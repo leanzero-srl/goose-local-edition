@@ -5,8 +5,20 @@ import {
   splitConfigFor,
   splitContextFromFreeMemory,
   splitPlan,
+  gbDecimal,
+  layerSplitView,
+  reserveFromPercent,
+  reservePercent,
+  reserveSource,
 } from './mlxDistributed';
-import { FLASH_PREFLIGHT_OK, FLASH_READY } from './mlxDistributed.fixtures';
+import {
+  FLASH_PREFLIGHT_OK,
+  FLASH_READY,
+  MIMO_PREFLIGHT_OK,
+  MIMO_PREFLIGHT_REFUSED,
+  MIMO_REASON,
+  MIMO_REFUSAL,
+} from './mlxDistributed.fixtures';
 import DISCOVERY from './mlxDistributedDiscovery.fixture.json';
 
 const QWEN = 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx';
@@ -157,5 +169,40 @@ describe('splitContextFromFreeMemory', () => {
     ).toBe(false);
     expect(splitContextFromFreeMemory({ ...derived, lastPreflight: undefined })).toBe(false);
     expect(splitContextFromFreeMemory(null)).toBe(false);
+  });
+});
+
+describe('layerSplitView (mimo_v2 on the mlx_lm pipeline)', () => {
+  it('reads the backend’s split, reserve, source and per-rank figures, rank 0 first', () => {
+    const view = layerSplitView(MIMO_PREFLIGHT_OK);
+    expect(view).not.toBeNull();
+    expect(view!.layers).toEqual([19, 29]);
+    expect(view!.reason).toBe(MIMO_REASON);
+    expect(view!.reserveRatio).toBe(0.05);
+    expect(view!.source).toBe('model');
+    expect(view!.refused).toBe(false);
+    expect(view!.rows.map((r) => [r.name, r.first, r.last, r.count])).toEqual([
+      ['workhorse', 29, 47, 19],
+      ['mule', 0, 28, 29],
+    ]);
+    expect(gbDecimal(view!.rows[0].spareBytes!)).toBe('0.00');
+    expect(gbDecimal(view!.rows[1].spareBytes!)).toBe('0.23');
+  });
+
+  it('a refusal carries the plan check’s sentence verbatim and the fitting reserve', () => {
+    const view = layerSplitView(MIMO_PREFLIGHT_REFUSED)!;
+    expect(view.refused).toBe(true);
+    expect(view.refusal).toBe(MIMO_REFUSAL);
+    expect(view.fittingReserveRatio).toBe(0.077);
+    expect(view.source).toBe('user');
+    expect(view.rows.every((r) => r.first == null && r.spareBytes == null)).toBe(true);
+  });
+
+  it('other runners have no layer split view; percents round-trip', () => {
+    expect(layerSplitView(FLASH_PREFLIGHT_OK)).toBeNull();
+    expect(reservePercent(0.077)).toBe('7.7');
+    expect(reserveFromPercent('7.7')).toBe(0.077);
+    expect(reserveFromPercent('')).toBeNull();
+    expect(reserveSource('bogus')).toBeNull();
   });
 });

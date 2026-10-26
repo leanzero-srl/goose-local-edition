@@ -16,6 +16,11 @@ import {
   FLASH_PREFLIGHT_REFUSED,
   FLASH_READY,
   FLASH_SERVING,
+  MIMO_CONFIG,
+  MIMO_PREFLIGHT_OK,
+  MIMO_PREFLIGHT_REFUSED,
+  MIMO_REASON,
+  MIMO_REFUSAL,
   STOPPED_WITH_CONFIG,
 } from './mlxDistributed.fixtures';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
@@ -1482,4 +1487,138 @@ describe('DistributedEngineSection — a disabled Preflight says why; the switch
       unmount();
     }
   }, 30_000);
+});
+
+describe('DistributedEngineSection — goose’s own layer split (mimo_v2, mlx_lm pipeline)', () => {
+  const MIMO_STOPPED: MlxDistributedStatus = { ...STOPPED_WITH_CONFIG, config: MIMO_CONFIG };
+
+  it('shows the split, the reserve in force and its source, the planner’s sentence and every Mac’s figures', async () => {
+    const { container } = section({
+      status: { ...MIMO_STOPPED, lastPreflight: MIMO_PREFLIGHT_OK },
+    });
+    const split = screen.getByTestId('mlx-dist-layer-split');
+    expect(split).toHaveAttribute('data-refused', 'false');
+    expect(within(split).getByTestId('mlx-dist-split-layers')).toHaveTextContent('19 / 29 layers');
+    expect(within(split).getByTestId('mlx-dist-split-reserve')).toHaveTextContent(
+      'reserve 5.0% of RAM'
+    );
+    const source = within(split).getByTestId('mlx-dist-split-source');
+    expect(source).toHaveAttribute('data-source', 'model');
+    expect(source).toHaveTextContent('mimo_v2’s own reserve');
+    expect(within(split).getByTestId('mlx-dist-split-reason').textContent).toBe(MIMO_REASON);
+    expect(split).toHaveTextContent('The safety margin is the reserve');
+    const rows = within(split).getAllByTestId('mlx-dist-split-row');
+    expect(rows.map((r) => r.getAttribute('data-node'))).toEqual(['workhorse', 'mule']);
+    expect(rows[0]).toHaveTextContent('L29–47 · 19 layers');
+    expect(rows[0]).toHaveTextContent('weights68.28 GB');
+    expect(rows[0]).toHaveTextContent('budget71.55 GB');
+    expect(rows[0]).toHaveTextContent('spare0.00 GB');
+    expect(rows[1]).toHaveTextContent('L0–28 · 29 layers');
+    expect(rows[1]).toHaveTextContent('weights100.31 GB');
+    expect(rows[1]).toHaveTextContent('budget104.13 GB');
+    expect(rows[1]).toHaveTextContent('spare0.23 GB');
+    expect(screen.queryByTestId('mlx-dist-plan-at')).toBeNull();
+    await expectDesigned(container);
+  });
+
+  it('a runner goose does not split itself shows no layer split block', () => {
+    section({ status: { ...STOPPED_WITH_CONFIG, lastPreflight: FLASH_PREFLIGHT_OK } });
+    expect(screen.queryByTestId('mlx-dist-layer-split')).toBeNull();
+  });
+
+  it('a refusal names the fitting reserve; “Plan at 7.7%” saves it and runs preflight again', async () => {
+    mockConfigUpdate.mockImplementation(async (c: unknown) => c);
+    mockPreflight.mockResolvedValue({ ...MIMO_PREFLIGHT_OK, ranAtMs: Date.now() });
+    const { container } = section({
+      status: {
+        ...MIMO_STOPPED,
+        config: { ...MIMO_CONFIG, planReserveRatio: 0.093 },
+        lastPreflight: MIMO_PREFLIGHT_REFUSED,
+      },
+    });
+    const split = screen.getByTestId('mlx-dist-layer-split');
+    expect(split).toHaveAttribute('data-refused', 'true');
+    expect(within(split).getByTestId('mlx-dist-split-reserve')).toHaveTextContent(
+      'reserve 9.3% of RAM'
+    );
+    expect(within(split).getByTestId('mlx-dist-split-source')).toHaveTextContent('set by you');
+    expect(within(split).queryAllByTestId('mlx-dist-split-row')).toEqual([]);
+    // The plan check's own sentence stays verbatim in the failing list.
+    expect(within(screen.getByTestId('mlx-dist-failing')).getByText(MIMO_REFUSAL)).toBeVisible();
+    const banner = within(split).getByTestId('mlx-dist-split-fits-at');
+    expect(banner).toHaveTextContent('Fits at 7.7%');
+    expect(banner).toHaveTextContent('No split fits at a reserve of 9.3% of RAM; one fits at 7.7%');
+    await expectDesigned(container);
+
+    await userEvent.click(within(banner).getByRole('button', { name: 'Plan at 7.7%' }));
+    await waitFor(() => expect(mockPreflight).toHaveBeenCalledTimes(1));
+    expect(mockConfigUpdate).toHaveBeenCalledTimes(1);
+    expect(mockConfigUpdate.mock.calls[0][0].planReserveRatio).toBe(0.077);
+    expect(mockConfigUpdate.mock.calls[0][0].modelId).toBe(MIMO_CONFIG.modelId);
+    expect(mockPreflight.mock.calls[0][0]).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByTestId('mlx-dist-layer-split')).toHaveAttribute('data-refused', 'false')
+    );
+  });
+
+  it('with an open draft, “Plan at” edits the draft and checks the draft, saving nothing', async () => {
+    mockPreflight.mockResolvedValue({ ...MIMO_PREFLIGHT_OK, ranAtMs: Date.now() });
+    section({ status: { ...MIMO_STOPPED, lastPreflight: MIMO_PREFLIGHT_REFUSED } });
+    await openAdvanced();
+    await userEvent.click(screen.getByRole('combobox', { name: 'Backend' }));
+    await userEvent.click(screen.getByTestId('mlx-dist-backend-ring'));
+    await userEvent.click(screen.getByRole('button', { name: 'Plan at 7.7%' }));
+    await waitFor(() => expect(mockPreflight).toHaveBeenCalledTimes(1));
+    expect(mockConfigUpdate).not.toHaveBeenCalled();
+    expect(mockPreflight.mock.calls[0][0]).toMatchObject({
+      backend: 'ring',
+      planReserveRatio: 0.077,
+    });
+    expect(screen.getByRole('textbox', { name: 'Plan reserve (% of RAM)' })).toHaveValue('7.7');
+  });
+
+  it('no settable reserve fits: it says so, with no button', () => {
+    section({
+      status: {
+        ...MIMO_STOPPED,
+        lastPreflight: { ...MIMO_PREFLIGHT_REFUSED, fittingReserveRatio: null },
+      },
+    });
+    expect(screen.getByTestId('mlx-dist-split-nofit')).toHaveTextContent('No reserve fits');
+    expect(screen.queryByTestId('mlx-dist-plan-at')).toBeNull();
+  });
+
+  it('goose’s default and a user value are named as their source', () => {
+    section({
+      status: {
+        ...MIMO_STOPPED,
+        lastPreflight: {
+          ...MIMO_PREFLIGHT_OK,
+          planReserveRatio: 0.093,
+          planReserveSource: 'default',
+        },
+      },
+    });
+    expect(screen.getByTestId('mlx-dist-split-source')).toHaveTextContent('goose’s default');
+  });
+
+  it('the Advanced reserve is a percent: typed 6.5 saves 0.065, cleared is omitted (model default)', async () => {
+    mockConfigUpdate.mockImplementation(async (c: unknown) => c);
+    section({ status: { ...MIMO_STOPPED, config: { ...MIMO_CONFIG, planReserveRatio: 0.06 } } });
+    await openAdvanced();
+    const field = screen.getByRole('textbox', { name: 'Plan reserve (% of RAM)' });
+    expect(field).toHaveValue('6.0');
+    await userEvent.clear(field);
+    expect(field).toHaveAttribute('placeholder', 'model default');
+    await userEvent.type(field, '6.5');
+    expect(field).toHaveValue('6.5');
+    await userEvent.click(screen.getByRole('button', { name: 'Save configuration' }));
+    await waitFor(() => expect(mockConfigUpdate).toHaveBeenCalledTimes(1));
+    expect(mockConfigUpdate.mock.calls[0][0].planReserveRatio).toBe(0.065);
+
+    await userEvent.clear(screen.getByRole('textbox', { name: 'Plan reserve (% of RAM)' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save configuration' }));
+    await waitFor(() => expect(mockConfigUpdate).toHaveBeenCalledTimes(2));
+    expect('planReserveRatio' in mockConfigUpdate.mock.calls[1][0]).toBe(false);
+  });
 });

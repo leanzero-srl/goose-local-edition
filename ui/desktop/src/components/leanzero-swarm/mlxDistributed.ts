@@ -433,6 +433,7 @@ export function cleanConfig(config: MlxDistributedConfigDto): MlxDistributedConf
   };
   if (next.context == null) delete next.context;
   if (next.slots == null) delete next.slots;
+  if (next.planReserveRatio == null) delete next.planReserveRatio;
   return next;
 }
 
