@@ -2123,6 +2123,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "Zur Pille verkleinern"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Diesen Fehler ausblenden — er erscheint nur wieder, wenn die Engine erneut ausfällt"
+  },
   "engineGlance.expand": {
     "defaultMessage": "Ganze Karte zeigen"
   },
@@ -5630,6 +5633,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Die Engine-Einstellungen konnten nicht gelesen werden."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Erneut lesen"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Stoppen"
   },
@@ -6205,6 +6211,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Gestoppt"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Außerhalb von goose gestoppt"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Nicht erreichbar"

@@ -2123,6 +2123,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "ピルに縮小"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "この失敗を閉じる — エンジンが再び失敗した場合にのみ再表示されます"
+  },
   "engineGlance.expand": {
     "defaultMessage": "カード全体を表示"
   },
@@ -5630,6 +5633,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "エンジン設定を読み取れませんでした。"
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "再読み込み"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "停止"
   },
@@ -6205,6 +6211,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "停止"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "goose の外部で停止"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "到達不能"

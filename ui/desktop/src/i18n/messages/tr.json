@@ -2123,6 +2123,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "Hapa küçült"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Bu hatayı kapat — yalnızca motor yeniden başarısız olursa geri gelir"
+  },
   "engineGlance.expand": {
     "defaultMessage": "Kartın tamamını göster"
   },
@@ -5630,6 +5633,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Motor ayarları okunamadı."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Yeniden oku"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Durdur"
   },
@@ -6205,6 +6211,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Durduruldu"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "goose dışında durduruldu"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Erişilemiyor"

@@ -2123,6 +2123,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "Свернуть в пилюлю"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Скрыть этот сбой — он появится снова, только если движок снова упадёт"
+  },
   "engineGlance.expand": {
     "defaultMessage": "Показать всю карточку"
   },
@@ -5630,6 +5633,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Не удалось прочитать настройки движка."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Прочитать снова"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Остановить"
   },
@@ -6205,6 +6211,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Остановлен"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Остановлен вне goose"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Недоступен"

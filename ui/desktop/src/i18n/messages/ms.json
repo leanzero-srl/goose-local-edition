@@ -2123,6 +2123,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "Kecilkan menjadi pil"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Tutup kegagalan ini — ia hanya kembali jika enjin gagal lagi"
+  },
   "engineGlance.expand": {
     "defaultMessage": "Tunjukkan kad penuh"
   },
@@ -5630,6 +5633,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Tidak dapat membaca tetapan enjin."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Baca semula"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Hentikan"
   },
@@ -6205,6 +6211,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Berhenti"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Dihentikan di luar goose"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Tidak dapat dicapai"

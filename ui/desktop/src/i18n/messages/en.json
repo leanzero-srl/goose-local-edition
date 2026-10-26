@@ -2132,6 +2132,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "Shrink to a pill"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Dismiss this failure — it comes back only if the engine fails again"
+  },
   "engineGlance.dismissed.title": {
     "defaultMessage": "Floating window hidden for this session"
   },
@@ -5792,6 +5795,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Could not read the engine settings."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Read again"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Stop"
   },
@@ -6367,6 +6373,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Stopped"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Stopped outside goose"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Unreachable"

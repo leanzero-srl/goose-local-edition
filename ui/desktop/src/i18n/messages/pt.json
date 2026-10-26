@@ -2123,6 +2123,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "Reduzir a pílula"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Dispensar esta falha — só volta se o motor falhar novamente"
+  },
   "engineGlance.expand": {
     "defaultMessage": "Mostrar o cartão inteiro"
   },
@@ -5630,6 +5633,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Não foi possível ler as configurações do motor."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Ler novamente"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Parar"
   },
@@ -6205,6 +6211,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Parado"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Parado fora do goose"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Inacessível"

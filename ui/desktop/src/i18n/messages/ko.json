@@ -2123,6 +2123,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "알약 크기로 줄이기"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "이 실패 닫기 — 엔진이 다시 실패할 때만 다시 표시됩니다"
+  },
   "engineGlance.expand": {
     "defaultMessage": "카드 전체 보기"
   },
@@ -5630,6 +5633,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "엔진 설정을 읽지 못했습니다."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "다시 읽기"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "중지"
   },
@@ -6205,6 +6211,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "중지됨"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "goose 외부에서 중지됨"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "연결 불가"

@@ -2123,6 +2123,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "Réduire en pastille"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Ignorer cet échec — il ne revient que si le moteur échoue à nouveau"
+  },
   "engineGlance.expand": {
     "defaultMessage": "Afficher toute la carte"
   },
@@ -5630,6 +5633,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Impossible de lire les réglages du moteur."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Relire"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Arrêter"
   },
@@ -6205,6 +6211,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Arrêté"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Arrêté en dehors de goose"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Injoignable"

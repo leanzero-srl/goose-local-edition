@@ -2123,6 +2123,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "Kecilkan jadi pil"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Tutup kegagalan ini — hanya muncul lagi jika mesin gagal lagi"
+  },
   "engineGlance.expand": {
     "defaultMessage": "Tampilkan kartu penuh"
   },
@@ -5630,6 +5633,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Tidak dapat membaca pengaturan mesin."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Baca lagi"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Hentikan"
   },
@@ -6205,6 +6211,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Berhenti"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Dihentikan di luar goose"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Tidak terjangkau"

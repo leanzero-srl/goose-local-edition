@@ -2123,6 +2123,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "Thu nhỏ thành viên thuốc"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Bỏ qua lỗi này — chỉ hiện lại nếu động cơ lỗi lần nữa"
+  },
   "engineGlance.expand": {
     "defaultMessage": "Hiện cả thẻ"
   },
@@ -5630,6 +5633,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Không đọc được cài đặt động cơ."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Đọc lại"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Dừng"
   },
@@ -6205,6 +6211,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Đã dừng"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Bị dừng bên ngoài goose"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Không kết nối được"

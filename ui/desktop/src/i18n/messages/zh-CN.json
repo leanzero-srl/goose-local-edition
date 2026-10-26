@@ -2123,6 +2123,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "缩成胶囊"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "忽略此故障 — 仅在引擎再次失败时才会重新出现"
+  },
   "engineGlance.expand": {
     "defaultMessage": "显示完整卡片"
   },
@@ -5630,6 +5633,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "无法读取引擎设置。"
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "重新读取"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "停止"
   },
@@ -6205,6 +6211,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "已停止"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "在 goose 之外被停止"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "无法访问"

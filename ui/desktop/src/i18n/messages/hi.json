@@ -2123,6 +2123,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "गोली जितना छोटा करें"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "इस विफलता को हटाएँ — यह तभी लौटेगी जब इंजन फिर से विफल होगा"
+  },
   "engineGlance.expand": {
     "defaultMessage": "पूरा कार्ड दिखाएँ"
   },
@@ -5630,6 +5633,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "इंजन सेटिंग पढ़ी नहीं जा सकीं।"
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "फिर से पढ़ें"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "रोकें"
   },
@@ -6205,6 +6211,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "रुका हुआ"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "goose के बाहर से रोका गया"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "पहुँच से बाहर"

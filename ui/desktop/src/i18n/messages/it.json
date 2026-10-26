@@ -2123,6 +2123,9 @@
   "engineGlance.collapse": {
     "defaultMessage": "Riduci a pillola"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Ignora questo errore: ricompare solo se il motore si guasta di nuovo"
+  },
   "engineGlance.expand": {
     "defaultMessage": "Mostra la scheda intera"
   },
@@ -5630,6 +5633,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Impossibile leggere le impostazioni del motore."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Rileggi"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Arresta"
   },
@@ -6205,6 +6211,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Arrestato"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Arrestato fuori da goose"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Non raggiungibile"
