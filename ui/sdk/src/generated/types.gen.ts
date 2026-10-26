@@ -3829,11 +3829,39 @@ export type MlxModelProfileDto = {
      * head_dim; the engine: a cache layout it cannot quantize — both name the reason).
      */
     kvCache?: MlxKvCacheModeDto | null;
+    /**
+     * Prompt-lookup (n-gram copy) drafting. Absent = auto (the engine's family default: on
+     * inside MTP for Qwen3.5/3.6/3.8, off for the suffix lane). Rides the engine env inside MTP
+     * and `--suffix-decoding` flags on a pure-attention model served without MTP; a hybrid
+     * served without MTP gets nothing. A change restarts the engine.
+     */
+    promptLookup?: MlxPromptLookupDto | null;
 };
 
 export type MlxThinkingModeDto = 'on' | 'off';
 
 export type MlxKvCacheModeDto = 'int8' | 'int4';
+
+/**
+ * Every field absent = the engine's own default for the lane.
+ */
+export type MlxPromptLookupDto = {
+    mode?: MlxPromptLookupModeDto | null;
+    /**
+     * MTP lane only: shortest context n-gram that may trigger a copy (engine floor 2).
+     */
+    minNgram?: number | null;
+    /**
+     * MTP lane: longest n-gram matched. Suffix lane: `--suffix-max-suffix-len`.
+     */
+    maxNgram?: number | null;
+    /**
+     * MTP lane: copy-draft ceiling. Suffix lane: `--suffix-max-draft`.
+     */
+    maxDraft?: number | null;
+};
+
+export type MlxPromptLookupModeDto = 'on' | 'off';
 
 /**
  * Persist MLX engine settings. A running engine keeps its old arguments; status reports
@@ -3893,6 +3921,17 @@ export type MlxLocalModelDto = {
      */
     kvCacheMeasurement?: MlxKvCacheMeasurementDto | null;
     kvCacheMeasurementError?: string | null;
+    /**
+     * The directory holds `mtp.safetensors`, so auto/`"mtp"` serves the MTP head and the
+     * prompt-lookup lever rides inside it.
+     */
+    hasMtpHead?: boolean;
+    /**
+     * config.json declares recurrent-state layers (GatedDeltaNet, Mamba, ...): without MTP the
+     * prompt-lookup lever is unavailable. Absent exactly when `hybrid_error` says why.
+     */
+    hybrid?: boolean | null;
+    hybridError?: string | null;
 };
 
 /**

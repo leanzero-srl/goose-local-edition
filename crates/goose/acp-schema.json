@@ -9435,6 +9435,17 @@
             }
           ],
           "description": "Compressed live KV cache, passed as `--kv-cache-dtype`: `\"int8\"` | `\"int4\"`. Absent = off\n(the engine's bf16 cache, no flag). A change restarts the engine. The mount is refused when\nthe model's KV cannot take it (goose: no attention layers / no quantization group for its\nhead_dim; the engine: a cache layout it cannot quantize — both name the reason)."
+        },
+        "promptLookup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxPromptLookupDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Prompt-lookup (n-gram copy) drafting. Absent = auto (the engine's family default: on\ninside MTP for Qwen3.5/3.6/3.8, off for the suffix lane). Rides the engine env inside MTP\nand `--suffix-decoding` flags on a pure-attention model served without MTP; a hybrid\nserved without MTP gets nothing. A change restarts the engine."
         }
       },
       "description": "Per-model sampling/context profile. Sampling is per MODEL: the engine spawns each\nmounted model with the flags from ITS profile in `MlxEngineSettingsDto::model_profiles`."
@@ -9451,6 +9462,53 @@
       "enum": [
         "int8",
         "int4"
+      ]
+    },
+    "MlxPromptLookupDto": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxPromptLookupModeDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "minNgram": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "MTP lane only: shortest context n-gram that may trigger a copy (engine floor 2).",
+          "minimum": 0
+        },
+        "maxNgram": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "MTP lane: longest n-gram matched. Suffix lane: `--suffix-max-suffix-len`.",
+          "minimum": 0
+        },
+        "maxDraft": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "MTP lane: copy-draft ceiling. Suffix lane: `--suffix-max-draft`.",
+          "minimum": 0
+        }
+      },
+      "description": "Every field absent = the engine's own default for the lane."
+    },
+    "MlxPromptLookupModeDto": {
+      "type": "string",
+      "enum": [
+        "on",
+        "off"
       ]
     },
     "MlxEngineSettingsUpdateRequest_unstable": {
@@ -9580,6 +9638,24 @@
           "description": "The measured quality of each setting on THIS model; absent with no error = never measured."
         },
         "kvCacheMeasurementError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hasMtpHead": {
+          "type": "boolean",
+          "description": "The directory holds `mtp.safetensors`, so auto/`\"mtp\"` serves the MTP head and the\nprompt-lookup lever rides inside it.",
+          "default": false
+        },
+        "hybrid": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "config.json declares recurrent-state layers (GatedDeltaNet, Mamba, ...): without MTP the\nprompt-lookup lever is unavailable. Absent exactly when `hybrid_error` says why."
+        },
+        "hybridError": {
           "type": [
             "string",
             "null"

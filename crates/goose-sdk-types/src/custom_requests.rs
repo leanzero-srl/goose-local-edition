@@ -2378,6 +2378,36 @@ pub struct MlxModelProfileDto {
     /// head_dim; the engine: a cache layout it cannot quantize — both name the reason).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kv_cache: Option<MlxKvCacheModeDto>,
+    /// Prompt-lookup (n-gram copy) drafting. Absent = auto (the engine's family default: on
+    /// inside MTP for Qwen3.5/3.6/3.8, off for the suffix lane). Rides the engine env inside MTP
+    /// and `--suffix-decoding` flags on a pure-attention model served without MTP; a hybrid
+    /// served without MTP gets nothing. A change restarts the engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_lookup: Option<MlxPromptLookupDto>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MlxPromptLookupModeDto {
+    On,
+    Off,
+}
+
+/// Every field absent = the engine's own default for the lane.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxPromptLookupDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<MlxPromptLookupModeDto>,
+    /// MTP lane only: shortest context n-gram that may trigger a copy (engine floor 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_ngram: Option<u32>,
+    /// MTP lane: longest n-gram matched. Suffix lane: `--suffix-max-suffix-len`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_ngram: Option<u32>,
+    /// MTP lane: copy-draft ceiling. Suffix lane: `--suffix-max-draft`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_draft: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -3039,6 +3069,16 @@ pub struct MlxLocalModelDto {
     pub kv_cache_measurement: Option<MlxKvCacheMeasurementDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kv_cache_measurement_error: Option<String>,
+    /// The directory holds `mtp.safetensors`, so auto/`"mtp"` serves the MTP head and the
+    /// prompt-lookup lever rides inside it.
+    #[serde(default)]
+    pub has_mtp_head: bool,
+    /// config.json declares recurrent-state layers (GatedDeltaNet, Mamba, ...): without MTP the
+    /// prompt-lookup lever is unavailable. Absent exactly when `hybrid_error` says why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hybrid: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hybrid_error: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
