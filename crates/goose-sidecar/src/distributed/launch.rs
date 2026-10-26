@@ -586,7 +586,7 @@ impl TensorLaunch {
             if widest == 0 {
                 return Ok(0);
             }
-            if total % widest != 0 {
+            if !total.is_multiple_of(widest) {
                 bail!(
                     "the plan's {what} ({total} B) is not {widest} layers' worth: it was not built \
                      by the layer split planner"
