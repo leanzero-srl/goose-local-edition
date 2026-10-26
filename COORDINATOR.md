@@ -27,3 +27,11 @@ The coordinator stopped at its context limit. Agents still running in the backgr
    load time + tok/s vs manual (277 s cold JACCL, ~40 tok/s), stop from app, no ranks left on either Mac,
    qwen3_5 distributed tests green. heavy-run --status before the 170 GB load.
 5. Record facts: goose-mlx-inference references/distributed-engine-history.md + mlx-jaccl-cluster changelog.
+
+## Update (after the compile+split agent, fccf87936b / 3d9e8a9750)
+- DONE: branch compiles; split planner + plan_reserve_ratio; clippy clean; sidecar 495 lib tests green (7 new);
+  development_gates 11/11. Default 9.3% refuses, names "fits at 7.7% (19/29)"; at 0.05 -> rank0 [29,48) 68.28 GB,
+  rank1 [0,29) 100.31 GB, derived context 60,672. Fields: layerSplit, splitReason, planReserveRatio.
+- OPEN, first: C = wire those fields into the goose ACP DTO + regen schema; then the rank-wrapper pipeline launch
+  (a mimo start fails today with a named "launch not wired yet"). Then items 2-5 above.
+- TRAP: macOS 27 on the workhorse needs cargo `--config 'profile.dev.package."*".strip=false'`.
