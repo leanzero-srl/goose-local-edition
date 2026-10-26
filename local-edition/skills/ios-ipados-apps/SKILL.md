@@ -60,3 +60,5 @@ This installation is laptop-owned. Canonical source: `~/.claude/skills/ios-ipado
 2026-10-26: Added the combined private-network TLS proof after localhost certificate tests passed but ATS rejected the actual mesh address. Documented supported Network framework investigation without claiming it was already proven.
 
 2026-10-26: Added saved-node recovery against a real isolated control server, pre-request versus sent-command retry proof, and the immediate WebSocket authorization-close race measured on iPad.
+
+2026-10-26: Verify the deployed authority URL before defining client URL validation. A legitimate HTTPS service can live below a reverse-proxy base path. Preserve that base path when appending API routes; reject credentials, queries, fragments, encoded separators and traversal. Test exact final request URLs against the real deployment shape. A localhost root-only fixture cannot prove this integration.
