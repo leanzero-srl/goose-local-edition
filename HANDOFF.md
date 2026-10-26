@@ -236,3 +236,41 @@ with BatchRotatingKVCache, batch_kv_dtype on SWA caches), the barrier, the weigh
      above; refused: planReserveRatio 0.093, source 'user', fittingReserveRatio 0.077, plan check fail, no plans).
      Vitest in DistributedEngineSection.test.tsx (+ expectDesigned for owner UI rules) and mlxDistributed.test.ts.
   4. `pnpm run i18n:extract` after new messages, then lint:check + test:run via $S; commit `desktop: ...`.
+
+## Session 4b (launch), 2026-10-26: steps 1-7 CODED, 4 old tests red (ctx-guard stop at ~175k)
+Landed (HEAD 29c1d2d24a; NOTE the DTO agent's commit swept my staged index in under ITS message: launch.rs,
+link_host.rs, preflight.rs, runner_update.rs, supervisor.rs; layer_split.rs edits went in 5662f78886):
+- launch.rs: `TensorLaunch::for_pipeline_ranks(plans, layers, full)` (refuses: split/plan-range mismatch "covers N
+  layers", differing prefill figures, a rank with 0 of a kind another rank has; canonical kv = lcm_f*kv/layer,
+  seq = lcm_s*state/layer, workspace min, limit min_r(L_r*min(w)), entries min); `kind_weights`;
+  `mlx_pipeline_rank_specs` (rank_specs now delegates to `mlx_lm_server_specs`); tests mod `pipeline_launch_tests`
+  (3 tests: 19/29 mimo split, weights {5,8}/{4,5}, equal weighted totals, interpreter, ulimit, prelude text,
+  serde round trip + NamedConversation alias, refusals).
+- layer_split.rs: `LayerSplit::full_layers`; tests mod/mimo_facts/nodes now pub(crate).
+- preflight.rs: `PreflightReport::pipeline_full_layers`, set in plan_mlx_pipeline; `mlx_pipeline_launches()`;
+  node check fails "pipeline" when MlxLmPipeline and no pipeline_python.
+- supervisor.rs: MlxLmPipeline arm in launch_specs; peers_follow_rank0 exhaustive match (pipeline=false);
+  server_load treats MlxLmPipeline as tensor. link_host.rs publish(): Warming->Ready for both.
+Weighted-eviction review (verified in ~/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12 mlx_lm 0.31.3):
+models/cache.py LRUPromptCache.insert_cache sums `c.nbytes` per entry, evicts on max_bytes; server.py:795 trim_to
+(prompt_cache_bytes - batch active nbytes) — per rank, own bytes. KVCache/RotatingKVCache/BatchKVCache/
+BatchRotatingKVCache each define their OWN nbytes (no double weighting via inheritance). KEPT the weights over a
+token-count scheme: token eviction needs patching LRU entry sizes + every nbytes consumer (batch active sum, the
+wrapper's prompt_cache_nbytes), and SWA bytes saturate at the 128 window so a token-linear bound is loose; one
+property patch covers every consumer, weighted >= min(w)*real so the limit is safe and near-tight. Caveat:
+QuantizedKVCache is NOT weighted (refuse/handle if a kv_bits path is ever enabled for mimo).
+OPEN (next agent):
+1. 4 pre-existing launch tests fail (asserted the old tag / exact remote script, broken by b02002b2d2's tag rename +
+   ulimit prefix): a_pipeline_rank_serves_the_approved_split_under_the_forks_interpreter (:1671),
+   the_remote_command_prints_the_pid_then_execs_the_marked_rank (:1477),
+   the_tensor_program_carries_the_budget_and_the_launch_window (:10447),
+   the_tensor_spec_asks_for_the_doorbell_and_an_older_peer_refuses_it. Decide per test: update the expectation
+   (ulimit prefix, new tag) — these are launch-shape tests, not qwen behaviour; or keep the tensor tag unchanged
+   for tensor specs (serialize NamedConversation when pipeline_split is None) if "unchanged" must hold literally.
+2. supervisor.rs:25 `bail` import now unused -> remove (clippy -D warnings).
+3. My 3 new tests: not seen in the FAILED list of the last run, but confirm they ran green.
+4. Gate: cargo test -p goose-sidecar; clippy -p goose-sidecar -p goose --all-targets -D warnings;
+   cargo test -p goose-swarm --test development_gates; rustfmt launch.rs + the 5 files. Push HEAD:mimo-distributed
+   (origin is at 29c1d2d24a already per `git log origin/...`; verify).
+TRAP: the DTO agent shares the git INDEX in this worktree — anything you stage can be swept into its commit. Stage
+and commit in ONE command (`git add <paths> && git commit`), never leave things staged.
