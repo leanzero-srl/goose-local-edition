@@ -828,6 +828,13 @@ impl ControllerBackend for GooseControllerBackend {
             }
         }
         Ok(WorkSnapshot {
+            sharing: Some(
+                self.0
+                    .runs
+                    .sharing_descriptor(&record.local_locator, work.kind)
+                    .await
+                    .map_err(store_error)?,
+            ),
             live_messages,
             entry: self.entry(&record)?,
             pending_inputs,

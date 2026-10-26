@@ -1321,6 +1321,19 @@ impl ExtensionManager {
             .collect()
     }
 
+    /// Project the connection-time configuration without re-resolving credentials or cloning them.
+    pub(crate) async fn project_resolved_configs<T>(
+        &self,
+        project: impl Fn(&ExtensionConfig) -> T,
+    ) -> Vec<T> {
+        self.extensions
+            .lock()
+            .await
+            .values()
+            .map(|extension| project(&extension.resolved_config))
+            .collect()
+    }
+
     /// The extensions the user added from outside goose — MCP servers over stdio, streamable HTTP
     /// or SSE, and inline Python — whose tools `tool_deferral` may declare as skeletons.
     /// goose's own (platform, builtin) and the frontend's tools are never deferred.
@@ -2221,6 +2234,41 @@ mod tests {
     }
 
     struct MockClient {}
+
+    #[tokio::test]
+    async fn recipient_sharing_projects_connection_time_config_without_resolving_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = ExtensionManager::new_without_provider(dir.path().to_path_buf());
+        let original: ExtensionConfig = serde_json::from_value(serde_json::json!({
+            "type": "streamable_http", "name": "service", "uri": "${SERVICE_ENDPOINT}"
+        }))
+        .unwrap();
+        let mut resolved = original.clone();
+        if let ExtensionConfig::StreamableHttp { uri, .. } = &mut resolved {
+            *uri = "https://connected.example/mcp".into();
+        }
+        manager.extensions.lock().await.insert(
+            "service".into(),
+            Extension::new(
+                original.clone(),
+                resolved,
+                Arc::new(MockClient {}),
+                None,
+                None,
+            ),
+        );
+        let observations = manager
+            .project_resolved_configs(|config| match config {
+                ExtensionConfig::StreamableHttp { uri, .. } => uri.clone(),
+                _ => panic!("unexpected transport"),
+            })
+            .await;
+        assert_eq!(
+            observations,
+            vec!["https://connected.example/mcp".to_owned()]
+        );
+        assert_eq!(manager.get_extension_configs().await, vec![original]);
+    }
 
     #[async_trait::async_trait]
     impl McpClientTrait for MockClient {

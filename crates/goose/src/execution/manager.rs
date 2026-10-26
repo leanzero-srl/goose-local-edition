@@ -548,6 +548,11 @@ impl AgentManager {
         self.sessions.read().await.contains(session_id)
     }
 
+    /// Inspect a loaded session without restoring providers or starting extension clients.
+    pub(crate) async fn cached_agent(&self, session_id: &str) -> Option<Arc<Agent>> {
+        self.sessions.read().await.peek(session_id).cloned()
+    }
+
     pub async fn session_count(&self) -> usize {
         self.sessions.read().await.len()
     }

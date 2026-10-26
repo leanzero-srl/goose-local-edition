@@ -10,6 +10,7 @@ mod observers;
 mod partials;
 mod preflights;
 mod questions;
+mod sharing;
 mod store;
 
 use crate::agents::Agent;

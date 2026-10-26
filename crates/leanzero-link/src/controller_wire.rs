@@ -389,11 +389,43 @@ pub struct InputOption {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkSnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sharing: Option<WorkSharingDescriptor>,
     pub live_messages: Vec<HistoryItem>,
     pub work_cursor: String,
     pub entry: CatalogEntry,
     pub pending_inputs: Vec<PendingInput>,
     pub history_watermark: CatalogCursor,
+}
+
+/// Recipient facts observed by the owner, not a guarantee about future routing or tool calls.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkSharingDescriptor {
+    pub provenance: SharingProvenance,
+    pub provider: Option<SharingProvider>,
+    pub tools: Vec<SharingTool>,
+    pub limitations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SharingProvenance {
+    Live,
+    Saved,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharingProvider {
+    pub name: String,
+    pub origin: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SharingTool {
+    pub name: String,
+    pub transport: String,
+    pub origin: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
