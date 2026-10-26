@@ -55,6 +55,7 @@ use crate::conversation::message::TokenState;
 pub(super) struct RunManagers {
     pub(super) agent_manager: Arc<AgentManager>,
     pub(super) session_manager: Arc<SessionManager>,
+    pub(super) owner_runs: Arc<OwnerRunRegistry>,
 }
 
 static RUN_MANAGERS: StdRwLock<Option<RunManagers>> = StdRwLock::new(None);
@@ -65,6 +66,7 @@ static RUN_MANAGERS: StdRwLock<Option<RunManagers>> = StdRwLock::new(None);
 pub(super) fn bind_run_managers(
     agent_manager: Arc<AgentManager>,
     session_manager: Arc<SessionManager>,
+    owner_runs: Arc<OwnerRunRegistry>,
 ) {
     let mut slot = RUN_MANAGERS.write().unwrap();
     let rebound = slot
@@ -73,6 +75,7 @@ pub(super) fn bind_run_managers(
     *slot = Some(RunManagers {
         agent_manager,
         session_manager,
+        owner_runs,
     });
     info!(
         rebound,
@@ -310,199 +313,86 @@ impl ServeRemoteExecutor {
             }
         };
 
-        // The door. The manager's token map is the busy set every reader consults — the
-        // link source's `local_node`, the idle guard, `cancel_session`. Registered before
-        // the task spawns, so the node reads Busy from the moment the 202 leaves; a token
-        // already present means another door (an ACP prompt run, a subagent) holds the
-        // session: refuse as Busy, never run two replies on one session.
-        let cancel_token = CancellationToken::new();
-        if let Err(error) = managers
-            .agent_manager
-            .try_register_cancel_token(&session_id, cancel_token.clone())
+        let events = reply_tap().subscribe();
+        let (_, task) = managers
+            .owner_runs
+            .start_existing(PromptRequest::new(
+                SessionId::new(session_id.clone()),
+                vec![ContentBlock::Text(TextContent::new(req.prompt))],
+            ))
             .await
-        {
-            warn!(%session_id, %error, "leanzeroLink: remote prompt refused, the session is busy in another run");
-            return Err(ExecuteError::Busy);
+            .map_err(|error| {
+                if error.body.code == "work_busy" {
+                    ExecuteError::Busy
+                } else {
+                    ExecuteError::Internal(error.body.message)
+                }
+            })?;
+        if let Some(log) = log {
+            tokio::spawn(log_owner_reply(session_id.clone(), events, task, log));
         }
-
-        tokio::spawn(run_remote_reply(
-            managers,
-            session_id.clone(),
-            req.prompt,
-            cancel_token,
-            log,
-        ));
-
+        // Dropping a JoinHandle detaches its task. The registry and turn guard own its lifetime.
         Ok(ExecuteAccepted { session_id })
     }
 }
 
-/// Releases the door's token when the reply task ends by ANY path — the net goose-server's
-/// `spawn_reply_task` carries as `AgentBusyGuard`. A token left behind would report this
-/// node Busy forever and refuse every peer. Disarmed after the inline release on the
-/// normal path so a spawned late removal can never strip a NEWER run's token.
-struct BusyDoorGuard {
-    agent_manager: Arc<AgentManager>,
+async fn log_owner_reply(
     session_id: String,
-    armed: bool,
-}
-
-impl BusyDoorGuard {
-    fn disarm(&mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for BusyDoorGuard {
-    fn drop(&mut self) {
-        if !self.armed {
+    mut events: broadcast::Receiver<TappedMsg>,
+    mut task: tokio::task::JoinHandle<Result<PromptResponse, agent_client_protocol::Error>>,
+    log: Arc<dyn ExecuteLog>,
+) {
+    fn append(
+        log: &dyn ExecuteLog,
+        event: TappedMsg,
+        session_id: &str,
+        failure: &mut Option<String>,
+    ) {
+        if event.session_id != session_id {
             return;
         }
-        let agent_manager = self.agent_manager.clone();
-        let session_id = self.session_id.clone();
-        tokio::spawn(async move {
-            agent_manager.unregister_cancel_token(&session_id).await;
-        });
-    }
-}
-
-async fn run_remote_reply(
-    managers: RunManagers,
-    session_id: String,
-    prompt: String,
-    cancel_token: CancellationToken,
-    log: Option<Arc<dyn ExecuteLog>>,
-) {
-    let mut guard = BusyDoorGuard {
-        agent_manager: managers.agent_manager.clone(),
-        session_id: session_id.clone(),
-        armed: true,
-    };
-    let (reason, failure) =
-        drive_remote_reply(&managers, &session_id, prompt, &cancel_token, log.as_ref()).await;
-    if let Some(log) = &log {
-        log.append(&format!("\n[finished: {reason}]\n"));
-        log.finish(run_end(reason, failure));
-    }
-    // Release inline on every non-panic exit so the next reply on this session is not
-    // refused by a token the guard's spawned drop has not removed yet; the guard stays as
-    // the panic net.
-    managers
-        .agent_manager
-        .unregister_cancel_token(&session_id)
-        .await;
-    guard.disarm();
-}
-
-/// The reply itself, as `on_prompt` runs one (`server.rs`): the session's agent from the
-/// manager, `agent.reply` under the run's cancel token, the stream drained and dropped
-/// promptly on cancel so an in-flight provider future (and any child it spawned with
-/// kill_on_drop) is torn down. The agent persists every message through
-/// `session_manager.add_message` itself; nothing is forwarded to an ACP client because
-/// there is none.
-async fn drive_remote_reply(
-    managers: &RunManagers,
-    session_id: &str,
-    prompt: String,
-    cancel_token: &CancellationToken,
-    log: Option<&Arc<dyn ExecuteLog>>,
-) -> (&'static str, Option<String>) {
-    let log_text = |text: &str| {
-        if let (Some(log), false) = (log, text.is_empty()) {
-            log.append(text);
-        }
-    };
-    // A cancel that raced the 202: nothing is built and no model is called — the early
-    // exit `on_prompt` takes before it streams.
-    if cancel_token.is_cancelled() {
-        info!(%session_id, "leanzeroLink: remote prompt cancelled before it started");
-        return ("cancelled", None);
-    }
-
-    let agent = match managers
-        .agent_manager
-        .get_or_create_agent(session_id.to_string())
-        .await
-    {
-        Ok(agent) => agent,
-        Err(error) => {
-            error!(%session_id, %error, "leanzeroLink: remote prompt could not get the session agent");
-            log_text(&format!(
-                "[error: failed to get the session agent: {error}]"
-            ));
-            publish_tap(session_id, || {
-                TapEvent::Error(format!("Failed to get session agent: {error}"))
-            });
-            return (
-                "error",
-                Some(format!("failed to get the session agent: {error}")),
-            );
-        }
-    };
-    if cancel_token.is_cancelled() {
-        info!(%session_id, "leanzeroLink: remote prompt cancelled before its reply started");
-        return ("cancelled", None);
-    }
-
-    let session_config = SessionConfig {
-        id: session_id.to_string(),
-        schedule_id: None,
-        max_turns: None,
-        retry_config: None,
-    };
-    let stream = match agent
-        .reply(
-            Message::user().with_text(&prompt),
-            session_config,
-            Some(cancel_token.clone()),
-        )
-        .await
-    {
-        Ok(stream) => stream,
-        Err(error) => {
-            error!(%session_id, %error, "leanzeroLink: remote prompt failed to start its reply stream");
-            log_text(&format!("[error: {error}]"));
-            publish_tap(session_id, || TapEvent::Error(error.to_string()));
-            return ("error", Some(error.to_string()));
-        }
-    };
-    // The mirror: every event fans onto the process-wide tap, and the session's delta
-    // sequence closes with Finish when the stream ends or is dropped.
-    let mut stream = tapped_reply(session_id, stream);
-
-    // D13: a provider failure does not error the stream; the agent yields a notice message
-    // and the stream ends normally, so the failure is read off the messages themselves.
-    let mut failure: Option<String> = None;
-    let reason = loop {
-        let event = tokio::select! {
-            biased;
-            _ = cancel_token.cancelled() => {
-                info!(%session_id, "leanzeroLink: remote prompt cancelled");
-                break "cancelled";
-            }
-            maybe_event = stream.next() => match maybe_event {
-                Some(event) => event,
-                None => break "stop",
-            },
-        };
-        match event {
-            Ok(AgentEvent::Message(message)) => {
-                if let Some(why) = job_run_failure(&message) {
-                    failure = Some(why);
+        match event.event {
+            TapEvent::Message(message) => {
+                if let Some(reason) = job_run_failure(&message) {
+                    *failure = Some(reason);
                 }
-                log_text(&job_log_text(&message));
+                log.append(&job_log_text(&message));
             }
-            Ok(_) => {}
-            Err(error) => {
-                error!(%session_id, %error, "leanzeroLink: remote prompt's reply stream failed");
-                log_text(&format!("\n[error: {error}]"));
-                failure = Some(error.to_string());
-                break "error";
+            TapEvent::Error(error) => {
+                log.append(&format!("\n[error: {error}]\n"));
+                *failure = Some(error);
+            }
+            _ => {}
+        }
+    }
+    let mut failure = None;
+    let result = loop {
+        tokio::select! {
+            result = &mut task => break result,
+            event = events.recv() => match event {
+                Ok(event) => append(log.as_ref(), event, &session_id, &mut failure),
+                Err(broadcast::error::RecvError::Lagged(count)) => log.append(&format!("\n[log gap: {count} events; complete messages remain in the owner chat]\n")),
+                Err(broadcast::error::RecvError::Closed) => break task.await,
             }
         }
     };
-    drop(stream);
-    (reason, failure)
+    while let Ok(event) = events.try_recv() {
+        append(log.as_ref(), event, &session_id, &mut failure);
+    }
+    let reason = match result {
+        Ok(Ok(response)) if response.stop_reason == StopReason::Cancelled => "cancelled",
+        Ok(Ok(_)) => "stop",
+        Ok(Err(error)) => {
+            failure = Some(acp_error_text(&error));
+            "error"
+        }
+        Err(error) => {
+            failure = Some(error.to_string());
+            "error"
+        }
+    };
+    log.append(&format!("\n[finished: {reason}]\n"));
+    log.finish(run_end(reason, failure));
 }
 
 /// The failure a reply message reports, if any (D13): the provider-error notice the agent ends
@@ -1021,6 +911,24 @@ mod tests {
     /// The bound-managers slot is process-wide; the executor tests take turns on it.
     static BIND_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+    struct AdmissionExecutor {
+        manager: Arc<AgentManager>,
+    }
+    #[async_trait::async_trait]
+    impl OwnerExecutor for AdmissionExecutor {
+        async fn prepare(&self, _: &str) -> anyhow::Result<(Arc<Agent>, Arc<AgentManager>)> {
+            Ok((Arc::new(Agent::new()), self.manager.clone()))
+        }
+        async fn execute(
+            &self,
+            _: PromptRequest,
+            ticket: RunTicket,
+        ) -> Result<PromptResponse, agent_client_protocol::Error> {
+            ticket.cancel_token.cancelled().await;
+            Ok(PromptResponse::new(StopReason::Cancelled))
+        }
+    }
+
     async fn temp_managers() -> (tempfile::TempDir, RunManagers) {
         let temp = tempfile::TempDir::new().unwrap();
         let session_manager = Arc::new(SessionManager::new(temp.path().to_path_buf()));
@@ -1033,11 +941,17 @@ mod tests {
             GoosePlatform::GooseDesktop,
         );
         let agent_manager = Arc::new(AgentManager::new(agent_config, Some(100)).await.unwrap());
+        let owner_runs =
+            OwnerRunRegistry::for_store(temp.path().to_path_buf(), session_manager.clone());
+        owner_runs.bind_executor(Arc::new(AdmissionExecutor {
+            manager: agent_manager.clone(),
+        }));
         (
             temp,
             RunManagers {
                 agent_manager,
                 session_manager,
+                owner_runs,
             },
         )
     }
@@ -1077,6 +991,7 @@ mod tests {
         bind_run_managers(
             managers.agent_manager.clone(),
             managers.session_manager.clone(),
+            managers.owner_runs.clone(),
         );
         let config = receiver_config(temp.path());
         let executor = executor(config);
@@ -1207,6 +1122,7 @@ mod tests {
         bind_run_managers(
             managers.agent_manager.clone(),
             managers.session_manager.clone(),
+            managers.owner_runs.clone(),
         );
         let executor = executor(receiver_config(temp.path()));
         let working_dir = temp.path().join("work");
@@ -1229,6 +1145,13 @@ mod tests {
             .await
             .unwrap();
         wait_until_idle(&managers.agent_manager, &accepted.session_id).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while log.1.lock().unwrap().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
         let text = log.0.lock().unwrap().clone();
         assert!(text.ends_with("[finished: cancelled]\n"), "log: {text:?}");
         assert_eq!(*log.1.lock().unwrap(), vec![RunEnd::Cancelled]);
@@ -1277,6 +1200,7 @@ mod tests {
         bind_run_managers(
             managers.agent_manager.clone(),
             managers.session_manager.clone(),
+            managers.owner_runs.clone(),
         );
         let executor = executor(receiver_config(temp.path()));
 
@@ -1319,6 +1243,7 @@ mod tests {
         bind_run_managers(
             managers.agent_manager.clone(),
             managers.session_manager.clone(),
+            managers.owner_runs.clone(),
         );
         let executor = executor(receiver_config(temp.path()));
         let err = executor
@@ -1341,6 +1266,7 @@ mod tests {
         bind_run_managers(
             managers.agent_manager.clone(),
             managers.session_manager.clone(),
+            managers.owner_runs.clone(),
         );
         let executor = executor(receiver_config(temp.path()));
         let session = managers

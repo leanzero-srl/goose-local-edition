@@ -1,90 +1,86 @@
-//! Session loops Q9 (DESIGN-SESSION-LOOPS §5.1, "A renderer reload mid-tick"): what this ACP stack
-//! does to a prompt that is still running when its window's websocket closes. Measured over the
-//! real router the desktop connects to (`create_acp_router`, a real TCP websocket), against a
-//! model endpoint that streams its first words and never finishes.
-//!
-//! Measured answer (b): the websocket's close makes `agent-client-protocol-http` abort the
-//! connection's task, and that drops every future the connection spawned — `on_prompt` included —
-//! mid-await. Nothing after the await runs: no `clear_active_run`, no end-of-turn record. So the
-//! state a prompt holds for its turn must be released by guards that drop with the future — and
-//! since Q-519 the run's guard also settles the turn as stopped (`acp_closed_window_turn_test.rs`).
-
+//! The real ACP websocket is a viewer of an original-owner task.
 #[path = "acp_ws/mod.rs"]
 mod acp_ws;
 
 use acp_ws::{configure, eventually, serve, user_turns_running, Answer, Model, Window};
 use goose::session::SessionManager;
-use goose::turn_outcome::TurnOutcomeState;
+use serde_json::json;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_closed_websocket_drops_the_prompt_it_was_running() {
+async fn an_owner_run_survives_every_viewer_and_a_reconnected_view_can_control_it() {
     let model = Model::start(vec![
-        Answer::Unfinished("The first words of an answer that never finishes"),
-        Answer::Unfinished("The reloaded window's answer"),
+        Answer::Unfinished("The original owner's answer"),
+        Answer::Unfinished("The following turn"),
     ])
     .await;
     configure(&model, false);
     let addr = serve().await;
-
-    let mut window = Window::open(addr, false).await;
+    let mut original = Window::open(addr, false).await;
     let work = tempfile::tempdir().unwrap();
-    let session_id = window.new_chat(work.path()).await;
+    let chat = original.new_chat(work.path()).await;
+    let mut second = Window::open(addr, false).await;
+    second
+        .request(
+            "session/load",
+            json!({"sessionId":chat,"cwd":work.path(),"mcpServers":[]}),
+        )
+        .await;
+    original
+        .prompt(&chat, "Keep working on the original Mac", None)
+        .await;
+    original
+        .until_answer_streams(&chat, "The original owner's answer")
+        .await;
+    second
+        .until_answer_streams(&chat, "The original owner's answer")
+        .await;
+    let catalog = SessionManager::instance().work_catalog().await.unwrap();
+    let first_run = catalog
+        .lookup_local_session(&chat)
+        .await
+        .unwrap()
+        .current_run_id
+        .unwrap();
+    original.close().await;
+    second.close().await;
 
-    assert_eq!(user_turns_running(), 0);
-    window.prompt(&session_id, "Plan the migration", None).await;
-    window.until_streaming(&session_id).await;
-    assert_eq!(
-        user_turns_running(),
-        1,
-        "the prompt holds its user turn while it streams"
-    );
-
-    // The window reloads: its websocket closes with the answer still streaming.
-    window.close().await;
-
-    // (b): the turn's guards drop with the prompt's future — the prompt did not run on unseen.
-    eventually("the closed connection's prompt was dropped", || async {
-        user_turns_running() == 0
-    })
-    .await;
-    // Nothing after the await ran, so the prompt's run registration settles the turn it held as
-    // stopped (Q-519): a closed window's answer reads Stopped, as the in-window Stop's does.
-    eventually(
-        "the dropped prompt's turn is recorded as stopped",
-        || async {
-            SessionManager::instance()
-                .sessions_with_extension_state::<TurnOutcomeState>()
-                .await
-                .unwrap()
-                .iter()
-                .any(|row| row.session_id == session_id && row.state.stopped.is_some())
-        },
-    )
-    .await;
-
-    // A new window on the same goose serves the same chat at once: nothing of the old
-    // connection's run holds the session busy.
     let mut reloaded = Window::open(addr, false).await;
     reloaded
         .request(
             "session/load",
-            serde_json::json!({"sessionId": session_id, "cwd": work.path(), "mcpServers": []}),
+            json!({"sessionId":chat,"cwd":work.path(),"mcpServers":[]}),
         )
         .await;
-    // The load replays the stopped answer's stored words as chunks; only the new answer's count.
-    reloaded.seen.clear();
-    let prompt = reloaded.prompt(&session_id, "Go on", None).await;
-    reloaded
-        .notification("session/update", |p| {
-            p["sessionId"] == session_id.as_str()
-                && p["update"]["sessionUpdate"] == "agent_message_chunk"
-                && p.to_string().contains("The reloaded window's answer")
-        })
+    let duplicate = reloaded
+        .prompt(&chat, "This must not start another model call", None)
         .await;
-    assert!(
-        !reloaded.seen.iter().any(|frame| frame["id"] == prompt),
-        "the prompt was not refused: {:#?}",
-        reloaded.seen
+    assert!(reloaded.response(duplicate).await.is_err());
+    assert_eq!(
+        catalog
+            .lookup_local_session(&chat)
+            .await
+            .unwrap()
+            .current_run_id
+            .as_deref(),
+        Some(first_run.as_str())
     );
     assert_eq!(user_turns_running(), 1);
+    assert_eq!(model.completion_requests(), 1);
+    reloaded.cancel(&chat).await;
+    eventually("explicit stop releases the detached task", || async {
+        user_turns_running() == 0
+    })
+    .await;
+    reloaded.prompt(&chat, "Start the next turn", None).await;
+    reloaded
+        .until_answer_streams(&chat, "The following turn")
+        .await;
+    let stale = reloaded.send("_goose/unstable/session/steer", json!({"sessionId":chat,"expectedRunId":first_run,"prompt":[{"type":"text","text":"old steer"}]})).await;
+    assert!(reloaded.response(stale).await.is_err());
+    assert_eq!(user_turns_running(), 1);
+    reloaded.cancel(&chat).await;
+    eventually("next turn explicitly stopped", || async {
+        user_turns_running() == 0
+    })
+    .await;
 }

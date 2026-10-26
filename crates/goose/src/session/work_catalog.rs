@@ -254,6 +254,43 @@ impl WorkCatalog {
         Ok(record)
     }
 
+    /// Read the immutable catalog version used by a snapshot or journal event.
+    pub async fn lookup_at(
+        &self,
+        work_id: &str,
+        watermark: &StoreWatermark,
+    ) -> Result<CatalogRecord> {
+        let mut tx = self.pool.begin().await?;
+        validate_cursor(&read_watermark(&mut tx).await?, watermark)?;
+        let record = lookup_at(&mut tx, work_id, watermark.revision).await?;
+        tx.commit().await?;
+        Ok(record)
+    }
+
+    /// Fetch one journal message at its event revision without replaying the transcript.
+    pub async fn message_at(
+        &self,
+        work_id: &str,
+        watermark: &StoreWatermark,
+        row_id: i64,
+    ) -> Result<Option<HistoryRecord>> {
+        let mut tx = self.pool.begin().await?;
+        validate_cursor(&read_watermark(&mut tx).await?, watermark)?;
+        lookup_at(&mut tx, work_id, watermark.revision).await?;
+        let record = sqlx::query_as::<_, HistoryRecord>(
+            "SELECT r.row_id, r.message_id, r.valid_from AS revision, m.role, m.content_json, m.created_timestamp, m.metadata_json \
+             FROM controller_message_rows r JOIN messages m ON m.id = r.row_id \
+             WHERE r.row_id = ? AND r.work_id = ? AND r.valid_from <= ? \
+             UNION ALL \
+             SELECT row_id, message_id, valid_from AS revision, role, content_json, created_timestamp, metadata_json \
+             FROM controller_message_versions WHERE row_id = ? AND work_id = ? AND valid_from <= ? AND valid_to >= ?")
+            .bind(row_id).bind(work_id).bind(watermark.revision)
+            .bind(row_id).bind(work_id).bind(watermark.revision).bind(watermark.revision)
+            .fetch_optional(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(record)
+    }
+
     pub async fn lookup_local_session(&self, local_id: &str) -> Result<CatalogRecord> {
         Ok(sqlx::query_as(
             "SELECT v.* FROM work_identity i JOIN catalog_versions v ON v.revision = i.revision \

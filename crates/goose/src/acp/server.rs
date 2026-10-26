@@ -40,6 +40,8 @@ use crate::session::{
 };
 use crate::source_roots::SourceRoot;
 use crate::utils::sanitize_unicode_tags;
+use crate::work_control::ActivePromptRun;
+use crate::work_control::{InputAnswer, InputHandler, OwnerExecutor, OwnerRunRegistry, RunTicket};
 use agent_client_protocol::schema::v1::{
     AgentCapabilities, Annotations, AuthMethod, AuthMethodAgent, AuthenticateRequest,
     AuthenticateResponse, BlobResourceContents, CancelNotification, CloseSessionRequest,
@@ -49,9 +51,9 @@ use agent_client_protocol::schema::v1::{
     InitializeResponse, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest,
     LoadSessionResponse, McpCapabilities, McpServer, Meta, NewSessionRequest, NewSessionResponse,
     PermissionOption, PermissionOptionKind, PromptCapabilities, PromptRequest, PromptResponse,
-    RequestPermissionOutcome, RequestPermissionRequest, ResourceLink, SessionCapabilities,
-    SessionCloseCapabilities, SessionConfigOption, SessionId, SessionInfoUpdate,
-    SessionListCapabilities, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
+    RequestPermissionRequest, ResourceLink, SessionCapabilities, SessionCloseCapabilities,
+    SessionConfigOption, SessionId, SessionInfoUpdate, SessionListCapabilities,
+    SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
     SetSessionConfigOptionResponse, SetSessionModeRequest, SetSessionModeResponse, StopReason,
     TextContent, TextResourceContents, ToolCall, ToolCallContent, ToolCallId, ToolCallLocation,
     ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, Usage, UsageUpdate,
@@ -221,11 +223,6 @@ struct GooseAcpSession {
     summarized_chains: HashSet<String>,
 }
 
-struct ActivePromptRun {
-    run_id: String,
-    cancel_token: CancellationToken,
-}
-
 /// A prompt's place in the busy set, released however the prompt ends. Measured (Q9,
 /// `tests/acp_connection_close_test.rs`): a closed websocket drops `on_prompt` mid-await, so
 /// `clear_active_run` never runs for it. The busy set is this connection's, but the manager can
@@ -236,8 +233,7 @@ struct ActivePromptRun {
 /// with its connection (its window closed or reloaded mid-answer) is settled as stopped from here —
 /// the streamed words and the stopped line stored — before its run is cleared.
 struct RunRegistration {
-    runs: Arc<Mutex<HashMap<String, ActivePromptRun>>>,
-    agent_manager: Arc<AgentManager>,
+    owner_runs: Arc<OwnerRunRegistry>,
     session_manager: Arc<SessionManager>,
     session_id: String,
     run_id: String,
@@ -346,7 +342,7 @@ impl Drop for RunRegistration {
         if self.cleared {
             return;
         }
-        let (runs, agent_manager) = (self.runs.clone(), self.agent_manager.clone());
+        let owner_runs = self.owner_runs.clone();
         let session_manager = self.session_manager.clone();
         let (session_id, run_id) = (self.session_id.clone(), self.run_id.clone());
         let turn = self.turn.take().map(|mut turn| {
@@ -367,13 +363,7 @@ impl Drop for RunRegistration {
                         )
                         .await;
                     }
-                    let mut runs = runs.lock().await;
-                    if runs.get(&session_id).map(|run| run.run_id.as_str()) == Some(&run_id) {
-                        runs.remove(&session_id);
-                        agent_manager.unregister_cancel_token(&session_id).await;
-                        warn!(session_id, run_id, "a prompt dropped before it ended (its connection closed, or it panicked); its run is cleared");
-                    }
-                    drop(runs);
+                    owner_runs.finish(&session_id, &run_id).await;
                     crate::chat_notes::hub()
                         .run_ended(&session_manager, &session_id, &run_id)
                         .await;
@@ -409,9 +399,13 @@ pub struct GooseAcpAgentOptions {
     pub scheduler: Arc<dyn SchedulerTrait>,
 }
 
+#[derive(Clone)]
 pub struct GooseAcpAgent {
     sessions: Arc<Mutex<HashMap<String, GooseAcpSession>>>,
     active_prompt_runs: Arc<Mutex<HashMap<String, ActivePromptRun>>>,
+    owner_runs: Arc<OwnerRunRegistry>,
+    owner_tools: bool,
+    observer_id: Uuid,
     closed_session_ids: Arc<Mutex<HashSet<String>>>,
     agent_manager: Arc<AgentManager>,
     provider_factory: AcpProviderFactory,
@@ -434,9 +428,9 @@ pub struct GooseAcpAgent {
     /// This process's loop runner (session loops, L2a), when it is installed.
     loops: Option<crate::session_loops::runner::Runner>,
     /// This connection's tick door (L2b), open from `initialize` until the connection ends.
-    loop_door: loop_door::DoorSlot,
+    loop_door: Arc<loop_door::DoorSlot>,
     /// This connection's notes door (Q-358), open from `initialize` until the connection ends.
-    notes_door: notes::NoteDoorSlot,
+    notes_door: Arc<notes::NoteDoorSlot>,
 }
 
 /// Shorten a session/thread id for perf log correlation.
@@ -1130,13 +1124,6 @@ impl GooseAcpAgent {
             .unwrap_or(false)
     }
 
-    fn supports_acp_elicitation(&self) -> bool {
-        self.client_supports_acp_elicitation
-            .get()
-            .copied()
-            .unwrap_or(false)
-    }
-
     // TODO: goose reads Paths::in_state_dir globally (e.g. RequestLog), ignoring this data_dir.
     pub async fn new(options: GooseAcpAgentOptions) -> Result<Self> {
         // The loop runner reads and writes the process's store; an agent over another store must
@@ -1144,7 +1131,10 @@ impl GooseAcpAgent {
         let loops = (options.data_dir == Paths::data_dir())
             .then(crate::session_loops::runner::installed)
             .flatten();
-        let session_manager = Arc::new(SessionManager::new(options.data_dir));
+        let session_manager = Arc::new(SessionManager::new(options.data_dir.clone()));
+        let owner_runs =
+            OwnerRunRegistry::for_store(options.data_dir.clone(), session_manager.clone());
+        let owner_tools = matches!(options.goose_platform, GoosePlatform::GooseDesktop);
 
         mlx_remote_single::install_route_load();
         #[cfg(unix)]
@@ -1166,11 +1156,15 @@ impl GooseAcpAgent {
             options.disable_session_naming,
             options.goose_platform.clone(),
         );
-        let agent_manager = Arc::new(AgentManager::new(agent_config, None).await?);
+        let agent_manager =
+            owner_runs.bind_agent_manager(Arc::new(AgentManager::new(agent_config, None).await?));
 
         Ok(Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            active_prompt_runs: Arc::new(Mutex::new(HashMap::new())),
+            active_prompt_runs: owner_runs.runs.clone(),
+            owner_runs,
+            owner_tools,
+            observer_id: Uuid::new_v4(),
             closed_session_ids: Arc::new(Mutex::new(HashSet::new())),
             agent_manager,
             provider_factory: options.provider_factory,
@@ -1191,8 +1185,8 @@ impl GooseAcpAgent {
             additional_source_roots: options.additional_source_roots,
             recipe_path_cache: Arc::new(Mutex::new(HashMap::new())),
             loops,
-            loop_door: loop_door::DoorSlot::default(),
-            notes_door: notes::NoteDoorSlot::default(),
+            loop_door: Arc::new(loop_door::DoorSlot::default()),
+            notes_door: Arc::new(notes::NoteDoorSlot::default()),
         })
     }
 
@@ -1319,6 +1313,11 @@ impl GooseAcpAgent {
         agent: &Arc<Agent>,
         session: &Session,
     ) {
+        // Desktop execution stays on this Mac even when its viewing window disconnects.
+        // Generic ACP clients retain their negotiated filesystem/terminal delegation.
+        if self.owner_tools {
+            return;
+        }
         let client_fs_capabilities = self
             .client_fs_capabilities
             .get()
@@ -1378,6 +1377,9 @@ impl GooseAcpAgent {
         cx: &ConnectionTo<Client>,
         session: &Session,
     ) -> Result<(Arc<Agent>, Vec<ExtensionLoadResult>), agent_client_protocol::Error> {
+        if let Some(agent) = self.owner_runs.active_agent(&session.id).await {
+            return Ok((agent, Vec::new()));
+        }
         let agent_result = self
             .get_or_create_session_agent_with_results(cx, session.id.clone())
             .await?;
@@ -1397,6 +1399,13 @@ impl GooseAcpAgent {
         mcp_servers: Vec<McpServer>,
         include_messages_on_reload: bool,
     ) -> Result<Session, agent_client_protocol::Error> {
+        if self.owner_runs.current_run(&session.id).await.is_some() {
+            if cwd != session.working_dir || !mcp_servers.is_empty() {
+                return Err(agent_client_protocol::Error::invalid_params()
+                    .data("cannot reconfigure a running owner session"));
+            }
+            return Ok(session);
+        }
         let config = Config::global();
         let mut builder = self.session_manager.update(&session.id);
         let mut session_needs_update = false;
@@ -1481,7 +1490,15 @@ impl GooseAcpAgent {
             responded_tool_ids: HashSet::new(),
             summarized_chains: HashSet::new(),
         };
-        self.sessions.lock().await.insert(session_id, acp_session);
+        self.sessions
+            .lock()
+            .await
+            .insert(session_id.clone(), acp_session);
+        if let Some(cx) = self.client_cx.get() {
+            self.owner_runs
+                .attach_observer(self.observer_id, &session_id, cx.clone())
+                .await;
+        }
     }
 
     async fn activate_acp_session(
@@ -1490,6 +1507,11 @@ impl GooseAcpAgent {
         session: &Session,
         tool_requests: HashMap<String, ToolRequest>,
     ) -> Result<(Arc<Agent>, Vec<ExtensionLoadResult>), agent_client_protocol::Error> {
+        if let Some(agent) = self.owner_runs.active_agent(&session.id).await {
+            self.register_acp_session(session.id.clone(), agent.clone(), tool_requests)
+                .await;
+            return Ok((agent, Vec::new()));
+        }
         let (agent, extension_results) = self.prepare_acp_session_agent(cx, session).await?;
         self.register_acp_session(session.id.clone(), agent.clone(), tool_requests)
             .await;
@@ -1595,7 +1617,8 @@ impl GooseAcpAgent {
                     Role::User => SessionUpdate::UserMessageChunk(chunk),
                     Role::Assistant => SessionUpdate::AgentMessageChunk(chunk),
                 };
-                cx.send_notification(SessionNotification::new(session_id.clone(), update))?;
+                self.owner_runs
+                    .notify_session(SessionNotification::new(session_id.clone(), update));
             }
             MessageContent::ToolRequest(tool_request) => {
                 self.handle_tool_request(
@@ -1620,7 +1643,7 @@ impl GooseAcpAgent {
                 .await?;
             }
             MessageContent::Thinking(thinking) => {
-                cx.send_notification(SessionNotification::new(
+                self.owner_runs.notify_session(SessionNotification::new(
                     session_id.clone(),
                     SessionUpdate::AgentThoughtChunk(
                         ContentChunk::new(ContentBlock::Text(TextContent::new(
@@ -1632,7 +1655,7 @@ impl GooseAcpAgent {
                             steer,
                         )),
                     ),
-                ))?;
+                ));
             }
             MessageContent::ActionRequired(action_required) => match &action_required.data {
                 ActionRequiredData::ToolConfirmation {
@@ -1649,7 +1672,8 @@ impl GooseAcpAgent {
                         tool_name.clone(),
                         arguments.clone(),
                         prompt.clone(),
-                    )?;
+                    )
+                    .await?;
                 }
                 ActionRequiredData::Elicitation {
                     id,
@@ -1669,12 +1693,12 @@ impl GooseAcpAgent {
                 ActionRequiredData::ElicitationResponse { .. } => {}
             },
             MessageContent::SystemNotification(notification) => {
-                send_status_message_update(
+                let _ = send_status_message_update(
                     cx,
                     self.supports_goose_custom_notifications(),
                     session_id.0.as_ref(),
                     notification,
-                )?;
+                );
             }
             _ => {}
         }
@@ -1688,7 +1712,7 @@ impl GooseAcpAgent {
         session_id_for_persist: &str,
         message_id: Option<&str>,
         session: &mut GooseAcpSession,
-        cx: &ConnectionTo<Client>,
+        _cx: &ConnectionTo<Client>,
     ) -> Result<(), agent_client_protocol::Error> {
         session
             .tool_requests
@@ -1698,10 +1722,10 @@ impl GooseAcpAgent {
         let initial_tool_call = pending_tool_call
             .tool_call
             .meta(pending_tool_call.identity_meta.clone());
-        cx.send_notification(SessionNotification::new(
+        self.owner_runs.notify_session(SessionNotification::new(
             session_id.clone(),
             SessionUpdate::ToolCall(initial_tool_call),
-        ))?;
+        ));
 
         if Config::global()
             .get_goose_disable_tool_call_summary()
@@ -1714,13 +1738,13 @@ impl GooseAcpAgent {
             let agent = session.agent.clone();
             let sid = session_id.clone();
             let request_id = tool_request.id.clone();
-            let cx = cx.clone();
             let name = tool_call.name.to_string();
             let identity_meta = pending_tool_call.identity_meta.clone();
             let fallback_title = pending_tool_call.fallback_title.clone();
             let session_id_for_persist = session_id_for_persist.to_string();
             let message_id_for_persist = message_id.map(|s| s.to_string());
             let session_manager = self.session_manager.clone();
+            let owner_runs = self.owner_runs.clone();
             let args_json = tool_call
                 .arguments
                 .as_ref()
@@ -1782,7 +1806,7 @@ impl GooseAcpAgent {
                 } else {
                     identity_meta
                 };
-                let _ = cx.send_notification(SessionNotification::new(
+                owner_runs.notify_session(SessionNotification::new(
                     sid,
                     SessionUpdate::ToolCallUpdate(
                         ToolCallUpdate::new(ToolCallId::new(request_id.clone()), fields).meta(meta),
@@ -1868,10 +1892,10 @@ impl GooseAcpAgent {
                 tool_response,
             ),
         );
-        cx.send_notification(SessionNotification::new(
+        self.owner_runs.notify_session(SessionNotification::new(
             session_id.clone(),
             SessionUpdate::ToolCallUpdate(update),
-        ))?;
+        ));
 
         // Chain summarization: when this response completes a multi-tool
         // chain, fire one LLM summary covering the run.
@@ -2049,7 +2073,7 @@ impl GooseAcpAgent {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn handle_tool_permission_request(
+    async fn handle_tool_permission_request(
         &self,
         cx: &ConnectionTo<Client>,
         agent: &Arc<Agent>,
@@ -2059,10 +2083,17 @@ impl GooseAcpAgent {
         arguments: serde_json::Map<String, serde_json::Value>,
         prompt: Option<String>,
     ) -> Result<(), agent_client_protocol::Error> {
-        let cx = cx.clone();
-        let agent = agent.clone();
-        let session_id = session_id.clone();
-
+        let run_id = self
+            .owner_runs
+            .current_run(session_id.0.as_ref())
+            .await
+            .ok_or_else(|| {
+                agent_client_protocol::Error::internal_error()
+                    .data("permission has no active owner run")
+            })?;
+        let input_prompt = prompt
+            .clone()
+            .unwrap_or_else(|| format!("Allow {tool_name}?"));
         let formatted_name = format_tool_name(&tool_name);
 
         let mut fields = ToolCallUpdateFields::new()
@@ -2093,36 +2124,38 @@ impl GooseAcpAgent {
         ];
 
         let permission_request =
-            RequestPermissionRequest::new(session_id, tool_call_update, options);
-
-        cx.send_request(permission_request)
-            .on_receiving_result(move |result| async move {
-                match result {
-                    Ok(response) => {
-                        agent
-                            .handle_confirmation(
-                                request_id,
-                                outcome_to_confirmation(&response.outcome),
-                            )
-                            .await;
-                        Ok(())
-                    }
-                    Err(e) => {
-                        error!(error = ?e, "permission request failed");
-                        agent
-                            .handle_confirmation(
-                                request_id,
-                                PermissionConfirmation {
-                                    principal_type: PrincipalType::Tool,
-                                    permission: Permission::Cancel,
-                                },
-                            )
-                            .await;
-                        Ok(())
-                    }
-                }
-            })?;
-
+            RequestPermissionRequest::new(session_id.clone(), tool_call_update, options);
+        let mut input_options = permission_request
+            .options
+            .iter()
+            .map(|option| leanzero_link::controller_wire::InputOption {
+                option_id: option.option_id.0.to_string(),
+                label: option.name.clone(),
+                accepts_value: false,
+            })
+            .collect::<Vec<_>>();
+        input_options.push(leanzero_link::controller_wire::InputOption {
+            option_id: "cancel".into(),
+            label: "Cancel".into(),
+            accepts_value: false,
+        });
+        let handler = Arc::new(OwnerPermission {
+            run_id: run_id.to_string(),
+            request_id: request_id.clone(),
+            agent: agent.clone(),
+            request: permission_request,
+        });
+        self.owner_runs
+            .register_input(
+                session_id.0.as_ref(),
+                &request_id,
+                input_prompt,
+                input_options,
+                handler,
+            )
+            .await
+            .internal_err()?;
+        let _ = cx;
         Ok(())
     }
 
@@ -2155,7 +2188,10 @@ fn extract_client_supports_recipe_param_requests(
         .unwrap_or(false)
 }
 
-fn outcome_to_confirmation(outcome: &RequestPermissionOutcome) -> PermissionConfirmation {
+#[cfg(test)]
+fn outcome_to_confirmation(
+    outcome: &agent_client_protocol::schema::v1::RequestPermissionOutcome,
+) -> PermissionConfirmation {
     PermissionConfirmation {
         principal_type: PrincipalType::Tool,
         permission: Permission::from(PermissionDecision::from(outcome)),
@@ -2645,6 +2681,10 @@ impl GooseAcpAgent {
             .use_login_shell_path
             .set(extract_use_login_shell_path(&args));
 
+        let mut executor = self.clone();
+        executor.closed_session_ids = Arc::new(Mutex::new(HashSet::new()));
+        self.owner_runs.bind_executor(Arc::new(executor));
+
         let capabilities = AgentCapabilities::new()
             .load_session(true)
             .session_capabilities(
@@ -2689,6 +2729,9 @@ impl GooseAcpAgent {
             .data(format!("Session not found: {}", session_id)));
         }
 
+        if let Some(agent) = self.owner_runs.active_agent(session_id).await {
+            return Ok(agent);
+        }
         {
             let sessions = self.sessions.lock().await;
             if let Some(session) = sessions.get(session_id) {
@@ -2714,6 +2757,10 @@ impl GooseAcpAgent {
         Ok(agent)
     }
 
+    pub fn owner_runs(&self) -> Arc<OwnerRunRegistry> {
+        self.owner_runs.clone()
+    }
+
     async fn start_active_run(
         &self,
         session_id: &str,
@@ -2723,47 +2770,27 @@ impl GooseAcpAgent {
         if self.closed_session_ids.lock().await.contains(session_id) {
             return Err(agent_client_protocol::Error::resource_not_found(Some(
                 session_id.to_string(),
-            ))
-            .data(format!("Session not found: {}", session_id)));
-        }
-
-        let mut active_prompt_runs = self.active_prompt_runs.lock().await;
-        if let Some(active_run) = active_prompt_runs.get(session_id) {
-            return Err(agent_client_protocol::Error::invalid_params().data(format!(
-                "session already has active run `{}`; use _goose/unstable/session/steer",
-                active_run.run_id.as_str()
             )));
         }
-
-        // The manager's token map is the busy set every other reader consults — LeanZero
-        // Link's receive-side idle guard, `cancel_session`, the orchestrator's subagent
-        // gate. An ACP prompt run registers there too, under the `active_prompt_runs`
-        // lock so the two registrations never split. A token already present means
-        // another door (goose-server's reply route, a subagent run) holds this session:
-        // refuse, never run two replies on one session.
-        if let Err(error) = self
-            .agent_manager
-            .try_register_connection_prompt(session_id, cancel_token.clone())
-            .await
-        {
-            return Err(agent_client_protocol::Error::invalid_params()
-                .data(format!("session is busy in another run: {error}")));
-        }
-
-        active_prompt_runs.insert(
-            session_id.to_string(),
-            ActivePromptRun {
+        let agent = self.get_session_agent(session_id).await?;
+        let run_id = Uuid::parse_str(&run_id).invalid_params_err()?;
+        self.owner_runs
+            .reserve(
+                session_id,
                 run_id,
                 cancel_token,
-            },
-        );
+                agent,
+                self.agent_manager.clone(),
+                None,
+            )
+            .await
+            .invalid_params_err()?;
         Ok(())
     }
 
     fn run_registration(&self, session_id: &str, run_id: &str) -> RunRegistration {
         RunRegistration {
-            runs: self.active_prompt_runs.clone(),
-            agent_manager: self.agent_manager.clone(),
+            owner_runs: self.owner_runs.clone(),
             session_manager: self.session_manager.clone(),
             session_id: session_id.to_string(),
             run_id: run_id.to_string(),
@@ -2779,31 +2806,7 @@ impl GooseAcpAgent {
     }
 
     async fn clear_active_run(&self, session_id: &str, run_id: &str) {
-        {
-            let mut active_prompt_runs = self.active_prompt_runs.lock().await;
-            let Some(active_run) = active_prompt_runs.get(session_id) else {
-                return;
-            };
-
-            if active_run.run_id != run_id {
-                return;
-            }
-
-            active_prompt_runs.remove(session_id);
-            // Release the manager-side registration made in `start_active_run`, under the
-            // same lock, so the busy set flips Idle exactly when the run is gone.
-            self.agent_manager.unregister_cancel_token(session_id).await;
-        }
-
-        let agent = {
-            let sessions = self.sessions.lock().await;
-            sessions
-                .get(session_id)
-                .map(|session| session.agent.clone())
-        };
-        if let Some(agent) = agent {
-            agent.discard_pending_steers(session_id).await;
-        }
+        self.owner_runs.finish(session_id, run_id).await;
         // Q-358: after the discard, so a note steered into this run that never drained waits again
         // (and cannot also drain into the next turn), and the chat — idle now — is offered it.
         crate::chat_notes::hub()
@@ -2824,35 +2827,6 @@ impl GooseAcpAgent {
                 );
             }
         }
-    }
-
-    async fn require_active_run(
-        &self,
-        session_id: &str,
-        expected_run_id: &str,
-    ) -> Result<String, agent_client_protocol::Error> {
-        if expected_run_id.is_empty() {
-            return Err(agent_client_protocol::Error::invalid_params()
-                .data("expectedRunId must not be empty"));
-        }
-
-        let active_prompt_runs = self.active_prompt_runs.lock().await;
-        let active_run = active_prompt_runs.get(session_id).ok_or_else(|| {
-            agent_client_protocol::Error::invalid_params().data("no active run to steer")
-        })?;
-        if active_run.run_id != expected_run_id {
-            return Err(
-                agent_client_protocol::Error::invalid_params().data(serde_json::json!({
-                    "message": format!(
-                        "expected active run id `{expected_run_id}` but found `{}`",
-                        active_run.run_id.as_str()
-                    ),
-                    "expectedRunId": expected_run_id,
-                    "actualRunId": active_run.run_id.as_str(),
-                })),
-            );
-        }
-        Ok(active_run.run_id.clone())
     }
 
     fn active_run_meta(active_run_id: Option<&str>) -> Meta {
@@ -3005,6 +2979,24 @@ impl GooseAcpAgent {
         cx: &ConnectionTo<Client>,
         args: PromptRequest,
     ) -> Result<PromptResponse, agent_client_protocol::Error> {
+        let owner = self.clone();
+        let cx = cx.clone();
+        let (send, receive) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let result = owner.run_owned_prompt(&cx, args, None).await;
+            let _ = send.send(result);
+        });
+        receive.await.map_err(|error| {
+            agent_client_protocol::Error::internal_error().data(error.to_string())
+        })?
+    }
+
+    async fn run_owned_prompt(
+        &self,
+        cx: &ConnectionTo<Client>,
+        args: PromptRequest,
+        ticket: Option<RunTicket>,
+    ) -> Result<PromptResponse, agent_client_protocol::Error> {
         // The ACP session_id IS the thread ID.
         let session_id = args.session_id.0.to_string();
         let sid = sid_short(&session_id);
@@ -3038,11 +3030,18 @@ impl GooseAcpAgent {
             }
         };
 
-        let run_id = format!("run_{}", Uuid::new_v4());
-        let cancel_token = CancellationToken::new();
+        let run_id = ticket
+            .as_ref()
+            .map_or_else(Uuid::new_v4, |ticket| ticket.run_id)
+            .to_string();
+        let cancel_token = ticket
+            .as_ref()
+            .map_or_else(CancellationToken::new, |ticket| ticket.cancel_token.clone());
         let cause = Arc::new(std::sync::OnceLock::new());
-        self.start_active_run(&session_id, run_id.clone(), cancel_token.clone())
-            .await?;
+        if ticket.is_none() {
+            self.start_active_run(&session_id, run_id.clone(), cancel_token.clone())
+                .await?;
+        }
         let mut run = self.run_registration(&session_id, &run_id);
         // Held for the whole reply (dropped when on_prompt returns, however the reply ends).
         let _answer_on = answer_on.map(|node| crate::nodes::answer_on::ask(&session_id, node));
@@ -3178,22 +3177,20 @@ impl GooseAcpAgent {
                     cause: cause.get().cloned(),
                 }));
             }
-            Self::send_active_run_update(cx, &args.session_id, None)?;
+            let _ = Self::send_active_run_update(cx, &args.session_id, None);
             return Ok(PromptResponse::new(StopReason::Cancelled));
         }
 
-        if let Err(error) = Self::send_active_run_update(cx, &args.session_id, Some(&run_id)) {
-            self.end_run(&mut run).await;
-            if let Some(tick) = tick.take() {
-                tick.failed(
-                    "connection",
-                    format!("the tick's run could not be announced: {error:?}"),
-                );
-            }
-            return Err(error);
-        }
+        let _ = Self::send_active_run_update(cx, &args.session_id, Some(&run_id));
 
         let user_message = Self::convert_acp_prompt_to_message(&args.prompt);
+        let user_message = match ticket
+            .as_ref()
+            .and_then(|ticket| ticket.message_id.as_ref())
+        {
+            Some(id) => user_message.with_id(id),
+            None => user_message,
+        };
         // A tick's message takes the id the runner minted with the offer (§5.2 step 2): the
         // window's marker and the stored message are the same message.
         let mut user_message = match (tick_message_id, &cross_note) {
@@ -3213,7 +3210,7 @@ impl GooseAcpAgent {
                     )
                 {
                     if recipe_path.exists() {
-                        if let Err(error) = cx.send_notification(SessionNotification::new(
+                        let _ = cx.send_notification(SessionNotification::new(
                             args.session_id.clone(),
                             SessionUpdate::AgentMessageChunk(ContentChunk::new(
                                 ContentBlock::Text(TextContent::new(format!(
@@ -3221,14 +3218,7 @@ impl GooseAcpAgent {
                                     full_command
                                 ))),
                             )),
-                        )) {
-                            self.end_run(&mut run).await;
-                            let _ = Self::send_active_run_update(cx, &args.session_id, None);
-                            if let Some(tick) = tick.take() {
-                                tick.failed("connection", format!("{error:?}"));
-                            }
-                            return Err(error);
-                        }
+                        ));
                     }
                 }
             }
@@ -3362,12 +3352,31 @@ impl GooseAcpAgent {
                     ttft_ms = t_start.elapsed().as_millis() as u64,
                     "perf: prompt first stream event (time-to-first-token from prompt start)"
                 );
+                if let Some(message_id) = ticket
+                    .as_ref()
+                    .and_then(|ticket| ticket.message_id.as_deref())
+                {
+                    if let Err(error) = self
+                        .owner_runs
+                        .mark_prompt_delivered(&session_id, message_id)
+                        .await
+                    {
+                        tracing::error!(%error, "consumed controller prompt receipt could not be persisted");
+                    }
+                }
                 first_event_logged = true;
             }
 
             match event {
                 Ok(crate::agents::AgentEvent::Message(message)) => {
                     // Agent persists messages via session_manager.add_message() internally.
+                    if let Err(error) = self
+                        .owner_runs
+                        .record_stream_message(&session_id, &run_id, &message)
+                        .await
+                    {
+                        tracing::error!(session_id, %error, "owner stream event could not be persisted");
+                    }
                     let stored_message_id = message.id.clone();
                     if message.role == rmcp::model::Role::User && message.metadata.steer {
                         self.note_drained(&session_id, stored_message_id.as_deref())
@@ -3456,21 +3465,19 @@ impl GooseAcpAgent {
                 // must not store it (`settle_stopped_turn`) as words the model said.
                 Ok(crate::agents::AgentEvent::PartialDiscarded(_)) => {
                     turn.streamed = crate::turn_outcome::StreamedReply::default();
+                    if let Err(error) = self.owner_runs.clear_partials(&session_id, &run_id).await {
+                        tracing::error!(%error, "discarded owner partial could not be cleared");
+                    }
                 }
                 Ok(crate::agents::AgentEvent::Usage(usage)) => turn.meter.on_usage(&usage),
                 Ok(crate::agents::AgentEvent::McpNotification((request_id, notification))) => {
                     if let Some(update) =
                         tool_notifications::tool_notification_update(request_id, notification)
                     {
-                        // Ends the stream like any stream error, so the run is cleared and a
-                        // tick ended — a bare `?` here left both behind.
-                        if let Err(error) = cx.send_notification(SessionNotification::new(
+                        let _ = cx.send_notification(SessionNotification::new(
                             args.session_id.clone(),
                             update,
-                        )) {
-                            stream_error = Some(error);
-                            break;
-                        }
+                        ));
                     }
                 }
                 Ok(_) => {}
@@ -3529,7 +3536,7 @@ impl GooseAcpAgent {
                 None => crate::session_loops::rules::TickEnd::Completed,
             })
         });
-        Self::send_active_run_update(cx, &args.session_id, None)?;
+        let _ = Self::send_active_run_update(cx, &args.session_id, None);
         if let Some(error) = stream_error {
             return Err(error);
         }
@@ -3541,15 +3548,15 @@ impl GooseAcpAgent {
             .internal_err_ctx("Failed to load session")?;
         if let Some(updates) = build_usage_updates(&session) {
             if self.supports_goose_custom_notifications() {
-                cx.send_notification(updates.custom)?;
+                let _ = cx.send_notification(updates.custom);
             }
             // Standard ACP notification — emitted alongside the custom one for
             // backwards compatibility. Remove once all known clients have
             // migrated to `_goose/unstable/session/update`.
-            cx.send_notification(SessionNotification::new(
+            let _ = cx.send_notification(SessionNotification::new(
                 args.session_id.clone(),
                 SessionUpdate::UsageUpdate(updates.standard),
-            ))?;
+            ));
         }
 
         debug!(
@@ -3643,12 +3650,7 @@ impl GooseAcpAgent {
             );
         }
 
-        self.require_active_run(&req.session_id, &req.expected_run_id)
-            .await?;
-        let agent = self.get_session_agent(&req.session_id).await?;
-        let active_run_id = self
-            .require_active_run(&req.session_id, &req.expected_run_id)
-            .await?;
+        let active_run_id = req.expected_run_id.clone();
 
         let message = Self::convert_acp_prompt_to_message(&req.prompt);
         if message.content.is_empty() {
@@ -3658,7 +3660,10 @@ impl GooseAcpAgent {
 
         let message_id = format!("steer_{}", Uuid::new_v4());
         let message = message.with_id(message_id.clone());
-        agent.steer(&req.session_id, message).await;
+        self.owner_runs
+            .steer(&req.session_id, &req.expected_run_id, message)
+            .await
+            .invalid_params_err()?;
 
         if let Some(cx) = self.client_cx.get() {
             let _ = Self::send_queued_steer_update(
@@ -3922,37 +3927,94 @@ impl GooseAcpAgent {
             .lock()
             .await
             .insert(session_id.to_string());
-
-        let active_run_token = {
-            let active_prompt_runs = self.active_prompt_runs.lock().await;
-            active_prompt_runs
-                .get(session_id)
-                .map(|active_run| active_run.cancel_token.clone())
-        };
-
-        if let Some(token) = active_run_token {
-            token.cancel();
-        }
-
-        let mut sessions = self.sessions.lock().await;
-        sessions.remove(session_id);
-        drop(sessions);
-
-        self.agent_manager
-            .remove_session_if_loaded(session_id)
-            .await
-            .internal_err_ctx("Failed to remove in-memory agent")?;
-
-        if let Some(outcome) =
-            crate::agents::platform_extensions::developer::process_groups::stop_session_leftovers(
-                session_id,
-            )
-            .await
-        {
-            info!(session_id = %session_id, %outcome, "ACP session closed: stopped what its shell commands left running");
+        if self.owner_runs.current_run(session_id).await.is_none() {
+            self.sessions.lock().await.remove(session_id);
+            self.agent_manager
+                .remove_session_if_loaded(session_id)
+                .await
+                .internal_err()?;
         }
         info!(session_id = %session_id, "ACP session closed");
         Ok(CloseSessionResponse::new())
+    }
+}
+
+struct OwnerPermission {
+    run_id: String,
+    request_id: String,
+    agent: Arc<Agent>,
+    request: RequestPermissionRequest,
+}
+
+#[async_trait::async_trait]
+impl InputHandler for OwnerPermission {
+    fn run_id(&self) -> &str {
+        &self.run_id
+    }
+    fn observe(
+        &self,
+        cx: &ConnectionTo<Client>,
+        registry: Arc<OwnerRunRegistry>,
+        input: leanzero_link::controller_wire::PendingInput,
+    ) {
+        let _ =
+            cx.send_request(self.request.clone())
+                .on_receiving_result(move |result| async move {
+                    if let Ok(response) = result {
+                        let answer = InputAnswer {
+                            option_id: PermissionDecision::from(&response.outcome).to_string(),
+                            value: None,
+                        };
+                        if let Err(error) = registry
+                            .answer_input(input.input_id, input.run_id, answer)
+                            .await
+                        {
+                            tracing::debug!(%error, "permission answer was not current");
+                        }
+                    }
+                    // A failed observer is not an answer. The original request remains pending.
+                    Ok(())
+                });
+    }
+    fn validate(&self, answer: &InputAnswer) -> anyhow::Result<()> {
+        let _: PermissionDecision = answer.option_id.parse()?;
+        Ok(())
+    }
+    async fn answer(&self, answer: InputAnswer) -> anyhow::Result<()> {
+        let decision: PermissionDecision = answer.option_id.parse()?;
+        self.agent
+            .handle_confirmation(
+                self.request_id.clone(),
+                PermissionConfirmation {
+                    principal_type: PrincipalType::Tool,
+                    permission: Permission::from(decision),
+                },
+            )
+            .await;
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl OwnerExecutor for GooseAcpAgent {
+    async fn prepare(&self, session_id: &str) -> anyhow::Result<(Arc<Agent>, Arc<AgentManager>)> {
+        let agent = self
+            .get_session_agent(session_id)
+            .await
+            .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+        Ok((agent, self.agent_manager.clone()))
+    }
+
+    async fn execute(
+        &self,
+        args: PromptRequest,
+        ticket: RunTicket,
+    ) -> Result<PromptResponse, agent_client_protocol::Error> {
+        let cx = self.client_cx.get().ok_or_else(|| {
+            agent_client_protocol::Error::internal_error()
+                .data("owner executor has no initialized observer context")
+        })?;
+        self.run_owned_prompt(cx, args, Some(ticket)).await
     }
 }
 
@@ -3966,6 +4028,7 @@ struct LoopDoorClose(Arc<GooseAcpAgent>);
 
 impl Drop for LoopDoorClose {
     fn drop(&mut self) {
+        self.0.owner_runs.detach_observer(self.0.observer_id);
         self.0.loop_door.close();
         self.0.notes_door.close();
     }
@@ -4059,7 +4122,7 @@ mod tests {
     use crate::session::session_manager::SessionType;
     use agent_client_protocol::schema::v1::{
         EnvVariable, HttpHeader, McpServer, McpServerHttp, McpServerSse, McpServerStdio,
-        PermissionOptionId, ResourceLink, SelectedPermissionOutcome,
+        PermissionOptionId, RequestPermissionOutcome, ResourceLink, SelectedPermissionOutcome,
     };
     use goose_providers::conversation::token_usage::Usage as TokenUsage;
     use rmcp::model::{CallToolRequestParams, Content as RmcpContent};
@@ -5403,13 +5466,19 @@ print(\"hello, world\")
         }
     }
 
-    /// Q9 (b): a prompt whose future is dropped mid-await (its websocket closed) leaves the busy
-    /// set through its registration's drop — the manager can outlive the connection — and only
-    /// while the entry is still that run's: a later run of the same chat is never cleared by it.
     #[tokio::test]
-    async fn a_dropped_prompts_run_leaves_the_busy_set_and_never_touches_a_later_run() {
+    async fn an_old_run_cleanup_cannot_clear_a_later_owner_run() {
         let temp = tempfile::tempdir().unwrap();
         let sessions = Arc::new(SessionManager::new(temp.path().to_path_buf()));
+        let chat = sessions
+            .create_session(
+                temp.path().to_path_buf(),
+                "owner run".into(),
+                SessionType::User,
+                GooseMode::Auto,
+            )
+            .await
+            .unwrap();
         let manager = Arc::new(
             AgentManager::new(
                 AgentConfig::new(
@@ -5425,74 +5494,58 @@ print(\"hello, world\")
             .await
             .unwrap(),
         );
-        let runs: Arc<Mutex<HashMap<String, ActivePromptRun>>> = Arc::default();
-        let register = |run_id: &str| {
-            let (runs, manager, run_id) = (runs.clone(), manager.clone(), run_id.to_string());
-            let sessions = sessions.clone();
-            async move {
-                let token = CancellationToken::new();
-                manager
-                    .try_register_connection_prompt("chat", token.clone())
-                    .await
-                    .unwrap();
-                runs.lock().await.insert(
-                    "chat".to_string(),
-                    ActivePromptRun {
-                        run_id: run_id.clone(),
-                        cancel_token: token,
-                    },
-                );
-                RunRegistration {
-                    runs,
-                    agent_manager: manager,
-                    session_manager: sessions,
-                    session_id: "chat".to_string(),
-                    run_id,
-                    cleared: false,
-                    turn: None,
-                }
-            }
-        };
-        let settle = || async {
-            for _ in 0..20 {
-                tokio::task::yield_now().await;
-            }
-        };
-
-        drop(register("run_1").await);
-        let mut cleared = false;
-        for _ in 0..500 {
-            if runs.lock().await.is_empty() && !manager.is_session_busy("chat").await {
-                cleared = true;
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
-        assert!(cleared, "the dropped run left the busy set");
-
-        let mut current = register("run_2").await;
+        let registry = OwnerRunRegistry::for_store(temp.path().to_path_buf(), sessions.clone());
+        let agent = Arc::new(Agent::new());
+        let first = Uuid::new_v4();
+        registry
+            .reserve(
+                &chat.id,
+                first,
+                CancellationToken::new(),
+                agent.clone(),
+                manager.clone(),
+                None,
+            )
+            .await
+            .unwrap();
+        registry.finish(&chat.id, &first.to_string()).await;
+        let second = Uuid::new_v4();
+        registry
+            .reserve(
+                &chat.id,
+                second,
+                CancellationToken::new(),
+                agent,
+                manager.clone(),
+                None,
+            )
+            .await
+            .unwrap();
         drop(RunRegistration {
-            runs: runs.clone(),
-            agent_manager: manager.clone(),
-            session_manager: sessions.clone(),
-            session_id: "chat".to_string(),
-            run_id: "run_1".to_string(),
+            owner_runs: registry.clone(),
+            session_manager: sessions,
+            session_id: chat.id.clone(),
+            run_id: first.to_string(),
             cleared: false,
             turn: None,
         });
-        settle().await;
-        assert_eq!(
-            runs.lock().await.get("chat").map(|r| r.run_id.clone()),
-            Some("run_2".to_string())
-        );
-        assert!(manager.is_session_busy("chat").await);
-
-        current.cleared = true;
-        drop(current);
-        settle().await;
-        assert!(
-            manager.is_session_busy("chat").await,
-            "a cleared registration leaves the clearing to clear_active_run"
-        );
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(registry.current_run(&chat.id).await, Some(second));
+        assert!(manager.is_session_busy(&chat.id).await);
+        assert!(registry
+            .stop(&chat.id, Some(&first.to_string()))
+            .await
+            .is_err());
+        assert!(!registry
+            .runs
+            .lock()
+            .await
+            .get(&chat.id)
+            .unwrap()
+            .cancel_token
+            .is_cancelled());
+        registry.finish(&chat.id, &second.to_string()).await;
     }
 }

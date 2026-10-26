@@ -16,142 +16,158 @@ use crate::session::SessionManager;
 impl super::GooseAcpAgent {
     pub(super) async fn handle_form_elicitation(
         &self,
-        cx: &ConnectionTo<Client>,
+        _cx: &ConnectionTo<Client>,
         session_id: &SessionId,
         elicitation_id: &str,
         message: &str,
         requested_schema: &serde_json::Value,
         meta: Meta,
     ) -> Result<(), agent_client_protocol::Error> {
-        if self.supports_acp_elicitation() {
-            self.send_form_elicitation(
-                cx,
-                session_id,
-                elicitation_id,
-                message,
-                requested_schema,
-                meta,
-            )
-            .await?;
-        } else {
-            warn!(
-                session_id = %session_id.0.as_ref(),
-                elicitation_id = %elicitation_id,
-                "ACP client does not support form elicitation"
-            );
-            self.cancel_form_elicitation(session_id.0.as_ref(), elicitation_id)
-                .await;
-        }
-
-        Ok(())
-    }
-
-    async fn send_form_elicitation(
-        &self,
-        cx: &ConnectionTo<Client>,
-        session_id: &SessionId,
-        elicitation_id: &str,
-        message: &str,
-        requested_schema: &serde_json::Value,
-        meta: Meta,
-    ) -> Result<(), agent_client_protocol::Error> {
-        let session_id = session_id.0.as_ref().to_string();
-        let elicitation_id = elicitation_id.to_string();
+        use super::ResultExt;
         if requested_schema
             .get("url")
             .and_then(|url| url.as_str())
             .is_some()
         {
-            warn!(
-                session_id = %session_id,
-                elicitation_id = %elicitation_id,
-                "ACP URL elicitation is not supported"
-            );
-            record_acp_elicitation_response(
-                &self.session_manager,
-                &session_id,
-                &elicitation_id,
-                ElicitationOutcome::Cancel,
-            )
-            .await;
-            return Ok(());
+            return Err(agent_client_protocol::Error::invalid_params()
+                .data("owner URL elicitation is unsupported"));
         }
-
-        let requested_schema: ElicitationSchema =
-            match serde_json::from_value(requested_schema.clone()) {
-                Ok(schema) => schema,
-                Err(error) => {
-                    record_acp_elicitation_response(
-                        &self.session_manager,
-                        &session_id,
-                        &elicitation_id,
-                        ElicitationOutcome::Cancel,
-                    )
-                    .await;
-                    return Err(agent_client_protocol::Error::internal_error()
-                        .data(format!("Failed to parse ACP elicitation schema: {error}")));
-                }
-            };
+        let schema: ElicitationSchema =
+            serde_json::from_value(requested_schema.clone()).invalid_params_err()?;
+        let run_id = self
+            .owner_runs
+            .current_run(session_id.0.as_ref())
+            .await
+            .ok_or_else(|| {
+                agent_client_protocol::Error::internal_error()
+                    .data("elicitation has no active owner run")
+            })?;
         let request = CreateElicitationRequest::new(
             ElicitationFormMode::new(
-                ElicitationSessionScope::new(session_id.clone()),
-                requested_schema,
+                ElicitationSessionScope::new(session_id.0.as_ref().to_string()),
+                schema,
             ),
             message.to_string(),
         )
         .meta(meta);
-
-        let callback_session_manager = Arc::clone(&self.session_manager);
-        let callback_session_id = session_id.clone();
-        let callback_elicitation_id = elicitation_id.clone();
-        if let Err(error) = cx
-            .send_request(CreateElicitationRequestMessage(request))
-            .on_receiving_result(move |result| async move {
-                let response = match result {
-                    Ok(response) => elicitation_response_from_acp(response.0),
-                    Err(error) => {
-                        warn!(
-                            error = %error,
-                            session_id = %callback_session_id,
-                            elicitation_id = %callback_elicitation_id,
-                            "ACP elicitation request failed"
-                        );
-                        ElicitationOutcome::Cancel
-                    }
-                };
-
-                record_acp_elicitation_response(
-                    &callback_session_manager,
-                    &callback_session_id,
-                    &callback_elicitation_id,
-                    response,
-                )
-                .await;
-
-                Ok(())
-            })
-        {
-            record_acp_elicitation_response(
-                &self.session_manager,
-                &session_id,
-                &elicitation_id,
-                ElicitationOutcome::Cancel,
+        let handler = Arc::new(OwnerElicitation {
+            run_id: run_id.to_string(),
+            session_id: session_id.0.as_ref().to_string(),
+            elicitation_id: elicitation_id.to_string(),
+            session_manager: self.session_manager.clone(),
+            schema: requested_schema.clone(),
+            request,
+        });
+        let options = [
+            ("accept", "Submit", true),
+            ("decline", "Decline", false),
+            ("cancel", "Cancel", false),
+        ]
+        .into_iter()
+        .map(
+            |(id, label, value)| leanzero_link::controller_wire::InputOption {
+                option_id: id.into(),
+                label: label.into(),
+                accepts_value: value,
+            },
+        )
+        .collect();
+        self.owner_runs
+            .register_input(
+                session_id.0.as_ref(),
+                elicitation_id,
+                message.to_string(),
+                options,
+                handler,
             )
-            .await;
-            return Err(error);
-        }
-
+            .await
+            .internal_err()?;
         Ok(())
     }
+}
 
-    async fn cancel_form_elicitation(&self, session_id: &str, elicitation_id: &str) {
-        record_acp_elicitation_response(
+struct OwnerElicitation {
+    run_id: String,
+    session_id: String,
+    elicitation_id: String,
+    session_manager: Arc<SessionManager>,
+    schema: serde_json::Value,
+    request: CreateElicitationRequest,
+}
+
+#[async_trait::async_trait]
+impl crate::work_control::InputHandler for OwnerElicitation {
+    fn run_id(&self) -> &str {
+        &self.run_id
+    }
+    fn observe(
+        &self,
+        cx: &ConnectionTo<Client>,
+        registry: Arc<crate::work_control::OwnerRunRegistry>,
+        input: leanzero_link::controller_wire::PendingInput,
+    ) {
+        let _ = cx
+            .send_request(CreateElicitationRequestMessage(self.request.clone()))
+            .on_receiving_result(move |result| async move {
+                if let Ok(response) = result {
+                    let answer = match elicitation_response_from_acp(response.0) {
+                        ElicitationOutcome::Accept(value) => crate::work_control::InputAnswer {
+                            option_id: "accept".into(),
+                            value: Some(value.to_string()),
+                        },
+                        ElicitationOutcome::Decline => crate::work_control::InputAnswer {
+                            option_id: "decline".into(),
+                            value: None,
+                        },
+                        ElicitationOutcome::Cancel => crate::work_control::InputAnswer {
+                            option_id: "cancel".into(),
+                            value: None,
+                        },
+                    };
+                    if let Err(error) = registry
+                        .answer_input(input.input_id, input.run_id, answer)
+                        .await
+                    {
+                        tracing::debug!(%error, "elicitation answer was not current");
+                    }
+                }
+                Ok(())
+            });
+    }
+    fn validate(&self, answer: &crate::work_control::InputAnswer) -> anyhow::Result<()> {
+        if answer.option_id == "accept" {
+            let value: serde_json::Value = serde_json::from_str(
+                answer
+                    .value
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("form answer requires its JSON values"))?,
+            )?;
+            let validator = jsonschema::validator_for(&self.schema)?;
+            if let Err(error) = validator.validate(&value) {
+                anyhow::bail!("{error}");
+            }
+        }
+        Ok(())
+    }
+    async fn answer(&self, answer: crate::work_control::InputAnswer) -> anyhow::Result<()> {
+        let outcome = match answer.option_id.as_str() {
+            "accept" => ElicitationOutcome::Accept(serde_json::from_str(
+                answer
+                    .value
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("form answer requires its JSON values"))?,
+            )?),
+            "decline" => ElicitationOutcome::Decline,
+            "cancel" => ElicitationOutcome::Cancel,
+            _ => anyhow::bail!("invalid form option"),
+        };
+        crate::elicitation::complete_elicitation_with_generated_message(
             &self.session_manager,
-            session_id,
-            elicitation_id,
-            ElicitationOutcome::Cancel,
+            &self.session_id,
+            &self.elicitation_id,
+            outcome,
         )
-        .await;
+        .await
     }
 }
 
@@ -226,28 +242,5 @@ fn elicitation_response_from_acp(response: CreateElicitationResponse) -> Elicita
             warn!(?action, "Unsupported ACP elicitation action");
             ElicitationOutcome::Cancel
         }
-    }
-}
-
-async fn record_acp_elicitation_response(
-    session_manager: &SessionManager,
-    session_id: &str,
-    elicitation_id: &str,
-    response: ElicitationOutcome,
-) {
-    if let Err(error) = crate::elicitation::complete_elicitation_with_generated_message(
-        session_manager,
-        session_id,
-        elicitation_id,
-        response,
-    )
-    .await
-    {
-        warn!(
-            error = %error,
-            session_id = %session_id,
-            elicitation_id = %elicitation_id,
-            "Failed to record ACP elicitation response"
-        );
     }
 }

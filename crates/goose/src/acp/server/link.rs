@@ -1490,7 +1490,7 @@ impl GooseAcpAgent {
         let source = self.link_source(key.allow_remote_execution);
         // A remote prompt (`link_serve.rs`) must run on the managers THIS source reads,
         // or its cancel token never reaches the busy set the idle guard consults.
-        link_serve::bind_run_managers(self.agent_manager.clone(), self.session_manager.clone());
+        link_serve::bind_run_managers(self.agent_manager.clone(), self.session_manager.clone(), self.owner_runs.clone());
         // The tracking factory is what lets `goose serve`'s exit path find the daemon this
         // manager started (`stop_started_mesh_daemons`); the mesh itself is the real one.
         let mut manager = LinkManager::with_mesh_factory(config, source, tracking_mesh_factory())

@@ -204,7 +204,10 @@ impl GooseAcpAgent {
             self.supports_goose_custom_notifications(),
         )?;
         let (agent, extension_results) = self.prepare_acp_session_agent(cx, &session).await?;
-        self.apply_session_recipe(&agent, &session).await?;
+        let observes_active_run = self.owner_runs.current_run(&session_id_str).await.is_some();
+        if !observes_active_run {
+            self.apply_session_recipe(&agent, &session).await?;
+        }
         self.register_acp_session(session_id_str.clone(), agent.clone(), replay_tool_requests)
             .await;
 
@@ -214,10 +217,12 @@ impl GooseAcpAgent {
             .await
             .internal_err_ctx("Failed to reload session")?;
 
-        agent
-            .extension_manager
-            .update_working_dir(&session.working_dir)
-            .await;
+        if !observes_active_run {
+            agent
+                .extension_manager
+                .update_working_dir(&session.working_dir)
+                .await;
+        }
 
         let (mode_state, config_options) =
             build_session_setup_config(&self.provider_inventory, &session).await?;

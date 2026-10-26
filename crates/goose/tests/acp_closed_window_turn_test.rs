@@ -1,8 +1,4 @@
-//! Q-519: a chat whose window was closed while it answered ("Stop the answer and close", Q-490)
-//! reopened with the person's prompt and nothing after it — no streamed words, no "You stopped this
-//! answer" line — while the in-window Stop left the line. The close drops the websocket, which drops
-//! `on_prompt` mid-await (Q9, `acp_connection_close_test.rs`), so nothing after the await ran. A
-//! turn ended by its window closing keeps what it streamed and the stopped line, as a Stop does.
+//! Explicit Stop followed by closing a viewer preserves the partial and stopped outcome.
 
 #[path = "acp_ws/mod.rs"]
 mod acp_ws;
@@ -36,7 +32,7 @@ fn stopped_line_of(message: &Message) -> Option<String> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_turn_ended_by_closing_its_window_keeps_its_words_and_the_stopped_line() {
+async fn an_explicit_stop_then_close_keeps_its_words_and_the_stopped_line() {
     let model = Model::start(vec![Answer::Unfinished(STREAMED)]).await;
     configure(&model, false);
     let addr = serve().await;
@@ -55,6 +51,9 @@ async fn a_turn_ended_by_closing_its_window_keeps_its_words_and_the_stopped_line
     window.until_streaming(&session_id).await;
 
     // "Stop the answer and close": the window goes with the answer still streaming.
+    window.cancel(&session_id).await;
+    // A response barrier proves the owner received Stop before closing the socket.
+    window.request("session/list", serde_json::json!({})).await;
     window.close().await;
 
     eventually(
