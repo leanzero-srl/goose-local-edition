@@ -313,3 +313,4 @@ and commit in ONE command (`git add <paths> && git commit`), never leave things 
 - Build wrapper: scratchpad/mimo2.sh (CARGO_TARGET_DIR=worktree/target, APFS clone of ~/Projects/goose/target).
 - TRAP: two agents in one worktree share the git INDEX: a `git commit` takes the other's staged files. Run one
   committing agent at a time, or give each its own worktree.
+- UPDATE: desktop split view DONE (347121d242, dde8f3a7e0, bd80d7ecbb; vitest 5196 pass; see Session 4c). Not CDP-checked. After SDK regen run 'cd ui/sdk && pnpm run build:ts' before desktop typecheck.
