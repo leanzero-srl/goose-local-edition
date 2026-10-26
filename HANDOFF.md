@@ -343,3 +343,4 @@ and commit in ONE command (`git add <paths> && git commit`), never leave things 
   installed 3.0.132) to the new pin; 3.0.132 rebuilds its own pin on its next Flash start (Q-234).
 - Remaining: pin bump -> rebuild -> live test (COORDINATOR item 4; screenshot to /Volumes/AI-workhorse/media/goose/mimo-2026-10-26/
   after ai-disk-guard --out) -> skill notes (item 5). Commits: no AI trailer (public repo hook rejects it).
+- UPDATE: dev build finished BUILD_OK (pre-pin): "ui/desktop/out/Goose Swarm-darwin-arm64/Goose Swarm.app". Rebuild after the pin bump.
