@@ -916,6 +916,16 @@ impl Provider for OpenAiProvider {
         Some(self.api_client.host())
     }
 
+    fn sharing_origin(&self) -> Option<String> {
+        let chat = self.api_client.sharing_origin(&self.base_path)?;
+        let responses = self.api_client.sharing_origin(&Self::map_base_path(
+            &self.base_path,
+            "responses",
+            OPEN_AI_DEFAULT_RESPONSES_PATH,
+        ))?;
+        (chat == responses).then_some(chat)
+    }
+
     fn skip_canonical_filtering(&self) -> bool {
         self.skip_canonical_filtering
     }
@@ -1301,6 +1311,24 @@ mod tests {
             n_ctx_cache: Arc::new(Mutex::new(HashMap::new())),
             transient_tail_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    #[test]
+    fn recipient_sharing_openai_uses_absolute_request_origin_or_reports_ambiguity() {
+        let mut provider = make_provider("openai");
+        provider.base_path = "https://user:secret@actual.example/v1/chat/completions".into();
+        assert_eq!(provider.endpoint(), Some("http://localhost"));
+        assert_eq!(
+            provider.sharing_origin().as_deref(),
+            Some("https://actual.example")
+        );
+        provider.base_path = "https://actual.example/custom".into();
+        assert_eq!(provider.sharing_origin(), None);
+        provider.base_path = "v1/chat/completions".into();
+        assert_eq!(
+            provider.sharing_origin().as_deref(),
+            Some("http://localhost")
+        );
     }
 
     const TEST_TURN_CONTEXT: &str =

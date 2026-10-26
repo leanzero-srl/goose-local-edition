@@ -440,6 +440,12 @@ pub trait Provider: Send + Sync {
         None
     }
 
+    /// Known initial HTTP origin for inference, accounting for request-path overrides.
+    /// None means unreported routing; it does not imply local execution.
+    fn sharing_origin(&self) -> Option<String> {
+        None
+    }
+
     /// Primary streaming method that all providers must implement.
     async fn stream(
         &self,

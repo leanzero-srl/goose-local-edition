@@ -123,6 +123,9 @@ struct Extension {
     /// memory — never serialized to disk.
     resolved_config: ExtensionConfig,
 
+    /// Exact URI passed to an HTTP client, absent for UDS and externally supplied clients.
+    connected_http_uri: Option<String>,
+
     client: McpClientBox,
     server_info: Option<ServerInfo>,
     _temp_dir: Option<tempfile::TempDir>,
@@ -140,6 +143,7 @@ impl Extension {
             client,
             config,
             resolved_config,
+            connected_http_uri: None,
             server_info,
             _temp_dir: temp_dir,
         }
@@ -995,6 +999,7 @@ impl ExtensionManager {
         }
 
         let mut temp_dir = None;
+        let mut connected_http_uri = None;
 
         let effective_working_dir = working_dir;
 
@@ -1022,6 +1027,9 @@ impl ExtensionManager {
                     .map(|(k, v)| (k.clone(), substitute_env_vars(v, &all_envs)))
                     .collect();
                 let resolved_socket = socket.as_ref().map(|s| substitute_env_vars(s, &all_envs));
+                if resolved_socket.is_none() {
+                    connected_http_uri = Some(resolved_uri.clone());
+                }
                 create_streamable_http_client(
                     &resolved_uri,
                     *timeout,
@@ -1227,16 +1235,15 @@ impl ExtensionManager {
         let server_info = client.get_info().cloned();
 
         let mut extensions = self.extensions.lock().await;
-        extensions.insert(
-            sanitized_name,
-            Extension::new(
-                config,
-                resolved_config,
-                Arc::from(client),
-                server_info,
-                temp_dir,
-            ),
+        let mut extension = Extension::new(
+            config,
+            resolved_config,
+            Arc::from(client),
+            server_info,
+            temp_dir,
         );
+        extension.connected_http_uri = connected_http_uri;
+        extensions.insert(sanitized_name, extension);
         drop(extensions);
         self.invalidate_tools_cache_and_bump_version().await;
 
@@ -1321,16 +1328,21 @@ impl ExtensionManager {
             .collect()
     }
 
-    /// Project the connection-time configuration without re-resolving credentials or cloning them.
+    /// Project runtime configuration and the URI actually passed to the HTTP client, without resolving secrets.
     pub(crate) async fn project_resolved_configs<T>(
         &self,
-        project: impl Fn(&ExtensionConfig) -> T,
+        project: impl Fn(&ExtensionConfig, Option<&str>) -> T,
     ) -> Vec<T> {
         self.extensions
             .lock()
             .await
             .values()
-            .map(|extension| project(&extension.resolved_config))
+            .map(|extension| {
+                project(
+                    &extension.resolved_config,
+                    extension.connected_http_uri.as_deref(),
+                )
+            })
             .collect()
     }
 
@@ -2236,7 +2248,7 @@ mod tests {
     struct MockClient {}
 
     #[tokio::test]
-    async fn recipient_sharing_projects_connection_time_config_without_resolving_again() {
+    async fn recipient_sharing_reports_connected_uri_even_when_resolution_changed() {
         let dir = tempfile::tempdir().unwrap();
         let manager = ExtensionManager::new_without_provider(dir.path().to_path_buf());
         let original: ExtensionConfig = serde_json::from_value(serde_json::json!({
@@ -2245,29 +2257,60 @@ mod tests {
         .unwrap();
         let mut resolved = original.clone();
         if let ExtensionConfig::StreamableHttp { uri, .. } = &mut resolved {
-            *uri = "https://connected.example/mcp".into();
+            *uri = "https://earlier-resolution.example/mcp".into();
         }
-        manager.extensions.lock().await.insert(
-            "service".into(),
-            Extension::new(
-                original.clone(),
-                resolved,
-                Arc::new(MockClient {}),
-                None,
-                None,
-            ),
+        let mut extension = Extension::new(
+            original.clone(),
+            resolved,
+            Arc::new(MockClient {}),
+            None,
+            None,
         );
+        extension.connected_http_uri = Some("https://connected.example/mcp".into());
+        manager
+            .extensions
+            .lock()
+            .await
+            .insert("service".into(), extension);
         let observations = manager
-            .project_resolved_configs(|config| match config {
-                ExtensionConfig::StreamableHttp { uri, .. } => uri.clone(),
+            .project_resolved_configs(|config, connected_uri| match config {
+                ExtensionConfig::StreamableHttp { uri, .. } => {
+                    (uri.clone(), connected_uri.map(str::to_owned))
+                }
                 _ => panic!("unexpected transport"),
             })
             .await;
         assert_eq!(
             observations,
-            vec!["https://connected.example/mcp".to_owned()]
+            vec![(
+                "https://earlier-resolution.example/mcp".into(),
+                Some("https://connected.example/mcp".into())
+            )]
         );
         assert_eq!(manager.get_extension_configs().await, vec![original]);
+    }
+
+    #[tokio::test]
+    async fn recipient_sharing_injected_client_cannot_claim_config_uri_was_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = ExtensionManager::new_without_provider(dir.path().to_path_buf());
+        let config = serde_json::from_value(serde_json::json!({
+            "type": "streamable_http", "name": "service", "uri": "https://unproven.example"
+        }))
+        .unwrap();
+        manager
+            .add_client(
+                "service".into(),
+                config,
+                Arc::new(MockClient {}),
+                None,
+                None,
+            )
+            .await;
+        let observations = manager
+            .project_resolved_configs(|_, uri| uri.map(str::to_owned))
+            .await;
+        assert_eq!(observations, vec![None]);
     }
 
     #[async_trait::async_trait]

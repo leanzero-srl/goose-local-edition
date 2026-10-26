@@ -287,6 +287,20 @@ impl ApiClient {
         &self.host
     }
 
+    pub(crate) fn sharing_origin(&self, path: &str) -> Option<String> {
+        // A decorator can replace the request entirely; inspecting it must not execute it.
+        if self.request_builder.is_some()
+            || [self.host.as_str(), path]
+                .iter()
+                .any(|value| value.contains("${") || value.chars().any(char::is_control))
+        {
+            return None;
+        }
+        let url = self.build_url(path).ok()?;
+        (matches!(url.scheme(), "http" | "https") && url.host().is_some())
+            .then(|| url.origin().ascii_serialization())
+    }
+
     fn rebuild_client(&mut self) -> Result<()> {
         let mut client_builder = apply_transport_timeouts(Client::builder())
             .default_headers(self.default_headers.clone());
@@ -607,6 +621,46 @@ ShGoCNbfNS+COlPMRAujyDlATZcLs9p4tA==
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn recipient_sharing_origin_matches_built_request_and_does_not_run_decorators() {
+        let client = ApiClient::new_with_tls(
+            "https://user:secret@configured.example/prefix".into(),
+            AuthMethod::NoAuth,
+            None,
+        )
+        .unwrap();
+        for (path, expected) in [
+            (
+                "v1/chat/completions?key=secret",
+                "https://configured.example",
+            ),
+            (
+                "https://user:secret@actual.example:8443/v1/chat/completions?key=secret",
+                "https://actual.example:8443",
+            ),
+            (
+                "//actual.example/v1/chat/completions",
+                "https://actual.example",
+            ),
+        ] {
+            let request = client
+                .request(path)
+                .send_request(|url, client| client.post(url))
+                .await
+                .unwrap()
+                .build()
+                .unwrap();
+            let observed = client.sharing_origin(path).unwrap();
+            assert_eq!(observed, expected);
+            assert_eq!(observed, request.url().origin().ascii_serialization());
+            assert!(!observed.contains("secret"));
+        }
+        let decorated = client.with_request_builder(Arc::new(|_| {
+            panic!("a sharing read must not execute a request decorator")
+        }));
+        assert_eq!(decorated.sharing_origin("v1/chat/completions"), None);
+    }
 
     #[test]
     fn test_request_builder_decorator() {

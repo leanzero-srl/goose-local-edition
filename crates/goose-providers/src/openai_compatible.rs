@@ -79,6 +79,11 @@ impl Provider for OpenAiCompatibleProvider {
         Some(self.api_client.host())
     }
 
+    fn sharing_origin(&self) -> Option<String> {
+        self.api_client
+            .sharing_origin(&format!("{}chat/completions", self.completions_prefix))
+    }
+
     async fn fetch_supported_models(&self) -> Result<Vec<String>, ProviderError> {
         let response = self.api_client.response_get("models").await.map_err(|e| {
             ProviderError::RequestFailed(super::http_status::redact_relay_capability(

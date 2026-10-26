@@ -395,6 +395,10 @@ impl Provider for OllamaProvider {
         Some(self.api_client.host())
     }
 
+    fn sharing_origin(&self) -> Option<String> {
+        self.api_client.sharing_origin("v1/chat/completions")
+    }
+
     fn skip_canonical_filtering(&self) -> bool {
         self.skip_canonical_filtering
     }

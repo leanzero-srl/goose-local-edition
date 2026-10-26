@@ -59,7 +59,10 @@ async fn live_descriptor(agent: &Agent) -> WorkSharingDescriptor {
     let provider = match agent.provider().await {
         Ok(provider) => safe_label(provider.get_name()).map(|name| SharingProvider {
             name,
-            origin: provider.endpoint().and_then(sanitized_origin),
+            origin: provider
+                .sharing_origin()
+                .as_deref()
+                .and_then(sanitized_origin),
         }),
         Err(_) => None,
     };
@@ -83,7 +86,7 @@ async fn live_descriptor(agent: &Agent) -> WorkSharingDescriptor {
             .await
             .iter()
             .filter(|config| matches!(config, ExtensionConfig::Frontend { .. }))
-            .map(tool_descriptor),
+            .map(|config| tool_descriptor(config, None)),
     );
     if tools
         .iter()
@@ -106,18 +109,14 @@ async fn live_descriptor(agent: &Agent) -> WorkSharingDescriptor {
     }
 }
 
-fn tool_descriptor(config: &ExtensionConfig) -> Option<SharingTool> {
+fn tool_descriptor(
+    config: &ExtensionConfig,
+    connected_http_uri: Option<&str>,
+) -> Option<SharingTool> {
     let (transport, origin) = match config {
-        ExtensionConfig::StreamableHttp { uri, socket, .. } => (
-            "http",
-            // With UDS, the URI supplies a Host header rather than the network destination.
-            if socket.is_none() {
-                sanitized_origin(uri)
-            } else {
-                None
-            },
-        ),
-        ExtensionConfig::Sse { uri, .. } => ("http", uri.as_deref().and_then(sanitized_origin)),
+        ExtensionConfig::StreamableHttp { .. } | ExtensionConfig::Sse { .. } => {
+            ("http", connected_http_uri.and_then(sanitized_origin))
+        }
         ExtensionConfig::Stdio { .. } => ("stdio", None),
         ExtensionConfig::Builtin { .. } => ("builtin", None),
         ExtensionConfig::Platform { .. } => ("platform", None),
@@ -197,18 +196,22 @@ mod tests {
             "type": "streamable_http", "name": "Issue service", "uri": "https://user:secret@tools.example/mcp/secret?key=secret",
             "headers": {"Authorization": "Bearer secret"}, "envs": {"TOKEN": "secret"}
         })).unwrap();
-        let tool = tool_descriptor(&config).unwrap();
+        let tool = tool_descriptor(
+            &config,
+            Some("https://user:secret@tools.example/mcp/secret?key=secret"),
+        )
+        .unwrap();
         assert_eq!(tool.origin.as_deref(), Some("https://tools.example"));
         assert!(!serde_json::to_string(&tool).unwrap().contains("secret"));
         let mut uds = config;
         if let ExtensionConfig::StreamableHttp { socket, .. } = &mut uds {
             *socket = Some("/private/secret.sock".into());
         }
-        assert_eq!(tool_descriptor(&uds).unwrap().origin, None);
+        assert_eq!(tool_descriptor(&uds, None).unwrap().origin, None);
         let stdio: ExtensionConfig = serde_json::from_value(serde_json::json!({
             "type": "stdio", "name": "Shell tools", "cmd": "/private/secret", "args": ["secret"], "envs": {"TOKEN": "secret"}
         })).unwrap();
-        let tool = tool_descriptor(&stdio).unwrap();
+        let tool = tool_descriptor(&stdio, None).unwrap();
         assert_eq!(tool.transport, "stdio");
         assert_eq!(tool.origin, None);
         assert!(!serde_json::to_string(&tool).unwrap().contains("secret"));
@@ -291,7 +294,10 @@ mod tests {
             "observed-driver"
         }
         fn endpoint(&self) -> Option<&str> {
-            Some("https://user:secret@actual-proxy.example/v1/secret?key=secret")
+            Some("https://configured-host.example")
+        }
+        fn sharing_origin(&self) -> Option<String> {
+            Some("https://user:secret@actual-proxy.example/v1/secret?key=secret".into())
         }
     }
 
