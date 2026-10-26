@@ -29,21 +29,22 @@ app_files = [file(str(p.relative_to(ROOT)), "sourcecode.swift") for p in sorted(
 test_files = [file(str(p.relative_to(ROOT)), "sourcecode.swift") for p in sorted((ROOT / "GooseRemoteTests").rglob("*.swift"))]
 test_fixtures = file("GooseRemoteTests/Fixtures", "folder")
 assets = file("GooseRemote/Resources/Assets.xcassets", "folder.assetcatalog")
+icon_license = file("GooseRemote/Resources/Lucide-LICENSE.txt", "text")
 privacy = file("GooseRemote/Resources/PrivacyInfo.xcprivacy", "text.xml")
 info = file("GooseRemote/Resources/Info.plist", "text.plist.xml")
 app_product = put("appProduct", 'isa = PBXFileReference; explicitFileType = wrapper.application; path = GooseRemote.app; sourceTree = BUILT_PRODUCTS_DIR;')
 test_product = put("testProduct", 'isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = GooseRemoteTests.xctest; sourceTree = BUILT_PRODUCTS_DIR;')
 product_group = put("products", f'isa = PBXGroup; name = Products; sourceTree = "<group>"; children = {array([app_product,test_product])};')
-main_group = put("mainGroup", f'isa = PBXGroup; sourceTree = "<group>"; children = {array(app_files + test_files + [test_fixtures, assets, privacy, info, product_group])};')
+main_group = put("mainGroup", f'isa = PBXGroup; sourceTree = "<group>"; children = {array(app_files + test_files + [test_fixtures, assets, privacy, icon_license, info, product_group])};')
 app_sources = phase("appSources", "PBXSourcesBuildPhase", app_files)
 test_sources = phase("testSources", "PBXSourcesBuildPhase", test_files)
 test_resources = phase("testResources", "PBXResourcesBuildPhase", [test_fixtures])
-resources = phase("resources", "PBXResourcesBuildPhase", [assets, privacy])
+resources = phase("resources", "PBXResourcesBuildPhase", [assets, privacy, icon_license])
 frameworks = phase("frameworks", "PBXFrameworksBuildPhase", [])
 embed = put("meshEmbed", 'isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647; files = (); inputPaths = (); outputPaths = (); alwaysOutOfDate = 1; runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = "\\\"$SRCROOT/scripts/embed-mesh-framework.sh\\\"";')
 
 common = {"SDKROOT":"iphoneos", "IPHONEOS_DEPLOYMENT_TARGET":"18.1", "SWIFT_VERSION":"5.0", "CLANG_ENABLE_MODULES":"YES", "ENABLE_STRICT_OBJC_MSGSEND":"YES", "CLANG_ENABLE_OBJC_ARC":"YES", "SWIFT_STRICT_CONCURRENCY":"complete", "TARGETED_DEVICE_FAMILY":"1,2", "SUPPORTED_PLATFORMS":"iphoneos iphonesimulator", "ENABLE_USER_SCRIPT_SANDBOXING":"NO"}
-app = {"PRODUCT_BUNDLE_IDENTIFIER":"net.leanzero.goose-remote", "PRODUCT_NAME":"GooseRemote", "INFOPLIST_FILE":"GooseRemote/Resources/Info.plist", "GENERATE_INFOPLIST_FILE":"NO", "MARKETING_VERSION":"1.0.0", "CURRENT_PROJECT_VERSION":"1", "CODE_SIGN_STYLE":"Automatic", "CODE_SIGN_ENTITLEMENTS":"GooseRemote/Resources/GooseRemote.entitlements", "LD_RUNPATH_SEARCH_PATHS":"$(inherited) @executable_path/Frameworks", "FRAMEWORK_SEARCH_PATHS":"$(inherited) $(GOOSE_TAILSCALE_FRAMEWORK_DIR)", "OTHER_LDFLAGS":"$(inherited) $(GOOSE_MESH_LDFLAGS)", "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME":"AccentColor"}
+app = {"PRODUCT_BUNDLE_IDENTIFIER":"net.leanzero.goose-remote", "PRODUCT_NAME":"GooseRemote", "INFOPLIST_FILE":"GooseRemote/Resources/Info.plist", "GENERATE_INFOPLIST_FILE":"NO", "MARKETING_VERSION":"1.0.0", "CURRENT_PROJECT_VERSION":"1", "CODE_SIGN_STYLE":"Automatic", "DEVELOPMENT_TEAM":"ZZ8MTZ6NRZ", "ASSETCATALOG_COMPILER_APPICON_NAME":"AppIcon", "CODE_SIGN_ENTITLEMENTS":"GooseRemote/Resources/GooseRemote.entitlements", "LD_RUNPATH_SEARCH_PATHS":"$(inherited) @executable_path/Frameworks", "FRAMEWORK_SEARCH_PATHS":"$(inherited) $(GOOSE_TAILSCALE_FRAMEWORK_DIR)", "OTHER_LDFLAGS":"$(inherited) $(GOOSE_MESH_LDFLAGS)", "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME":"AccentColor"}
 tests = {"PRODUCT_BUNDLE_IDENTIFIER":"net.leanzero.goose-remote.tests", "PRODUCT_NAME":"GooseRemoteTests", "GENERATE_INFOPLIST_FILE":"YES", "TEST_HOST":"$(BUILT_PRODUCTS_DIR)/GooseRemote.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/GooseRemote", "BUNDLE_LOADER":"$(TEST_HOST)", "FRAMEWORK_SEARCH_PATHS":"$(inherited) $(GOOSE_TAILSCALE_FRAMEWORK_DIR)", "OTHER_LDFLAGS":"$(inherited) $(GOOSE_MESH_LDFLAGS)"}
 def configs(name, own):
     refs = []
