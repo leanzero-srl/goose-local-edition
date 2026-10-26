@@ -184,3 +184,35 @@ TODO (next agent, in order)
   E0460/E0463 "found possibly newer version of crate" = the shared ~/Projects/goose/target being rebuilt by another
   worktree at the same time (environmental, not this change): re-run `cargo test -p goose-sidecar --doc` alone.
   Still uncompiled: crates goose + goose-sdk-types (mlx_engine.rs, mlx_remote_single.rs, custom_requests.rs).
+
+## STATE 2026-10-26 ~19:40 (agent 4, stopped at the context guard) — FULL GATE GREEN, negative controls + live NOT done
+DONE (commits 76bee1293a i18n, 7ed5ed57e8 acp regen, then "MlxEngineView typecheck" fix):
+- i18n: 3 keys in en + all 15 catalogs (file order, translated; script scratchpad add_i18n.py). i18n:check passes (4053 msgs).
+- `just generate-acp-types` ran; acp-schema.json + ui/sdk/src/generated committed.
+- lint:check found `stoppedBy` missing on the hand-written `MlxEngineStatus` (ui/desktop/src/acp/mlx-engine.ts:66):
+  added `stoppedBy?` + `stoppedOutside?`.
+- GATE (all EXIT 0): cargo fmt --check; clippy --all-targets -p goose -p goose-sidecar -p goose-sdk-types -D warnings;
+  cargo test -p goose-sidecar (unit 490/0, integration, doctests all ok); cargo test -p goose-sdk-types (8/0);
+  cargo test -p goose --lib mlx_ (105/0, incl. fit-stall, outside stoppedBy, restore_step outside);
+  cargo build -p goose-cli; pnpm run lint:check; pnpm run test:run (555 files passed).
+- "SIGTERM test >60 s": MEASURED environmental. Same binary: 110 s twice (each mount->running 36 s), then 4.7 s on
+  three runs; sibling a_load_that_ends 26 s -> 2.2 s in the same windows. Per-status calls were <1.2 ms; nothing in
+  the test or fix is slow. No change made.
+TRAPS (cost time this round):
+- Workhorse is macOS 27 now: every cargo cmd needs `--config 'profile.dev.package."*".strip=false'` (sqlx_macros
+  "mis-aligned LINKEDIT"). Own target: CARGO_TARGET_DIR=/Users/workhorse/Projects/goose-wt-enginecard/target
+  (scratchpad rs.sh sets it) — the shared ~/Projects/goose/target raced with the mimo-distributed worktree.
+- Long cargo jobs: heavy-run in background + a foreground `for i in seq; grep -q ^EXIT log; sleep 15` wait (<=600 s).
+TODO (next agent)
+1. Negative controls (copy file to scratchpad, break, run ONE test, cp back; never git checkout --), each must FAIL:
+   lib.rs stopped_outside_goose -> false (a_stop_signal..., an_engine_stopped_from_outside...);
+   mlx_engine.rs stopped_by_wire drop `None if outside` arm (an_engine_stopped_from_outside_goose_says_outside...);
+   bounded_fit: limit ignored (use 60 s) (a_fit_read_that_stalls...); mlx_remote_single restore_step drop outside
+   arm (only_a_stopped_engine_nobody_stopped_is_restored); sharedStatusPoll limit removed (sharedStatusPoll.test.tsx
+   'a read goose never answers'); mlx-placement PLACEMENT_PLAN_LIMIT_MS race removed (mlx-placement.timeLimit.test.ts);
+   MlxStateTile stoppedOutside branch (MlxStateTile.test.tsx); EngineGlanceInApp DockSlot without
+   withoutDismissedFailure (EngineGlanceInApp.test.tsx).
+2. Live check per goose-feature-dev skill (packaged app, isolated GOOSE_PATH_ROOT/GOOSE_USER_DATA_DIR, own CDP port,
+   references/cdp-acp-override.mjs): never-answering mlxEngine/status -> err banner + "Read again" after 10 s;
+   status {state:'stopped', stoppedBy:'outside'} -> tile "Stopped outside goose", sidebar card gone. Else say unverified.
+3. Push `git push origin HEAD:fix/engine-failure-card-sticks`. No DMG.
