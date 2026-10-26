@@ -314,3 +314,32 @@ and commit in ONE command (`git add <paths> && git commit`), never leave things 
 - TRAP: two agents in one worktree share the git INDEX: a `git commit` takes the other's staged files. Run one
   committing agent at a time, or give each its own worktree.
 - UPDATE: desktop split view DONE (347121d242, dde8f3a7e0, bd80d7ecbb; vitest 5196 pass; see Session 4c). Not CDP-checked. After SDK regen run 'cd ui/sdk && pnpm run build:ts' before desktop typecheck.
+
+## Session 6 (2026-10-26 ~20:45, coordinator stopped at context limit)
+- DONE fc91d575cd: the failing test was a CODE bug, not the test: `link_control::older_peer_refusal` lacked the new tag
+  `mlxLmServerPipelineSplit` (an older peer refusing a mimo rank would not say "update goose"). Added first in the list.
+  Also clippy manual_is_multiple_of (launch.rs:589). Gates: cargo test -p goose-sidecar 500 pass/0 fail (+ integration
+  9/2/13/6 pass), fmt --check 0, clippy -p goose-sidecar -p goose --all-targets -D warnings 0, development_gates 11/11.
+  Desktop lint/vitest NOT re-run this session (no UI change since Session 4c's 5196 pass).
+- PIN: NOT bumped. At 20:45 neither `lz-pipeline-qwen4.15` nor `v0.14.3-lz.15` was on origin; release agent suites
+  (suites2.sh pid 16686, suites3-base.sh pid 19744) still running. Wait: `git -C ~/Projects/Rapid-MLX ls-remote --tags origin | grep -E 'qwen4.15|lz.15'`.
+  Bump = provision.rs PIPELINE_FORK_COMMIT + PIPELINE_FORK (both carry the sha) + rerun sidecar tests (preflight tests
+  reference the const). PIPELINE_SINGLE_LINE_REVIEWED_THROUGH stays lz.14 unless ENGINE_LAUNCHER also moves (a test pins equality).
+- DEV BUILD in flight at handoff: scratchpad live/build.sh under heavy-run (cargo build goose debug -> just copy-binary debug
+  -> ui/desktop pnpm run package), log scratchpad live/build.log (BUILD_OK on success). Rebuild after the pin bump.
+- LIVE TEST prep (not started): decided the ssh-peer path (documented recipe: seeded config, node `ssh: workmule`)
+  instead of Link, because workmule's installed 3.0.132 serves Link and would refuse the new tag; replacing it is invasive.
+  Seeded isolated profile: /tmp/gmimo/root/config/config.yaml (short path: sun_path), userdata /tmp/gmimo/userdata;
+  mlx_engine port 8190, distributed port 8191, coordinator 32373, JACCL; workhorse en3 192.168.0.2 "EXO Thunderbolt 2"
+  rdma_en3; workmule en9 192.168.0.1 "TB Workhorse" rdma_en9, model /Users/workmule/.goose/models/mlx-community/MiMo-V2.6-Flash-RL-mxfp4-q8;
+  workhorse model /Volumes/AI-workhorse/models/goose/mlx-community/MiMo-V2.6-Flash-RL-mxfp4-q8. Mule has no
+  ~/.goose/distributed yet (provision builds it; uv at /opt/homebrew/bin/uv). CDP driver copied to scratchpad live/cdp.mjs.
+  Launch: GOOSE_PATH_ROOT=/tmp/gmimo/root GOOSE_USER_DATA_DIR=/tmp/gmimo/userdata GOOSE_DISABLE_KEYRING=1
+  "ui/desktop/out/Goose Swarm-darwin-arm64/Goose Swarm.app/Contents/MacOS/Goose Swarm" --remote-debugging-port=9461 (or Goose-darwin-arm64 path).
+- BLOCKER for the 170 GB load: workhorse holds another session's PLD matrix (/Volumes/AI-workhorse/runs/2026-10-26-pld-qwen38,
+  engine :8471, 33 GB, GPU 98%, at config c3 of 4). Rank 0 needs ~68 GB of ~71 GB available: wait for it to finish; never touch it.
+  Mule had a CI cargo test job (goose-controller-build) in a heavy slot.
+- SIDE EFFECT to note: provisioning upserts ~/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12 (shared with the owner's
+  installed 3.0.132) to the new pin; 3.0.132 rebuilds its own pin on its next Flash start (Q-234).
+- Remaining: pin bump -> rebuild -> live test (COORDINATOR item 4; screenshot to /Volumes/AI-workhorse/media/goose/mimo-2026-10-26/
+  after ai-disk-guard --out) -> skill notes (item 5). Commits: no AI trailer (public repo hook rejects it).
