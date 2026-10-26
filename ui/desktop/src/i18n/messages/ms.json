@@ -1463,6 +1463,21 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} token konteks. Nod yang menjawab giliran terakhir sembang ini tidak melaporkan tetingkap konteksnya."
   },
+  "controller.work.refreshLog": {
+    "defaultMessage": "Muat semula log"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "Muatkan output terdahulu"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "Memuatkan output terdahulu…"
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "Muat semula log automatik dijeda semasa melihat output terdahulu."
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "Belum ada output log."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Had Perbualan"
   },

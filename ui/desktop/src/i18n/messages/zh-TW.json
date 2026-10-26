@@ -1463,6 +1463,21 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} 個上下文 token。回答此聊天上一輪的節點沒有回報其上下文視窗。"
   },
+  "controller.work.refreshLog": {
+    "defaultMessage": "重新整理日誌"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "載入較早的輸出"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "正在載入較早的輸出…"
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "檢視較早的輸出時，日誌自動重新整理已暫停。"
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "尚無日誌輸出。"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "對話限制"
   },

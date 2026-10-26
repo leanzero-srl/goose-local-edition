@@ -1463,6 +1463,21 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} token ngữ cảnh. Nút đã trả lời lượt cuối của cuộc trò chuyện này không báo cửa sổ ngữ cảnh của nó."
   },
+  "controller.work.refreshLog": {
+    "defaultMessage": "Làm mới nhật ký"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "Tải đầu ra trước đó"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "Đang tải đầu ra trước đó…"
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "Tự động làm mới nhật ký đang tạm dừng khi xem đầu ra trước đó."
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "Chưa có đầu ra nhật ký."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Giới hạn cuộc trò chuyện"
   },

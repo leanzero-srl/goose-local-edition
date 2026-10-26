@@ -1463,6 +1463,21 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} токенов контекста. Узел, ответивший на последний ход этого чата, не сообщил своё контекстное окно."
   },
+  "controller.work.refreshLog": {
+    "defaultMessage": "Обновить журнал"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "Загрузить предыдущий вывод"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "Загрузка предыдущего вывода…"
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "Автоматическое обновление журнала приостановлено при просмотре предыдущего вывода."
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "В журнале пока нет вывода."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Ограничения разговора"
   },

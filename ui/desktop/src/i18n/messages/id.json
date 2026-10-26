@@ -1463,6 +1463,21 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} token konteks. Node yang menjawab giliran terakhir obrolan ini tidak melaporkan jendela konteksnya."
   },
+  "controller.work.refreshLog": {
+    "defaultMessage": "Segarkan log"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "Muat keluaran sebelumnya"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "Memuat keluaran sebelumnya…"
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "Penyegaran log otomatis dijeda saat melihat keluaran sebelumnya."
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "Belum ada keluaran log."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Batas Percakapan"
   },

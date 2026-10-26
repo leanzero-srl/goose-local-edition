@@ -1463,6 +1463,21 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} トークンのコンテキスト。このチャットの直前のターンに応答したノードは、コンテキストウィンドウを報告しませんでした。"
   },
+  "controller.work.refreshLog": {
+    "defaultMessage": "ログを更新"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "過去の出力を読み込む"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "過去の出力を読み込み中…"
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "過去の出力を表示している間、ログの自動更新は一時停止しています。"
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "ログ出力はまだありません。"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "会話制限"
   },

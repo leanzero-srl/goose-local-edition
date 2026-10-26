@@ -142,6 +142,28 @@ describe('selected controller transcript replay', () => {
     state = applyWorkFrame(state, fixtureFrame('tombstone', 7, null));
     expect(state.deleted).toBe(true);
     expect(state.items).toEqual([]);
+    expect(state.refreshSnapshot).toBe(false);
+    expect(state.nextHistoryPageToken).toBeNull();
+  });
+  it('resnapshots external log growth without changing the run phase', () => {
+    const entry = { ...fixtureEntry, work: { ...fixtureEntry.work, kind: 'shell_job' as const } };
+    const state = addHistory(workSnapshot({ ...fixtureSnapshot(), entry }), {
+      work: entry.work,
+      store_generation: entry.store_generation,
+      revision: 4,
+      items: [fixtureMessage('log_100_200', 4, 'Current tail')],
+      next_page_token: 'older-100',
+      work_cursor: 'cursor-4',
+    });
+    const changed = applyWorkFrame(state, {
+      ...fixtureFrame('log_updated', 5, { entry: { ...entry, revision: 5 } }),
+      work: entry.work,
+    });
+    expect(changed.refreshSnapshot).toBe(true);
+    expect(changed.entry.state).toBe('running');
+    expect(changed.cursor).toBe('cursor-5');
+    expect(changed.items).toEqual(state.items);
+    expect(changed.nextHistoryPageToken).toBe('older-100');
   });
   it('refuses cross-owner and changed-generation frames even when work IDs collide', () => {
     const state = workSnapshot(fixtureSnapshot());

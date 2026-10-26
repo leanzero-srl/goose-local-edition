@@ -1463,6 +1463,21 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} Tokens Kontext. Der Knoten, der den letzten Durchgang dieses Chats beantwortet hat, hat sein Kontextfenster nicht gemeldet."
   },
+  "controller.work.refreshLog": {
+    "defaultMessage": "Protokoll aktualisieren"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "Ältere Ausgabe laden"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "Ältere Ausgabe wird geladen…"
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "Die automatische Protokollaktualisierung ist beim Anzeigen älterer Ausgaben pausiert."
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "Noch keine Protokollausgabe."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Konversationslimits"
   },

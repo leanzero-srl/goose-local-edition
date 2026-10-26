@@ -1463,6 +1463,21 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} token bağlam. Bu sohbetin son turunu yanıtlayan düğüm bağlam penceresini bildirmedi."
   },
+  "controller.work.refreshLog": {
+    "defaultMessage": "Günlüğü yenile"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "Önceki çıktıyı yükle"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "Önceki çıktı yükleniyor…"
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "Önceki çıktı görüntülenirken otomatik günlük yenileme duraklatılır."
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "Henüz günlük çıktısı yok."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Konuşma Sınırları"
   },

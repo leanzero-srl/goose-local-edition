@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import type { CatalogEntry, CommandAction, HostDescriptor } from '../../acp/controllerTypes';
 import { defineMessages, useIntl } from '../../i18n';
@@ -14,6 +14,14 @@ const messages = defineMessages({
   owner: { id: 'controller.work.owner', defaultMessage: 'Runs on {name}' },
   load: { id: 'controller.work.load', defaultMessage: 'Loading from the owner Mac…' },
   reload: { id: 'controller.work.reload', defaultMessage: 'Reload owner state' },
+  refreshLog: { id: 'controller.work.refreshLog', defaultMessage: 'Refresh log' },
+  loadOlder: { id: 'controller.work.loadOlder', defaultMessage: 'Load older output' },
+  loadingOlder: { id: 'controller.work.loadingOlder', defaultMessage: 'Loading older output…' },
+  historyPaused: {
+    id: 'controller.work.historyPaused',
+    defaultMessage: 'Automatic log refresh is paused while viewing older output.',
+  },
+  noOutput: { id: 'controller.work.noOutput', defaultMessage: 'No log output yet.' },
   unavailable: {
     id: 'controller.work.unavailable',
     defaultMessage:
@@ -119,7 +127,28 @@ export default function ControllerWorkView({
   const intl = useIntl();
   const work = useControllerWork(entry);
   const [text, setText] = useState('');
+  const transcript = useRef<HTMLDivElement>(null);
+  const olderScroll = useRef<{ height: number; top: number } | null>(null);
   const current = work.state?.entry ?? entry;
+  const externalLog = current.work.kind !== 'chat';
+  useLayoutEffect(() => {
+    if (work.loadingOlder || !olderScroll.current || !transcript.current) return;
+    const { height, top } = olderScroll.current;
+    transcript.current.scrollTop = top + transcript.current.scrollHeight - height;
+    olderScroll.current = null;
+  }, [work.state?.items, work.loadingOlder]);
+  const refresh = () => {
+    olderScroll.current = null;
+    work.reload();
+  };
+  const loadOlder = () => {
+    if (transcript.current)
+      olderScroll.current = {
+        height: transcript.current.scrollHeight,
+        top: transcript.current.scrollTop,
+      };
+    void work.loadOlder();
+  };
   const disabled =
     stale ||
     host.availability !== 'online' ||
@@ -154,6 +183,22 @@ export default function ControllerWorkView({
         <p className="text-xs text-text-secondary break-all">
           {current.working_dir} · {current.work.kind} · {current.state}
         </p>
+        {externalLog && !work.state?.deleted && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              variant="outline"
+              disabled={work.loading || stale || host.availability !== 'online'}
+              onClick={refresh}
+            >
+              {intl.formatMessage(messages.refreshLog)}
+            </Button>
+            {work.historyPaused && (
+              <p role="status" className="text-sm text-text-secondary">
+                {intl.formatMessage(messages.historyPaused)}
+              </p>
+            )}
+          </div>
+        )}
         {(stale || host.availability !== 'online') && (
           <p role="status" className="text-text-danger text-sm">
             {intl.formatMessage(messages.unavailable)}
@@ -162,21 +207,41 @@ export default function ControllerWorkView({
         {work.error && (
           <div role="alert" className="text-text-danger text-sm space-y-2">
             <p>{work.error}</p>
-            <Button variant="outline" onClick={work.reload}>
+            <Button variant="outline" onClick={refresh}>
               {intl.formatMessage(messages.reload)}
             </Button>
           </div>
         )}
       </header>
-      <div className="flex-1 min-h-0 overflow-auto p-4 space-y-4" aria-live="polite">
+      <div
+        ref={transcript}
+        className="flex-1 min-h-0 overflow-auto p-4 space-y-4"
+        aria-live={work.historyPaused ? 'off' : 'polite'}
+      >
         {work.loading && <p>{intl.formatMessage(messages.load)}</p>}
         {work.state?.deleted && <p>{intl.formatMessage(messages.deleted)}</p>}
+        {externalLog && work.state?.nextHistoryPageToken && !work.state.deleted && (
+          <Button
+            variant="outline"
+            disabled={work.loadingOlder || stale || host.availability !== 'online'}
+            onClick={loadOlder}
+          >
+            {intl.formatMessage(work.loadingOlder ? messages.loadingOlder : messages.loadOlder)}
+          </Button>
+        )}
         {work.state?.items.map((item) => (
           <ControllerMessage key={item.message_id} message={transcriptMessage(item)} />
         ))}
-        {!work.loading && work.state && work.state.items.length === 0 && !work.state.deleted && (
-          <p className="text-text-secondary">{intl.formatMessage(messages.noMessages)}</p>
-        )}
+        {!work.loading &&
+          !work.error &&
+          work.state &&
+          work.state.items.length === 0 &&
+          !work.state.deleted &&
+          !work.state.nextHistoryPageToken && (
+            <p className="text-text-secondary">
+              {intl.formatMessage(externalLog ? messages.noOutput : messages.noMessages)}
+            </p>
+          )}
         {work.state?.pendingInputs.map((input) => (
           <ControllerInput
             key={`${input.input_id}:${input.run_id}`}

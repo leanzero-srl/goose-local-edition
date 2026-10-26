@@ -1463,6 +1463,21 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} टोकन का संदर्भ। जिस नोड ने इस चैट के पिछले टर्न का जवाब दिया, उसने अपनी कॉन्टेक्स्ट विंडो नहीं बताई।"
   },
+  "controller.work.refreshLog": {
+    "defaultMessage": "लॉग रीफ़्रेश करें"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "पुराना आउटपुट लोड करें"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "पुराना आउटपुट लोड हो रहा है…"
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "पुराना आउटपुट देखते समय लॉग का अपने आप रीफ़्रेश होना रुका हुआ है।"
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "अभी तक कोई लॉग आउटपुट नहीं है।"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "बातचीत की सीमाएँ"
   },

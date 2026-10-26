@@ -26,27 +26,47 @@ export function useControllerWork(selected: CatalogEntry) {
   const [state, setState] = useState<ControllerWorkState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [historyPaused, setHistoryPaused] = useState(false);
   const [sending, setSending] = useState(false);
   const [commands, setCommands] = useState<Array<PendingCommand & { error?: string }>>([]);
   const [reload, setReload] = useState(0);
   const current = useRef<ControllerWorkState | null>(null);
   const commandBusy = useRef(false);
   const alive = useRef(false);
+  const loadOlderRequest = useRef<(() => Promise<void>) | null>(null);
   const identity = workKey(selected.work);
 
   useEffect(() => {
     alive.current = true;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let paused = false;
+    let olderBusy = false;
+    const externalLog = selected.work.kind !== 'chat';
+    const historyTokens = new Set<string>();
     current.current = null;
     setState(null);
     setLoading(true);
+    setLoadingOlder(false);
+    setHistoryPaused(false);
     setError(null);
     setCommands([]);
     const publish = (next: ControllerWorkState) => {
       if (cancelled) return;
       current.current = next;
       setState(next);
+    };
+    const preserveHistory = (next: ControllerWorkState): ControllerWorkState => {
+      const previous = current.current;
+      if (!externalLog || !paused || !previous) return next;
+      return {
+        ...next,
+        items: previous.items,
+        partialIds: previous.partialIds,
+        historyRevision: previous.historyRevision,
+        nextHistoryPageToken: previous.nextHistoryPageToken,
+      };
     };
     const restoreCommands = async () => {
       const pending = await controllerPendingCommands(selected.work);
@@ -82,19 +102,48 @@ export function useControllerWork(selected: CatalogEntry) {
         next.entry.store_generation !== selected.store_generation
       )
         throw new Error('The owner returned a different work identity.');
-      let token: string | null = null;
-      const seen = new Set<string>();
-      do {
-        if (cancelled) return;
-        const page = await controllerHistory(selected.work, selected.store_generation, token);
-        next = addHistory(next, page);
-        token = page.next_page_token;
-        if (token && seen.has(token)) throw new Error('History pagination did not advance.');
-        if (token) seen.add(token);
-      } while (token);
+      if (!externalLog || !paused) {
+        let token: string | null = null;
+        const seen = new Set<string>();
+        do {
+          if (cancelled) return;
+          const page = await controllerHistory(selected.work, selected.store_generation, token);
+          next = addHistory(next, page);
+          token = page.next_page_token;
+          if (token && seen.has(token)) throw new Error('History pagination did not advance.');
+          if (token) seen.add(token);
+        } while (token && !externalLog);
+        if (!paused) {
+          historyTokens.clear();
+          for (const token of seen) historyTokens.add(token);
+        }
+      }
       if (!cancelled) {
-        publish(next);
+        publish(preserveHistory(next));
         setLoading(false);
+      }
+    };
+    loadOlderRequest.current = async () => {
+      const token = current.current?.nextHistoryPageToken;
+      if (!externalLog || !token || olderBusy || current.current?.deleted) return;
+      paused = true;
+      olderBusy = true;
+      setHistoryPaused(true);
+      setLoadingOlder(true);
+      try {
+        const page = await controllerHistory(selected.work, selected.store_generation, token);
+        if (cancelled || !current.current || current.current.deleted) return;
+        if (page.next_page_token && historyTokens.has(page.next_page_token))
+          throw new Error('History pagination did not advance.');
+        const next = addHistory(current.current, page);
+        if (page.next_page_token) historyTokens.add(page.next_page_token);
+        publish(next);
+        setError(null);
+      } catch (failure) {
+        if (!cancelled) setError(controllerErrorText(failure));
+      } finally {
+        olderBusy = false;
+        if (!cancelled) setLoadingOlder(false);
       }
     };
     const poll = async () => {
@@ -111,6 +160,10 @@ export function useControllerWork(selected: CatalogEntry) {
             selected.store_generation,
             next.cursor
           );
+          if (cancelled) return;
+          // Paging may have completed during the replay request. Keep its history and cursor.
+          if (current.current && current.current.sequence >= next.sequence) next = current.current;
+          else next = preserveHistory(next);
           for (const frame of batch.frames) next = applyWorkFrame(next, frame);
           if (!batch.resume_cursor || (batch.has_more && batch.resume_cursor === previousCursor))
             throw new Error('Work replay did not advance.');
@@ -142,6 +195,7 @@ export function useControllerWork(selected: CatalogEntry) {
     return () => {
       cancelled = true;
       alive.current = false;
+      loadOlderRequest.current = null;
       if (timer) clearTimeout(timer);
     };
     // A catalog revision refresh must not restart selected transcript history.
@@ -224,11 +278,14 @@ export function useControllerWork(selected: CatalogEntry) {
     state,
     error,
     loading,
+    loadingOlder,
+    historyPaused,
     sending,
     commands,
     send,
     retry: submitExact,
     checkReceipt,
+    loadOlder: () => loadOlderRequest.current?.(),
     reload: () => setReload((value) => value + 1),
   };
 }

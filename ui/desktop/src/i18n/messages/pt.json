@@ -1463,6 +1463,21 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} tokens de contexto. O nó que respondeu ao último turno deste chat não informou sua janela de contexto."
   },
+  "controller.work.refreshLog": {
+    "defaultMessage": "Atualizar registro"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "Carregar saída anterior"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "Carregando saída anterior…"
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "A atualização automática do registro está pausada durante a visualização da saída anterior."
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "Ainda não há saída no registro."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Limites da conversa"
   },

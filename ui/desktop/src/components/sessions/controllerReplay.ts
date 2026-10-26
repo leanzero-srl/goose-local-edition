@@ -18,6 +18,7 @@ export interface ControllerWorkState {
   cursor: string;
   sequence: number;
   historyRevision: number | null;
+  nextHistoryPageToken: string | null;
   refreshSnapshot: boolean;
   deleted: boolean;
 }
@@ -44,6 +45,16 @@ function mergeItems(items: HistoryItem[], added: HistoryItem[]): HistoryItem[] {
     (a, b) => transcriptMessage(a).created - transcriptMessage(b).created
   );
 }
+function mergeLogItems(items: HistoryItem[], added: HistoryItem[]): HistoryItem[] {
+  return mergeItems(items, added)
+    .map((item) => {
+      const range = /^log_(\d+)_(\d+)$/.exec(item.message_id);
+      if (!range) throw new Error('The owner returned a log chunk without its byte range.');
+      return { item, offset: Number(range[1]) };
+    })
+    .sort((a, b) => a.offset - b.offset)
+    .map(({ item }) => item);
+}
 export function workSnapshot(snapshot: WorkSnapshot): ControllerWorkState {
   const { entry, history_watermark: mark } = snapshot;
   if (
@@ -60,6 +71,7 @@ export function workSnapshot(snapshot: WorkSnapshot): ControllerWorkState {
     cursor: snapshot.work_cursor,
     sequence: mark.revision,
     historyRevision: null,
+    nextHistoryPageToken: null,
     refreshSnapshot: false,
     deleted: false,
   };
@@ -74,13 +86,18 @@ export function addHistory(state: ControllerWorkState, page: HistoryPage): Contr
   const committed = new Set(page.items.map((item) => item.message_id));
   const durable = state.items.filter((item) => !state.partialIds.includes(item.message_id));
   const partials = state.items.filter((item) => state.partialIds.includes(item.message_id));
+  const items =
+    state.entry.work.kind === 'chat'
+      ? mergeItems(mergeItems(durable, page.items), partials)
+      : mergeLogItems(state.items, page.items);
   return {
     ...state,
     // The history pages retain the owner's timestamp/row order. Live chunks come after those
     // rows for timestamp ties, including a user message and its answer in the same second.
-    items: mergeItems(mergeItems(durable, page.items), partials),
+    items,
     partialIds: state.partialIds.filter((id) => !committed.has(id)),
     historyRevision: page.revision,
+    nextHistoryPageToken: page.next_page_token,
   };
 }
 export function applyWorkFrame(state: ControllerWorkState, frame: WorkFrame): ControllerWorkState {
@@ -100,7 +117,15 @@ export function applyWorkFrame(state: ControllerWorkState, frame: WorkFrame): Co
   };
   const payload = objectValue(frame.payload);
   if (frame.type === 'tombstone')
-    return { ...next, deleted: true, items: [], pendingInputs: [], partialIds: [] };
+    return {
+      ...next,
+      deleted: true,
+      items: [],
+      pendingInputs: [],
+      partialIds: [],
+      nextHistoryPageToken: null,
+      refreshSnapshot: false,
+    };
   // A complete history snapshot is authoritative even for messages absent from it. Applying an
   // earlier upsert/delete can resurrect a deleted message or remove a subsequently renamed one.
   if (

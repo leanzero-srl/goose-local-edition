@@ -1463,6 +1463,21 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} 个上下文 token。回答此聊天上一轮的节点没有报告其上下文窗口。"
   },
+  "controller.work.refreshLog": {
+    "defaultMessage": "刷新日志"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "加载较早的输出"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "正在加载较早的输出…"
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "查看较早的输出时，日志自动刷新已暂停。"
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "暂无日志输出。"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "对话限制"
   },

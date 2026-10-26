@@ -1463,6 +1463,21 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} 토큰의 컨텍스트. 이 채팅의 마지막 턴에 응답한 노드가 컨텍스트 창을 알려 주지 않았습니다."
   },
+  "controller.work.refreshLog": {
+    "defaultMessage": "로그 새로 고침"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "이전 출력 불러오기"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "이전 출력 불러오는 중…"
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "이전 출력을 보는 동안 로그 자동 새로 고침이 일시 중지됩니다."
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "아직 로그 출력이 없습니다."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "대화 제한"
   },

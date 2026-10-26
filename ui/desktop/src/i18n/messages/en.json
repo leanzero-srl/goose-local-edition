@@ -1562,14 +1562,26 @@
   "controller.work.deleted": {
     "defaultMessage": "This work was deleted or is no longer shared by its owner."
   },
+  "controller.work.historyPaused": {
+    "defaultMessage": "Automatic log refresh is paused while viewing older output."
+  },
   "controller.work.load": {
     "defaultMessage": "Loading from the owner Mac…"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "Load older output"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "Loading older output…"
   },
   "controller.work.message": {
     "defaultMessage": "Message for this session on {name}"
   },
   "controller.work.noMessages": {
     "defaultMessage": "No visible messages yet."
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "No log output yet."
   },
   "controller.work.note": {
     "defaultMessage": "Add note"
@@ -1582,6 +1594,9 @@
   },
   "controller.work.queue": {
     "defaultMessage": "Queue next message"
+  },
+  "controller.work.refreshLog": {
+    "defaultMessage": "Refresh log"
   },
   "controller.work.reload": {
     "defaultMessage": "Reload owner state"

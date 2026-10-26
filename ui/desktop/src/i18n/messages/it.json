@@ -1463,6 +1463,21 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} token di contesto. Il nodo che ha risposto all’ultimo turno di questa chat non ha indicato la sua finestra di contesto."
   },
+  "controller.work.refreshLog": {
+    "defaultMessage": "Aggiorna registro"
+  },
+  "controller.work.loadOlder": {
+    "defaultMessage": "Carica output precedente"
+  },
+  "controller.work.loadingOlder": {
+    "defaultMessage": "Caricamento output precedente…"
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "L’aggiornamento automatico del registro è sospeso durante la visualizzazione dell’output precedente."
+  },
+  "controller.work.noOutput": {
+    "defaultMessage": "Nessun output nel registro per ora."
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Limiti della conversazione"
   },
