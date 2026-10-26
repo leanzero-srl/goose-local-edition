@@ -7,7 +7,7 @@ struct PendingInputView: View {
     @State private var answer = ""
     @State private var drafts: [String: String] = [:]
 
-    private var busy: Bool { store.selectedError != nil || store.sending || store.unfinishedCommand != nil }
+    private var busy: Bool { store.selectedError != nil || store.sending || store.sharingRequest != nil || store.unfinishedCommand != nil }
     var body: some View {
         StudioPanel {
             Label("Needs your answer", icon: .question).font(.headline).foregroundStyle(Studio.warningInk)

@@ -87,6 +87,14 @@ final class LocalControllerStore {
         else { next.pendingCommands.append(command) }
         try save(next)
     }
+    func removeUnacceptedCommand(_ id: UUID) throws {
+        var next = data
+        guard let index = next.pendingCommands.firstIndex(where: { $0.id == id }), next.pendingCommands[index].receipt == nil else {
+            throw ControllerError.invalid("This command already has a delivery receipt. Check its status before continuing.")
+        }
+        next.pendingCommands.remove(at: index)
+        try save(next)
+    }
     func clear() throws { try save(LocalControllerData()) }
     func cacheCatalog(_ snapshot: OwnerCatalogSnapshot) throws {
         var next = data

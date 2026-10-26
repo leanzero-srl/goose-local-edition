@@ -45,6 +45,7 @@ final class ControllerStore {
     private(set) var draftRevision = 0
     private(set) var pendingRevision = 0
     private(set) var sending = false
+    private(set) var sharingRequest: SessionSharingRequest?
     var selectedRef: WorkRef?
 
     @ObservationIgnored private let credentials: any CredentialStorage
@@ -268,6 +269,7 @@ final class ControllerStore {
     func synchronize() async { manualSync(); await syncTask?.value }
 
     func select(_ work: WorkRef?) async {
+        sharingRequest = nil
         workTask?.cancel(); workTask = nil
         selectedRequest = UUID()
         selectedLoading = false
@@ -297,7 +299,7 @@ final class ControllerStore {
         guard selectedError == nil, let work = selectedWork else { return }
         do {
             let command = try WorkCommand.make(entry: work.entry, action: action, text: draft(for: work.entry.work))
-            await deliver(command)
+            await requestDelivery(command)
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -308,21 +310,72 @@ final class ControllerStore {
         }
         do {
             let command = try WorkCommand.answer(entry: current.entry, input: input, option: option, value: value)
-            await deliver(command)
+            await requestDelivery(command, input: input)
         } catch { errorMessage = error.localizedDescription }
     }
 
-    private func deliver(_ command: WorkCommand) async {
+    private func requestDelivery(_ command: WorkCommand, input: PendingInput? = nil) async {
+        guard !sending, unfinishedCommand == nil else { return }
+        guard [.send, .steer, .note, .answerInput].contains(command.action) else {
+            sharingRequest = nil
+            await deliver(command)
+            return
+        }
+        guard sharingRequest == nil, authenticated, let identity = envelope,
+              let host = hosts.first(where: { $0.id == command.work.ownerNodeId }) else { return }
+        sharingRequest = .init(command: command, authority: identity.authority,
+                               deviceId: identity.credentials.device.id, ownerName: host.name, input: input)
+    }
+
+    func declineSharing() { sharingRequest = nil }
+
+    func confirmSharing(_ id: UUID) async {
+        guard let request = sharingRequest, request.id == id else { return }
+        sharingRequest = nil
+        do {
+            _ = try confirmedSharingCommand(request)
+            await deliver(request.command, sharing: request)
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    private func confirmedSharingCommand(_ request: SessionSharingRequest) throws -> WorkCommand {
+        guard authenticated, let identity = envelope, request.matches(identity),
+              selectedError == nil, selectedRef == request.command.work,
+              let current = selectedWork, current.entry.work == request.command.work,
+              current.entry.storeGeneration == request.command.expectedStoreGeneration,
+              current.entry.revision >= request.command.expectedRevision,
+              current.entry.currentRunId == request.command.expectedRunId,
+              current.entry.canPerform(request.command.action),
+              request.input.map({ current.pendingInputs.contains($0) }) ?? true else {
+            throw ControllerError.invalid("The account or session changed. Nothing was sent. Review the session and try again.")
+        }
+        // Stream progress changes the concurrency revision, not the instruction the user approved.
+        return .init(commandId: request.command.commandId, work: request.command.work,
+                     expectedStoreGeneration: request.command.expectedStoreGeneration, expectedRevision: current.entry.revision,
+                     expectedRunId: request.command.expectedRunId, action: request.command.action, payload: request.command.payload)
+    }
+
+    private func deliver(_ command: WorkCommand, sharing: SessionSharingRequest? = nil) async {
         guard !sending, unfinishedCommand == nil, let host = hosts.first(where: { $0.id == command.work.ownerNodeId }) else { return }
         sending = true
         defer { sending = false }
         do {
             guard let local else { throw ControllerError.unavailable("Command recovery storage is unavailable. Nothing was sent.") }
             let identity = try await validCredential()
+            let command = try sharing.map(confirmedSharingCommand) ?? command
             var pending = PendingCommand(command: command, createdAt: Date())
             try local.record(pending)
             pendingRevision += 1
-            let receipt = try await owner.submit(command, host: host, credential: identity.credentials.accessToken)
+            let receipt: CommandReceipt
+            do {
+                receipt = try await owner.submit(command, host: host, credential: identity.credentials.accessToken)
+            } catch ControllerError.remote(409, "stale_revision", _) {
+                // The owner checks this before accepting/journaling a new command, so no receipt exists.
+                try local.removeUnacceptedCommand(command.commandId)
+                pendingRevision += 1
+                if selectedRef == command.work { await select(command.work) }
+                throw ControllerError.invalid("The owner did not accept this action because the session changed. Review the refreshed session and try again. Your draft has been kept.")
+            }
             guard receipt.commandId == command.commandId, receipt.work == command.work else { throw ControllerError.malformedResponse }
             pending.receipt = receipt
             try local.record(pending)
@@ -412,6 +465,7 @@ final class ControllerStore {
         try await removeLocalAccess()
     }
     private func removeLocalAccess() async throws {
+        sharingRequest = nil
         stopStreams()
         selectedRequest = UUID()
         envelope = nil
@@ -678,6 +732,7 @@ final class ControllerStore {
     }
     func endSelection(_ work: WorkRef) {
         guard selectedRef == work else { return }
+        sharingRequest = nil
         selectedRequest = UUID()
         workTask?.cancel(); workTask = nil
         selectedRef = nil; selectedWork = nil; selectedError = nil
@@ -693,6 +748,7 @@ final class ControllerStore {
         }
     }
     func sceneBackground() async {
+        sharingRequest = nil
         foreground = false
         stopStreams()
         syncTask?.cancel()

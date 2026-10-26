@@ -19,6 +19,9 @@ struct SessionDetailView: View {
                 description: { Text("Refresh the session list and try again.") }
             }
         }
+        .sheet(item: Binding(get: { store.sharingRequest }, set: { if $0 == nil { store.declineSharing() } })) { request in
+            SessionSharingView(request: request).environment(store)
+        }
         .studioScreen().navigationTitle(store.selectedWork?.entry.title ?? work.kind.title)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: work) { if store.selectedRef != work || store.selectedError != nil { await store.select(work) } }
@@ -114,7 +117,7 @@ struct SessionDetailView: View {
                 Spacer()
                 Button { Task { await store.send(action: action) } } label: { Label(action.title, icon: .arrowUp) }
                     .buttonStyle(StudioPrimaryButtonStyle()).controlSize(.large)
-                    .disabled(store.selectedError != nil || !entry.canPerform(action) || !store.canStoreDrafts || store.sending || store.unfinishedCommand != nil || store.draft(for: work).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(store.selectedError != nil || !entry.canPerform(action) || !store.canStoreDrafts || store.sending || store.sharingRequest != nil || store.unfinishedCommand != nil || store.draft(for: work).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(16).background(Studio.surface)
