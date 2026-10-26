@@ -5807,6 +5807,30 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} cần {need} GB trên Mac này và hiện có {free} GB trống cho nó — thiếu {short} GB."
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "Tự động"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "tự động: tắt trên Mac này"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "tự động: bật trên Mac này"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "Giữ bảng n-gram trên ổ đĩa"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Đo trên Qwen3.8-Flash-Next (M5 Max 128 GB): từ 104 GB xuống 72 GB bộ nhớ, tốc độ giải mã chênh vài phần trăm, cùng câu trả lời."
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "Mô hình đọc từ SSD vài hàng trong bảng n-gram 32 GB mà mỗi token cần, thay vì giữ cả bảng trong bộ nhớ. Tự động bật khi mô hình không vừa Mac này nếu không làm vậy. Áp dụng ở lần nạp tiếp theo."
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "Tắt"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "Bật"
+  },
   "mlxPromptLookup.auto": {
     "defaultMessage": "Tự động"
   },

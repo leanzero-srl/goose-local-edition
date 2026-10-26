@@ -5807,6 +5807,30 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} precisa de {need} GB neste Mac e agora há {free} GB livres para ele — faltam {short} GB."
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "auto: desligado neste Mac"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "auto: ligado neste Mac"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "Manter a tabela de n-gramas no disco"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Medido no Qwen3.8-Flash-Next (M5 Max 128 GB): de 104 GB para 72 GB em memória, velocidade de decodificação a poucos por cento, as mesmas respostas."
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "O modelo lê do SSD as poucas linhas da sua tabela de n-gramas de 32 GB de que cada token precisa, em vez de manter a tabela na memória. Auto ativa-o quando o modelo não caberia de outra forma neste Mac. Aplica-se na próxima montagem."
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "Desligado"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "Ligado"
+  },
   "mlxPromptLookup.auto": {
     "defaultMessage": "Auto"
   },

@@ -59,6 +59,7 @@ import { mlxErrorMessage } from './mlxErrorMessage';
 import { MlxThinkingFields } from './MlxThinkingFields';
 import { MlxKvCacheFields } from './MlxKvCacheFields';
 import { MlxPromptLookupFields } from './MlxPromptLookupFields';
+import { MlxNgramTableFields } from './MlxNgramTableFields';
 import {
   mlxEngineBrowse,
   mlxEngineBrowseFilters,
@@ -302,6 +303,8 @@ export type LaneSettingKey = 'speculative' | 'adapterPath' | 'textOnly';
 export type ThinkingSettingKey = 'thinking' | 'reasoningEffort';
 /** `kvCache` is '' (off — the engine's bf16 cache) | 'int8' | 'int4'. */
 export type KvCacheSettingKey = 'kvCache';
+/** `pleOffload` is '' (auto) | 'true' | 'false'. */
+export type NgramTableSettingKey = 'pleOffload';
 /**
  * `promptLookupMode` is '' (auto) | 'on' | 'off'; the three numbers are drafted as text and a
  * blank one leaves the engine's default for the lane.
@@ -316,6 +319,7 @@ export type ProfileDraftKey =
   | LaneSettingKey
   | ThinkingSettingKey
   | KvCacheSettingKey
+  | NgramTableSettingKey
   | PromptLookupSettingKey;
 
 export type NumericDrafts = Record<ProfileDraftKey, string>;
@@ -325,7 +329,13 @@ const NUMERIC_KEYS: NumericSettingKey[] = [...SAMPLING_FIELDS, CONTEXT_LIMIT_FIE
 );
 const LANE_KEYS: LaneSettingKey[] = ['speculative', 'adapterPath', 'textOnly'];
 const THINKING_KEYS: ThinkingSettingKey[] = ['thinking', 'reasoningEffort'];
-const PROFILE_KEYS = [...NUMERIC_KEYS, ...LANE_KEYS, ...THINKING_KEYS, 'kvCache'] as const;
+const PROFILE_KEYS = [
+  ...NUMERIC_KEYS,
+  ...LANE_KEYS,
+  ...THINKING_KEYS,
+  'kvCache',
+  'pleOffload',
+] as const;
 const PROMPT_LOOKUP_NUMBERS = [
   ['promptLookupMinNgram', 'minNgram'],
   ['promptLookupMaxNgram', 'maxNgram'],
@@ -349,6 +359,7 @@ export function draftsFromProfile(profile: MlxModelProfile | undefined): Numeric
   drafts.thinking = profile?.thinking ?? '';
   drafts.reasoningEffort = profile?.reasoningEffort ?? '';
   drafts.kvCache = profile?.kvCache ?? '';
+  drafts.pleOffload = profile?.pleOffload == null ? '' : String(profile.pleOffload);
   drafts.promptLookupMode = profile?.promptLookup?.mode ?? '';
   for (const [key, field] of PROMPT_LOOKUP_NUMBERS) {
     const value = profile?.promptLookup?.[field];
@@ -377,6 +388,8 @@ export function profileFromDrafts(drafts: NumericDrafts): MlxModelProfile {
   const effort = drafts.reasoningEffort.trim();
   if (effort !== '') profile.reasoningEffort = effort;
   if (drafts.kvCache === 'int8' || drafts.kvCache === 'int4') profile.kvCache = drafts.kvCache;
+  if (drafts.pleOffload === 'true') profile.pleOffload = true;
+  else if (drafts.pleOffload === 'false') profile.pleOffload = false;
   const promptLookup: MlxPromptLookup = {};
   const plMode = drafts.promptLookupMode.trim();
   if (plMode === 'on' || plMode === 'off') promptLookup.mode = plMode;
@@ -1450,6 +1463,11 @@ function SamplingSection(props: SamplingSectionProps) {
                 setDraft={setDraft}
               />
               <MlxPromptLookupFields
+                model={models.find((m) => m.id === selectedModelId)}
+                drafts={drafts}
+                setDraft={setDraft}
+              />
+              <MlxNgramTableFields
                 model={models.find((m) => m.id === selectedModelId)}
                 drafts={drafts}
                 setDraft={setDraft}

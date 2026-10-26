@@ -5807,6 +5807,30 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model}은(는) 이 Mac에서 {need} GB가 필요하고 지금 쓸 수 있는 여유는 {free} GB입니다. {short} GB 부족합니다."
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "자동"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "자동: 이 Mac에서 꺼짐"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "자동: 이 Mac에서 켜짐"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "n-gram 테이블을 디스크에 두기"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Qwen3.8-Flash-Next(M5 Max 128GB)에서 측정: 메모리 104GB에서 72GB로, 디코드 속도 차이는 몇 퍼센트 이내, 같은 답변."
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "모델이 32GB n-gram 테이블을 메모리에 두지 않고 토큰마다 필요한 몇 행만 SSD에서 읽습니다. 자동은 그렇지 않으면 모델이 이 Mac에 맞지 않을 때 켭니다. 다음 마운트부터 적용됩니다."
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "꺼짐"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "켜짐"
+  },
   "mlxPromptLookup.auto": {
     "defaultMessage": "자동"
   },

@@ -5969,6 +5969,30 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} needs {need} GB on this Mac and {free} GB is free for it now — {short} GB short."
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "auto: off for this Mac"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "auto: on for this Mac"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "Keep n-gram table on disk"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Measured on Qwen3.8-Flash-Next (M5 Max 128 GB): 104 GB to 72 GB held, decode speed within a few percent, the same answers."
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "The model reads the few rows of its 32 GB n-gram table each token needs from the SSD instead of holding the table in memory. Auto turns it on when the model would not otherwise fit this Mac. Applies at the next mount."
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "Off"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "On"
+  },
   "mlxPromptLookup.auto": {
     "defaultMessage": "Auto"
   },

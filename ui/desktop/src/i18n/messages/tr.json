@@ -5807,6 +5807,30 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} bu Mac'te {need} GB istiyor ve şu an onun için {free} GB boş — {short} GB eksik."
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "Otomatik"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "otomatik: bu Mac'te kapalı"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "otomatik: bu Mac'te açık"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "N-gram tablosunu diskte tut"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Qwen3.8-Flash-Next (M5 Max 128 GB) üzerinde ölçüldü: bellekte 104 GB yerine 72 GB, çözme hızı birkaç yüzde içinde, aynı yanıtlar."
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "Model, 32 GB'lık n-gram tablosunu bellekte tutmak yerine her token'ın ihtiyaç duyduğu birkaç satırı SSD'den okur. Otomatik, model aksi halde bu Mac'e sığmayacaksa açar. Bir sonraki yüklemede uygulanır."
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "Kapalı"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "Açık"
+  },
   "mlxPromptLookup.auto": {
     "defaultMessage": "Otomatik"
   },

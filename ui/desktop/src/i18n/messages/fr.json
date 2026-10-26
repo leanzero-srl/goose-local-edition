@@ -5807,6 +5807,30 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} a besoin de {need} Go sur ce Mac et {free} Go sont libres pour lui maintenant — il manque {short} Go."
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "auto : désactivé sur ce Mac"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "auto : activé sur ce Mac"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "Garder la table de n-grammes sur le disque"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Mesuré sur Qwen3.8-Flash-Next (M5 Max 128 Go) : de 104 Go à 72 Go en mémoire, vitesse de décodage à quelques pour cent près, les mêmes réponses."
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "Le modèle lit sur le SSD les quelques lignes de sa table de n-grammes de 32 Go dont chaque jeton a besoin, au lieu de garder la table en mémoire. Auto l'active quand le modèle ne tiendrait pas autrement sur ce Mac. S'applique au prochain chargement."
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "Désactivé"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "Activé"
+  },
   "mlxPromptLookup.auto": {
     "defaultMessage": "Auto"
   },

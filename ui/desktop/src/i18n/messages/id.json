@@ -5807,6 +5807,30 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} butuh {need} GB di Mac ini dan sekarang {free} GB tersedia untuknya — kurang {short} GB."
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "Otomatis"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "otomatis: nonaktif untuk Mac ini"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "otomatis: aktif untuk Mac ini"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "Simpan tabel n-gram di disk"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Diukur pada Qwen3.8-Flash-Next (M5 Max 128 GB): 104 GB menjadi 72 GB di memori, kecepatan dekode selisih beberapa persen, jawaban yang sama."
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "Model membaca beberapa baris tabel n-gram 32 GB yang dibutuhkan tiap token dari SSD, alih-alih menyimpan tabel di memori. Otomatis menyalakannya bila model tidak akan muat di Mac ini. Berlaku pada pemuatan berikutnya."
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "Nonaktif"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "Aktif"
+  },
   "mlxPromptLookup.auto": {
     "defaultMessage": "Otomatis"
   },

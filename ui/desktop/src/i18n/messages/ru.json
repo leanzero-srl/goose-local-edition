@@ -5807,6 +5807,30 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} нужно {need} ГБ на этом Mac, а свободно для неё сейчас {free} ГБ — не хватает {short} ГБ."
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "Авто"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "авто: выкл на этом Mac"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "авто: вкл на этом Mac"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "Держать таблицу n-грамм на диске"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Измерено на Qwen3.8-Flash-Next (M5 Max 128 ГБ): занято 72 ГБ вместо 104 ГБ, скорость декодирования в пределах нескольких процентов, те же ответы."
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "Модель читает с SSD те несколько строк своей таблицы n-грамм на 32 ГБ, которые нужны каждому токену, вместо того чтобы держать таблицу в памяти. Авто включает это, когда иначе модель не поместится на этом Mac. Применяется при следующей загрузке."
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "Выкл"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "Вкл"
+  },
   "mlxPromptLookup.auto": {
     "defaultMessage": "Авто"
   },

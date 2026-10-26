@@ -5807,6 +5807,30 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} はこの Mac で {need} GB を必要とし、今使える空きは {free} GB です。{short} GB 不足しています。"
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "自動"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "自動: この Mac ではオフ"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "自動: この Mac ではオン"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "n-gram テーブルをディスクに置く"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Qwen3.8-Flash-Next（M5 Max 128 GB）で測定: 保持メモリ 104 GB から 72 GB、デコード速度の差は数パーセント以内、回答は同一。"
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "32 GB の n-gram テーブルをメモリに保持せず、各トークンに必要な数行だけを SSD から読み込みます。自動は、そうしないとモデルがこの Mac に収まらない場合にオンにします。次回のマウントから適用されます。"
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "オフ"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "オン"
+  },
   "mlxPromptLookup.auto": {
     "defaultMessage": "自動"
   },

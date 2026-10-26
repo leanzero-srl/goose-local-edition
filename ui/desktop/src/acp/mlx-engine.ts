@@ -194,6 +194,11 @@ export interface MlxModelProfile {
    * MTP for Qwen3.5/3.6/3.8; the suffix lane stays off). A change restarts the engine.
    */
   promptLookup?: MlxPromptLookup;
+  /**
+   * Keep the n-gram (PLE) table on disk (`--qwen4-ple-offload`). Absent = auto: on when the
+   * model would not otherwise fit this Mac. Ignored for a model without the table.
+   */
+  pleOffload?: boolean;
 }
 
 export type MlxKvCacheMode = 'int8' | 'int4';
@@ -312,6 +317,10 @@ export interface MlxLocalModel {
   /** config.json declares recurrent-state layers; absent exactly when `hybridError` says why. */
   hybrid?: boolean | null;
   hybridError?: string | null;
+  /** The checkpoint carries an n-gram (PLE) table the engine can leave on disk. */
+  hasNgramTable?: boolean;
+  /** What auto resolves to on this Mac. */
+  ngramTableAutoOn?: boolean;
 }
 
 export interface MlxModelsList {

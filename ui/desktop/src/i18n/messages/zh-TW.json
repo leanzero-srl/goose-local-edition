@@ -5807,6 +5807,30 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} 在這台 Mac 上需要 {need} GB，現在可供它使用的空閒為 {free} GB — 還差 {short} GB。"
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "自動"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "自動：此 Mac 上關閉"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "自動：此 Mac 上開啟"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "將 n-gram 表保留在磁碟上"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "在 Qwen3.8-Flash-Next（M5 Max 128 GB）上實測：佔用記憶體從 104 GB 降到 72 GB，解碼速度相差幾個百分點以內，回答相同。"
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "模型不再把 32 GB 的 n-gram 表放在記憶體中，而是從 SSD 讀取每個 token 所需的幾列。當模型否則無法放入此 Mac 時，自動會開啟。在下次掛載時生效。"
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "關"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "開"
+  },
   "mlxPromptLookup.auto": {
     "defaultMessage": "自動"
   },

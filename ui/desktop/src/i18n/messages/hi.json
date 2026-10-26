@@ -5807,6 +5807,30 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} को इस Mac पर {need} GB चाहिए और अभी इसके लिए {free} GB खाली है — {short} GB कम।"
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "ऑटो"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "ऑटो: इस Mac पर बंद"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "ऑटो: इस Mac पर चालू"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "n-gram तालिका डिस्क पर रखें"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Qwen3.8-Flash-Next (M5 Max 128 GB) पर मापा गया: 104 GB से 72 GB मेमोरी, डिकोड गति कुछ प्रतिशत के भीतर, वही उत्तर।"
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "मॉडल अपनी 32 GB n-gram तालिका को मेमोरी में रखने के बजाय हर टोकन के लिए ज़रूरी कुछ पंक्तियाँ SSD से पढ़ता है। ऑटो इसे तब चालू करता है जब मॉडल अन्यथा इस Mac में फ़िट नहीं होगा। अगली माउंट पर लागू होता है।"
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "बंद"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "चालू"
+  },
   "mlxPromptLookup.auto": {
     "defaultMessage": "ऑटो"
   },
