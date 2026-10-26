@@ -198,9 +198,19 @@ impl GooseAcpAgent {
             .prepare_session_for_activation(session, args.cwd.clone(), args.mcp_servers, true)
             .await?;
 
+        let replay = self
+            .owner_runs
+            .begin_observer_replay(
+                self.observer_id,
+                &session_id_str,
+                cx.clone(),
+                self.supports_goose_custom_notifications(),
+            )
+            .await
+            .internal_err_ctx("Failed to establish owner replay boundary")?;
         let replay_tool_requests = replay_conversation_to_client(
             cx,
-            &session,
+            &replay.session,
             self.supports_goose_custom_notifications(),
         )?;
         let (agent, extension_results) = self.prepare_acp_session_agent(cx, &session).await?;
@@ -242,6 +252,7 @@ impl GooseAcpAgent {
             ms = t_start.elapsed().as_millis() as u64,
             "perf: load_session_refactor done"
         );
+        replay.complete()?;
         self.closed_session_ids.lock().await.remove(&session_id_str);
         Ok(response)
     }

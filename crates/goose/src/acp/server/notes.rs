@@ -533,7 +533,7 @@ impl GooseAcpAgent {
     /// read or write is logged and the person's message still goes.
     pub(super) async fn notes_before_message(
         &self,
-        cx: &ConnectionTo<Client>,
+        _cx: &ConnectionTo<Client>,
         session_id: &SessionId,
         persons_message: bool,
     ) {
@@ -556,12 +556,10 @@ impl GooseAcpAgent {
                             message.created,
                             false,
                         ));
-                        if let Err(error) = cx.send_notification(SessionNotification::new(
+                        self.owner_runs.notify_session(SessionNotification::new(
                             session_id.clone(),
                             SessionUpdate::UserMessageChunk(chunk),
-                        )) {
-                            warn!(session_id = %sid, ?error, "notes: the note's marker did not reach this window; it is stored in the chat");
-                        }
+                        ));
                         senders.push(note.from.session_id.clone());
                     }
                     if !notes.is_empty() {

@@ -127,6 +127,7 @@ mod mlx_placement;
 mod mlx_remote_single;
 mod mlx_replica;
 pub use mlx_engine::GoosedMlxControl;
+pub(crate) use providers::{create_provider_core, save_provider_config_core};
 mod model_fields;
 mod needs_you;
 mod new_session;
@@ -265,8 +266,7 @@ enum TurnStop {
     /// Cancelled through the prompt: the person's Stop, or a tick yielding to a reply (`cause`).
     Cancelled {
         cause: Option<crate::session_loops::rules::CancelCause>,
-        window: ConnectionTo<Client>,
-        custom_notifications: bool,
+        owner_runs: Arc<OwnerRunRegistry>,
     },
     /// The prompt was dropped with its connection while the reply streamed.
     Dropped,
@@ -302,34 +302,19 @@ async fn settle_stopped_turn(
             }
             return;
         }
-        TurnStop::Cancelled {
-            window,
-            custom_notifications,
-            ..
-        } => Some((window, custom_notifications)),
+        TurnStop::Cancelled { owner_runs, .. } => Some(owner_runs),
         TurnStop::Dropped if user => None,
         TurnStop::Dropped => return,
     };
     let stopped = meter.stopped().await;
     match crate::turn_outcome::record_stopped(&session_manager, &session_id, stopped).await {
         Ok(notice) => {
-            let Some((cx, custom_notifications)) = window else {
+            let Some(owner_runs) = window else {
                 return;
             };
             for content in &notice.content {
                 if let MessageContent::SystemNotification(notification) = content {
-                    if let Err(error) = send_status_message_update(
-                        &cx,
-                        custom_notifications,
-                        &session_id,
-                        notification,
-                    ) {
-                        warn!(
-                            session_id,
-                            ?error,
-                            "the stopped turn's notice was not sent; it is stored in the chat"
-                        );
-                    }
+                    owner_status_message_update(&owner_runs, &session_id, notification);
                 }
             }
         }
@@ -1496,7 +1481,12 @@ impl GooseAcpAgent {
             .insert(session_id.clone(), acp_session);
         if let Some(cx) = self.client_cx.get() {
             self.owner_runs
-                .attach_observer(self.observer_id, &session_id, cx.clone())
+                .attach_observer(
+                    self.observer_id,
+                    &session_id,
+                    cx.clone(),
+                    self.supports_goose_custom_notifications(),
+                )
                 .await;
         }
     }
@@ -1589,6 +1579,39 @@ impl GooseAcpAgent {
             }
         }
         message
+    }
+
+    fn publish_user_prompt(
+        &self,
+        session_id: &SessionId,
+        message: &Message,
+        except_live: Option<Uuid>,
+    ) {
+        for content in message
+            .content
+            .iter()
+            .filter_map(|content| content.filter_for_audience(Role::User))
+        {
+            let content = match content {
+                MessageContent::Text(text) => {
+                    ContentBlock::Text(TextContent::new(text.text.clone()))
+                }
+                MessageContent::Image(image) => ContentBlock::Image(ImageContent::new(
+                    image.data.clone(),
+                    image.mime_type.clone(),
+                )),
+                _ => continue,
+            };
+            self.owner_runs.notify_session_except(
+                SessionNotification::new(
+                    session_id.clone(),
+                    SessionUpdate::UserMessageChunk(
+                        ContentChunk::new(content).meta(replay_message_meta(message)),
+                    ),
+                ),
+                except_live,
+            );
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1693,12 +1716,7 @@ impl GooseAcpAgent {
                 ActionRequiredData::ElicitationResponse { .. } => {}
             },
             MessageContent::SystemNotification(notification) => {
-                let _ = send_status_message_update(
-                    cx,
-                    self.supports_goose_custom_notifications(),
-                    session_id.0.as_ref(),
-                    notification,
-                );
+                owner_status_message_update(&self.owner_runs, session_id.0.as_ref(), notification);
             }
             _ => {}
         }
@@ -1917,7 +1935,7 @@ impl GooseAcpAgent {
         session_id: &SessionId,
         _session_id_str: &str,
         session: &mut GooseAcpSession,
-        cx: &ConnectionTo<Client>,
+        _cx: &ConnectionTo<Client>,
     ) {
         let Some(chain) = session.chain_membership.get(tool_call_id).cloned() else {
             warn!(
@@ -1991,7 +2009,7 @@ impl GooseAcpAgent {
 
         let sid = session_id.clone();
         let chain_for_task = chain.clone();
-        let cx = cx.clone();
+        let owner_runs = self.owner_runs.clone();
         let session_manager = self.session_manager.clone();
 
         let first_id = first_id.clone();
@@ -2063,7 +2081,7 @@ impl GooseAcpAgent {
 
             let meta = with_tool_chain_summary_meta(identity_meta, &summary, count);
             let fields = ToolCallUpdateFields::new();
-            let _ = cx.send_notification(SessionNotification::new(
+            owner_runs.notify_session(SessionNotification::new(
                 sid,
                 SessionUpdate::ToolCallUpdate(
                     ToolCallUpdate::new(ToolCallId::new(first_id), fields).meta(meta),
@@ -2266,6 +2284,19 @@ fn send_status_message_update(
     Ok(())
 }
 
+fn owner_status_message_update(
+    registry: &OwnerRunRegistry,
+    session_id: &str,
+    notification: &SystemNotificationContent,
+) {
+    if let Some(status) = status_message_from_system_notification(notification) {
+        registry.notify_custom_session(GooseSessionNotification {
+            session_id: session_id.to_owned(),
+            update: GooseSessionUpdate::StatusMessage(StatusMessageUpdate { status }),
+        });
+    }
+}
+
 /// The loading line for a response whose tool calls are still forming, built only from what the
 /// decoder has received (see `FormingProgress`): the tool being written, by the name the chat gives
 /// tools (`format_tool_name`, Q-151), and the counts. `None` until there is something to report. The
@@ -2360,17 +2391,12 @@ fn forming_status(progress: &goose_providers::formats::openai::FormingProgress) 
 /// Sends the forming line as a progress status whenever its text changes — the counts are the
 /// cadence, so nothing here reads a clock. A client without goose's custom notifications gets none.
 fn forming_progress_observer(
-    cx: &ConnectionTo<Client>,
+    registry: Arc<OwnerRunRegistry>,
     session_id: &str,
-    supports_goose_custom_notifications: bool,
 ) -> goose_providers::formats::openai::FormingProgressObserver {
-    let cx = cx.clone();
     let session_id = session_id.to_string();
     let last_sent = std::sync::Mutex::new(String::new());
     std::sync::Arc::new(move |progress| {
-        if !supports_goose_custom_notifications {
-            return;
-        }
         let Some(message) = forming_progress_text(&progress) else {
             return;
         };
@@ -2388,14 +2414,8 @@ fn forming_progress_observer(
                 },
             }),
         };
-        match cx.send_notification(notification) {
-            Ok(()) => *last = message,
-            Err(e) => warn!(
-                session_id = %session_id,
-                error = ?e,
-                "the forming-progress status could not be sent to the client"
-            ),
-        }
+        registry.notify_custom_session(notification);
+        *last = message;
     })
 }
 
@@ -2403,17 +2423,12 @@ fn forming_progress_observer(
 /// it to admit again, then the lift — as the same progress status the forming line uses. A client
 /// without goose's custom notifications gets none.
 fn engine_hold_observer(
-    cx: &ConnectionTo<Client>,
+    registry: Arc<OwnerRunRegistry>,
     session_id: &str,
-    supports_goose_custom_notifications: bool,
 ) -> goose_providers::engine_hold::EngineHoldObserver {
     use goose_providers::engine_hold::EngineHoldEvent;
-    let cx = cx.clone();
     let session_id = session_id.to_string();
     std::sync::Arc::new(move |event| {
-        if !supports_goose_custom_notifications {
-            return;
-        }
         let (EngineHoldEvent::Waiting { words } | EngineHoldEvent::Admitted { words }) = event;
         let notification = GooseSessionNotification {
             session_id: session_id.clone(),
@@ -2425,13 +2440,7 @@ fn engine_hold_observer(
                 },
             }),
         };
-        if let Err(e) = cx.send_notification(notification) {
-            warn!(
-                session_id = %session_id,
-                error = ?e,
-                "the engine-hold status could not be sent to the client"
-            );
-        }
+        registry.notify_custom_session(notification);
     })
 }
 
@@ -2842,33 +2851,6 @@ impl GooseAcpAgent {
         }
     }
 
-    fn active_run_meta(active_run_id: Option<&str>) -> Meta {
-        let mut goose = serde_json::Map::new();
-        goose.insert(
-            "activeRunId".to_string(),
-            active_run_id
-                .map(|run_id| serde_json::Value::String(run_id.to_string()))
-                .unwrap_or(serde_json::Value::Null),
-        );
-
-        let mut meta = serde_json::Map::new();
-        meta.insert("goose".to_string(), serde_json::Value::Object(goose));
-        meta
-    }
-
-    fn send_active_run_update(
-        cx: &ConnectionTo<Client>,
-        session_id: &SessionId,
-        active_run_id: Option<&str>,
-    ) -> Result<(), agent_client_protocol::Error> {
-        cx.send_notification(SessionNotification::new(
-            session_id.clone(),
-            SessionUpdate::SessionInfoUpdate(
-                SessionInfoUpdate::new().meta(Self::active_run_meta(active_run_id)),
-            ),
-        ))
-    }
-
     fn send_queued_steer_update(
         cx: &ConnectionTo<Client>,
         session_id: &SessionId,
@@ -2967,7 +2949,7 @@ impl GooseAcpAgent {
     /// recorded whole (Q-519).
     async fn settle_cancelled_turn(
         &self,
-        cx: &ConnectionTo<Client>,
+        _cx: &ConnectionTo<Client>,
         session_id: &str,
         cause: Option<crate::session_loops::rules::CancelCause>,
         turn: StreamingTurn,
@@ -2978,8 +2960,7 @@ impl GooseAcpAgent {
             turn,
             TurnStop::Cancelled {
                 cause,
-                window: cx.clone(),
-                custom_notifications: self.supports_goose_custom_notifications(),
+                owner_runs: self.owner_runs.clone(),
             },
         );
         if let Err(error) = tokio::spawn(settle).await {
@@ -3190,11 +3171,9 @@ impl GooseAcpAgent {
                     cause: cause.get().cloned(),
                 }));
             }
-            let _ = Self::send_active_run_update(cx, &args.session_id, None);
+
             return Ok(PromptResponse::new(StopReason::Cancelled));
         }
-
-        let _ = Self::send_active_run_update(cx, &args.session_id, Some(&run_id));
 
         let user_message = Self::convert_acp_prompt_to_message(&args.prompt);
         let user_message = match ticket
@@ -3202,7 +3181,7 @@ impl GooseAcpAgent {
             .and_then(|ticket| ticket.message_id.as_ref())
         {
             Some(id) => user_message.with_id(id),
-            None => user_message,
+            None => user_message.with_generated_id(),
         };
         // A tick's message takes the id the runner minted with the offer (§5.2 step 2): the
         // window's marker and the stored message are the same message.
@@ -3223,7 +3202,7 @@ impl GooseAcpAgent {
                     )
                 {
                     if recipe_path.exists() {
-                        let _ = cx.send_notification(SessionNotification::new(
+                        self.owner_runs.notify_session(SessionNotification::new(
                             args.session_id.clone(),
                             SessionUpdate::AgentMessageChunk(ContentChunk::new(
                                 ContentBlock::Text(TextContent::new(format!(
@@ -3257,7 +3236,6 @@ impl GooseAcpAgent {
         if let Some(note) = &cross_note {
             if let Err(error) = self.take_cross_note(&session_id, note).await {
                 self.end_run(&mut run).await;
-                let _ = Self::send_active_run_update(cx, &args.session_id, None);
                 return Err(error);
             }
         }
@@ -3273,6 +3251,13 @@ impl GooseAcpAgent {
         // after the message it introduces — for this turn's model and on every reload. The
         // message is stamped as it enters the chat, after everything that precedes it.
         user_message.created = chrono::Utc::now().timestamp();
+        if crate::agents::execute_commands::parse_slash_command(&message_text).is_none() {
+            self.publish_user_prompt(
+                &args.session_id,
+                &user_message,
+                ticket.is_none().then_some(self.observer_id),
+            );
+        }
 
         let session_config = SessionConfig {
             id: session_id.clone(),
@@ -3288,7 +3273,6 @@ impl GooseAcpAgent {
             Ok(stream) => stream,
             Err(error) => {
                 self.end_run(&mut run).await;
-                let _ = Self::send_active_run_update(cx, &args.session_id, None);
                 if let Some(tick) = tick.take() {
                     tick.failed("reply", format!("Error getting agent reply: {error}"));
                 }
@@ -3321,10 +3305,8 @@ impl GooseAcpAgent {
         // are processed.
         let mut chain_buffer: Vec<(String, String)> = Vec::new();
         let mut stream_error = None;
-        let forming_observer =
-            forming_progress_observer(cx, &session_id, self.supports_goose_custom_notifications());
-        let hold_observer =
-            engine_hold_observer(cx, &session_id, self.supports_goose_custom_notifications());
+        let forming_observer = forming_progress_observer(self.owner_runs.clone(), &session_id);
+        let hold_observer = engine_hold_observer(self.owner_runs.clone(), &session_id);
 
         loop {
             let event = tokio::select! {
@@ -3482,18 +3464,21 @@ impl GooseAcpAgent {
                         tracing::error!(%error, "discarded owner partial could not be cleared");
                     }
                 }
+                Ok(crate::agents::AgentEvent::HistoryReplaced(_)) => {
+                    // This changes model context, not the live transcript already shown. Keep
+                    // the run's original visual boundary even when persistence rewrites IDs.
+                }
                 Ok(crate::agents::AgentEvent::Usage(usage)) => turn.meter.on_usage(&usage),
                 Ok(crate::agents::AgentEvent::McpNotification((request_id, notification))) => {
                     if let Some(update) =
                         tool_notifications::tool_notification_update(request_id, notification)
                     {
-                        let _ = cx.send_notification(SessionNotification::new(
+                        self.owner_runs.notify_session(SessionNotification::new(
                             args.session_id.clone(),
                             update,
                         ));
                     }
                 }
-                Ok(_) => {}
                 Err(e) => {
                     stream_error = Some(
                         agent_client_protocol::Error::internal_error()
@@ -3549,7 +3534,7 @@ impl GooseAcpAgent {
                 None => crate::session_loops::rules::TickEnd::Completed,
             })
         });
-        let _ = Self::send_active_run_update(cx, &args.session_id, None);
+
         if let Some(error) = stream_error {
             return Err(error);
         }
@@ -3560,13 +3545,11 @@ impl GooseAcpAgent {
             .await
             .internal_err_ctx("Failed to load session")?;
         if let Some(updates) = build_usage_updates(&session) {
-            if self.supports_goose_custom_notifications() {
-                let _ = cx.send_notification(updates.custom);
-            }
+            self.owner_runs.notify_custom_session(updates.custom);
             // Standard ACP notification — emitted alongside the custom one for
             // backwards compatibility. Remove once all known clients have
             // migrated to `_goose/unstable/session/update`.
-            let _ = cx.send_notification(SessionNotification::new(
+            self.owner_runs.notify_session(SessionNotification::new(
                 args.session_id.clone(),
                 SessionUpdate::UsageUpdate(updates.standard),
             ));
@@ -3609,13 +3592,12 @@ impl GooseAcpAgent {
             )));
             // Q-90: the answer check lands under the reply that is still on screen, and is stored
             // so a reload shows it again.
-            let (agent, session_manager, session_id, cx) = (
+            let (agent, session_manager, session_id, owner_runs) = (
                 agent.clone(),
                 self.session_manager.clone(),
                 session_id.clone(),
-                cx.clone(),
+                self.owner_runs.clone(),
             );
-            let custom_notifications = self.supports_goose_custom_notifications();
             reviewers.push(tokio::spawn(async move {
                 let Some(notice) = crate::turn_assessment::check_turn_answer(
                     agent,
@@ -3629,18 +3611,7 @@ impl GooseAcpAgent {
                 };
                 for content in &notice.content {
                     if let MessageContent::SystemNotification(notification) = content {
-                        if let Err(err) = send_status_message_update(
-                            &cx,
-                            custom_notifications,
-                            &session_id,
-                            notification,
-                        ) {
-                            tracing::warn!(
-                                session_id,
-                                ?err,
-                                "answer check: the notice was not sent"
-                            );
-                        }
+                        owner_status_message_update(&owner_runs, &session_id, notification);
                     }
                 }
             }));

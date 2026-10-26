@@ -4,6 +4,8 @@ pub mod backend;
 mod commands;
 mod cursors;
 mod inputs;
+pub mod management;
+mod observers;
 mod partials;
 mod questions;
 mod store;
@@ -11,8 +13,7 @@ mod store;
 use crate::agents::Agent;
 use crate::execution::manager::AgentManager;
 use crate::session::SessionManager;
-use agent_client_protocol::schema::v1::{PromptRequest, PromptResponse, SessionNotification};
-use agent_client_protocol::{Client, ConnectionTo};
+use agent_client_protocol::schema::v1::{PromptRequest, PromptResponse};
 use async_trait::async_trait;
 use leanzero_link::controller::ControllerError;
 use std::collections::HashMap;
@@ -65,7 +66,7 @@ pub struct OwnerRunRegistry {
     initialized: OnceCell<()>,
     input_handlers: Mutex<HashMap<Uuid, Arc<dyn InputHandler>>>,
     queued: Mutex<HashMap<String, Vec<commands::QueuedCommand>>>,
-    observers: RwLock<HashMap<String, HashMap<Uuid, ConnectionTo<Client>>>>,
+    observers: RwLock<observers::OwnerObservers>,
 }
 
 impl OwnerRunRegistry {
@@ -84,7 +85,7 @@ impl OwnerRunRegistry {
             initialized: OnceCell::new(),
             input_handlers: Mutex::new(HashMap::new()),
             queued: Mutex::new(HashMap::new()),
-            observers: RwLock::new(HashMap::new()),
+            observers: RwLock::new(observers::OwnerObservers::default()),
         });
         registries.insert(key, Arc::downgrade(&registry));
         registry
@@ -115,68 +116,6 @@ impl OwnerRunRegistry {
             .read()
             .expect("owner executor poisoned")
             .is_some()
-    }
-
-    pub async fn attach_observer(
-        self: &Arc<Self>,
-        id: Uuid,
-        session_id: &str,
-        cx: ConnectionTo<Client>,
-    ) {
-        self.observers
-            .write()
-            .expect("owner observers poisoned")
-            .entry(session_id.to_string())
-            .or_default()
-            .insert(id, cx.clone());
-        let pending = {
-            let handlers = self.input_handlers.lock().await;
-            handlers
-                .iter()
-                .map(|(id, handler)| (*id, handler.clone()))
-                .collect::<Vec<_>>()
-        };
-        for (input_id, handler) in pending {
-            if let Ok(Some(json)) = async {
-                Ok::<_, anyhow::Error>(sqlx::query_scalar::<_, String>("SELECT input_json FROM owner_inputs WHERE input_id=? AND session_id=? AND state='open'")
-                    .bind(input_id.to_string()).bind(session_id).fetch_optional(self.pool().await?).await?)
-            }.await {
-                match serde_json::from_str(&json) {
-                    Ok(input) => handler.observe(&cx, self.clone(), input),
-                    Err(error) => tracing::error!(%error, "pending owner input is unreadable"),
-                }
-            }
-        }
-    }
-
-    pub fn detach_observer(&self, id: Uuid) {
-        self.observers
-            .write()
-            .expect("owner observers poisoned")
-            .retain(|_, observers| {
-                observers.remove(&id);
-                !observers.is_empty()
-            });
-    }
-
-    pub fn notify_session(&self, notification: SessionNotification) {
-        if let Some(observers) = self
-            .observers
-            .write()
-            .expect("owner observers poisoned")
-            .get_mut(notification.session_id.0.as_ref())
-        {
-            observers.retain(|_, cx| cx.send_notification(notification.clone()).is_ok());
-        }
-    }
-
-    pub(super) fn input_observers(&self, session_id: &str) -> Vec<ConnectionTo<Client>> {
-        self.observers
-            .read()
-            .expect("owner observers poisoned")
-            .get(session_id)
-            .map(|observers| observers.values().cloned().collect())
-            .unwrap_or_default()
     }
 
     pub async fn current_run(&self, session_id: &str) -> Option<Uuid> {
@@ -294,6 +233,7 @@ impl OwnerRunRegistry {
         let record = catalog.lookup_local_session(session_id).await?;
         let generation = catalog.watermark().await?.generation;
         let work_id = Uuid::parse_str(&record.work_id)?;
+        let baseline = self.session_manager.get_session(session_id, true).await?;
         manager
             .try_register_connection_prompt(session_id, token.clone())
             .await?;
@@ -315,6 +255,7 @@ impl OwnerRunRegistry {
                 generation,
             },
         );
+        self.begin_run_replay(baseline, run_id);
         Ok(RunTicket {
             session_id: session_id.to_owned(),
             run_id,
@@ -337,6 +278,7 @@ impl OwnerRunRegistry {
         if let Err(error) = self.finish_store(&run).await {
             tracing::error!(session_id, %error, "owner run completion could not be persisted");
         }
+        self.finish_run_replay(session_id, &run.run_id);
         drop(runs);
         self.input_handlers
             .lock()

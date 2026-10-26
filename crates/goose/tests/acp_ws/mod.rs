@@ -31,6 +31,8 @@ pub enum Answer {
     Hold,
     /// Asks for one tool call — `(tool, JSON arguments)` — and finishes the answer.
     ToolCall(&'static str, &'static str),
+    /// Streams thinking before a native tool, exercising the agent's stored tool-ID rewrite.
+    ThinkingToolCall(&'static str, &'static str, &'static str),
     /// Asks for several tool calls in ONE message — each `(tool, JSON arguments)` — and finishes.
     ToolCalls(Vec<(&'static str, String)>),
     /// 503 as goose's distributed engine answers while its watchdog holds admission for memory
@@ -197,15 +199,31 @@ impl Model {
                         let _ = socket.flush().await;
                         unfinished.push(socket);
                     }
-                    Answer::ToolCall(..) | Answer::ToolCalls(_) => {
+                    Answer::ToolCall(..) | Answer::ToolCalls(_) | Answer::ThinkingToolCall(..) => {
+                        let thinking = match &answer {
+                            Answer::ThinkingToolCall(thinking, _, _) => Some(*thinking),
+                            _ => None,
+                        };
                         let calls = match answer {
-                            Answer::ToolCall(tool, arguments) => {
+                            Answer::ToolCall(tool, arguments)
+                            | Answer::ThinkingToolCall(_, tool, arguments) => {
                                 vec![(tool, arguments.to_string())]
                             }
                             Answer::ToolCalls(calls) => calls,
                             _ => unreachable!(),
                         };
                         let _ = socket.write_all(head.as_bytes()).await;
+                        if let Some(thinking) = thinking {
+                            let _ = socket
+                                .write_all(
+                                    chunk(
+                                        json!({"role":"assistant","reasoning_content":thinking}),
+                                        None,
+                                    )
+                                    .as_bytes(),
+                                )
+                                .await;
+                        }
                         let request = serving.requests.lock().unwrap().len();
                         let tool_calls: Vec<Value> = calls
                             .iter()

@@ -1,5 +1,6 @@
 use super::*;
 use agent_client_protocol::schema::v1::StopReason;
+use agent_client_protocol::{Client, ConnectionTo};
 use leanzero_link::controller_auth::{
     authorize, AuthorizationError, ControllerAuthority, DispatchAuthorization, ReceiverBinding,
 };

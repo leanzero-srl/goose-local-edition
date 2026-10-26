@@ -164,6 +164,10 @@ async fn idle_remote_answer_continues_original_owner_once_and_preserves_other_qu
         .await
         .unwrap();
     assert_eq!(replay.command_id, accepted.command_id);
+    eventually("remote owner continuation finished", || async {
+        registry.current_run(&chat).await.is_none()
+    })
+    .await;
     let final_session = manager.get_session(&chat, true).await.unwrap();
     let questions = NeedsYouState::from_extension_data(&final_session.extension_data).unwrap();
     let answered = questions
