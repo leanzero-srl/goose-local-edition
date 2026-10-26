@@ -15,7 +15,7 @@ struct NodesView: View {
                 Section { Button("Connect this device", action: connect).buttonStyle(StudioPrimaryButtonStyle()).controlSize(.large) }.listRowBackground(Studio.surface)
             } else {
                 Section { SyncSummary() }.listRowBackground(Studio.surface)
-                Section { NavigationLink { AddMacView() } label: { Label("Add a Mac", systemImage: "plus.circle") } }.listRowBackground(Studio.surface)
+                Section { NavigationLink { AddMacView() } label: { Label("Add a Mac", icon: .plus) } }.listRowBackground(Studio.surface)
                 Section("Macs") {
                     if store.hosts.isEmpty {
                         Text(store.lastSync == nil ? "Sync Link to load registered Macs." : "No Macs have registered controller access for this account.")
@@ -24,7 +24,7 @@ struct NodesView: View {
                     ForEach(store.hosts) { host in
                         NavigationLink { NodeDetailView(host: host) } label: {
                             VStack(alignment: .leading, spacing: 8) {
-                                Label(host.name, systemImage: "desktopcomputer").font(.headline)
+                                Label(host.name, icon: .laptop).font(.headline)
                                 StatusBadge(text: host.statusLabel, color: host.controllerAvailable ? Studio.positive : Studio.warning)
                                 RelativeSample(date: host.lastSeenAt, prefix: "Last seen")
                             }.padding(.vertical, 6)
@@ -34,7 +34,7 @@ struct NodesView: View {
             }
         }.navigationTitle("Nodes").studioScreen()
             .refreshable { await store.synchronize() }
-            .toolbar { if store.authenticated { Button { store.manualSync() } label: { Label("Sync all Macs", systemImage: "arrow.triangle.2.circlepath") }.disabled(store.syncRunning) } }
+            .toolbar { if store.authenticated { Button { store.manualSync() } label: { StudioSyncLabel(title: "Sync all Macs", active: store.syncRunning) }.disabled(store.syncRunning) } }
     }
 }
 
@@ -60,15 +60,15 @@ struct NodeDetailView: View {
                     LabeledContent("Memory available", value: sample.memoryFreePercent.map { "\($0.formatted(.number.precision(.fractionLength(1))))%" } ?? "Unknown")
                     LabeledContent("Memory capacity", value: sample.memoryTotalGB.map { "\($0.formatted(.number.precision(.fractionLength(1)))) GiB" } ?? "Unknown")
                 } else {
-                    Label("No resource sample received", systemImage: "chart.xyaxis.line")
+                    Label("No resource sample received", icon: .chart)
                     Text("CPU and memory stay unknown until this Mac supplies a timestamped sample.").font(.subheadline).foregroundStyle(Studio.secondaryInk)
                 }
                 Button("Refresh resource sample") { Task { await store.loadResources(host) } }.disabled(!host.controllerAvailable)
             }.listRowBackground(Studio.surface)
             Section("Manage this Mac") {
-                NavigationLink { ManagementView(kind: .models, host: host) } label: { Label("Models & downloads", systemImage: "arrow.down.circle") }
-                NavigationLink { ManagementView(kind: .providers, host: host) } label: { Label("Providers", systemImage: "key.horizontal") }
-                NavigationLink { AddMacView() } label: { Label("Node setup", systemImage: "desktopcomputer.and.arrow.down") }
+                NavigationLink { ManagementView(kind: .models, host: host) } label: { Label("Models & downloads", icon: .download) }
+                NavigationLink { ManagementView(kind: .providers, host: host) } label: { Label("Providers", icon: .cloud) }
+                NavigationLink { AddMacView() } label: { Label("Node setup", icon: .laptop) }
             }.listRowBackground(Studio.surface)
         }.navigationTitle(host.name).studioScreen()
     }
@@ -77,5 +77,4 @@ struct NodeDetailView: View {
 enum ManagementKind {
     case models, providers, setup
     var title: String { switch self { case .models: "Models & downloads"; case .providers: "Providers"; case .setup: "Node setup" } }
-    var symbol: String { switch self { case .models: "arrow.down.circle"; case .providers: "key.horizontal"; case .setup: "desktopcomputer.and.arrow.down" } }
 }

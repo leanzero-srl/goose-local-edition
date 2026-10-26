@@ -5,8 +5,8 @@ enum WorkKind: String, Codable, CaseIterable, Sendable {
     var title: String {
         switch self { case .chat: "Chat"; case .agentWork: "Agent Work"; case .benchmark: "Benchmark"; case .shellJob: "Shell job" }
     }
-    var symbol: String {
-        switch self { case .chat: "bubble.left.and.bubble.right"; case .agentWork: "sparkles"; case .benchmark: "chart.bar.xaxis"; case .shellJob: "terminal" }
+    var icon: StudioIconName {
+        switch self { case .chat: .messageSquare; case .agentWork: .bot; case .benchmark: .gauge; case .shellJob: .terminal }
     }
 }
 

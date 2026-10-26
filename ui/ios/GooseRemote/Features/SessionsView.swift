@@ -17,7 +17,11 @@ struct SessionsView: View {
                     .navigationSplitViewColumnWidth(min: 300, ideal: 360, max: 460)
             } detail: {
                 if let selected = store.selectedRef { SessionDetailView(work: selected) }
-                else { ContentUnavailableView("Choose a session", systemImage: "bubble.left.and.bubble.right", description: Text("Read and control work on the Mac that owns it.")).studioScreen() }
+                else {
+                    ContentUnavailableView { Label("Choose a session", icon: .messageSquare) }
+                    description: { Text("Read and control work on the Mac that owns it.") }
+                    .studioScreen()
+                }
             }
         } else {
             NavigationStack {
@@ -30,7 +34,7 @@ struct SessionsView: View {
         List {
             Section {
                 HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "point.3.connected.trianglepath.dotted").font(.title2).foregroundStyle(Studio.accent)
+                    Image("GooseBrand").resizable().scaledToFit().frame(width: 44, height: 44).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Goose Swarm").font(.headline)
                         Text("Work stays on its Mac.").font(.subheadline).foregroundStyle(Studio.secondaryInk)
@@ -53,7 +57,7 @@ struct SessionsView: View {
                 Section {
                     Picker("Session type", selection: $filter) {
                         Text("All types").tag(Optional<WorkKind>.none)
-                        ForEach(WorkKind.allCases, id: \.self) { kind in Label(kind.title, systemImage: kind.symbol).tag(Optional(kind)) }
+                        ForEach(WorkKind.allCases, id: \.self) { kind in Label(kind.title, icon: kind.icon).tag(Optional(kind)) }
                     }
                     if filteredEntries.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
@@ -78,7 +82,7 @@ struct SessionsView: View {
         .toolbar {
             if store.authenticated {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { store.manualSync() } label: { Label("Sync all Macs", systemImage: "arrow.triangle.2.circlepath") }
+                    Button { store.manualSync() } label: { StudioSyncLabel(title: "Sync all Macs", active: store.syncRunning) }
                         .disabled(store.syncRunning).accessibilityIdentifier("manualSync")
                 }
             }
@@ -103,15 +107,15 @@ struct SessionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: entry.work.kind.symbol).foregroundStyle(Studio.kind(entry.work.kind)).frame(width: 24)
+                StudioIcon(entry.work.kind.icon).foregroundStyle(Studio.kind(entry.work.kind)).frame(width: 24)
                 Text(entry.title.isEmpty ? "Untitled \(entry.work.kind.title.lowercased())" : entry.title).font(.headline).lineLimit(3)
             }
             HStack(alignment: .top) {
                 Text(entry.work.kind.title).font(.caption.weight(.semibold)).foregroundStyle(Studio.kind(entry.work.kind))
                 Spacer(minLength: 8)
-                StatusBadge(text: entry.state.title, color: statusColor)
+                StatusBadge(text: entry.state.title, color: statusColor, active: entry.state == .running && store.connection == .connected)
             }
-            Label(store.ownerName(entry.work.ownerNodeId), systemImage: "desktopcomputer").font(.subheadline).foregroundStyle(Studio.secondaryInk)
+            Label(store.ownerName(entry.work.ownerNodeId), icon: .laptop).font(.subheadline).foregroundStyle(Studio.secondaryInk)
             RelativeSample(date: entry.updatedAt, prefix: "Updated")
         }.padding(.vertical, 8).accessibilityElement(children: .combine)
     }
@@ -130,22 +134,26 @@ struct SyncSummary: View {
                     switch result.state {
                     case .waiting: Text("Waiting").font(.caption)
                     case .syncing: ProgressView("Loading sessions")
-                    case .complete(let count): Text("\(count) sessions synchronized").font(.caption).foregroundStyle(Studio.positive)
-                    case .unavailable(let message): Text(message).font(.caption).foregroundStyle(Studio.warning)
-                    case .failed(let message): Text(message).font(.caption).foregroundStyle(Studio.danger)
+                    case .complete(let count): Text("\(count) sessions synchronized").font(.caption).foregroundStyle(Studio.positiveInk)
+                    case .unavailable(let message): Text(message).font(.caption).foregroundStyle(Studio.warningInk)
+                    case .failed(let message): Text(message).font(.caption).foregroundStyle(Studio.dangerInk)
                     }
                 }.padding(.vertical, 4)
             }
-            if case .stale(let message) = store.connection { Text(message).font(.subheadline).foregroundStyle(Studio.danger) }
+            if case .stale(let message) = store.connection { Text(message).font(.subheadline).foregroundStyle(Studio.dangerInk) }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    if store.syncRunning { ProgressView().controlSize(.small) }
-                    Label(store.syncRunning ? "Syncing fleet" : store.connection.title, systemImage: "network")
-                        .font(.subheadline.weight(.semibold))
+                    if store.syncRunning {
+                        StudioSyncLabel(title: "Syncing fleet", active: true)
+                    } else {
+                        Label(store.connection.title, icon: .network)
+                    }
                 }
+                .font(.subheadline.weight(.semibold))
                 RelativeSample(date: store.lastSync, prefix: "Last checked")
             }
         }
+        .disclosureGroupStyle(StudioDisclosureStyle())
     }
 }

@@ -2,6 +2,8 @@ import SwiftUI
 
 @main
 struct GooseRemoteApp: App {
+    @AppStorage(StudioTheme.storageKey) private var theme: StudioTheme = .system
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var store: ControllerStore = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("GooseRemote", isDirectory: true)
@@ -11,7 +13,9 @@ struct GooseRemoteApp: App {
     @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
-            RootView().environment(store).tint(Studio.accent)
+            RootView().environment(store).tint(Studio.accentInk)
+                .preferredColorScheme(theme.colorScheme)
+                .transaction { if reduceMotion { $0.disablesAnimations = true } }
                 .task {
                     if store.accountDeletion?.blocksAccountAccess == true { await store.checkAccountDeletion() }
                     else if store.authenticated { store.manualSync() }
@@ -28,8 +32,8 @@ enum AppSection: String, CaseIterable, Identifiable {
     case sessions, nodes, settings
     var id: Self { self }
     var title: String { rawValue.capitalized }
-    var symbol: String {
-        switch self { case .sessions: "bubble.left.and.bubble.right"; case .nodes: "desktopcomputer"; case .settings: "gearshape" }
+    var icon: StudioIconName {
+        switch self { case .sessions: .messageSquare; case .nodes: .network; case .settings: .settings }
     }
 }
 
@@ -39,16 +43,18 @@ struct RootView: View {
     var body: some View {
         @Bindable var store = store
         TabView(selection: $section) {
-            Tab("Sessions", systemImage: AppSection.sessions.symbol, value: AppSection.sessions) {
+            Tab(value: AppSection.sessions) {
                 SessionsView(connect: { section = .settings })
-            }
-            Tab("Nodes", systemImage: AppSection.nodes.symbol, value: AppSection.nodes) {
+            } label: { Label("Sessions", image: AppSection.sessions.icon.assetName) }
+            Tab(value: AppSection.nodes) {
                 NavigationStack { NodesView(connect: { section = .settings }) }
-            }
-            Tab("Settings", systemImage: AppSection.settings.symbol, value: AppSection.settings) {
+            } label: { Label("Nodes", image: AppSection.nodes.icon.assetName) }
+            Tab(value: AppSection.settings) {
                 NavigationStack { SettingsView() }
-            }
+            } label: { Label("Settings", image: AppSection.settings.icon.assetName) }
         }
+        .toolbarBackground(Studio.surface, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
         .onChange(of: store.accountDeletion?.phase, initial: true) { _, phase in
             if phase != nil { section = .settings }
         }

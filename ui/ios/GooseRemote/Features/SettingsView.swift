@@ -2,12 +2,19 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(ControllerStore.self) private var store
+    @AppStorage(StudioTheme.storageKey) private var theme: StudioTheme = .system
     @State private var removingLocal = false
     @State private var deviceToRevoke: DeviceRecord?
     private var platform: String { UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "ios" }
     var body: some View {
         @Bindable var store = store
         Form {
+            Section {
+                StudioThemePicker(selection: $theme)
+            } header: {
+                Text("Appearance")
+            } footer: { Text("System follows your device’s appearance.") }
+                .listRowBackground(Studio.surface)
             if store.authenticated, let envelope = store.envelope {
                 Section("This device") {
                     LabeledContent("Name", value: envelope.credentials.device.name)
@@ -67,6 +74,7 @@ struct SettingsView: View {
                 Text("Native iPhone and iPad controller for Goose Swarm. Your device does not run inference, shell jobs, or model downloads.")
                     .font(.subheadline).foregroundStyle(Studio.secondaryInk)
                 NavigationLink("Connection & privacy") { privacy }
+                NavigationLink("Icon license") { LucideLicenseView() }
             }.listRowBackground(Studio.surface)
         }.navigationTitle("Settings").studioScreen()
             .onAppear { if store.deviceName.isEmpty { store.deviceName = platform == "ipados" ? "My iPad" : "My iPhone" } }

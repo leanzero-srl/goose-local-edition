@@ -12,9 +12,9 @@ struct ManagementView: View {
     var body: some View {
         List {
             Section { Text("Changes apply to \(host.name).").font(.subheadline).foregroundStyle(Studio.secondaryInk) }.listRowBackground(Studio.surface)
-            if let setupError { Section { Text(setupError).foregroundStyle(Studio.danger) } }
+            if let setupError { Section { Text(setupError).foregroundStyle(Studio.dangerInk) } }
             if let model {
-                if let error = model.error { Section { Text(error).foregroundStyle(Studio.danger).textSelection(.enabled) } }
+                if let error = model.error { Section { Text(error).foregroundStyle(Studio.dangerInk).textSelection(.enabled) } }
                 ManagementStatusView(model: model)
                 if kind == .models { models(model) }
                 else if kind == .providers {
@@ -67,7 +67,7 @@ struct ManagementView: View {
                     Text("\(bytes(progress.downloadedBytes)) of \(bytes(progress.totalBytes))").font(.caption)
                 } else { Text("\(bytes(progress.downloadedBytes)) downloaded").font(.caption) }
                 if let file = progress.currentFile { Text(file).font(.caption.monospaced()).textSelection(.enabled) }
-                if let error = progress.error { Text(error).foregroundStyle(Studio.danger).textSelection(.enabled) }
+                if let error = progress.error { Text(error).foregroundStyle(Studio.dangerInk).textSelection(.enabled) }
                 RelativeSample(date: model.progressAt, prefix: "Updated")
                 if progress.state == "paused" { Button("Resume") { Task { await downloadAction(.downloadResume, model: model) } }.disabled(model.busy || model.pending != nil) }
                 if ["queued", "downloading"].contains(progress.state) { Button("Pause") { Task { await downloadAction(.downloadPause, model: model) } }.disabled(model.busy || model.pending != nil) }
@@ -133,7 +133,7 @@ struct ProviderConfigurationView: View {
                         Text(field.key).font(.subheadline.weight(.semibold))
                         if field.secret { SecureField(field.isSet ? "Saved — enter to replace" : "Enter value", text: binding(field.key)) }
                         else { TextField(field.value ?? "Enter value", text: binding(field.key)).textInputAutocapitalization(.never).autocorrectionDisabled() }
-                        if field.required && !field.isSet { Text("Required").font(.caption).foregroundStyle(Studio.warning) }
+                        if field.required && !field.isSet { Text("Required").font(.caption).foregroundStyle(Studio.warningInk) }
                     }
                 }
                 TextField("Model for connection test (optional)", text: $testModel).textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -144,7 +144,7 @@ struct ProviderConfigurationView: View {
                     if !testModel.isEmpty { payload["test_model"] = .string(testModel) }
                     Task { await model.perform(.providerConfigure, target: provider.displayName, payload: .object(payload)); if model.pending == nil && model.error == nil { values = [:] } }
                 }.disabled(model.busy || model.pending != nil)
-                if let error = model.error { Text(error).foregroundStyle(Studio.danger) }
+                if let error = model.error { Text(error).foregroundStyle(Studio.dangerInk) }
 
             }.listRowBackground(Studio.surface)
             ManagementStatusView(model: model)
@@ -177,7 +177,7 @@ struct NewProviderView: View {
                     if requiresAuth { payload["api_key"] = .string(key) }
                     Task { await model.perform(.providerCreate, target: name, payload: .object(payload)); if model.pending == nil && model.error == nil { key = "" } }
                 }.disabled(model.busy || model.pending != nil || name.isEmpty || endpoint.isEmpty || models.isEmpty || (requiresAuth && key.isEmpty))
-                if let error = model.error { Text(error).foregroundStyle(Studio.danger) }
+                if let error = model.error { Text(error).foregroundStyle(Studio.dangerInk) }
 
             }.listRowBackground(Studio.surface)
             ManagementStatusView(model: model)
@@ -196,7 +196,7 @@ struct AddMacView: View {
                 Text("4. Sync here. The Mac appears after it has registered its secure connection.")
                 Button("Sync registered Macs") { store.manualSync() }.disabled(store.syncRunning)
             }.listRowBackground(Studio.surface)
-            Section("Connected Macs") { ForEach(store.hosts) { host in Label(host.name, systemImage: "desktopcomputer") } }.listRowBackground(Studio.surface)
+            Section("Connected Macs") { ForEach(store.hosts) { host in Label(host.name, icon: .laptop) } }.listRowBackground(Studio.surface)
             Section { Text("You can add more phones and tablets as controllers. They never join the inference pool.").foregroundStyle(Studio.secondaryInk) }.listRowBackground(Studio.surface)
         }.navigationTitle("Add a Mac").studioScreen()
     }

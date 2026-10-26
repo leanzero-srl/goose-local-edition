@@ -11,10 +11,13 @@ struct SessionDetailView: View {
             else if let selected = store.selectedWork, selected.entry.work == work {
                 content(selected)
             } else if let error = store.selectedError {
-                ContentUnavailableView { Label("Session unavailable", systemImage: "wifi.exclamationmark") } description: { Text(error) } actions: {
+                ContentUnavailableView { Label("Session unavailable", icon: .offline) } description: { Text(error) } actions: {
                     Button("Try again") { Task { await store.select(work) } }.buttonStyle(StudioPrimaryButtonStyle())
                 }
-            } else { ContentUnavailableView("Session not loaded", systemImage: work.kind.symbol, description: Text("Refresh the session list and try again.")) }
+            } else {
+                ContentUnavailableView { Label("Session not loaded", icon: work.kind.icon) }
+                description: { Text("Refresh the session list and try again.") }
+            }
         }
         .studioScreen().navigationTitle(store.selectedWork?.entry.title ?? work.kind.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -22,7 +25,7 @@ struct SessionDetailView: View {
         .onDisappear { store.endSelection(work) }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await store.select(work) } } label: { Label("Refresh session", systemImage: "arrow.clockwise") }
+                Button { Task { await store.select(work) } } label: { StudioSyncLabel(title: "Refresh session", active: store.selectedLoading) }
             }
         }
         .confirmationDialog("Stop this run on \(store.ownerName(work.ownerNodeId))?", isPresented: $confirmStop, titleVisibility: .visible) {
@@ -34,31 +37,35 @@ struct SessionDetailView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     if let error = store.selectedError {
-                        Notice(title: "Saved view", message: error, symbol: "wifi.exclamationmark")
+                        Notice(title: "Saved view", message: error, icon: .offline)
                     }
                     StudioPanel {
-                        Label(store.ownerName(work.ownerNodeId), systemImage: "desktopcomputer").font(.headline)
-                        HStack { Text(work.kind.title).font(.subheadline); Spacer(); StatusBadge(text: selected.entry.state.title) }
+                        Label(store.ownerName(work.ownerNodeId), icon: .laptop).font(.headline)
+                        HStack {
+                            Text(work.kind.title).font(.subheadline)
+                            Spacer()
+                            StatusBadge(text: selected.entry.state.title, active: selected.entry.state == .running && store.connection == .connected && store.selectedError == nil && !store.selectedHistoryPaused)
+                        }
                         if let directory = selected.entry.workingDir {
                             Text(directory).font(.caption.monospaced()).foregroundStyle(Studio.secondaryInk).textSelection(.enabled)
                         }
                         RelativeSample(date: selected.entry.updatedAt, prefix: "Owner updated")
                         if selected.entry.canPerform(.stop) {
-                            Button("Stop run", role: .destructive) { confirmStop = true }.buttonStyle(.bordered)
+                            Button(role: .destructive) { confirmStop = true } label: { Label("Stop run", icon: .stop) }.buttonStyle(StudioSecondaryButtonStyle())
                                 .disabled(store.selectedError != nil || store.sending || store.unfinishedCommand != nil)
                         }
                     }
                     if store.selectedHistoryPaused {
-                        Notice(title: "Reading older activity", message: "Live log updates are paused to keep your place. Refresh to return to the latest activity.", symbol: "pause.circle")
+                        Notice(title: "Reading older activity", message: "Live log updates are paused to keep your place. Refresh to return to the latest activity.", icon: .pause)
                     }
                     if work.kind != .chat, selected.hasMoreHistory {
-                        Button("Load older activity") { Task { await store.loadMoreHistory() } }.buttonStyle(.bordered).disabled(store.selectedLoading)
+                        Button("Load older activity") { Task { await store.loadMoreHistory() } }.buttonStyle(StudioSecondaryButtonStyle()).disabled(store.selectedLoading)
                     }
                     ForEach(selected.pendingInputs) { input in
                         PendingInputView(input: input, supported: selected.entry.canPerform(.answerInput))
                     }
                     if selected.transcript.isEmpty {
-                        Notice(title: "No transcript yet", message: "The owner returned no visible messages for this session.", symbol: work.kind.symbol)
+                        Notice(title: "No transcript yet", message: "The owner returned no visible messages for this session.", icon: work.kind.icon)
                     }
                     ForEach(selected.transcript) { item in
                         StudioPanel {
@@ -70,10 +77,10 @@ struct SessionDetailView: View {
                             Text(item.text).font(work.kind == .shellJob ? .system(.body, design: .monospaced) : .body).textSelection(.enabled)
                         }
                     }
-                    if work.kind == .chat, selected.hasMoreHistory { Button("Load more history") { Task { await store.loadMoreHistory() } }.buttonStyle(.bordered) }
+                    if work.kind == .chat, selected.hasMoreHistory { Button("Load more history") { Task { await store.loadMoreHistory() } }.buttonStyle(StudioSecondaryButtonStyle()) }
                     if let pending = store.pendingCommands.last(where: { $0.command.work == work }) {
                         StudioPanel {
-                            Label(pending.receipt?.state.title ?? "Checking delivery", systemImage: "paperplane").font(.headline)
+                            Label(pending.receipt?.state.title ?? "Checking delivery", icon: .send).font(.headline)
                             Text(pending.receipt?.reason ?? "Acceptance is separate from delivery. The owner’s receipt determines the result.").font(.subheadline).foregroundStyle(Studio.secondaryInk)
                             if store.unfinishedCommand != nil { Button("Check delivery") { Task { await store.checkDelivery() } }.disabled(store.sending) }
                         }
@@ -105,7 +112,7 @@ struct SessionDetailView: View {
                 Text(store.canStoreDrafts ? "Draft saved on this device" : "Draft storage unavailable")
                     .font(.caption).foregroundStyle(Studio.secondaryInk)
                 Spacer()
-                Button { Task { await store.send(action: action) } } label: { Label(action.title, systemImage: "arrow.up") }
+                Button { Task { await store.send(action: action) } } label: { Label(action.title, icon: .arrowUp) }
                     .buttonStyle(StudioPrimaryButtonStyle()).controlSize(.large)
                     .disabled(store.selectedError != nil || !entry.canPerform(action) || !store.canStoreDrafts || store.sending || store.unfinishedCommand != nil || store.draft(for: work).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }

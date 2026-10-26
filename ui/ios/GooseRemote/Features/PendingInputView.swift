@@ -10,7 +10,7 @@ struct PendingInputView: View {
     private var busy: Bool { store.selectedError != nil || store.sending || store.unfinishedCommand != nil }
     var body: some View {
         StudioPanel {
-            Label("Needs your answer", systemImage: "person.crop.circle.badge.questionmark").font(.headline).foregroundStyle(Studio.warning)
+            Label("Needs your answer", icon: .question).font(.headline).foregroundStyle(Studio.warningInk)
             Text(input.prompt).textSelection(.enabled)
             if !supported {
                 unavailable("This owner does not currently allow remote answers. Open the request on its Mac.")
@@ -41,7 +41,7 @@ struct PendingInputView: View {
         ForEach(input.options) { choice in
             Button(choice.label) {
                 Task { await store.answer(input: input, option: choice, value: choice.acceptsValue ? answer : nil) }
-            }.buttonStyle(.bordered).disabled(busy || (choice.acceptsValue && answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+            }.buttonStyle(StudioSecondaryButtonStyle()).disabled(busy || (choice.acceptsValue && answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
         }
     }
 
@@ -56,7 +56,7 @@ struct PendingInputView: View {
             Text("Request \(requestId)").font(.caption.monospaced()).foregroundStyle(Studio.secondaryInk).textSelection(.enabled)
             ForEach(input.options) { choice in
                 Button(choice.label) { Task { await store.answer(input: input, option: choice, value: nil) } }
-                    .buttonStyle(.bordered).disabled(busy || choice.acceptsValue)
+                    .buttonStyle(StudioSecondaryButtonStyle()).disabled(busy || choice.acceptsValue)
             }
         case .failure(let error): unavailable(error.localizedDescription)
         }
@@ -70,7 +70,7 @@ struct PendingInputView: View {
             ForEach(form.fields) { field in fieldView(field) }
             let answer = Result { try form.answer(drafts) }
             switch answer {
-            case .failure(let error): Text(error.localizedDescription).font(.caption).foregroundStyle(Studio.warning).accessibilityIdentifier("form-validation")
+            case .failure(let error): Text(error.localizedDescription).font(.caption).foregroundStyle(Studio.warningInk).accessibilityIdentifier("form-validation")
             case .success: EmptyView()
             }
             ForEach(input.options) { choice in
@@ -81,7 +81,7 @@ struct PendingInputView: View {
                         value = result
                     } else { value = nil }
                     Task { await store.answer(input: input, option: choice, value: value) }
-                }.buttonStyle(.bordered).disabled(busy || (choice.acceptsValue && !answer.isSuccess))
+                }.buttonStyle(StudioSecondaryButtonStyle()).disabled(busy || (choice.acceptsValue && !answer.isSuccess))
             }
         }
     }
