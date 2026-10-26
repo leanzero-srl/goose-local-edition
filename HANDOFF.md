@@ -216,3 +216,23 @@ TODO (next agent)
    references/cdp-acp-override.mjs): never-answering mlxEngine/status -> err banner + "Read again" after 10 s;
    status {state:'stopped', stoppedBy:'outside'} -> tile "Stopped outside goose", sidebar card gone. Else say unverified.
 3. Push `git push origin HEAD:fix/engine-failure-card-sticks`. No DMG.
+
+## STATE 2026-10-26 ~20:45 (agent 5) — NEGATIVE CONTROLS + LIVE CHECK DONE; branch ready to merge
+Negative controls (break -> run that one test -> restore -> green), all FAIL with the fix broken:
+- lib.rs stopped_outside_goose forced false: a_stop_signal_from_outside_goose... FAIL, an_engine_stopped_from_outside_goose_reads_stopped... FAIL
+- mlx_engine.rs `None if outside` arm removed: an_engine_stopped_from_outside_goose_says_outside... FAIL
+- bounded_fit timeout removed: a_fit_read_that_stalls... HUNG 14 min (never passed) -> test now has an outer 10 s limit
+  (fa608fa0e0) and FAILS in 10.0 s; single-flight busy check removed: FAIL
+- mlx_remote_single restore_step outside arm removed: only_a_stopped_engine_nobody_stopped_is_restored FAIL
+- sharedStatusPoll bound removed: 3/3 'a read goose never answers' FAIL; placement limit -> 1e9: FAIL
+- MlxStateTile stoppedOutside branch removed: FAIL; DockSlot without withoutDismissedFailure: FAIL;
+  dismissed failure never coming back (key compare dropped): FAIL
+Restored: cargo test -p goose --lib mlx_ 105/0; goose-sidecar targets ok; the four vitest files green; fmt + clippy -D warnings clean.
+Live (dev package, isolated GOOSE_PATH_ROOT/GOOSE_USER_DATA_DIR, CDP 9461, engine port 8191, mlx-community/Qwen3.5-9B-MLX-4bit):
+(a) SIGTERM uv pid -> status stopped/stoppedBy outside, Engine tile "Stopped outside goose", no sidebar card: PASS
+(b) SIGKILL -> red card with X + eye; X removes the card (Nodes chip + Engine tile still say Failed, by design); a new failure
+    (exit 137) brings the card back: PASS
+(c) never-answering mlxEngine/status -> Checking at 4 s, "Engine unreachable: goose did not answer the engine status in 10 s"
+    + "Read again" at 13 s; lifted hang + Read again -> real state: PASS
+Evidence: /Volumes/AI-workhorse/media/goose/enginecard-2026-10-26/*.png. Traps -> goose-feature-dev skill changelog 2026-10-26.
+Open (not this branch): SIGKILL of the uv launcher orphans the rapid-mlx python (still serves the port; status failed, monitor Idle).
