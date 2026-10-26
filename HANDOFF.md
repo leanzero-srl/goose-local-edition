@@ -79,3 +79,57 @@ per goose-feature-dev skill (packaged app + CDP, isolated GOOSE_PATH_ROOT/GOOSE_
 7. Live: packaged app isolated (skill recipe), crafted ACP override via skill references/cdp-acp-override.mjs to
    show (a) status that never answers -> panel leaves Checking after the bound, (b) failed 143 -> neutral.
    Never open a window on the owner's screen without saying so (this is the workhorse; owner may be at it).
+
+## STATE 2026-10-26 (agent 2, stopped at the 160k context guard) — WIP commit, gate NOT run yet
+DONE (uncompiled for Rust; vitest green for the two UI test files below):
+- NEW `ui/desktop/src/utils/timeLimit.ts` (`withTimeLimit`, `TimeLimitError`, `limitWords`); acpConnection.ts's
+  private withTimeout replaced by it.
+- `sharedStatusPoll.ts`: `createSharedPoll(read, {what, limitMs})`, `readLimitMs(i)=max(10s,3*i)`; every read
+  raced against the limit -> failed snapshot "goose did not answer <what> in N s; reading it again", slot freed,
+  late answer dropped (race settled). Users named: useMlxEngineStatus ('the engine status'),
+  useMlxDistributedStatus ('the split’s status'), useChatServedBy ('what the engine is doing').
+  Tests appended to sharedStatusPoll.test.tsx (describe 'a read goose never answers', 3 tests) — PASS.
+- `acp/mlx-placement.ts`: `PLACEMENT_PLAN_LIMIT_MS=45_000` around placementPlan (failure published to
+  latestPlacementPlans). Test `acp/mlx-placement.timeLimit.test.ts` — PASS. PlacementCard already has a refresh
+  button (header) + err banner; NewNodeDialog has Retry; usePlacementPlans -> 'failed'.
+- `MlxEngineView.tsx`: "Engine unreachable" banner gets a "Read again" button (i18n `mlxEngineView.statusRetry`,
+  new prop `onRetryStatus` on EngineSection). i18n catalogs NOT yet updated (run i18n:extract / add to en.json +
+  15 catalogs, see skill changelog 2026-09-23 (1) for the safe catalog script).
+- `crates/goose/src/acp/server/mlx_engine.rs`: core_status mount_fit now via `bounded_fit(MOUNT_FIT_LIMIT=5s,
+  &MOUNT_FIT_BUSY, fut)` — spawn_blocking + Handle::block_on, tokio::time::timeout, single-flight AtomicBool with
+  Drop guard. NOT COMPILED. Rust test still to write in mlx_engine.rs `mod tests` (~line 1600): a future waiting on
+  a std mpsc/oneshot -> Err contains "did not finish in"; second call while busy -> Err "earlier read"; release
+  it, then busy clears (never use std::future::pending in spawn_blocking: runtime drop waits forever).
+
+TODO
+3. External stop rule (design decided, not coded):
+   - goose-sidecar lib.rs `SidecarExit` (372): add `code: Option<i32>`, `signal: Option<i32>` (fill at 474 from
+     `status.code()` / `ExitStatusExt::signal`) + `pub fn stopped_outside_goose(&self)->bool` =
+     stopped_by.is_none() && (code==Some(143)||code==Some(130)||signal==Some(SIGTERM)||signal==Some(SIGINT)).
+     SIGKILL / other codes stay failed.
+   - engine.rs status() Running branch (~2380): if exit.stopped_outside_goose() -> state "stopped", model_id None,
+     last_error None, new `EngineStatus.stopped_outside: bool = true` (add field ~1254, Default false);
+     else unchanged "failed".
+   - mlx_engine.rs `stopped_by_wire(state, stopper, outside: bool)`: outside && stopper None -> "outside"
+     (update its test ~1778 and the caller at core_status). Update doc on `stopped_by` in
+     goose-sdk-types custom_requests.rs:2620 (add `outside`), regenerate schema if a generator touches docs
+     (acp-schema.json carries descriptions: `just generate-acp`-ish; check `git grep -n "stoppedBy" crates/goose/acp-schema.json`).
+   - mlx_remote_single.rs:1028 restore_step: add arm `Some("outside")` -> Decline("something outside goose
+     stopped {peer}'s engine there, so this Mac does not start it again — Run it again to bring '{model}' back")
+     + test beside 2476.
+   - Table test of the classifier in engine.rs tests (~4009): 143/130/SIGTERM/SIGINT none -> outside;
+     137/SIGKILL/1 -> failed; stopped_by Some(..) + 143 -> not outside.
+   - UI: stopped -> mlxEngineMonitor readSingle 'off' -> glance present false (card clears). Show the neutral
+     words "Stopped outside goose" where the stopped state is named: MlxStateTile word (STATE_WORD 'stopped')
+     when status.stoppedBy==='outside' (thread stoppedBy through servingEngine input), test in MlxStateTile test.
+     mlxTray.ts:1027 / engineGlance nodesNavChip follow state, no change needed.
+4. Dismiss (X) on failed card: EngineGlanceCard.tsx (eye = engine-glance-hide at ~990 keeps its meaning). Add
+   `engine-glance-dismiss` X only when stage==='failed'; store dismissed key = detail (lastError) in glanceStore
+   (renderer); card hidden while engine.stage==='failed' && detail===dismissedKey; a changed detail shows it
+   again. i18n `engineGlance.dismissFailure` "Dismiss this failure". Test in EngineGlanceCard.test.tsx.
+5. i18n all 15 catalogs; gate: `source bin/activate-hermit; export CARGO_TARGET_DIR=~/Projects/goose/target`;
+   via ~/Projects/machine-sync/bin/heavy-run: cargo fmt --all; cargo clippy --all-targets -p goose -p goose-sidecar
+   -- -D warnings; cargo test -p goose-sidecar; cargo test -p goose --lib mlx_; cd ui/desktop && pnpm run
+   lint:check && pnpm run test:run. (ui deps already installed in this worktree.)
+6. Live check per skill (packaged + cdp-acp-override): never-answering mlxEngine/status -> banner after 10 s;
+   status {state:'stopped', stoppedBy:'outside'} -> neutral. Or state unverified.

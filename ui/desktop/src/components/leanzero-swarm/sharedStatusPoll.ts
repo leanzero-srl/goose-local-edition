@@ -1,4 +1,5 @@
 import { useCallback, useSyncExternalStore } from 'react';
+import { limitWords, withTimeLimit } from '../../utils/timeLimit';
 
 /**
  * ONE read of a goosed status for every surface of this window that watches it (Q-208, design D9).
@@ -15,7 +16,11 @@ import { useCallback, useSyncExternalStore } from 'react';
  *  - with no watcher left the store forgets everything, so a surface that opens later never shows a
  *    read nobody was taking;
  *  - a read overtaken by a newer one says nothing about now and is dropped (no reordering);
- *  - while the window is hidden only a `whileHidden` watcher keeps the reads going.
+ *  - while the window is hidden only a `whileHidden` watcher keeps the reads going;
+ *  - every read has a TIME LIMIT: a read goose does not answer in time is a FAILED read (its words
+ *    say so) and the next tick reads again. Before this a read that never resolved held the
+ *    in-flight slot for the life of the window, so every watcher sat on its first state forever
+ *    (the owner's Engine panel: "Checking" for hours, 3.0.132). A late answer is dropped.
  */
 
 export interface PollSnapshot<T> {
@@ -51,9 +56,27 @@ interface Watcher<A> {
 
 const EMPTY: PollSnapshot<never> = { value: null, failed: false, error: null, reads: 0 };
 
+/** The shortest time limit of a read: a status read is slow at worst, never this slow. */
+export const MIN_READ_LIMIT_MS = 10_000;
+
+/** A read's time limit at `intervalMs`: three ticks, and never under {@link MIN_READ_LIMIT_MS}. */
+export function readLimitMs(intervalMs: number): number {
+  return Math.max(MIN_READ_LIMIT_MS, 3 * intervalMs);
+}
+
+export interface SharedPollOptions {
+  /** What the read is, for the time-limit error ("the engine status"). */
+  what?: string;
+  /** The time limit of one read at the store's interval; default {@link readLimitMs}. */
+  limitMs?: (intervalMs: number) => number;
+}
+
 export function createSharedPoll<T, A = never>(
-  read: (arg: A | null) => Promise<T>
+  read: (arg: A | null) => Promise<T>,
+  options: SharedPollOptions = {}
 ): SharedPoll<T, A> {
+  const what = options.what ?? 'the status';
+  const limitOf = options.limitMs ?? readLimitMs;
   const watchers = new Map<symbol, Watcher<A>>();
   let snap: PollSnapshot<T> = EMPTY;
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -87,8 +110,13 @@ export function createSharedPoll<T, A = never>(
     const gen = generation;
     const seq = ++started;
     inFlight += 1;
+    const limit = limitOf(timerMs ?? Math.min(...[...watchers.values()].map((w) => w.need.intervalMs)));
     try {
-      const value = await read(arg);
+      const value = await withTimeLimit(
+        read(arg),
+        limit,
+        `goose did not answer ${what} in ${limitWords(limit)}; reading it again`
+      );
       if (gen !== generation || seq < landed) return;
       landed = seq;
       snap = { value, failed: false, error: null, reads: snap.reads + 1 };

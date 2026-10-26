@@ -11,6 +11,7 @@ import type {
   MlxSpeedRecordDto,
 } from '@aaif/goose-sdk';
 import { getAcpClient } from './acpConnection';
+import { limitWords, withTimeLimit } from '../utils/timeLimit';
 
 /**
  * Client surface for the placement planner (`_goose/unstable/mlxEngine/{placementPlan,
@@ -35,6 +36,14 @@ async function call<T>(method: string, params: Record<string, unknown>): Promise
   return (await client.extMethod(method, params)) as unknown as T;
 }
 
+/**
+ * How long a plan may take before it is a failure. A real plan of the 27B over two Macs took 5.4 s
+ * (PlacementCard.test.tsx's fixture); a plan that has not answered in 45 s is stuck — the owner's
+ * Run it card said "Measuring your Macs and the model…" for hours (3.0.132) — and the card shows
+ * the failure with its refresh instead.
+ */
+export const PLACEMENT_PLAN_LIMIT_MS = 45_000;
+
 /** Plan one model, or every model in the models folder (`modelId` absent — the picker's badges). */
 export async function mlxPlacementPlan(
   goal: PlacementGoal,
@@ -45,9 +54,10 @@ export async function mlxPlacementPlan(
   if (modelId) params.modelId = modelId;
   if (context != null) params.context = context;
   try {
-    const response = await call<PlacementPlanResponse>(
-      '_goose/unstable/mlxEngine/placementPlan',
-      params
+    const response = await withTimeLimit(
+      call<PlacementPlanResponse>('_goose/unstable/mlxEngine/placementPlan', params),
+      PLACEMENT_PLAN_LIMIT_MS,
+      `goose did not answer the placement plan in ${limitWords(PLACEMENT_PLAN_LIMIT_MS)} — a network-mounted models folder or an unreachable Mac can stall it; refresh to plan again`
     );
     rememberPlacementPlans(response.plans);
     return response;

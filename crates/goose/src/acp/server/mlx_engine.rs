@@ -662,9 +662,14 @@ async fn core_status(
         Err(e) => status.chip_error = Some(e),
     }
     if let Some(model_id) = &req.fit_model_id {
-        match manager.mount_fit(model_id).await {
+        let id = model_id.clone();
+        let fit = bounded_fit(MOUNT_FIT_LIMIT, &MOUNT_FIT_BUSY, async move {
+            manager.mount_fit(&id).await.map_err(|e| format!("{e:#}"))
+        })
+        .await;
+        match fit {
             Ok(fit) => status.mount_fit = Some(fit_to_dto(model_id, &fit)),
-            Err(e) => status.mount_fit_error = Some(format!("{e:#}")),
+            Err(e) => status.mount_fit_error = Some(e),
         }
     }
     status.hosting = super::mlx_distributed::hosting_dto();
@@ -680,6 +685,60 @@ async fn core_status(
         }
     }
     Ok(MlxEngineStatusResponse { status })
+}
+
+/// How long a status read waits for the picked model's fit. The fit lists the models folder, and a
+/// models folder on a network mount (the workmule's `~/.goose/models` is NFS over Thunderbolt) can
+/// stall a read for minutes: the status must answer without it rather than hang with it (the
+/// owner's Engine panel sat on "Checking" for hours, 3.0.132).
+const MOUNT_FIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// One fit read at a time: a stalled one is not joined by another on every status tick.
+static MOUNT_FIT_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Clears the busy flag when the fit read ENDS, however it ends (an answer, an error, a panic) —
+/// never when the status stopped waiting for it.
+struct FitBusy(&'static std::sync::atomic::AtomicBool);
+
+impl Drop for FitBusy {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// `fit`, run off the runtime's worker threads (its folder read is synchronous and may block), and
+/// given up on after `limit`: the error says why the fit is missing. While an earlier read is
+/// still running, no second one starts.
+async fn bounded_fit<F>(
+    limit: std::time::Duration,
+    busy: &'static std::sync::atomic::AtomicBool,
+    fit: F,
+) -> Result<FitVerdict, String>
+where
+    F: std::future::Future<Output = Result<FitVerdict, String>> + Send + 'static,
+{
+    if busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err(
+            "an earlier read of the models folder for this fit has still not finished (a \
+             network-mounted models folder can stall); the fit is left out until it does"
+                .to_string(),
+        );
+    }
+    let guard = FitBusy(busy);
+    let runtime = tokio::runtime::Handle::current();
+    let read = tokio::task::spawn_blocking(move || {
+        let _guard = guard;
+        runtime.block_on(fit)
+    });
+    match tokio::time::timeout(limit, read).await {
+        Ok(Ok(fit)) => fit,
+        Ok(Err(e)) => Err(format!("the fit check ended without an answer: {e}")),
+        Err(_) => Err(format!(
+            "reading the models folder for this fit did not finish in {} s (a network-mounted \
+             models folder can stall); the fit is left out of this status",
+            limit.as_secs()
+        )),
+    }
 }
 
 static LOCAL_CHIP: std::sync::OnceLock<MlxChipDto> = std::sync::OnceLock::new();
