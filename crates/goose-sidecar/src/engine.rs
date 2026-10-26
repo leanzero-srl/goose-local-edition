@@ -23,6 +23,7 @@ use crate::machine::{
     self, LoadClaim, LoadHolder, LoadLock, LoadLockAttempt, LoadLockHeld, OtherEngine,
 };
 use crate::model_identity::{NodeModel, ServedNames};
+use crate::ple_offload;
 use crate::port_holder;
 use crate::prompt_lookup::{self, PromptLookupLane, PromptLookupProfile};
 use crate::{
@@ -178,6 +179,13 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.14-ple.1 (fork lz/qwen4-expert-offload, branch off lz.14) = lz.14 + `serve --qwen4-ple-offload`:
+/// Qwen3.8-Flash-Next's 32 GB n-gram (PLE) table stays in the checkpoint on disk and the ~16 rows a
+/// token needs are gathered from it (`crate::ple_offload`; M5 Max 128 GB: 104.25 → 72.25 GB MLX
+/// active, decode within a few % of resident, greedy output identical). Off unless the flag is
+/// sent; the tag's routed-expert offload flags (`--qwen4-expert-*`) are unfinished and goose never
+/// sends them. Memory-guard line: no `--cache-memory-percent` (Guarded row).
+///
 /// v0.14.3-lz.14 (fork lz/release-lz14 = lz.13 c58790b11 + lz/kv-dtype-extend edd279eb6 + lz/flint
 /// ff88eb79c) = lz.13 + a cold request joining a batch mid-prefill no longer turns the session's KV
 /// float32 (mlx-lm `BatchKVCache.extend` padded the empty side with a float32 `mx.array([])`; the
@@ -275,7 +283,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14-ple.1",
     "rapid-mlx",
 ];
 
@@ -380,6 +388,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.13",
         "rapid-mlx",
     ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14",
+        "rapid-mlx",
+    ],
 ];
 
 /// The MTP head file an MTPLX-style artefact ships next to its trunk shards. Its presence
@@ -451,6 +465,10 @@ pub struct ModelProfile {
     /// N-gram / prompt-lookup decoding (`prompt_lookup`): env on the MTP lane, `--suffix-*` flags
     /// on a pure-attention model without MTP, nothing on a hybrid without MTP. Default = auto.
     pub prompt_lookup: PromptLookupProfile,
+    /// Keep the checkpoint's n-gram (PLE) table on disk (`--qwen4-ple-offload`,
+    /// `crate::ple_offload`). `None` = auto: on for a `qwen4_exp` checkpoint that would not
+    /// otherwise fit this Mac. Never sent for a checkpoint without the table.
+    pub ple_offload: Option<bool>,
 }
 
 /// The explicit thinking choices; auto is the ABSENCE of a choice (`Option::None`), never a variant,
@@ -855,7 +873,42 @@ pub fn build_serve_command(
         let lane = prompt_lookup_lane_of(&model_path, want_mtp);
         argv.extend(prompt_lookup::engine_flags(&profile.prompt_lookup, &lane));
     }
+    if ple_offload_on(&model_path, profile, ple_offload::Machine::local) {
+        argv.push(ple_offload::ENGINE_FLAG.to_string());
+    }
     Ok(argv)
+}
+
+/// Whether the engine leaves `model_path`'s n-gram table on disk under `profile` on `machine`.
+/// Auto charges the model the way the mount gate does (its size on disk plus the smallest useful
+/// context's KV) and reads only static machine facts, so the argv never moves with live memory.
+pub fn ple_offload_on(
+    model_path: &Path,
+    profile: &ModelProfile,
+    machine: impl FnOnce() -> Option<ple_offload::Machine>,
+) -> bool {
+    if !ple_offload::has_table(model_path) {
+        return false;
+    }
+    if let Some(on) = profile.ple_offload {
+        return on;
+    }
+    let facts = match crate::placement::model::read_model_facts(model_path) {
+        Ok(facts) => facts,
+        Err(e) => {
+            tracing::warn!(
+                "n-gram table auto: {} unreadable, the table stays resident: {e:#}",
+                model_path.display()
+            );
+            return false;
+        }
+    };
+    let need = crate::placement::planner::single_engine_need(
+        crate::memory::dir_size_bytes(model_path),
+        Ok(&facts),
+        profile.kv_cache,
+    );
+    ple_offload::resolve(None, true, &facts.model_type, need.total_bytes(), machine())
 }
 
 fn prompt_lookup_lane_of(model_path: &Path, serves_mtp: bool) -> PromptLookupLane {
@@ -1416,23 +1469,44 @@ pub fn local_gpu_ceiling() -> Result<u64> {
     anyhow::bail!("the GPU ceiling is read from Metal, which exists only on macOS")
 }
 
-/// The single engine's need for `model` — the placement planner's own (`single_engine_need`).
+/// The single engine's need for `model` — the placement planner's own (`single_engine_need_placed`)
+/// — and, when the profile leaves the n-gram table on disk on this Mac, the note that says so.
 #[cfg(unix)]
-fn single_engine_need(dir: &Path, weights_bytes: u64, kv_mode: Option<KvCacheMode>) -> Need {
+fn single_engine_need(
+    dir: &Path,
+    weights_bytes: u64,
+    profile: &ModelProfile,
+    machine: ple_offload::Machine,
+) -> (Need, Option<String>) {
     let facts = crate::placement::model::read_model_facts(dir).map_err(|e| format!("{e:#}"));
-    crate::placement::planner::single_engine_need(
+    let on_disk = ple_offload_on(dir, profile, || Some(machine));
+    let need = crate::placement::planner::single_engine_need_placed(
         weights_bytes,
         facts.as_ref().map_err(Clone::clone),
-        kv_mode,
-    )
+        profile.kv_cache,
+        on_disk,
+    );
+    let note = match &facts {
+        Ok(f) if on_disk => Some(ple_offload::fit_note(f.ple_table_bytes, need.total_bytes())),
+        _ => None,
+    };
+    (need, note)
 }
 
 #[cfg(not(unix))]
-fn single_engine_need(_dir: &Path, weights_bytes: u64, _kv_mode: Option<KvCacheMode>) -> Need {
-    Need::single_engine(
-        weights_bytes,
-        Err("model facts are read on macOS only".to_string()),
-        0,
+fn single_engine_need(
+    _dir: &Path,
+    weights_bytes: u64,
+    _profile: &ModelProfile,
+    _machine: ple_offload::Machine,
+) -> (Need, Option<String>) {
+    (
+        Need::single_engine(
+            weights_bytes,
+            Err("model facts are read on macOS only".to_string()),
+            0,
+        ),
+        None,
     )
 }
 
@@ -1765,13 +1839,18 @@ impl MlxEngineManager {
             .gpu_ceiling()
             .context("reading the GPU ceiling the fit rule needs")?;
         let frees = self.start_frees_with(settings).await;
-        let need = single_engine_need(
+        let default_profile = ModelProfile::default();
+        let (need, table_note) = single_engine_need(
             &expand_tilde(&settings.models_dir).join(&model.id),
             model.size_bytes,
             settings
                 .model_profiles
                 .get(&model.id)
-                .and_then(|p| p.kv_cache),
+                .unwrap_or(&default_profile),
+            ple_offload::Machine {
+                total_bytes: reading.total_bytes,
+                ceiling_bytes: ceiling,
+            },
         );
         let others = self.other_engines(settings.port);
         let mut verdict = fit::judge(
@@ -1784,6 +1863,9 @@ impl MlxEngineManager {
                 freed_by_switch_bytes: frees.bytes(),
             },
         );
+        if let Some(note) = table_note {
+            verdict.append(note);
+        }
         if let Some(note) = frees.note() {
             verdict.append(note);
         }
@@ -2741,6 +2823,75 @@ mod tests {
         settings
     }
 
+    /// A checkpoint whose one shard holds a 4 KiB n-gram table tensor (and the index naming it).
+    fn ngram_table_dir(model_type: &str, with_table: bool) -> tempfile::TempDir {
+        let root = prompt_lookup_dir(
+            serde_json::json!({"model_type": model_type, "num_hidden_layers": 2}),
+            false,
+        );
+        let dir = root.path().join("org/m");
+        let name = if with_table {
+            "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_0.weight"
+        } else {
+            "model.language_model.layers.1.mlp.down_proj.weight"
+        };
+        let header = serde_json::json!({
+            name: {"dtype": "BF16", "shape": [256, 8], "data_offsets": [0, 4096]}
+        })
+        .to_string();
+        let mut shard = (header.len() as u64).to_le_bytes().to_vec();
+        shard.extend(header.as_bytes());
+        shard.extend(std::iter::repeat_n(0u8, 4096));
+        std::fs::write(dir.join("model-00001-of-00001.safetensors"), shard).unwrap();
+        std::fs::write(
+            dir.join("model.safetensors.index.json"),
+            serde_json::json!({"weight_map": {name: "model-00001-of-00001.safetensors"}})
+                .to_string(),
+        )
+        .unwrap();
+        root
+    }
+
+    #[test]
+    fn the_ngram_table_flag_follows_the_profile_and_auto_follows_the_fit() {
+        let flag = |root: &tempfile::TempDir, choice: Option<bool>| {
+            let mut s = prompt_lookup_settings(root, Default::default(), None);
+            s.model_profiles.get_mut("org/m").unwrap().ple_offload = choice;
+            build_serve_command(&s, "org/m", &[])
+                .unwrap()
+                .iter()
+                .any(|a| a == ple_offload::ENGINE_FLAG)
+        };
+        let flash = ngram_table_dir("qwen4_exp", true);
+        assert!(flag(&flash, Some(true)));
+        assert!(!flag(&flash, Some(false)));
+        let no_table = ngram_table_dir("qwen4_exp", false);
+        assert!(!flag(&no_table, Some(true)), "never sent without the table");
+
+        let dir = flash.path().join("org/m");
+        let tiny = ple_offload::Machine {
+            total_bytes: 4096,
+            ceiling_bytes: 4096,
+        };
+        let roomy = ple_offload::Machine {
+            total_bytes: 1 << 40,
+            ceiling_bytes: 1 << 40,
+        };
+        let auto = ModelProfile::default();
+        assert!(ple_offload_on(&dir, &auto, || Some(tiny)));
+        assert!(!ple_offload_on(&dir, &auto, || Some(roomy)));
+        assert!(!ple_offload_on(&dir, &auto, || None));
+        let other = ngram_table_dir("qwen3_5_moe", true);
+        assert!(!ple_offload_on(
+            &other.path().join("org/m"),
+            &auto,
+            || Some(tiny)
+        ));
+        let (need, note) = single_engine_need(&dir, 4096 + 200, &auto, tiny);
+        assert!(need.weights_bytes < 4096, "{need:?}");
+        assert!(note.unwrap().contains("n-gram table on disk"));
+    }
+
     #[test]
     fn prompt_lookup_rides_env_on_mtp_flags_on_pure_attention_and_nothing_on_a_hybrid() {
         use crate::prompt_lookup::{
@@ -3044,7 +3195,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14-ple.1",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -3420,7 +3571,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14-ple.1",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
@@ -5418,6 +5569,7 @@ while True:
             active_bytes_per_token: 0,
             active_params_per_token: 0,
             lookup_bytes: 0,
+            ple_table_bytes: 0,
             excluded_bytes: 0,
             largest_layer_bytes: 0,
             kv: Err("config.json names no attention".into()),
@@ -5444,6 +5596,7 @@ while True:
                 model: &facts,
                 bytes_on_disk,
                 kv_mode: None,
+                ple_offload: None,
                 nodes: &nodes,
                 cluster: None,
                 tensor: None,

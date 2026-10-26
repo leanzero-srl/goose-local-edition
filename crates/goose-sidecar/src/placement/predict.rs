@@ -837,6 +837,7 @@ mod tests {
             active_bytes_per_token: active,
             active_params_per_token: params,
             lookup_bytes: 0,
+            ple_table_bytes: 0,
             excluded_bytes: 0,
             largest_layer_bytes: 0,
             kv: Err::<KvCacheFacts, _>("n/a".into()),

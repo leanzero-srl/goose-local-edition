@@ -46,6 +46,7 @@ pub mod model_identity;
 mod model_parsers;
 #[cfg(unix)]
 pub mod placement;
+pub mod ple_offload;
 pub mod port_holder;
 pub mod prompt_lookup;
 mod subprocess;

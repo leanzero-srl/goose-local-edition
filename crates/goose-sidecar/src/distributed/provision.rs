@@ -128,8 +128,10 @@ pub const PIPELINE_FORK_COMMIT: &str = "8c000705422c314b2f7acd81ae9e398db0ae9320
 /// the closed-think signal); the pinned pipeline code is unchanged. lz.14 (the single engine's KV
 /// dtype guard and Recursive Flint) is reviewed on branch lz/pipeline-review-lz14 (eec8f6bd7): 7 n/a
 /// (the split never calls mlx-lm's BatchKVCache.extend and never serves flint); the pinned pipeline
-/// code is unchanged.
-pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.14";
+/// code is unchanged. v0.14.3-lz.14-ple.1 (the single engine's `--qwen4-ple-offload`, plus the unfinished,
+/// never-sent `--qwen4-expert-*` flags) is n/a: every change is opt-in by serve flag/env in the
+/// single engine's qwen4_exp model and cli, and the split runs its own pinned fork commit.
+pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.14-ple.1";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
     "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@8c000705422c314b2f7acd81ae9e398db0ae9320";
