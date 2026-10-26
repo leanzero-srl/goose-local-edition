@@ -185,9 +185,6 @@ pub struct PreflightReport {
     /// mlx_lm pipeline only: full-attention layers per rank, rank 0 first (`LayerSplit::full_layers`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_full_layers: Option<Vec<u32>>,
-    /// mlx_lm pipeline only: full-attention layers per rank, rank 0 first (`LayerSplit::full_layers`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline_full_layers: Option<Vec<u32>>,
     /// mlx_lm pipeline only: why this split (the planner's max-min-spare sentence).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_reason: Option<String>,
@@ -273,31 +270,6 @@ impl PreflightReport {
             .collect::<Option<Vec<_>>>()
             .context("the preflight produced no per-rank plan")?;
         super::launch::TensorLaunch::for_ranks(&plans)
-    }
-
-    /// The mlx_lm pipeline ranks' launch figures and prompt-cache weights, from the plans and the
-    /// split the preflight approved (`TensorLaunch::for_pipeline_ranks`).
-    pub fn mlx_pipeline_launches(
-        &self,
-    ) -> Result<(
-        Vec<super::launch::TensorLaunch>,
-        Vec<super::launch::PipelineCacheWeights>,
-    )> {
-        let plans = self
-            .nodes
-            .iter()
-            .map(|n| n.plan.as_ref())
-            .collect::<Option<Vec<_>>>()
-            .context("the preflight produced no per-rank plan")?;
-        let layers = self
-            .layer_split
-            .as_deref()
-            .context("the preflight approved no layer split")?;
-        let full = self
-            .pipeline_full_layers
-            .as_deref()
-            .context("the preflight carries no full-attention layers per rank: run it again")?;
-        super::launch::TensorLaunch::for_pipeline_ranks(&plans, layers, full)
     }
 
     /// The mlx_lm pipeline ranks' launch figures and prompt-cache weights, from the plans and the
@@ -1318,7 +1290,6 @@ pub async fn run_preflight(
         slots: None,
         layer_split: None,
         pipeline_full_layers: None,
-        pipeline_full_layers: None,
         split_reason: None,
         plan_reserve_ratio: None,
         plan_reserve_source: None,
@@ -1797,7 +1768,6 @@ fn plan_mlx_pipeline(
             report.max_context_fits = Some(split.context);
             report.pipeline_starts = Some(split.plans.iter().map(|p| p.layer_start).collect());
             report.layer_split = Some(split.layers.clone());
-            report.pipeline_full_layers = Some(split.full_layers.clone());
             report.pipeline_full_layers = Some(split.full_layers.clone());
             report.split_reason = Some(split.reason.clone());
             report.plan_reserve_ratio = Some(split.reserve_ratio);
@@ -2829,7 +2799,6 @@ pub(crate) mod tests {
             pipeline_starts: None,
             slots: None,
             layer_split: None,
-            pipeline_full_layers: None,
             pipeline_full_layers: None,
             split_reason: None,
             plan_reserve_ratio: None,

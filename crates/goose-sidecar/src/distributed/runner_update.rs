@@ -451,7 +451,6 @@ mod tests {
             slots: None,
             layer_split: None,
             pipeline_full_layers: None,
-            pipeline_full_layers: None,
             split_reason: None,
             plan_reserve_ratio: None,
             plan_reserve_source: None,

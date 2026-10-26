@@ -274,3 +274,22 @@ OPEN (next agent):
    (origin is at 29c1d2d24a already per `git log origin/...`; verify).
 TRAP: the DTO agent shares the git INDEX in this worktree — anything you stage can be swept into its commit. Stage
 and commit in ONE command (`git add <paths> && git commit`), never leave things staged.
+
+## Session 5 (coordinator, 2026-10-26 ~20:00): state for the NEXT coordinator
+- This commit: removed duplicated lines left by the shared-index mixup (preflight.rs field/fn/inits, runner_update.rs),
+  dropped unused `bail` (supervisor.rs), updated launch tests to the ulimit prefix, the new tag
+  `mlxLmServerPipelineSplit` (repo convention: every spec change bumps the tag for tensor too), and
+  rank_pipeline_split.py in TENSOR_PROGRAM. cargo test -p goose-sidecar: 499 pass, 1 FAIL:
+  launch::tests::the_tensor_spec_asks_for_the_doorbell_and_an_older_peer_refuses_it (panics near launch.rs:10550/10604;
+  read the panic message; likely the remaining refusal-message/alias expectations for the new tag). Then clippy
+  -p goose-sidecar -p goose --all-targets -D warnings, development_gates.
+- Desktop split-view agent was STILL RUNNING at this commit (ui/desktop only; HANDOFF "Session 4 (DTO+view)").
+- Rapid-MLX: release agent (another session) owns suite compare + tags v0.14.3-lz.15 / lz-pipeline-qwen4.15 + push.
+  Suites: scratchpad suites2.sh (new lines, logs suite2-{single,pipe}.log) and suites3-base.sh (base lines), pytest
+  --timeout 180 (pytest-timeout installed in the 4 tvenvs; the first base run hung at 0% CPU in
+  tests/test_batching_deterministic.py and was killed). When lz-pipeline-qwen4.15 is on origin: bump
+  PIPELINE_FORK_COMMIT (provision.rs) to its sha.
+- Then: live two-Mac test (brief in COORDINATOR.md item 4), skill notes (item 5).
+- Build wrapper: scratchpad/mimo2.sh (CARGO_TARGET_DIR=worktree/target, APFS clone of ~/Projects/goose/target).
+- TRAP: two agents in one worktree share the git INDEX: a `git commit` takes the other's staged files. Run one
+  committing agent at a time, or give each its own worktree.

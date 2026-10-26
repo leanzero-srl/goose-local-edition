@@ -1475,7 +1475,9 @@ pub(crate) mod tests {
         let args = python_args(spec).unwrap();
         let script = remote_script(&config.nodes[1].python, &args);
         assert!(script
-            .starts_with("echo GOOSE_RANK_PID=$$; exec '/tmp/jaccl-smoke/.venv/bin/python' '-c' "));
+            .starts_with(
+            "ulimit -n 65536 2>/dev/null || ulimit -n 10240; echo GOOSE_RANK_PID=$$; exec '/tmp/jaccl-smoke/.venv/bin/python' '-c' "
+        ));
         assert!(script.ends_with(&format!("'{RANK_MARKER}'")));
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(&args[3])
@@ -1669,7 +1671,7 @@ pub(crate) mod tests {
         );
         let script = remote_script(specs[1].interpreter(&config.nodes[1]).unwrap(), &args);
         assert!(script.starts_with(
-            "echo GOOSE_RANK_PID=$$; exec '/Users/workhorse/.goose/distributed/fork/bin/python' '-c' "
+            "ulimit -n 65536 2>/dev/null || ulimit -n 10240; echo GOOSE_RANK_PID=$$; exec '/Users/workhorse/.goose/distributed/fork/bin/python' '-c' "
         ));
 
         let mut four = config.clone();
@@ -10467,6 +10469,7 @@ print("ok")
                 include_str!("rank_stream_watch.py"),
                 include_str!("rank_xml_guard.py"),
                 include_str!("rank_admission.py"),
+                include_str!("rank_pipeline_split.py"),
                 include_str!("rank_wrapper.py")
             )
         );
@@ -10490,7 +10493,7 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerNamedConversation");
+        assert_eq!(json["program"], "mlxLmServerPipelineSplit");
         assert_eq!(json["name_conversations"], true);
         assert_eq!(json["keep_every_conversation"], true);
         assert_eq!(json["batch_kv_dtype"], true);
@@ -10544,7 +10547,7 @@ print("ok")
         }
         let refused = serde_json::from_value::<EveryConversationProgram>(json.clone()).unwrap_err();
         assert!(
-            refused.to_string().contains("mlxLmServerNamedConversation"),
+            refused.to_string().contains("mlxLmServerPipelineSplit"),
             "{refused}"
         );
         let why = link_control_refusal(&refused.to_string());
@@ -10598,7 +10601,7 @@ print("ok")
         }
         let refused = serde_json::from_value::<KvDtypeProgram>(json.clone()).unwrap_err();
         assert!(
-            refused.to_string().contains("mlxLmServerNamedConversation"),
+            refused.to_string().contains("mlxLmServerPipelineSplit"),
             "{refused}"
         );
         let why = link_control_refusal(&refused.to_string());
