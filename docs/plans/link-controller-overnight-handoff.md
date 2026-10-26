@@ -4,7 +4,7 @@
 
 Owner requested unattended completion, then went to sleep and explicitly said no more codes. Existing isolated laptop/workhorse and iPhone/iPad test enrollment/control approval persists. Installed original sessions/profiles stay separate. Do not reset saved identities, delete legacy nodes, weaken the mesh fence, bypass the Mac lock or request another OTP overnight.
 
-At the end of this user-triggered turn, meaningful independent source/build work is complete. This is the first goal-turn audit of the remaining owner/external-state impasse; do not mark the goal complete. Do not rerun passed suites merely to fill a continuation.
+The user-triggered turn completed the source/build work and recorded the first audit of the owner/external-state impasse. The next continuation verified deployment retention and public destinations, closing factual documentation gaps; the same UI/signing/legacy-host blockers persisted (second consecutive blocked audit). Do not mark the goal complete or rerun passed suites merely to fill a continuation. The bounded remaining facts and limits are in docs/ios-release/DEPLOYED-RETENTION-AUDIT.md.
 
 ## Verified artifacts
 
@@ -35,3 +35,7 @@ At the end of this user-triggered turn, meaningful independent source/build work
 ## Build traps
 
 Keep the current isolated workhorse checkout `/Users/workhorse/Projects/goose-recipient-build` while release work is active. Canonical warm target `/Users/workhorse/Projects/goose/target`; do not replace live worker sources. Heavy work via node-dispatch. Passing command is `cargo clippy --config 'profile.dev.package."*".strip=false' ...`, not config-before-clippy (actual Cargo1.92 drops that global override for external subcommands). No broad Cargo clean. Gates/scripts `/tmp/goose-recipient-gate.sh` and `/tmp/goose-recipient-finish.sh`; first contains the now-corrected bad ordering and is historical, finish script is the working recipe.
+
+## Overnight continuation, 21:13 UTC
+
+Backend 97116 remains alive; read-only Xcode production account-list count remains zero. No export retry, UI unlock attempt or credential request. Existing public policy/contact destinations return 200 with expected titles; the policy still describes manual deletion and omits Goose Remote. Company identity is already confirmed, while Apple conversion remains pending. Deployed retention audit confirms capabilities, configured providers, sweep activity and successful log rotation; provider history/backups and retention policy remain unproved. Documentation-only corrections and the reusable support-skill lesson are saved; no service configuration or public policy was changed.

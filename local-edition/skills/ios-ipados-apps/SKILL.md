@@ -68,3 +68,5 @@ This installation is laptop-owned. Canonical source: `~/.claude/skills/ios-ipado
 2026-10-26: Added consent binding across rolling transcript revisions, preaccept-refusal versus lost-acknowledgement recovery, and explicit Connect navigation reset after native simulator and independent-review findings.
 
 2026-10-26: Added observed-recipient provenance and sanitized-origin rules after the native sharing disclosure: runtime facts, saved configuration and unknown destinations must not be presented as exhaustive recipients or guaranteed future routing.
+
+2026-10-26: Added deployed retention verification after a Link audit distinguished one-hour rate windows from two-hour record TTL, observed cleanup from configured cleanup, and rotated-file age from an exact erasure promise.

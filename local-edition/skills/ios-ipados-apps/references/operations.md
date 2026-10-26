@@ -34,6 +34,8 @@ At each release and when Apple announces changes, review upcoming submission dea
 
 Review networking/crypto and other dependency vulnerabilities, licenses and release notes. Pin and verify updates; test reconnect and old-client behavior before rolling out protocol changes. Keep certificates/provisioning, APNs configuration if used, review accounts, support/privacy URLs, and external service credentials current. Separate their expiry/failure alerts from actual service health.
 
+Verify retention on the running deployment, not just in a repository default. Record enabled service paths without exposing credentials, the loaded cleanup schedule and a recent execution result. Token validity, record TTL, physical removal and provider backups are different facts; a working TTL sweep does not prove registry history is purged. Describe scheduled log rotation with its actual age calculation rather than promising an exact erasure deadline.
+
 Account deletion must reach the authoritative identity/data services and revoke devices/tokens; verify caches and support/diagnostic stores according to the stated retention policy. For products controlling user-owned hosts, explicitly distinguish deleting service-held account data from destructive deletion of the user's own local work. Never wipe remote work as an undocumented consequence of logout.
 
 When support reveals a repeatable failure, add a focused regression and update the owning project runbook. Update this generic skill only for a reusable platform lesson. Automated monitoring or recurring checks require the user's scheduling instruction; creating an app is not authorization to create background automations or email customers.
