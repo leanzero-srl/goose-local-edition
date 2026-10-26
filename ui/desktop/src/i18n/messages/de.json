@@ -5807,6 +5807,57 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} braucht {need} GB auf diesem Mac, und {free} GB sind jetzt dafür frei — {short} GB zu wenig."
   },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "Leere Zahlen behalten den Engine-Standard. In MTP füllen 31, 63 oder 95 ganze 32-Zeilen-Prüfkacheln. Gilt beim nächsten Laden."
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "es mischt Linear-Attention- oder SSM-Schichten mit Attention und wird ohne MTP-Kopf bereitgestellt. Die Engine verweigert Suffix-Decoding auf rekurrenten Schichten, und Prompt Lookup läuft nur innerhalb von MTP."
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "innerhalb von MTP"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "Suffix-Decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "Längster Entwurf (Tokens)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "Längstes N-Gramm"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "Kürzestes N-Gramm"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "Gemessen auf Qwen3.8-27B Q8: Code-Änderungen 42,8 auf 134,8 tok/s bei 99 % akzeptierten Kopien; Zusammenfassungen und Chat gewinnen nichts."
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "Kopiert eine Fortsetzung, die der Prompt bereits enthält, als langen Entwurf innerhalb von MTP, geprüft wie jeder Entwurf, sodass die Ausgabe die des Modells bleibt. Auto behält den Familienstandard der Engine (an für Qwen3.5/3.6/3.8)."
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Prompt Lookup braucht den Ordner des Modells, um seine Spur zu wählen, und dieses Modell liegt nicht im Modellordner."
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "Aus"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "An"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt Lookup (N-Gramm)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "Ohne MTP bereitgestellt, daher steuert der Hebel den Suffix-Decoder der Engine: nur Greedy-Sampling, eine Anfrage zur Zeit. Auto lässt ihn aus; auf Mellum langsamer gemessen, also erst nach einem Vergleich einschalten."
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "Für dieses Modell nicht verfügbar: {reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose kann nicht feststellen, ob dieses Modell reine Attention ist ({error})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Abbrechen"
   },

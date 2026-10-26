@@ -5807,6 +5807,57 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} はこの Mac で {need} GB を必要とし、今使える空きは {free} GB です。{short} GB 不足しています。"
   },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "自動"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "空欄の数値はエンジンの既定値のままです。MTP 内では 31、63、95 が 32 行の検証タイルをちょうど埋めます。次回のマウントで適用されます。"
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "linear-attention または SSM 層を attention と混在させており、MTP ヘッドなしで提供されます。エンジンは再帰層での suffix decoding を拒否し、prompt lookup は MTP 内でのみ動作します。"
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "MTP 内"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "最長ドラフト(トークン)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "最長 n-gram"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "最短 n-gram"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "Qwen3.8-27B Q8 で計測: コード編集は 42.8 から 134.8 tok/s、コピーの 99% が採用。要約とチャットは向上なし。"
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "プロンプトにすでに含まれる続きを MTP 内の長いドラフトとしてコピーし、他のドラフトと同様に検証するため、出力はモデル自身のものです。自動はエンジンのファミリー既定値を使います(Qwen3.5/3.6/3.8 ではオン)。"
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Prompt lookup はレーンを選ぶためにモデルのフォルダーが必要ですが、このモデルはモデルフォルダーにありません。"
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "オフ"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "オン"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup(n-gram)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "MTP なしで提供されるため、このレバーはエンジンの suffix decoder を動かします。greedy サンプリングのみ、一度に 1 リクエスト。自動ではオフ。Mellum では遅く計測されたので、比較してからオンにしてください。"
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "このモデルでは利用できません: {reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose はこのモデルが純粋な attention かどうか判断できません({error})。"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "キャンセル"
   },

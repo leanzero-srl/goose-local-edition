@@ -189,9 +189,25 @@ export interface MlxModelProfile {
    * KV cannot take it.
    */
   kvCache?: MlxKvCacheMode;
+  /**
+   * Prompt-lookup (n-gram copy) drafting. Absent = auto: the engine's family default (on inside
+   * MTP for Qwen3.5/3.6/3.8; the suffix lane stays off). A change restarts the engine.
+   */
+  promptLookup?: MlxPromptLookup;
 }
 
 export type MlxKvCacheMode = 'int8' | 'int4';
+
+/** Every field absent = the engine's own default for the lane. */
+export interface MlxPromptLookup {
+  mode?: 'on' | 'off';
+  /** MTP lane only: shortest context n-gram that may trigger a copy (engine floor 2). */
+  minNgram?: number;
+  /** MTP lane: longest n-gram matched. Suffix lane: `--suffix-max-suffix-len`. */
+  maxNgram?: number;
+  /** MTP lane: copy-draft ceiling (31/63/95 fill whole 32-row verify tiles). Suffix: `--suffix-max-draft`. */
+  maxDraft?: number;
+}
 
 /**
  * KV bytes one token of context costs at each cache setting, from the model's config.json and
@@ -291,6 +307,11 @@ export interface MlxLocalModel {
   /** Absent with no error = never measured on this model. */
   kvCacheMeasurement?: MlxKvCacheMeasurement | null;
   kvCacheMeasurementError?: string | null;
+  /** The folder holds `mtp.safetensors`: auto/`mtp` serves the head and prompt lookup rides in it. */
+  hasMtpHead?: boolean;
+  /** config.json declares recurrent-state layers; absent exactly when `hybridError` says why. */
+  hybrid?: boolean | null;
+  hybridError?: string | null;
 }
 
 export interface MlxModelsList {

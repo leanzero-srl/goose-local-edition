@@ -5807,6 +5807,57 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} bu Mac'te {need} GB istiyor ve şu an onun için {free} GB boş — {short} GB eksik."
   },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "Otomatik"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "Boş sayılar motor varsayılanını korur. MTP içinde 31, 63 veya 95, 32 satırlık doğrulama karolarını tam doldurur. Bir sonraki yüklemede uygulanır."
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "linear-attention veya SSM katmanlarını attention ile karıştırır ve MTP başlığı olmadan sunulur. Motor, yinelemeli katmanlarda suffix decoding'i reddeder ve prompt lookup yalnızca MTP içinde çalışır."
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "MTP içinde"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "En uzun taslak (token)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "En uzun n-gram"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "En kısa n-gram"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "Qwen3.8-27B Q8 üzerinde ölçüldü: kod düzenlemeleri 42,8'den 134,8 tok/s'ye, kopyaların %99'u kabul; özetler ve sohbet kazanç sağlamıyor."
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "İstemde zaten bulunan bir devamı MTP içinde uzun bir taslak olarak kopyalar ve her taslak gibi doğrular, böylece çıktı modelin kendisine ait kalır. Otomatik, motorun aile varsayılanını korur (Qwen3.5/3.6/3.8 için açık)."
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Prompt lookup şeridini seçmek için modelin klasörüne ihtiyaç duyar ve bu model, modeller klasöründe değil."
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "Kapalı"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "Açık"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup (n-gram)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "MTP olmadan sunuluyor, bu yüzden kol motorun suffix decoder'ını sürer: yalnızca greedy örnekleme, aynı anda tek istek. Otomatik kapalı bırakır; Mellum'da daha yavaş ölçüldü, yalnızca karşılaştırdıktan sonra açın."
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "Bu model için kullanılamıyor: {reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose bu modelin saf attention olup olmadığını anlayamıyor ({error})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "İptal"
   },

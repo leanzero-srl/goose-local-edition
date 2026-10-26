@@ -5807,6 +5807,57 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} cần {need} GB trên Mac này và hiện có {free} GB trống cho nó — thiếu {short} GB."
   },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "Tự động"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "Số để trống giữ mặc định của engine. Trong MTP, 31, 63 hoặc 95 lấp đầy trọn các ô xác minh 32 hàng. Áp dụng ở lần nạp tiếp theo."
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "mô hình trộn các lớp linear-attention hoặc SSM với attention và được phục vụ không có đầu MTP. Engine từ chối suffix decoding trên các lớp hồi quy, và prompt lookup chỉ chạy bên trong MTP."
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "trong MTP"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "Bản nháp dài nhất (token)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "N-gram dài nhất"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "N-gram ngắn nhất"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "Đo trên Qwen3.8-27B Q8: sửa mã từ 42,8 lên 134,8 tok/s với 99% bản sao được chấp nhận; tóm tắt và trò chuyện không tăng tốc."
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "Sao chép phần tiếp theo đã có trong prompt thành một bản nháp dài bên trong MTP, được xác minh như mọi bản nháp, nên đầu ra vẫn là của mô hình. Tự động giữ mặc định theo dòng mô hình của engine (bật cho Qwen3.5/3.6/3.8)."
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Prompt lookup cần thư mục của mô hình để chọn làn, và mô hình này không có trong thư mục mô hình."
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "Tắt"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "Bật"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup (n-gram)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "Được phục vụ không có MTP, nên cần gạt điều khiển suffix decoder của engine: chỉ lấy mẫu greedy, mỗi lần một yêu cầu. Tự động để tắt; đo trên Mellum chậm hơn, chỉ bật sau khi so sánh."
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "Không khả dụng cho mô hình này: {reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose không xác định được mô hình này có phải attention thuần hay không ({error})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Hủy"
   },

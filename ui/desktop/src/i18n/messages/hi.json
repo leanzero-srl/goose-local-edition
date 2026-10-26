@@ -5807,6 +5807,57 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} को इस Mac पर {need} GB चाहिए और अभी इसके लिए {free} GB खाली है — {short} GB कम।"
   },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "ऑटो"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "खाली संख्याएँ इंजन का डिफ़ॉल्ट रखती हैं। MTP के भीतर 31, 63 या 95 पूरी 32-पंक्ति सत्यापन टाइलें भरते हैं। अगले माउंट पर लागू होता है।"
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "यह linear-attention या SSM परतों को attention के साथ मिलाता है और MTP हेड के बिना चलाया जाता है। इंजन recurrent परतों पर suffix decoding मना करता है, और prompt lookup केवल MTP के भीतर चलता है।"
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "MTP के भीतर"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "सबसे लंबा ड्राफ़्ट (टोकन)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "सबसे लंबा n-gram"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "सबसे छोटा n-gram"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "Qwen3.8-27B Q8 पर मापा गया: कोड संपादन 42.8 से 134.8 tok/s, 99% प्रतियाँ स्वीकार; सारांश और चैट में कोई लाभ नहीं।"
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "प्रॉम्प्ट में पहले से मौजूद निरंतरता को MTP के भीतर लंबे ड्राफ़्ट के रूप में कॉपी करता है, किसी भी ड्राफ़्ट की तरह सत्यापित, इसलिए आउटपुट मॉडल का ही रहता है। ऑटो इंजन का फ़ैमिली डिफ़ॉल्ट रखता है (Qwen3.5/3.6/3.8 के लिए चालू)।"
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Prompt lookup को अपनी लेन चुनने के लिए मॉडल का फ़ोल्डर चाहिए, और यह मॉडल मॉडल फ़ोल्डर में नहीं है।"
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "बंद"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "चालू"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup (n-gram)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "MTP के बिना चलाया जाता है, इसलिए यह लीवर इंजन का suffix decoder चलाता है: केवल greedy sampling, एक समय में एक अनुरोध। ऑटो इसे बंद रखता है; Mellum पर धीमा मापा गया, इसलिए तुलना के बाद ही चालू करें।"
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "इस मॉडल के लिए उपलब्ध नहीं: {reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose यह नहीं बता सकता कि यह मॉडल शुद्ध attention है या नहीं ({error})।"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "रद्द करें"
   },

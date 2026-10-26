@@ -5807,6 +5807,57 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} perlukan {need} GB pada Mac ini dan kini {free} GB kosong untuknya — kurang {short} GB."
   },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "Nombor kosong mengekalkan lalai enjin. Dalam MTP, 31, 63 atau 95 memenuhi jubin pengesahan 32 baris sepenuhnya. Berkuat kuasa pada pemuatan seterusnya."
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "ia mencampurkan lapisan linear-attention atau SSM dengan attention dan dihidangkan tanpa kepala MTP. Enjin menolak suffix decoding pada lapisan berulang, dan prompt lookup hanya berjalan dalam MTP."
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "dalam MTP"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "Draf terpanjang (token)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "N-gram terpanjang"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "N-gram terpendek"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "Diukur pada Qwen3.8-27B Q8: suntingan kod 42.8 kepada 134.8 tok/s dengan 99% salinan diterima; ringkasan dan sembang tiada peningkatan."
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "Menyalin sambungan yang sudah ada dalam prompt sebagai draf panjang dalam MTP, disahkan seperti draf lain, jadi output kekal milik model. Auto mengekalkan lalai keluarga enjin (hidup untuk Qwen3.5/3.6/3.8)."
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Prompt lookup memerlukan folder model untuk memilih lorongnya, dan model ini tiada dalam folder model."
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "Mati"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "Hidup"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup (n-gram)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "Dihidangkan tanpa MTP, jadi tuil ini memacu suffix decoder enjin: sampling greedy sahaja, satu permintaan pada satu masa. Auto membiarkannya mati; diukur lebih perlahan pada Mellum, jadi hidupkan hanya selepas membandingkan."
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "Tidak tersedia untuk model ini: {reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose tidak dapat menentukan sama ada model ini attention tulen ({error})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Batal"
   },

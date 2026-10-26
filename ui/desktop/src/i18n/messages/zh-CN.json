@@ -5807,6 +5807,57 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} 在这台 Mac 上需要 {need} GB，现在可供它使用的空闲为 {free} GB — 还差 {short} GB。"
   },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "自动"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "留空的数字保持引擎默认值。在 MTP 内,31、63 或 95 可填满完整的 32 行验证块。下次挂载时生效。"
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "它将 linear-attention 或 SSM 层与 attention 混合,且在没有 MTP 头的情况下运行。引擎拒绝在循环层上使用 suffix decoding,而 prompt lookup 只在 MTP 内运行。"
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "MTP 内"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "最长草稿(token)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "最长 n-gram"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "最短 n-gram"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "在 Qwen3.8-27B Q8 上测得:代码编辑从 42.8 提升到 134.8 tok/s,99% 的复制被接受;摘要和聊天没有提升。"
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "将提示中已有的后续内容作为 MTP 内的长草稿复制,并像其他草稿一样验证,因此输出仍是模型自己的。自动保持引擎的系列默认值(Qwen3.5/3.6/3.8 为开启)。"
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Prompt lookup 需要模型的文件夹来选择通道,而此模型不在模型文件夹中。"
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "关闭"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "开启"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup(n-gram)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "在没有 MTP 的情况下运行,因此该选项驱动引擎的 suffix decoder:仅限 greedy 采样,一次一个请求。自动保持关闭;在 Mellum 上测得更慢,请对比后再开启。"
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "此模型不可用:{reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose 无法判断此模型是否为纯 attention({error})。"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "取消"
   },

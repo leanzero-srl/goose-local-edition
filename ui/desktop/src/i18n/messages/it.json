@@ -5807,6 +5807,57 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} richiede {need} GB su questo Mac e ora ne sono liberi {free} GB: mancano {short} GB."
   },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "I numeri vuoti mantengono il valore predefinito del motore. Dentro MTP, 31, 63 o 95 riempiono tile di verifica complete da 32 righe. Si applica al prossimo caricamento."
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "mescola livelli linear-attention o SSM con attention ed è servito senza testa MTP. Il motore rifiuta il suffix decoding sui livelli ricorrenti, e il prompt lookup funziona solo dentro MTP."
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "dentro MTP"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "Bozza più lunga (token)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "N-gramma più lungo"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "N-gramma più corto"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "Misurato su Qwen3.8-27B Q8: modifiche al codice da 42,8 a 134,8 tok/s con il 99% delle copie accettate; riassunti e chat non guadagnano nulla."
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "Copia una continuazione già presente nel prompt come bozza lunga dentro MTP, verificata come ogni bozza, quindi l'output resta quello del modello. Auto mantiene il valore predefinito della famiglia nel motore (attivo per Qwen3.5/3.6/3.8)."
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Il prompt lookup ha bisogno della cartella del modello per scegliere la sua corsia, e questo modello non è nella cartella dei modelli."
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "Spento"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "Acceso"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup (n-gramma)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "Servito senza MTP, quindi la leva guida il suffix decoder del motore: solo campionamento greedy, una richiesta alla volta. Auto lo lascia spento; misurato più lento su Mellum, attivalo solo dopo un confronto."
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "Non disponibile per questo modello: {reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose non riesce a stabilire se questo modello è attention pura ({error})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Annulla"
   },
