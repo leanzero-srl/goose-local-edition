@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 /// [`LinkEvent::NodeStateChanged`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NodeState {
+    /// An advertisement only; mesh role authorization comes from the worker registry.
+    /// Absent on old peers means update_required, with no controller capabilities.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller: Option<crate::controller_wire::ControllerProtocol>,
     pub node_id: String,
     pub hostname: String,
     pub mesh_ip: Option<String>,
@@ -224,6 +228,10 @@ mod tests {
             "sessions_active":0,"updated_at":"2026-10-25T10:00:00Z",
             "allows":{"manage_models":true,"answer_chat":true,"run_split":false}}"#;
         let n: NodeState = serde_json::from_str(old).expect("old peer JSON parses");
+        assert!(
+            n.controller.is_none(),
+            "legacy peer has no controller capability"
+        );
         let a = n.allows.expect("allows");
         assert!(a.manage_models && a.answer_chat && !a.run_split);
         assert!(!a.run_jobs);
@@ -300,6 +308,7 @@ mod tests {
         );
 
         let node = NodeState {
+            controller: None,
             node_id: "node-a".to_string(),
             hostname: "a-host".to_string(),
             mesh_ip: Some("100.64.0.1".to_string()),
@@ -326,6 +335,7 @@ mod tests {
     #[test]
     fn last_poll_error_is_omitted_when_none_and_defaults_when_absent() {
         let node = NodeState {
+            controller: None,
             node_id: "node-a".to_string(),
             hostname: "a-host".to_string(),
             mesh_ip: None,
@@ -353,6 +363,7 @@ mod tests {
         assert_eq!(parsed.last_poll_error, None);
 
         let with_error = NodeState {
+            controller: None,
             last_poll_error: Some("peer answered 401 Unauthorized: token mismatch".into()),
             ..node
         };
@@ -381,6 +392,7 @@ mod tests {
         assert!(value.get("computer_name").is_none() && value.get("allows").is_none());
 
         let named = NodeState {
+            controller: None,
             computer_name: Some("Work's Mac Studio".to_string()),
             allows: Some(NodeAllows {
                 run_jobs: false,
@@ -418,6 +430,7 @@ mod tests {
             .is_none());
 
         let leaving = NodeState {
+            controller: None,
             status: NodeStatus::Offline,
             leaving: Some(NodeLeaving {
                 reason: LeaveReason::Restarting,
@@ -453,6 +466,7 @@ mod tests {
     fn nodes_response_uses_self_key() {
         let response = SwarmNodesResponse {
             self_node: NodeState {
+                controller: None,
                 node_id: "node-a".to_string(),
                 hostname: "a-host".to_string(),
                 mesh_ip: None,

@@ -406,6 +406,7 @@ pub trait StreamErrorExplainer: Send + Sync {
 /// loudly, never silently skipped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeerTarget {
+    pub mesh_node_key: Option<String>,
     pub hostname: String,
     pub mesh_ip: Option<String>,
     pub port: u16,
@@ -414,6 +415,7 @@ pub struct PeerTarget {
 impl PeerTarget {
     pub fn from_mesh_peer(peer: &MeshPeer, port: u16) -> Self {
         Self {
+            mesh_node_key: peer.mesh_node_key.clone(),
             hostname: peer.hostname.clone(),
             mesh_ip: peer.ip.clone(),
             port,
@@ -457,6 +459,11 @@ struct PeerDial {
 
 struct PeerEntry {
     target: PeerTarget,
+    /// The latest mesh observation, even when role expiry freezes the cached row.
+    observed_target: PeerTarget,
+    /// Replaced on any role contradiction or observed target change; restoring
+    /// the old values must not resurrect capabilities issued before that change.
+    continuation_identity: Arc<()>,
     state: NodeState,
     tasks: Vec<JoinHandle<()>>,
     /// How many going-away notices this peer has sent. A poll reads it when it BEGINS and
@@ -485,6 +492,7 @@ pub const PEER_LIVENESS_TIMEOUTS: u32 = 2;
 pub const PEER_SLOW_LOOKS: u32 = 3;
 
 struct RegistryInner {
+    admission: StdMutex<crate::controller_discovery::PeerAdmission>,
     config: PeerRegistryConfig,
     pubsub: Arc<PubSub>,
     /// `None` ⇔ no mesh proxy: every poll and stream attempt fails with
@@ -517,6 +525,14 @@ pub struct PeerRegistry {
     inner: Arc<RegistryInner>,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum PeerAuthorizationError {
+    #[error("no known mesh peer '{0}'")]
+    UnknownPeer(String),
+    #[error("peer '{0}' has no fresh authoritative host role")]
+    Denied(String),
+}
+
 impl PeerRegistry {
     pub fn new(config: PeerRegistryConfig, pubsub: Arc<PubSub>) -> Result<Self, PeerDialError> {
         let dial = match config.peer_proxy {
@@ -528,6 +544,7 @@ impl PeerRegistry {
         };
         Ok(Self {
             inner: Arc::new(RegistryInner {
+                admission: StdMutex::new(crate::controller_discovery::PeerAdmission::LegacyFleet),
                 config,
                 pubsub,
                 dial,
@@ -542,6 +559,9 @@ impl PeerRegistry {
     /// have their tasks aborted and their sessions dropped from the mirror;
     /// new/changed peers start `Offline` and get a poll task + a stream task.
     pub fn set_peers(&self, targets: Vec<PeerTarget>) {
+        // One pre-poll admission point feeds jobs, inference, distributed placement and
+        // totals: controllers never acquire a row or network tasks in an upgraded fabric.
+        let admission = self.inner.admission.lock().unwrap().clone();
         let mut peers = self.inner.peers.lock().unwrap();
 
         let keep: HashSet<&str> = targets.iter().map(|t| t.hostname.as_str()).collect();
@@ -565,6 +585,17 @@ impl PeerRegistry {
         }
 
         for target in targets {
+            if let Some(existing) = peers.get_mut(&target.hostname) {
+                if existing.observed_target != target {
+                    existing.continuation_identity = Arc::new(());
+                }
+                existing.observed_target = target.clone();
+            }
+            // Preserve cached rows and existing work when authority is unavailable.
+            // Only freshly admitted identities may create/update polling targets.
+            if !admission.admits(target.mesh_node_key.as_deref()) {
+                continue;
+            }
             if let Some(existing) = peers.get(&target.hostname) {
                 if existing.target == target {
                     continue;
@@ -576,6 +607,7 @@ impl PeerRegistry {
                 }
             }
             let state = NodeState {
+                controller: None,
                 node_id: target.hostname.clone(),
                 hostname: target.hostname.clone(),
                 mesh_ip: target.mesh_ip.clone(),
@@ -618,6 +650,8 @@ impl PeerRegistry {
             peers.insert(
                 target.hostname.clone(),
                 PeerEntry {
+                    observed_target: target.clone(),
+                    continuation_identity: Arc::new(()),
                     target,
                     state,
                     tasks,
@@ -629,6 +663,18 @@ impl PeerRegistry {
     }
 
     /// Convenience over [`Self::set_peers`] straight from `MeshStatus.peers`.
+    pub fn set_peer_admission(&self, admission: crate::controller_discovery::PeerAdmission) {
+        let mut current = self.inner.admission.lock().unwrap();
+        let mut peers = self.inner.peers.lock().unwrap();
+        for peer in peers.values_mut() {
+            if !admission.continues(peer.target.mesh_node_key.as_deref()) {
+                peer.continuation_identity = Arc::new(());
+            }
+        }
+        *current = admission;
+    }
+
+    /// Reconcile only after installing the authority's current admission snapshot.
     pub fn set_mesh_peers(&self, peers: &[MeshPeer], control_port: u16) {
         self.set_peers(
             peers
@@ -640,14 +686,90 @@ impl PeerRegistry {
 
     /// Last-known states of all mesh peers, sorted by hostname.
     pub fn peer_nodes(&self) -> Vec<NodeState> {
+        let admission = self.inner.admission.lock().unwrap();
         let peers = self.inner.peers.lock().unwrap();
-        let mut nodes: Vec<NodeState> = peers.values().map(|e| e.state.clone()).collect();
+        let mut nodes: Vec<NodeState> = peers
+            .values()
+            .map(|e| {
+                let mut state = e.state.clone();
+                if !admission.admits(e.target.mesh_node_key.as_deref()) {
+                    state.last_poll_error =
+                        Some("host role authorization unavailable or expired; cached state".into());
+                    state.allows = Some(crate::wire::NodeAllows::default());
+                    state.load = None;
+                }
+                state
+            })
+            .collect();
         nodes.sort_by(|a, b| {
             a.hostname
                 .cmp(&b.hostname)
                 .then_with(|| a.node_id.cmp(&b.node_id))
         });
         nodes
+    }
+
+    /// Fresh authority is required at each placement look, independent of cached liveness.
+    pub fn compute_peer_nodes(&self) -> Vec<NodeState> {
+        let admission = self.inner.admission.lock().unwrap();
+        let peers = self.inner.peers.lock().unwrap();
+        let mut nodes: Vec<_> = peers
+            .values()
+            .filter(|entry| admission.admits(entry.target.mesh_node_key.as_deref()))
+            .map(|entry| entry.state.clone())
+            .collect();
+        nodes.sort_by(|a, b| (&a.hostname, &a.node_id).cmp(&(&b.hostname, &b.node_id)));
+        nodes
+    }
+
+    pub fn require_compute_peer(&self, node_id: &str) -> Result<(), PeerAuthorizationError> {
+        let admission = self.inner.admission.lock().unwrap();
+        let peers = self.inner.peers.lock().unwrap();
+        let peer = peers
+            .values()
+            .find(|entry| {
+                entry.state.node_id == node_id
+                    || entry.target.hostname == node_id
+                    || entry.state.hostname == node_id
+            })
+            .ok_or_else(|| PeerAuthorizationError::UnknownPeer(node_id.to_string()))?;
+        if !admission.admits(peer.target.mesh_node_key.as_deref()) {
+            return Err(PeerAuthorizationError::Denied(node_id.to_string()));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn admitted_target(
+        &self,
+        node_id: &str,
+    ) -> Result<(PeerTarget, Arc<()>), PeerAuthorizationError> {
+        let admission = self.inner.admission.lock().unwrap();
+        let peers = self.inner.peers.lock().unwrap();
+        let peer = peers
+            .values()
+            .find(|entry| {
+                entry.state.node_id == node_id
+                    || entry.target.hostname == node_id
+                    || entry.state.hostname == node_id
+            })
+            .ok_or_else(|| PeerAuthorizationError::UnknownPeer(node_id.to_string()))?;
+        if !admission.admits(peer.target.mesh_node_key.as_deref())
+            || peer.observed_target != peer.target
+        {
+            return Err(PeerAuthorizationError::Denied(node_id.to_string()));
+        }
+        Ok((peer.target.clone(), peer.continuation_identity.clone()))
+    }
+
+    pub(crate) fn continues_target(&self, target: &PeerTarget, identity: &Arc<()>) -> bool {
+        let admission = self.inner.admission.lock().unwrap();
+        let peers = self.inner.peers.lock().unwrap();
+        admission.continues(target.mesh_node_key.as_deref())
+            && peers.get(&target.hostname).is_some_and(|entry| {
+                entry.target == *target
+                    && entry.observed_target == *target
+                    && Arc::ptr_eq(&entry.continuation_identity, identity)
+            })
     }
 
     /// The peer-originated slice of the mirror index, most recent first.
@@ -669,6 +791,7 @@ impl PeerRegistry {
     /// poll has folded its self-reported id). `None` when no such peer is known or it
     /// reports no mesh IP (a permanently `Offline` row is not a POST target).
     pub fn peer_base_url(&self, node_id: &str) -> Option<String> {
+        let admission = self.inner.admission.lock().unwrap();
         let peers = self.inner.peers.lock().unwrap();
         peers
             .values()
@@ -677,6 +800,7 @@ impl PeerRegistry {
                     || entry.target.hostname == node_id
                     || entry.state.hostname == node_id
             })
+            .filter(|entry| admission.admits(entry.target.mesh_node_key.as_deref()))
             .and_then(|entry| entry.target.base_url())
     }
 
@@ -827,6 +951,15 @@ async fn liveness_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, base_
             tokio::time::sleep(PEER_LIVENESS_INTERVAL).await;
         }
         let Some(inner) = weak.upgrade() else { return };
+        if !inner
+            .admission
+            .lock()
+            .unwrap()
+            .admits(target.mesh_node_key.as_deref())
+        {
+            timeouts = 0;
+            continue;
+        }
         let Some(proxy) = inner.dial.as_ref().map(|dial| dial.proxy) else {
             return;
         };
@@ -900,6 +1033,16 @@ async fn poll_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, base_url:
     loop {
         let Some(inner) = weak.upgrade() else { return };
         let poll_interval = inner.config.poll_interval;
+        if !inner
+            .admission
+            .lock()
+            .unwrap()
+            .admits(target.mesh_node_key.as_deref())
+        {
+            drop(inner);
+            tokio::time::sleep(poll_interval).await;
+            continue;
+        }
         let outcome = poll_peer_once(&inner, &target, &base_url).await;
         if !matches!(outcome, Err(PollFailure::Slow(_))) {
             reset_slow_looks(&inner, &target.hostname);
@@ -1143,6 +1286,16 @@ async fn stream_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, ws_base
     loop {
         let Some(inner) = weak.upgrade() else { return };
         let backoff = inner.config.reconnect_backoff;
+        if !inner
+            .admission
+            .lock()
+            .unwrap()
+            .admits(target.mesh_node_key.as_deref())
+        {
+            drop(inner);
+            tokio::time::sleep(backoff).await;
+            continue;
+        }
         let url = stream_url(&ws_base, &inner.config.node_token, since);
         let proxy = inner.dial.as_ref().map(|dial| dial.proxy);
         let connect_timeout = inner.config.request_timeout;
@@ -1260,6 +1413,100 @@ mod tests {
     use super::*;
     use crate::wire::LeaveReason;
 
+    #[tokio::test]
+    async fn role_lease_blocks_new_work_but_preserves_cached_state_and_existing_tasks() {
+        use crate::controller_discovery::PeerAdmission;
+        use crate::controller_wire::{DeviceRole, RegisteredPeer, RegisteredPeers};
+        let registry = registry_with_studio();
+        {
+            let mut peers = registry.inner.peers.lock().unwrap();
+            let peer = peers.get_mut("studio").unwrap();
+            peer.target.mesh_node_key = Some("nodekey:host".into());
+            peer.state = report(None);
+            // A held observer task represents already accepted work: role expiry must
+            // change admission, not cancel work or destroy its cached transcript.
+            peer.tasks.push(tokio::spawn(std::future::pending()));
+        }
+        registry.inner.sessions.lock().unwrap().insert(
+            "s".into(),
+            SessionSummary {
+                session_id: "s".into(),
+                origin_node_id: "studio-id".into(),
+                working_dir: "/fixture".into(),
+                name: "Cached work".into(),
+                updated_at: Utc::now(),
+                message_count: 1,
+                live: true,
+            },
+        );
+        let snapshot = RegisteredPeers {
+            protocol_version: 1,
+            lease_seconds: 1,
+            revision: 1,
+            peers: vec![
+                RegisteredPeer {
+                    mesh_node_key: "nodekey:host".into(),
+                    role: DeviceRole::Host,
+                    owner_node_id: Some(uuid::Uuid::new_v4()),
+                },
+                RegisteredPeer {
+                    mesh_node_key: "nodekey:phone".into(),
+                    role: DeviceRole::Controller,
+                    owner_node_id: None,
+                },
+            ],
+        };
+        registry.set_peer_admission(
+            PeerAdmission::registered(snapshot.clone(), tokio::time::Instant::now()).unwrap(),
+        );
+        registry.set_peers(vec![
+            PeerTarget {
+                hostname: "studio".into(),
+                mesh_node_key: Some("nodekey:host".into()),
+                mesh_ip: None,
+                port: 41226,
+            },
+            PeerTarget {
+                hostname: "phone".into(),
+                mesh_node_key: Some("nodekey:phone".into()),
+                mesh_ip: None,
+                port: 41226,
+            },
+        ]);
+        assert_eq!(
+            registry.peer_nodes().len(),
+            1,
+            "controller gets no worker row"
+        );
+        assert_eq!(registry.compute_peer_nodes().len(), 1);
+        assert!(registry.require_compute_peer("studio-id").is_ok());
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        assert!(registry.compute_peer_nodes().is_empty());
+        assert!(matches!(
+            registry.require_compute_peer("studio-id"),
+            Err(PeerAuthorizationError::Denied(_))
+        ));
+        let cached = registry.peer_nodes();
+        assert_eq!(cached.len(), 1);
+        assert_eq!(
+            cached[0].status,
+            NodeStatus::Idle,
+            "authorization loss is not an offline verdict"
+        );
+        assert!(cached[0]
+            .last_poll_error
+            .as_ref()
+            .unwrap()
+            .contains("cached state"));
+        assert_eq!(registry.peer_sessions().len(), 1);
+        assert!(!registry.inner.peers.lock().unwrap()["studio"].tasks[0].is_finished());
+        registry.set_peer_admission(
+            PeerAdmission::registered(snapshot, tokio::time::Instant::now()).unwrap(),
+        );
+        assert_eq!(registry.compute_peer_nodes().len(), 1);
+        registry.shutdown();
+    }
+
     fn registry_with_studio() -> PeerRegistry {
         let registry = PeerRegistry::new(
             PeerRegistryConfig {
@@ -1274,6 +1521,7 @@ mod tests {
         .unwrap();
         // No mesh IP: the row exists and no poll task runs, so the test drives every fold.
         registry.set_peers(vec![PeerTarget {
+            mesh_node_key: None,
             hostname: "studio".to_string(),
             mesh_ip: None,
             port: 41226,
@@ -1283,6 +1531,7 @@ mod tests {
 
     fn report(leaving: Option<LeaveReason>) -> NodeState {
         NodeState {
+            controller: None,
             load: None,
             node_id: "studio-id".to_string(),
             hostname: "studio".to_string(),

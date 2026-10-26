@@ -353,7 +353,7 @@ mod imp {
             .ok_or_else(|| "this Mac is not connected to LeanZero Link".to_string())?;
         let self_id = super::super::link::stable_node_id();
         Ok(registry
-            .peer_nodes()
+            .compute_peer_nodes()
             .into_iter()
             .filter(|p| p.node_id != self_id && p.status != NodeStatus::Offline)
             .map(|p| (link_control::link_host(&p.node_id), p.hostname))

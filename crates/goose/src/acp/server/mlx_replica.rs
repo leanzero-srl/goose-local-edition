@@ -222,7 +222,7 @@ pub(super) async fn core_replica_targets(
     }
     let (local, warning) = local_facts().await?;
     let peers = match manager.active_registry().await {
-        Some(registry) => registry.peer_nodes(),
+        Some(registry) => registry.compute_peer_nodes(),
         None => Vec::new(),
     };
     let targets = futures::future::join_all(peers.into_iter().map(|peer| {
@@ -290,7 +290,7 @@ pub(super) async fn core_replicate(
     }
     let hostname = match manager.active_registry().await {
         Some(registry) => registry
-            .peer_nodes()
+            .compute_peer_nodes()
             .into_iter()
             .find(|peer| peer.node_id == req.target_node_id)
             .map(|peer| peer.hostname),

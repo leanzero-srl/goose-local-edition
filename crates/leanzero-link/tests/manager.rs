@@ -254,6 +254,7 @@ struct FakeStateSource;
 impl SwarmStateSource for FakeStateSource {
     async fn local_node(&self) -> NodeState {
         NodeState {
+            controller: None,
             node_id: "self-node".to_string(),
             hostname: "self-host".to_string(),
             mesh_ip: None,
@@ -277,6 +278,7 @@ impl SwarmStateSource for FakeStateSource {
 
 fn connected_status() -> MeshStatus {
     MeshStatus {
+        self_node_key: None,
         self_ip: Some("100.64.0.7".to_string()),
         self_hostname: Some("self-host".to_string()),
         backend_state: BackendState::Running,
@@ -294,6 +296,7 @@ struct NamedIdleSource {
 impl SwarmStateSource for NamedIdleSource {
     async fn local_node(&self) -> NodeState {
         NodeState {
+            controller: None,
             node_id: self.node_id.clone(),
             hostname: format!("{}-host", self.node_id),
             mesh_ip: None,
@@ -729,6 +732,7 @@ async fn node_count_excludes_offline_peers_and_poll_failures_are_counted() {
     let h = Harness::new(tempfile::tempdir().unwrap());
     h.seed_identity("a@example.com", "good-token");
     *h.script.peers.lock().unwrap() = vec![MeshPeer {
+        mesh_node_key: None,
         hostname: "ghost".to_string(),
         ip: None,
         online: false,
@@ -1543,6 +1547,7 @@ async fn remote_execute_posts_to_a_peer_execute_route() {
         .await
         .expect("A has a live peer registry while connected");
     let target = PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(b_port)),
         port: b_port,
@@ -1691,6 +1696,7 @@ async fn mlx_proxy_posts_to_a_peer_mlx_route_and_surfaces_its_payload_and_errors
         .await
         .expect("A has a live peer registry while connected");
     let target = PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(b_port)),
         port: b_port,
@@ -1770,6 +1776,7 @@ async fn mlx_proxy_surfaces_a_peer_failure_verbatim() {
 
     let registry = manager.active_registry().await.expect("live registry");
     let target = PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(b_port)),
         port: b_port,
@@ -1843,6 +1850,7 @@ async fn mlx_proxy_waits_past_the_fabric_request_timeout_for_a_slow_peer() {
 
     let registry = manager.active_registry().await.expect("live registry");
     let target = PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(b_port)),
         port: b_port,
@@ -1901,6 +1909,7 @@ async fn mlx_proxy_unreachable_peer_is_a_typed_error() {
         listener.local_addr().unwrap().port()
     };
     let target = PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(dead_port)),
         port: dead_port,
@@ -1926,6 +1935,298 @@ async fn mlx_proxy_unreachable_peer_is_a_typed_error() {
 }
 
 // ── the distributed engine's node route ──────────────────────────────────
+
+/// Controlled rank watchdog: the same 15-second last-poll rule as link_host,
+/// with an injected clock so the test exercises 30 seconds of work without a model.
+#[derive(Default)]
+struct AcceptedRankNode {
+    clock_ms: std::sync::atomic::AtomicU64,
+    last_poll_ms: std::sync::atomic::AtomicU64,
+    stopped: AtomicBool,
+    calls: AtomicU32,
+    rank_id: StdMutex<String>,
+}
+
+impl AcceptedRankNode {
+    fn advance(&self, millis: u64) {
+        let now = self.clock_ms.fetch_add(millis, Ordering::SeqCst) + millis;
+        if now - self.last_poll_ms.load(Ordering::SeqCst) > 15_000 {
+            self.stopped.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+#[async_trait]
+impl DistributedNode for AcceptedRankNode {
+    fn serving_allowed(&self) -> bool {
+        true
+    }
+    async fn dispatch(
+        &self,
+        op: &str,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, DistributedNodeError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if op == "rankStart" {
+            if request["runId"] == "missing-ack" {
+                return Ok(json!({"pid": 1}));
+            }
+            let id = format!("accepted-{}", request["runId"].as_str().unwrap());
+            *self.rank_id.lock().unwrap() = id.clone();
+            return Ok(json!({"rankId": id, "pid": 1, "leaseMs": 15_000}));
+        }
+        let id = self.rank_id.lock().unwrap().clone();
+        if request["rankId"] != id || self.stopped.load(Ordering::SeqCst) {
+            return Err(DistributedNodeError::Refused {
+                code: "unknownRank".into(),
+                message: "rank absent or lease stopped".into(),
+            });
+        }
+        match op {
+            "rankPoll" => {
+                self.last_poll_ms
+                    .store(self.clock_ms.load(Ordering::SeqCst), Ordering::SeqCst);
+                Ok(json!({"rankId": id, "lines": 1, "exit": null}))
+            }
+            "rankStop" => {
+                self.stopped.store(true, Ordering::SeqCst);
+                Ok(json!({"report": {"verified": true}, "exit": {"code": 0}}))
+            }
+            _ => Err(DistributedNodeError::UnknownOp(op.into())),
+        }
+    }
+}
+
+fn rank_admission(
+    target: &PeerTarget,
+    duration: Duration,
+) -> leanzero_link::controller_discovery::PeerAdmission {
+    leanzero_link::controller_discovery::PeerAdmission::RegisteredHosts {
+        revision: 1,
+        roles: std::collections::HashMap::from([(
+            target.mesh_node_key.clone().unwrap(),
+            leanzero_link::controller_wire::DeviceRole::Host,
+        )]),
+        deadline: tokio::time::Instant::now() + duration,
+    }
+}
+
+async fn rank_fixture() -> (
+    LinkManager,
+    Harness,
+    MockServer,
+    leanzero_link::control::ControlHandle,
+    Arc<AcceptedRankNode>,
+    PeerTarget,
+) {
+    let node = Arc::new(AcceptedRankNode::default());
+    let mut config = ControlConfig::new(node_token_from_secret(SECRET), None);
+    config.port = 0;
+    let handle = ControlService::start(
+        config,
+        Arc::new(NamedIdleSource {
+            node_id: "rank-peer".into(),
+        }),
+        None,
+        None,
+        Some(node.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    let port = handle.local_addr().port();
+    let target = PeerTarget {
+        mesh_node_key: Some("nodekey:accepted-host".into()),
+        hostname: "rank-peer".into(),
+        mesh_ip: Some(support::fake_tailnet().expose(port)),
+        port,
+    };
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager_with(&server, false, |c| {
+        c.poll_interval = Duration::from_secs(3600)
+    });
+    manager.connect().await.unwrap();
+    tokio::task::yield_now().await; // Let the fake mesh's initial reconcile finish.
+    let registry = manager.active_registry().await.unwrap();
+    registry.set_peer_admission(rank_admission(&target, Duration::from_secs(30)));
+    registry.set_peers(vec![target.clone()]);
+    (manager, h, server, handle, node, target)
+}
+
+#[tokio::test]
+async fn accepted_rank_continuation_survives_role_expiry_but_new_work_is_denied() {
+    let (manager, _h, _server, peer, node, target) = rank_fixture().await;
+    let registry = manager.active_registry().await.unwrap();
+    let (_, rank) = manager
+        .distributed_rank_start(&target.hostname, &json!({"runId": "run-a"}))
+        .await
+        .unwrap();
+    assert_eq!(rank.run_id(), "run-a");
+    assert_eq!(rank.rank_id(), "accepted-run-a");
+    // The role deadline passes while the mesh and the accepted process remain healthy.
+    registry.set_peer_admission(rank_admission(&target, Duration::ZERO));
+    for _ in 0..6 {
+        node.advance(5_000);
+        manager.distributed_rank_poll(&rank, 0).await.unwrap();
+    }
+    assert!(!node.stopped.load(Ordering::SeqCst));
+    assert_eq!(node.last_poll_ms.load(Ordering::SeqCst), 30_000);
+    let before = node.calls.load(Ordering::SeqCst);
+    assert!(manager
+        .distributed_rank_start(&target.hostname, &json!({"runId": "run-b"}))
+        .await
+        .is_err());
+    for op in [
+        "rankPoll",
+        "rankStop",
+        "rankStart",
+        "exec",
+        "discover",
+        "provisionStart",
+    ] {
+        assert!(manager
+            .distributed_proxy(
+                &target.hostname,
+                op,
+                &json!({"rankId": "fabricated", "runId": "run-b"})
+            )
+            .await
+            .is_err());
+    }
+    assert_eq!(node.calls.load(Ordering::SeqCst), before);
+    let mut outage = rank_admission(&target, Duration::from_secs(30));
+    outage.authority_unavailable();
+    registry.set_peer_admission(outage);
+    manager.distributed_rank_poll(&rank, 1).await.unwrap();
+    manager.distributed_rank_stop(&rank, false).await.unwrap();
+    assert!(node.stopped.load(Ordering::SeqCst));
+    assert!(
+        manager.distributed_rank_poll(&rank, 1).await.is_err(),
+        "terminated handle cannot be reused"
+    );
+    // Negative control: without delivered polls the exact watchdog fixture stops.
+    let unpolled = AcceptedRankNode::default();
+    unpolled.advance(15_001);
+    assert!(unpolled.stopped.load(Ordering::SeqCst));
+    peer.shutdown();
+    manager.logout(false).await.unwrap();
+}
+
+#[tokio::test]
+async fn accepted_rank_continuation_rejects_substitution_revocation_and_stale_generation() {
+    use leanzero_link::{controller_discovery::PeerAdmission, controller_wire::DeviceRole};
+    for change in [
+        "key",
+        "endpoint",
+        "role",
+        "removed",
+        "role-restored",
+        "key-restored",
+        "peer-removed",
+        "generation",
+        "manager",
+    ] {
+        let (manager, _h, _server, peer, node, target) = rank_fixture().await;
+        let registry = manager.active_registry().await.unwrap();
+        let (_, rank) = manager
+            .distributed_rank_start(&target.hostname, &json!({"runId": "run-a"}))
+            .await
+            .unwrap();
+        registry.set_peer_admission(rank_admission(&target, Duration::ZERO));
+        let before = node.calls.load(Ordering::SeqCst);
+        match change {
+            "key" | "key-restored" | "endpoint" => {
+                let mut changed = target.clone();
+                if change.starts_with("key") {
+                    changed.mesh_node_key = Some("nodekey:replacement".into());
+                } else {
+                    changed.port = if changed.port == u16::MAX {
+                        changed.port - 1
+                    } else {
+                        changed.port + 1
+                    };
+                }
+                registry.set_peers(vec![changed]); // The displayed cached row stays old.
+                if change == "key-restored" {
+                    registry.set_peers(vec![target.clone()]);
+                }
+            }
+            "role" | "role-restored" | "removed" => {
+                let roles = if change.starts_with("role") {
+                    std::collections::HashMap::from([(
+                        target.mesh_node_key.clone().unwrap(),
+                        DeviceRole::Controller,
+                    )])
+                } else {
+                    std::collections::HashMap::new()
+                };
+                registry.set_peer_admission(PeerAdmission::RegisteredHosts {
+                    revision: 2,
+                    roles,
+                    deadline: tokio::time::Instant::now(),
+                });
+                if change == "role-restored" {
+                    registry.set_peer_admission(rank_admission(&target, Duration::from_secs(30)));
+                }
+            }
+            "peer-removed" => {
+                registry.set_peers(vec![]);
+                registry.set_peer_admission(rank_admission(&target, Duration::from_secs(30)));
+                registry.set_peers(vec![target.clone()]);
+            }
+            "generation" => {
+                manager.disconnect().await.unwrap();
+                manager.connect().await.unwrap();
+                tokio::task::yield_now().await;
+                let current = manager.active_registry().await.unwrap();
+                current.set_peer_admission(rank_admission(&target, Duration::from_secs(30)));
+                current.set_peers(vec![target.clone()]);
+            }
+            "manager" => {
+                let (other, _h2, _s2, p2, _, _) = rank_fixture().await;
+                assert!(other.distributed_rank_poll(&rank, 0).await.is_err());
+                p2.shutdown();
+                other.logout(false).await.unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            manager.distributed_rank_poll(&rank, 0).await.is_err(),
+            "{change} must invalidate the handle"
+        );
+        assert_eq!(
+            node.calls.load(Ordering::SeqCst),
+            before,
+            "{change} reached the peer"
+        );
+        peer.shutdown();
+        manager.logout(false).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn rank_start_without_an_ack_identity_grants_no_continuation() {
+    let (manager, _h, _server, peer, _node, target) = rank_fixture().await;
+    assert!(
+        matches!(manager.distributed_rank_start(&target.hostname, &json!({"runId": "missing-ack"})).await, Err(LinkError::RankContinuation(message)) if message.contains("outcome unknown"))
+    );
+    assert!(manager
+        .distributed_rank_start(&target.hostname, &json!({}))
+        .await
+        .is_err());
+    peer.shutdown();
+    manager.logout(false).await.unwrap();
+}
 
 /// A peer's distributed-node side, scripted: its owner's switch, and one answer per op.
 struct ScriptedDistributedNode {
@@ -2028,6 +2329,7 @@ async fn distributed_proxy_carries_every_class_of_a_peers_answer() {
     let server = MockServer::start().await;
     let (manager, _dir) = connected_requester(&server).await;
     let target = PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(b_port)),
         port: b_port,
@@ -2098,6 +2400,7 @@ async fn distributed_proxy_carries_every_class_of_a_peers_answer() {
     .expect("node C starts");
     let c_port = c.local_addr().port();
     let unwired = PeerTarget {
+        mesh_node_key: None,
         hostname: "node-c".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(c_port)),
         port: c_port,
@@ -2177,6 +2480,7 @@ async fn the_chat_relay_reaches_a_peer_through_the_connected_managers_registry()
     manager.connect().await.expect("A connects");
     let registry = manager.active_registry().await.expect("a live registry");
     let target = PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(b_port)),
         port: b_port,
@@ -2866,6 +3170,7 @@ async fn peer_knowing_self(node_id: &str) -> leanzero_link::control::ControlHand
     .await
     .expect("stand-in peer starts");
     handle.set_peers(vec![PeerTarget {
+        mesh_node_key: None,
         hostname: "self-host".to_string(),
         mesh_ip: Some("100.64.254.254".to_string()),
         port: 1,
@@ -2928,6 +3233,7 @@ async fn announce_leaving_tells_each_reachable_peer_and_names_every_failure() {
     };
     let dying = peer_knowing_self("dying").await;
     let target = |name: &str, handle: &leanzero_link::control::ControlHandle| PeerTarget {
+        mesh_node_key: None,
         hostname: format!("{name}-host"),
         mesh_ip: Some(support::fake_tailnet().expose(handle.local_addr().port())),
         port: handle.local_addr().port(),
@@ -2942,6 +3248,7 @@ async fn announce_leaving_tells_each_reachable_peer_and_names_every_failure() {
         target("stranger", &stranger),
         target("dying", &dying),
         PeerTarget {
+            mesh_node_key: None,
             hostname: "gone-host".to_string(),
             mesh_ip: Some(support::fake_tailnet().expose(dead_port)),
             port: dead_port,
@@ -3030,6 +3337,7 @@ async fn a_leaving_peer_is_refused_by_name_until_the_fabric_sees_it_again() {
 
     let studio = peer_knowing_self("studio").await;
     let target = PeerTarget {
+        mesh_node_key: None,
         hostname: "studio-host".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(studio.local_addr().port())),
         port: studio.local_addr().port(),
@@ -3169,6 +3477,7 @@ async fn jobs_go_to_a_peer_with_this_nodes_origin_and_refusals_stay_typed() {
     manager.connect().await.expect("A connects");
     let registry = manager.active_registry().await.unwrap();
     let target = PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(b_port)),
         port: b_port,

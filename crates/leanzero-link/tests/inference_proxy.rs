@@ -297,6 +297,7 @@ struct Source;
 impl SwarmStateSource for Source {
     async fn local_node(&self) -> NodeState {
         NodeState {
+            controller: None,
             node_id: "node-b".to_string(),
             hostname: HOSTNAME.to_string(),
             mesh_ip: None,

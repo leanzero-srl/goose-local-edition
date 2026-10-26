@@ -380,6 +380,8 @@ impl std::fmt::Display for BackendState {
 /// Wire shape for the upcoming control service and UI.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MeshStatus {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_node_key: Option<String>,
     pub self_ip: Option<String>,
     pub self_hostname: Option<String>,
     pub backend_state: BackendState,
@@ -389,6 +391,9 @@ pub struct MeshStatus {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MeshPeer {
+    /// Provider-authenticated public node key, never inferred from hostname or address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh_node_key: Option<String>,
     pub hostname: String,
     pub ip: Option<String>,
     pub online: bool,
@@ -399,6 +404,7 @@ pub struct MeshPeer {
 impl MeshStatus {
     pub fn stopped() -> Self {
         Self {
+            self_node_key: None,
             self_ip: None,
             self_hostname: None,
             backend_state: BackendState::Stopped,
@@ -420,6 +426,8 @@ struct RawStatus {
 
 #[derive(Deserialize)]
 struct RawNode {
+    #[serde(rename = "PublicKey", default)]
+    public_key: Option<String>,
     #[serde(rename = "HostName", default)]
     host_name: String,
     #[serde(rename = "TailscaleIPs", default)]
@@ -450,8 +458,11 @@ pub fn parse_status_json(raw: &str) -> Result<MeshStatus, MeshError> {
     let mut peers: Vec<MeshPeer> = status
         .peers
         .unwrap_or_default()
-        .into_values()
-        .map(|node| MeshPeer {
+        .into_iter()
+        .map(|(node_key, node)| MeshPeer {
+            // Status.Peer is keyed by NodePublic; PeerStatus.PublicKey names Self.
+            // https://github.com/tailscale/tailscale/blob/main/ipn/ipnstate/ipnstate.go
+            mesh_node_key: Some(node_key),
             hostname: node.host_name,
             ip: pick_ip(node.tailscale_ips.as_deref()),
             online: node.online,
@@ -461,6 +472,7 @@ pub fn parse_status_json(raw: &str) -> Result<MeshStatus, MeshError> {
     peers.sort_by(|a, b| (&a.hostname, &a.ip).cmp(&(&b.hostname, &b.ip)));
 
     Ok(MeshStatus {
+        self_node_key: status.self_node.and_then(|node| node.public_key),
         self_ip,
         self_hostname,
         backend_state: BackendState::from(status.backend_state),

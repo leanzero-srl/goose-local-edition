@@ -111,6 +111,7 @@ impl SwarmStateSource for FakeStateSource {
         self.node_reads.fetch_add(1, Ordering::SeqCst);
         let sessions = self.sessions.lock().unwrap().clone();
         NodeState {
+            controller: None,
             node_id: self.node_id.clone(),
             hostname: self.hostname.clone(),
             mesh_ip: None,
@@ -561,6 +562,7 @@ async fn peering_folds_remote_state_and_deltas_then_flips_offline() {
 
     let b_mesh_ip = support::fake_tailnet().expose(b.local_addr().port());
     a.set_peers(vec![PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b-host".to_string(),
         mesh_ip: Some(b_mesh_ip.clone()),
         port: b.local_addr().port(),
@@ -730,6 +732,7 @@ async fn peer_keeps_its_mirror_while_the_peers_index_is_unreadable() {
     let base_a = base_url(&a);
     let client = reqwest::Client::new();
     a.set_peers(vec![PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b-host".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(b.local_addr().port())),
         port: b.local_addr().port(),
@@ -865,6 +868,7 @@ async fn spawn_stub_peer_with(
 ) -> (u16, StubPeerHandle) {
     let stub = StubPeer {
         node: NodeState {
+            controller: None,
             node_id: node_id.to_string(),
             hostname: format!("{node_id}-host"),
             mesh_ip: Some("127.0.0.1".to_string()),
@@ -917,6 +921,7 @@ async fn a_peer_answering_4xx_keeps_its_last_status_and_carries_the_error() {
     let unauthorized = Arc::new(AtomicBool::new(false));
     let (stub_port, stub) = spawn_stub_peer("node-stub", unauthorized.clone()).await;
     handle.set_peers(vec![PeerTarget {
+        mesh_node_key: None,
         hostname: "node-stub-host".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(stub_port)),
         port: stub_port,
@@ -1036,6 +1041,7 @@ async fn a_peer_whose_link_drops_reads_offline_within_2_4_s_at_production_cadenc
     let client = reqwest::Client::new();
     let b_mesh_ip = support::fake_tailnet().expose(b.local_addr().port());
     a.set_peers(vec![PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b-host".to_string(),
         mesh_ip: Some(b_mesh_ip.clone()),
         port: b.local_addr().port(),
@@ -1064,6 +1070,7 @@ async fn a_peer_whose_port_closes_reads_offline_within_2_4_s_at_production_caden
     let base_a = base_url(&a);
     let client = reqwest::Client::new();
     a.set_peers(vec![PeerTarget {
+        mesh_node_key: None,
         hostname: "node-stub-host".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(stub_port)),
         port: stub_port,
@@ -1106,6 +1113,7 @@ async fn a_slow_but_alive_peer_is_not_marked_offline_on_one_timeout() {
     let base_a = base_url(&a);
     let client = reqwest::Client::new();
     a.set_peers(vec![PeerTarget {
+        mesh_node_key: None,
         hostname: "node-stub-host".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(stub_port)),
         port: stub_port,
@@ -1151,6 +1159,7 @@ async fn one_timed_out_liveness_dial_does_not_mark_a_live_peer_offline() {
     let client = reqwest::Client::new();
     let b_mesh_ip = support::fake_tailnet().expose(b.local_addr().port());
     a.set_peers(vec![PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b-host".to_string(),
         mesh_ip: Some(b_mesh_ip.clone()),
         port: b.local_addr().port(),
@@ -1193,6 +1202,7 @@ async fn unreachable_peer_is_offline_not_an_error() {
         listener.local_addr().unwrap().port()
     };
     handle.set_peers(vec![PeerTarget {
+        mesh_node_key: None,
         hostname: "ghost-host".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(dead_port)),
         port: dead_port,
@@ -1253,6 +1263,7 @@ async fn without_a_mesh_proxy_a_reachable_peer_is_offline_never_dialed_directly(
     .await
     .expect("A starts");
     a.set_peers(vec![PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b-host".to_string(),
         mesh_ip: Some("127.0.0.1".to_string()),
         port: b.local_addr().port(),
@@ -1950,6 +1961,7 @@ async fn a_peer_leaving_on_purpose_is_marked_at_once_and_cleared_when_it_answers
     let b_port = b.local_addr().port();
     let b_ip = support::fake_tailnet().expose(b_port);
     a.set_peers(vec![PeerTarget {
+        mesh_node_key: None,
         hostname: "node-b-host".to_string(),
         mesh_ip: Some(b_ip.clone()),
         port: b_port,
@@ -2729,6 +2741,9 @@ mod jobs_http {
         let mut c = std::process::Command::new(bin);
         // Same two slots as test_limits(); CPU backstop off (a test box mid-build is loaded).
         c.env("HEAVY_RUN_LOCK", lock)
+            // This fixture has its own lock files. Inheriting the test runner's
+            // production-slot receipt would bypass the fixture's lock assertions.
+            .env_remove("HEAVY_RUN_HELD")
             .env("NODE_LIMITS_FILE", ledger.join("absent-limits.json"))
             .args([
                 "--lock-wait",

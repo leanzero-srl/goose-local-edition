@@ -19,7 +19,10 @@
 
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Weak};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Weak,
+};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -38,7 +41,7 @@ use crate::peer_dial::{peer_http_client, MeshProxy, PeerDialError, PeerTimeout};
 use crate::queue::QueueLookup;
 use crate::state::{
     ChatServing, DistributedNode, DistributedNodeError, ExecuteAccepted, ExecuteError,
-    ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerRegistry, RemoteExecutor,
+    ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerRegistry, PeerTarget, RemoteExecutor,
     SwarmStateSource,
 };
 use crate::tailnet_route::RouteReport;
@@ -256,6 +259,8 @@ pub enum LinkError {
     NotConnected,
     #[error("no known mesh peer with node id '{0}'")]
     UnknownPeer(String),
+    #[error("{0}")]
+    PeerAuthorization(String),
     /// The peer told this node it is going away on purpose (`POST /v1/swarm/peer-leaving`) and
     /// has not been seen online since: nothing is sent to it. `name` is its ComputerName, else
     /// its hostname — "Work's Mac Studio quit goose".
@@ -285,6 +290,8 @@ pub enum LinkError {
     /// `501` (not wired), or answered outside the contract.
     #[error("distributed request to a peer failed: {0}")]
     DistributedProxy(String),
+    #[error("accepted distributed rank continuation is no longer authorized: {0}")]
+    RankContinuation(String),
     #[error(transparent)]
     PeerDial(#[from] PeerDialError),
     #[error("mesh joined but reported no IP — cannot compose a Connected state")]
@@ -348,6 +355,39 @@ impl std::fmt::Display for LeavingReport {
             )?;
         }
         Ok(())
+    }
+}
+
+impl From<crate::state::PeerAuthorizationError> for LinkError {
+    fn from(error: crate::state::PeerAuthorizationError) -> Self {
+        match error {
+            crate::state::PeerAuthorizationError::UnknownPeer(id) => Self::UnknownPeer(id),
+            denied @ crate::state::PeerAuthorizationError::Denied(_) => {
+                Self::PeerAuthorization(denied.to_string())
+            }
+        }
+    }
+}
+
+/// Opaque, process-local authority for one successfully accepted rank. It cannot be
+/// constructed from a rank ID or deserialized from a controller/mesh request.
+#[derive(Clone)]
+pub struct DistributedRankContinuation {
+    manager: Weak<Core>,
+    generation: u64,
+    target: PeerTarget,
+    peer_identity: Arc<()>,
+    run_id: String,
+    rank_id: String,
+    live: Arc<AtomicBool>,
+}
+
+impl DistributedRankContinuation {
+    pub fn rank_id(&self) -> &str {
+        &self.rank_id
+    }
+    pub fn run_id(&self) -> &str {
+        &self.run_id
     }
 }
 
@@ -860,6 +900,7 @@ impl LinkManager {
         let (base_url, token, proxy) = {
             let inner = self.core.inner.lock().await;
             let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+            active.registry.require_compute_peer(target_node_id)?;
             let base_url = active
                 .registry
                 .peer_base_url(target_node_id)
@@ -908,6 +949,7 @@ impl LinkManager {
         let (base_url, token, proxy) = {
             let inner = self.core.inner.lock().await;
             let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+            active.registry.require_compute_peer(target_node_id)?;
             let base_url = active
                 .registry
                 .peer_base_url(target_node_id)
@@ -943,6 +985,7 @@ impl LinkManager {
         let (base_url, token, proxy) = {
             let inner = self.core.inner.lock().await;
             let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+            active.registry.require_compute_peer(target_node_id)?;
             let base_url = active
                 .registry
                 .peer_base_url(target_node_id)
@@ -964,6 +1007,145 @@ impl LinkManager {
         .await
     }
 
+    /// Only a successful rankStart response grants continuation. A lost response
+    /// remains an unknown outcome; the caller receives no fabricated rank handle.
+    pub async fn distributed_rank_start(
+        &self,
+        target_node_id: &str,
+        body: &serde_json::Value,
+    ) -> Result<(serde_json::Value, DistributedRankContinuation), LinkError> {
+        let run_id = body
+            .get("runId")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| LinkError::RankContinuation("rankStart requires a runId".into()))?
+            .to_owned();
+        let ((target, peer_identity), generation, token, proxy) = {
+            let inner = self.core.inner.lock().await;
+            let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+            (
+                active.registry.admitted_target(target_node_id)?,
+                active.generation,
+                active.node_token.clone(),
+                active.registry.peer_proxy(),
+            )
+        };
+        let base_url = target
+            .base_url()
+            .ok_or_else(|| LinkError::UnknownPeer(target_node_id.into()))?;
+        let answer = post_peer_distributed(
+            proxy,
+            &base_url,
+            &token,
+            self.core.config.control.connect_timeout,
+            "rankStart",
+            body,
+        )
+        .await?;
+        let rank_id = answer
+            .get("rankId")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                LinkError::RankContinuation(
+                    "rankStart response has no rankId; outcome unknown".into(),
+                )
+            })?
+            .to_owned();
+        let capability = DistributedRankContinuation {
+            manager: Arc::downgrade(&self.core),
+            generation,
+            target,
+            peer_identity,
+            run_id,
+            rank_id,
+            live: Arc::new(AtomicBool::new(true)),
+        };
+        // Check again after the network hop: reconnection or explicit revocation
+        // while the peer accepted must not grant authority on a different peer.
+        self.rank_continuation_call(&capability).await?;
+        Ok((answer, capability))
+    }
+
+    async fn rank_continuation_call(
+        &self,
+        rank: &DistributedRankContinuation,
+    ) -> Result<PeerCall, LinkError> {
+        let inner = self.core.inner.lock().await;
+        let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+        if !Weak::ptr_eq(&rank.manager, &Arc::downgrade(&self.core))
+            || active.generation != rank.generation
+            || !rank.live.load(Ordering::Acquire)
+            || !active
+                .registry
+                .continues_target(&rank.target, &rank.peer_identity)
+        {
+            rank.live.store(false, Ordering::Release);
+            return Err(LinkError::RankContinuation(format!(
+                "run '{}' rank '{}' identity or connection changed",
+                rank.run_id, rank.rank_id
+            )));
+        }
+        Ok(PeerCall {
+            base_url: rank.target.base_url().ok_or_else(|| {
+                LinkError::RankContinuation("accepted peer has no endpoint".into())
+            })?,
+            token: active.node_token.clone(),
+            proxy: active.registry.peer_proxy(),
+            connect_timeout: self.core.config.control.connect_timeout,
+            liveness_interval: self.core.config.control.poll_interval,
+        })
+    }
+
+    pub async fn distributed_rank_poll(
+        &self,
+        rank: &DistributedRankContinuation,
+        known_lines: u64,
+    ) -> Result<serde_json::Value, LinkError> {
+        let call = self.rank_continuation_call(rank).await?;
+        let answer = post_peer_distributed(
+            call.proxy,
+            &call.base_url,
+            &call.token,
+            call.connect_timeout,
+            "rankPoll",
+            &serde_json::json!({"rankId": rank.rank_id, "knownLines": known_lines}),
+        )
+        .await?;
+        if answer.get("rankId").and_then(|v| v.as_str()) != Some(rank.rank_id.as_str()) {
+            rank.live.store(false, Ordering::Release);
+            return Err(LinkError::RankContinuation(
+                "poll response changed accepted rank identity".into(),
+            ));
+        }
+        if answer.get("exit").is_some_and(|exit| !exit.is_null()) {
+            rank.live.store(false, Ordering::Release);
+        }
+        Ok(answer)
+    }
+
+    pub async fn distributed_rank_stop(
+        &self,
+        rank: &DistributedRankContinuation,
+        follow_rank0: bool,
+    ) -> Result<serde_json::Value, LinkError> {
+        let call = self.rank_continuation_call(rank).await?;
+        let answer = post_peer_distributed(
+            call.proxy,
+            &call.base_url,
+            &call.token,
+            call.connect_timeout,
+            "rankStop",
+            &serde_json::json!({"rankId": rank.rank_id, "followRank0": follow_rank0}),
+        )
+        .await?;
+        // A failed stop verification can be retried; only a witnessed exit consumes it.
+        if answer.get("exit").is_some_and(|exit| !exit.is_null()) {
+            rank.live.store(false, Ordering::Release);
+        }
+        Ok(answer)
+    }
+
     /// How to reach peer `target_node_id`'s control service right now — its base URL, the
     /// bearer, the mesh proxy — for callers that stream their own request (the inference relay).
     /// A peer that said it is leaving is [`LinkError::PeerLeaving`] until the fabric sees it
@@ -971,6 +1153,7 @@ impl LinkManager {
     pub async fn peer_call(&self, target_node_id: &str) -> Result<PeerCall, LinkError> {
         let inner = self.core.inner.lock().await;
         let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+        active.registry.require_compute_peer(target_node_id)?;
         if let Some(error) = active
             .registry
             .peer_node(target_node_id)
@@ -989,6 +1172,16 @@ impl LinkManager {
             connect_timeout: self.core.config.control.connect_timeout,
             liveness_interval: self.core.config.control.poll_interval,
         })
+    }
+
+    /// Observation cadence carries no dispatch authorization: an existing request must
+    /// not be cancelled merely because the worker role registry is temporarily offline.
+    pub async fn peer_liveness_interval(&self) -> Result<Duration, LinkError> {
+        let inner = self.core.inner.lock().await;
+        if inner.active.is_none() {
+            return Err(LinkError::NotConnected);
+        }
+        Ok(self.core.config.control.poll_interval)
     }
 
     /// This node's jobs registry while connected (the control service's own).
@@ -1040,7 +1233,7 @@ impl LinkManager {
         let peers = self
             .active_registry()
             .await
-            .map(|r| r.peer_nodes())
+            .map(|r| r.compute_peer_nodes())
             .unwrap_or_default();
         let mut rows: Vec<(&str, bool, Option<&crate::load::NodeLoad>)> =
             vec![(self_id.as_str(), reg.enabled(), Some(&self_load))];

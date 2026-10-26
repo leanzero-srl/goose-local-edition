@@ -29,6 +29,11 @@
 
 pub mod control;
 pub mod control_proxy;
+pub mod controller;
+pub mod controller_auth;
+pub mod controller_discovery;
+pub mod controller_tls;
+pub mod controller_wire;
 pub mod discovery;
 pub mod identity;
 pub mod inference;
@@ -38,6 +43,7 @@ pub mod load;
 pub mod manager;
 pub mod mesh;
 pub mod netpath;
+pub mod owner_identity;
 pub mod peer_dial;
 pub mod pubsub;
 pub mod queue;

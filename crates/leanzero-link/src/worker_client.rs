@@ -229,6 +229,131 @@ pub struct WorkerClient {
 }
 
 impl WorkerClient {
+    /// Controller tokens remain opaque: only the worker verifies JWTs and registry state.
+    /// https://www.rfc-editor.org/rfc/rfc7662#section-2.1
+    pub(crate) async fn controller_request<T: serde::de::DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &'static str,
+        credential: &str,
+        existing_host_credential: Option<&str>,
+        body: Option<&serde_json::Value>,
+    ) -> Result<T, WorkerError> {
+        let url = self.url(path);
+        // Controller credentials may only travel over authenticated worker TLS.
+        // Tests use loopback mock servers, never a production plaintext exception.
+        let parsed = url::Url::parse(&url).map_err(|error| WorkerError::Unexpected {
+            status: 0,
+            what: path,
+            url: url.clone(),
+            error: error.to_string(),
+        })?;
+        if parsed.scheme() != "https" && !cfg!(test) {
+            return Err(WorkerError::Unexpected {
+                status: 0,
+                what: path,
+                url,
+                error: "controller authority requires HTTPS".into(),
+            });
+        }
+        let response = self
+            .send(path, &url, |http| {
+                let mut request = http.request(method, &url).bearer_auth(credential);
+                if let Some(existing) = existing_host_credential {
+                    request = request.header("X-Link-Host-Credential", existing);
+                }
+                if let Some(body) = body {
+                    request = request.json(body);
+                }
+                request
+            })
+            .await?;
+        if response.status().is_success() {
+            return decode(path, &url, response).await;
+        }
+        Err(WorkerError::Unexpected {
+            status: response.status().as_u16(),
+            what: path,
+            url,
+            error: error_envelope(response).await.raw,
+        })
+    }
+
+    pub async fn register_controller_host(
+        &self,
+        account_token: &str,
+        existing: Option<&str>,
+        request: &crate::controller_wire::HostRegistration,
+    ) -> Result<crate::controller_wire::HostCredentials, WorkerError> {
+        self.controller_request(
+            reqwest::Method::POST,
+            "/v1/controller/hosts/register",
+            account_token,
+            existing,
+            Some(&serde_json::json!(request)),
+        )
+        .await
+    }
+
+    pub async fn lease_controller_host(
+        &self,
+        credential: &str,
+        request: &crate::controller_wire::HostLeaseRequest,
+    ) -> Result<crate::controller_wire::HostLease, WorkerError> {
+        self.controller_request(
+            reqwest::Method::POST,
+            "/v1/controller/hosts/lease",
+            credential,
+            None,
+            Some(&serde_json::json!(request)),
+        )
+        .await
+    }
+
+    pub async fn controller_hosts(
+        &self,
+        device_token: &str,
+    ) -> Result<crate::controller_wire::HostsResponse, WorkerError> {
+        self.controller_request(
+            reqwest::Method::GET,
+            "/v1/controller/hosts",
+            device_token,
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn controller_peers(
+        &self,
+        host_credential: &str,
+    ) -> Result<crate::controller_wire::RegisteredPeers, WorkerError> {
+        self.controller_request(
+            reqwest::Method::GET,
+            "/v1/controller/hosts/peers",
+            host_credential,
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn controller_peer_admission(
+        &self,
+        host_credential: &str,
+    ) -> Result<crate::controller_discovery::PeerAdmission, WorkerError> {
+        let started = tokio::time::Instant::now();
+        let peers = self.controller_peers(host_credential).await?;
+        crate::controller_discovery::PeerAdmission::registered(peers, started).map_err(|reason| {
+            WorkerError::Unexpected {
+                status: 503,
+                what: "/v1/controller/hosts/peers",
+                url: self.url("/v1/controller/hosts/peers"),
+                error: reason.to_string(),
+            }
+        })
+    }
+
     /// A client against `base_url` (trailing slash trimmed) with the default timeout.
     pub fn new(base_url: impl Into<String>) -> Result<Self, WorkerError> {
         Self::with_timeout(base_url, DEFAULT_TIMEOUT)
@@ -240,6 +365,10 @@ impl WorkerClient {
     ) -> Result<Self, WorkerError> {
         let http = reqwest::Client::builder()
             .timeout(timeout)
+            // A 307 could replay a JSON introspection token to another origin even if
+            // Authorization were stripped. Worker endpoints never redirect credentials.
+            // https://docs.rs/reqwest/latest/reqwest/redirect/struct.Policy.html#method.none
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|source| WorkerError::BuildClient { source })?;
         let base_url = base_url.into().trim_end_matches('/').to_string();
@@ -298,6 +427,7 @@ impl WorkerClient {
                 // Port 0 keeps the URL's port; the name stays the TLS SNI and `Host`.
                 pinned = reqwest::Client::builder()
                     .timeout(self.timeout)
+                    .redirect(reqwest::redirect::Policy::none())
                     .resolve(host, SocketAddr::new((*ip).into(), 0))
                     .build()
                     .map_err(|source| WorkerError::BuildClient { source })?;

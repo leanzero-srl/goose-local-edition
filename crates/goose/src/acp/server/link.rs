@@ -434,6 +434,7 @@ fn derive_node(
         Err(_) => busy_status(&snapshot.busy),
     };
     NodeState {
+        controller: None,
         node_id: node_id.to_string(),
         hostname: hostname_string(),
         mesh_ip: None,

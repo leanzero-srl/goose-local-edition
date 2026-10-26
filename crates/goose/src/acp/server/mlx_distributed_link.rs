@@ -11,7 +11,8 @@
 //! - The hosting record: a rank this goosed serves is published under the state dir, so another
 //!   window's goosed on this Mac refuses its single engine too (one engine owns a Mac).
 
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use goose_sdk_types::custom_requests::{
     MlxDistributedHostedRankDto, MlxDistributedLinkDiscoveryDto, MlxDistributedLinkPeerDto,
@@ -19,10 +20,11 @@ use goose_sdk_types::custom_requests::{
 };
 use goose_sidecar::distributed::exec::{BoxFuture, NodeExec, SystemExec};
 use goose_sidecar::distributed::link_control::{
-    self, DiscoverRequest, ExecAnswer, LinkCallError, LinkOp, LinkRefusal, LinkTransport, Requester,
+    self, DiscoverRequest, ExecAnswer, LinkCallError, LinkOp, LinkRefusal, LinkTransport,
+    RankPollRequest, RankStopRequest, Requester,
 };
 use goose_sidecar::distributed::link_host::{self, HostError, HostedRankStatus};
-use leanzero_link::manager::{AuthState, LinkError};
+use leanzero_link::manager::{AuthState, DistributedRankContinuation, LinkError};
 use leanzero_link::netpath::InterfaceKind;
 use leanzero_link::state::{DistributedNode, DistributedNodeError};
 use leanzero_link::wire::NodeStatus;
@@ -164,7 +166,10 @@ fn link_call_error(error: LinkError) -> LinkCallError {
 }
 
 /// This Mac as the REQUESTER: a `link:` node's ops through the `LinkManager`'s peer proxy.
-pub struct GoosedLinkTransport;
+#[derive(Default)]
+pub struct GoosedLinkTransport {
+    ranks: Mutex<HashMap<(String, String), DistributedRankContinuation>>,
+}
 
 impl LinkTransport for GoosedLinkTransport {
     fn call<'a>(
@@ -180,10 +185,59 @@ impl LinkTransport for GoosedLinkTransport {
                         .to_string(),
                 )
             })?;
-            manager
-                .distributed_proxy(peer, op.path(), &body)
-                .await
-                .map_err(link_call_error)
+            match op {
+                LinkOp::RankStart => {
+                    let (answer, rank) = manager
+                        .distributed_rank_start(peer, &body)
+                        .await
+                        .map_err(link_call_error)?;
+                    let mut ranks = self.ranks.lock().unwrap();
+                    ranks.retain(|(owner, _), _| owner != peer);
+                    ranks.insert((peer.to_owned(), rank.rank_id().to_owned()), rank);
+                    Ok(answer)
+                }
+                LinkOp::RankPoll | LinkOp::RankStop => {
+                    let rank_id = body
+                        .get("rankId")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| LinkCallError::BadRequest("rankId is required".into()))?;
+                    let key = (peer.to_owned(), rank_id.to_owned());
+                    let rank = self
+                        .ranks
+                        .lock()
+                        .unwrap()
+                        .get(&key)
+                        .cloned()
+                        .ok_or_else(|| {
+                            LinkCallError::Refused(LinkRefusal {
+                                code: "rankNotAccepted".into(),
+                                message: "this connection has no accepted rank capability".into(),
+                            })
+                        })?;
+                    let answer = if op == LinkOp::RankPoll {
+                        let request: RankPollRequest = serde_json::from_value(body)
+                            .map_err(|e| LinkCallError::BadRequest(e.to_string()))?;
+                        manager
+                            .distributed_rank_poll(&rank, request.known_lines)
+                            .await
+                    } else {
+                        let request: RankStopRequest = serde_json::from_value(body)
+                            .map_err(|e| LinkCallError::BadRequest(e.to_string()))?;
+                        manager
+                            .distributed_rank_stop(&rank, request.follow_rank0)
+                            .await
+                    }
+                    .map_err(link_call_error)?;
+                    if answer.get("exit").is_some_and(|exit| !exit.is_null()) {
+                        self.ranks.lock().unwrap().remove(&key);
+                    }
+                    Ok(answer)
+                }
+                _ => manager
+                    .distributed_proxy(peer, op.path(), &body)
+                    .await
+                    .map_err(link_call_error),
+            }
         })
     }
 
@@ -215,7 +269,7 @@ async fn computer_name() -> Option<String> {
 pub(super) fn ensure_link_transport() {
     static ONCE: OnceLock<()> = OnceLock::new();
     ONCE.get_or_init(|| {
-        link_control::install_transport(Arc::new(GoosedLinkTransport));
+        link_control::install_transport(Arc::new(GoosedLinkTransport::default()));
         link_host::observe(Box::new(|hosted| {
             let result = match hosted {
                 Some(status) => publish_hosting(status),
@@ -452,7 +506,7 @@ pub(super) async fn link_discovery() -> MlxDistributedLinkDiscoveryDto {
     };
     let self_id = stable_node_id();
     let peers = registry
-        .peer_nodes()
+        .compute_peer_nodes()
         .into_iter()
         .filter(|p| p.node_id != self_id);
     let mut out: Vec<MlxDistributedLinkPeerDto> =

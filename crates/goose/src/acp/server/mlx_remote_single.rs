@@ -290,8 +290,8 @@ impl PeerControl for LinkManager {
             if let Some(words) = self.unreachable(peer).await {
                 return words;
             }
-            match self.peer_call(peer).await {
-                Ok(call) => tokio::time::sleep(call.liveness_interval).await,
+            match self.peer_liveness_interval().await {
+                Ok(interval) => tokio::time::sleep(interval).await,
                 Err(error) => return link_refusal(&error).message,
             }
         }
@@ -758,12 +758,12 @@ where
 async fn fabric_cadence(peer: Option<String>) -> Result<(), String> {
     let manager = super::link::existing_link_manager()
         .ok_or_else(|| "LeanZero Link has not started in this goose".to_string())?;
-    let peer = peer.ok_or_else(|| "the route names no peer".to_string())?;
-    let call = manager
-        .peer_call(&peer)
+    peer.ok_or_else(|| "the route names no peer".to_string())?;
+    let interval = manager
+        .peer_liveness_interval()
         .await
         .map_err(|error| link_refusal(&error).message)?;
-    tokio::time::sleep(call.liveness_interval).await;
+    tokio::time::sleep(interval).await;
     Ok(())
 }
 
@@ -2153,6 +2153,7 @@ mod tests {
                 since: chrono::Utc::now(),
             }),
             load: None,
+            controller: None,
         };
         assert_eq!(
             fabric_verdict(

@@ -19,6 +19,7 @@ native-tls = ["reqwest/native-tls"]
 [dependencies]
 async-trait = { workspace = true }
 axum = { workspace = true, features = ["ws"] }
+axum-server = { version = "0.8", default-features = false, features = ["tls-rustls"] }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["now", "clock"] }
 dirs = { workspace = true }
@@ -27,13 +28,16 @@ gethostname = "1.1.0"
 goose-sidecar = { path = "../goose-sidecar" }
 hmac = "0.13"
 rand.workspace = true
+rcgen = { version = "0.14", default-features = false, features = ["aws_lc_rs", "crypto", "pem"] }
 reqwest = { workspace = true, features = ["json", "socks", "stream"] }
+rustls.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2.workspace = true
 subtle = { version = "2.5", default-features = false, features = ["std"] }
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 thiserror = { workspace = true }
+time = { version = "0.3", features = ["std"] }
 tokio = { workspace = true, features = ["fs", "process", "time", "sync", "macros", "rt-multi-thread", "io-util", "net"] }
 # SOCKS5 CLIENT for the peer WebSocket: under --tun=userspace-networking the host has
 # no route to mesh IPs, so every peer dial goes through tailscaled's SOCKS5 listener
@@ -46,6 +50,7 @@ tokio-socks = "0.5"
 tokio-tungstenite = "0.29"
 tracing = { workspace = true }
 url = { workspace = true }
+uuid = { workspace = true, features = ["serde"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -59,5 +64,6 @@ goose-provider-types = { path = "../goose-provider-types" }
 goose-providers = { path = "../goose-providers" }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 wiremock = { workspace = true }
