@@ -31,6 +31,7 @@ use uuid::Uuid;
 
 pub type ResourceSampler =
     Arc<dyn Fn() -> BoxFuture<'static, Result<NodeLoad, ControllerError>> + Send + Sync>;
+type ScopePolicy = Arc<dyn Fn(ControllerScope) -> bool + Send + Sync>;
 
 pub struct ControllerBackendConfig {
     pub host: HostDescriptor,
@@ -43,6 +44,7 @@ pub struct ControllerBackendConfig {
 pub struct GooseControllerBackend(Arc<BackendState>);
 
 struct BackendState {
+    scope_policy: std::sync::RwLock<Option<ScopePolicy>>,
     host: HostDescriptor,
     account_id: Uuid,
     catalog: WorkCatalog,
@@ -82,6 +84,7 @@ impl GooseControllerBackend {
             &config.policy,
         )?;
         Ok(Self(Arc::new(BackendState {
+            scope_policy: std::sync::RwLock::new(None),
             host: config.host,
             account_id: config.account_id,
             catalog,
@@ -92,6 +95,18 @@ impl GooseControllerBackend {
             signer,
             policy: config.policy,
         })))
+    }
+
+    pub fn with_scope_policy(
+        self,
+        policy: Arc<dyn Fn(ControllerScope) -> bool + Send + Sync>,
+    ) -> Self {
+        *self
+            .0
+            .scope_policy
+            .write()
+            .expect("controller policy poisoned") = Some(policy);
+        self
     }
 
     fn authenticate(
@@ -519,6 +534,15 @@ impl ControllerBackend for GooseControllerBackend {
         }
         if self.0.resources.is_some() {
             scopes.push(ControllerScope::ResourcesRead);
+        }
+        if let Some(policy) = self
+            .0
+            .scope_policy
+            .read()
+            .expect("controller policy poisoned")
+            .as_ref()
+        {
+            scopes.retain(|scope| policy(*scope));
         }
         scopes
     }

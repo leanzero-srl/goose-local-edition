@@ -303,7 +303,7 @@ impl ControlService {
             pending_jobs: config.pending_jobs.clone(),
             leaving: leaving.clone(),
         };
-        let router = swarm_router(ctx, Arc::new(config.node_token));
+        let router = swarm_router(ctx.clone(), Arc::new(config.node_token));
 
         let loopback_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), config.port);
         let local_listener =
@@ -369,6 +369,7 @@ impl ControlService {
         }));
 
         Ok(ControlHandle {
+            ctx,
             local_addr,
             mesh_bind,
             registry,
@@ -380,6 +381,7 @@ impl ControlService {
 }
 
 pub struct ControlHandle {
+    ctx: Ctx,
     local_addr: SocketAddr,
     mesh_bind: MeshBind,
     registry: PeerRegistry,
@@ -389,6 +391,13 @@ pub struct ControlHandle {
 }
 
 impl ControlHandle {
+    pub fn resource_sampler(&self) -> crate::controller_host::HostResourceSampler {
+        let ctx = self.ctx.clone();
+        Arc::new(move || {
+            let ctx = ctx.clone();
+            Box::pin(async move { self_load(&ctx).await })
+        })
+    }
     /// This node's jobs registry (what `/v1/swarm/jobs` serves): the manager's self short-cut.
     pub fn jobs(&self) -> Arc<crate::jobs::JobRegistry> {
         self.jobs.clone()

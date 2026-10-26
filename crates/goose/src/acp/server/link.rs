@@ -33,6 +33,7 @@
 //! `SessionDelta`.
 
 use super::*;
+mod host;
 
 use crate::config::ConfigError;
 use crate::execution::manager::{standalone_runs, RunRegistry};
@@ -1490,11 +1491,19 @@ impl GooseAcpAgent {
         let source = self.link_source(key.allow_remote_execution);
         // A remote prompt (`link_serve.rs`) must run on the managers THIS source reads,
         // or its cancel token never reaches the busy set the idle guard consults.
-        link_serve::bind_run_managers(self.agent_manager.clone(), self.session_manager.clone(), self.owner_runs.clone());
+        link_serve::bind_run_managers(
+            self.agent_manager.clone(),
+            self.session_manager.clone(),
+            self.owner_runs.clone(),
+        );
         // The tracking factory is what lets `goose serve`'s exit path find the daemon this
         // manager started (`stop_started_mesh_daemons`); the mesh itself is the real one.
         let mut manager = LinkManager::with_mesh_factory(config, source, tracking_mesh_factory())
             .internal_err_ctx("constructing the LeanZero Link manager")?;
+        manager = manager.with_controller_host(Arc::new(host::GooseHostFactory {
+            sessions: self.session_manager.clone(),
+            runs: self.owner_runs.clone(),
+        }));
         // Attach the process-wide remote executor if goose-server injected one at boot; a
         // node built without it serves `/v1/swarm/execute` as `501` (execution not wired).
         if let Some(executor) = current_executor() {

@@ -32,6 +32,7 @@ pub mod control_proxy;
 pub mod controller;
 pub mod controller_auth;
 pub mod controller_discovery;
+pub mod controller_host;
 pub mod controller_tls;
 pub mod controller_wire;
 pub mod discovery;

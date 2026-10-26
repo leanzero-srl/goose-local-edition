@@ -48,6 +48,7 @@ tokio-socks = "0.5"
 # feature. Pinned to the minor axum 0.8 already pulls in, so no new crate enters
 # the dependency tree.
 tokio-tungstenite = "0.29"
+tower = { version = "0.5", features = ["util"] }
 tracing = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true, features = ["serde"] }
@@ -64,6 +65,5 @@ goose-provider-types = { path = "../goose-provider-types" }
 goose-providers = { path = "../goose-providers" }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-tower = { version = "0.5", features = ["util"] }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 wiremock = { workspace = true }

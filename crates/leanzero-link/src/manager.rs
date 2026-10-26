@@ -74,6 +74,16 @@ pub const MESH_POLL_FAILURE_LOOKS: u32 = 5;
 #[async_trait::async_trait]
 pub trait Mesh: Send + Sync {
     async fn join(&self, auth_key: &str, hostname: &str) -> Result<(), MeshError>;
+    async fn reauthenticate(&self, _auth_key: &str, _hostname: &str) -> Result<(), MeshError> {
+        Err(MeshError::JoinFailed {
+            stderr: "explicit host reauthentication is not implemented by this mesh".into(),
+        })
+    }
+    async fn resume(&self) -> Result<(), MeshError> {
+        Err(MeshError::JoinFailed {
+            stderr: "host mesh resume is not implemented by this mesh".into(),
+        })
+    }
     async fn status(&self) -> Result<MeshStatus, MeshError>;
     /// The daemon's loopback SOCKS5 listener, through which every outbound peer call is
     /// dialed (userspace networking gives the host no route to mesh IPs).
@@ -86,6 +96,12 @@ pub trait Mesh: Send + Sync {
 impl Mesh for MeshEngine {
     async fn join(&self, auth_key: &str, hostname: &str) -> Result<(), MeshError> {
         MeshEngine::join(self, auth_key, hostname).await
+    }
+    async fn reauthenticate(&self, auth_key: &str, hostname: &str) -> Result<(), MeshError> {
+        MeshEngine::reauthenticate(self, auth_key, hostname).await
+    }
+    async fn resume(&self) -> Result<(), MeshError> {
+        MeshEngine::resume(self).await
     }
     async fn status(&self) -> Result<MeshStatus, MeshError> {
         MeshEngine::status(self).await
@@ -227,6 +243,16 @@ pub struct LinkRoutes {
 
 #[derive(Debug, Error)]
 pub enum LinkError {
+    #[error(transparent)]
+    OwnerIdentity(#[from] crate::owner_identity::OwnerIdentityError),
+    #[error(transparent)]
+    ControllerTls(#[from] crate::controller_tls::ControllerTlsError),
+    #[error(transparent)]
+    Controller(#[from] crate::controller::ControllerError),
+    #[error(transparent)]
+    ControllerAuthorization(#[from] crate::controller_auth::AuthorizationError),
+    #[error("controller host: {0}")]
+    ControllerHost(String),
     #[error(transparent)]
     Worker(#[from] WorkerError),
     #[error(transparent)]
@@ -397,6 +423,7 @@ impl DistributedRankContinuation {
 /// is an `Option` so the poll loop itself can hand its `Active` to
 /// [`teardown_active`] without aborting the task it is running on.
 struct Active {
+    controller_host: Option<crate::controller_host::ControllerHostHandle>,
     mesh: Arc<dyn Mesh>,
     control: Option<ControlHandle>,
     registry: PeerRegistry,
@@ -541,6 +568,7 @@ impl From<ControlError> for ConnectFailure {
 /// the seams it was started with, so the supervisor restarts it with the same ones.
 #[derive(Clone, Default)]
 struct Seams {
+    controller_host: Option<Arc<dyn crate::controller_host::ControllerHostFactory>>,
     /// The local remote-execute seam, injected beside `source` (mirroring how the
     /// [`SwarmStateSource`] is threaded). `None` → this node cannot run remote prompts
     /// (self short-circuit and the control route both answer as unavailable). goose-server
@@ -581,6 +609,13 @@ pub struct LinkManager {
 }
 
 impl LinkManager {
+    pub fn with_controller_host(
+        mut self,
+        factory: Arc<dyn crate::controller_host::ControllerHostFactory>,
+    ) -> Self {
+        self.seams.controller_host = Some(factory);
+        self
+    }
     /// Construct with the production mesh factory. Loads any persisted identity:
     /// present → `LoggedIn` (it does NOT connect by itself; the embedding process calls
     /// [`Self::auto_reconnect`] at launch, which honours the persisted intent); absent →
@@ -731,6 +766,15 @@ impl LinkManager {
         self.core
             .identity
             .save(&Identity::new(result.email.clone(), result.token.clone()))?;
+        if let Some(secret) = result.node_secret.as_deref() {
+            crate::controller_host::remember_login_secret(
+                &self.core.identity.path()?,
+                &result.email,
+                secret,
+            )?;
+        } else if self.seams.controller_host.is_some() {
+            return Err(LinkError::NoNodeSecret);
+        }
         let mut inner = self.core.inner.lock().await;
         inner.auth = AuthState::LoggedIn {
             email: result.email.clone(),
@@ -775,7 +819,12 @@ impl LinkManager {
             });
             (
                 inner.auth.clone(),
-                inner.last_error.clone(),
+                inner
+                    .active
+                    .as_ref()
+                    .and_then(|active| active.controller_host.as_ref())
+                    .and_then(|host| host.error())
+                    .or_else(|| inner.last_error.clone()),
                 inner.mesh_poll_failures,
                 live,
                 inner.intent_fields(),
@@ -1801,6 +1850,14 @@ impl LinkManager {
             ));
             return Err(err.into());
         }
+        crate::controller_host::clear_login_secret(&self.core.identity.path()?)?;
+        let host_logout_error = if let Some(factory) = &self.seams.controller_host {
+            crate::controller_host::logout_host(factory.as_ref(), &self.core.worker)
+                .await
+                .err()
+        } else {
+            None
+        };
         if wipe {
             let dir = &self.core.config.mesh.state_dir;
             if dir.exists() {
@@ -1824,6 +1881,9 @@ impl LinkManager {
             (Some(mesh), Some(intent)) => Some(format!("{mesh}; {intent}")),
             (mesh, intent) => mesh.or(intent),
         };
+        if let Some(error) = host_logout_error {
+            inner.last_error = Some(format!("logout incomplete: controller access is closed, but host credential revocation failed: {error}"));
+        }
         Ok(())
     }
 
@@ -2098,43 +2158,67 @@ impl Core {
 
         let node_hostname = self.node_hostname()?;
 
-        let key = match self.worker.join_key(&identity.token).await {
-            Ok(key) => key,
-            // Only the worker's NAMED verdict on the token clears the credential; the
-            // client maps every other 401 to `Unexpected` (see `WorkerClient::join_key`).
-            Err(err @ (WorkerError::AuthExpired { .. } | WorkerError::AuthInvalid { .. })) => {
-                if let Err(clear_err) = self.identity.clear() {
-                    tracing::error!(error = %clear_err, "failed to clear the dead identity");
+        let mut host = None;
+        let mut host_context = None;
+        let (node_token, login_server, legacy_key) = if let Some(factory) = &seams.controller_host {
+            // A host upgrades through its dedicated authority path. Missing local secret
+            // requires the existing host OTP flow, before any daemon or listener starts.
+            let secret =
+                crate::controller_host::login_secret(&self.identity.path()?, &identity.email)?;
+            let prepared = crate::controller_host::PreparedHost::prepare(
+                factory.clone(),
+                self.worker.clone(),
+                &identity.token,
+                &identity.email,
+                &node_hostname,
+            )
+            .await?;
+            let context = prepared.mesh_context().await?;
+            let login = context.login_server.clone();
+            host = Some(prepared);
+            host_context = Some(context);
+            (node_token_from_secret(&secret), Some(login), None)
+        } else {
+            let key = match self.worker.join_key(&identity.token).await {
+                Ok(key) => key,
+                // Only the worker's NAMED verdict on the token clears the credential; the
+                // client maps every other 401 to `Unexpected` (see `WorkerClient::join_key`).
+                Err(err @ (WorkerError::AuthExpired { .. } | WorkerError::AuthInvalid { .. })) => {
+                    if let Err(clear_err) = self.identity.clear() {
+                        tracing::error!(error = %clear_err, "failed to clear the dead identity");
+                    }
+                    return Err(ConnectFailure {
+                        error: err.into(),
+                        logout: true,
+                    });
                 }
-                return Err(ConnectFailure {
-                    error: err.into(),
-                    logout: true,
-                });
-            }
-            Err(err) => return Err(err.into()),
-        };
+                Err(err) => return Err(err.into()),
+            };
 
-        // The node token is derived from the worker-issued account secret and nothing
-        // else. A worker that did not issue one is a loud refusal BEFORE any daemon is
-        // spawned — never a token derived from the email or the template's placeholder.
-        let secret = key
-            .node_secret
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or(ConnectFailure {
-                error: LinkError::NoNodeSecret,
-                logout: false,
-            })?;
-        let node_token = node_token_from_secret(secret);
+            // The node token is derived from the worker-issued account secret and nothing
+            // else. A worker that did not issue one is a loud refusal BEFORE any daemon is
+            // spawned — never a token derived from the email or the template's placeholder.
+            let secret = key
+                .node_secret
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or(ConnectFailure {
+                    error: LinkError::NoNodeSecret,
+                    logout: false,
+                })?;
+            (
+                node_token_from_secret(secret),
+                key.login_server,
+                Some(key.auth_key),
+            )
+        };
 
         let mut mesh_config = self.config.mesh.clone();
         mesh_config.hostname = node_hostname.clone();
         // A Headscale key carries the control server it belongs to; join against that,
         // not the configured default. Absent/blank → keep the template's login server.
-        if let Some(login_server) = key
-            .login_server
-            .clone()
+        if let Some(login_server) = login_server
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
         {
@@ -2142,7 +2226,18 @@ impl Core {
         }
         let mesh = self.mesh_factory.start(mesh_config).await?;
 
-        if let Err(err) = mesh.join(&key.auth_key, &node_hostname).await {
+        let joined = if let Some(key) = legacy_key {
+            mesh.join(&key, &node_hostname)
+                .await
+                .map_err(LinkError::from)
+        } else if let (Some(host), Some(context)) = (&host, host_context) {
+            host.enroll(mesh.as_ref(), context, &node_hostname).await
+        } else {
+            Err(LinkError::ControllerHost(
+                "host enrollment context is missing".into(),
+            ))
+        };
+        if let Err(err) = joined {
             mesh.shutdown().await;
             return Err(err.into());
         }
@@ -2212,6 +2307,26 @@ impl Core {
         // this node's (possibly ephemeral) local port.
         let peer_port = self.config.control.port;
         let registry = control.registry().clone();
+        let controller_host = if let Some(host) = host {
+            match host
+                .activate(
+                    mesh.clone(),
+                    registry.clone(),
+                    mesh_ip.clone(),
+                    control.resource_sampler(),
+                )
+                .await
+            {
+                Ok(host) => Some(host),
+                Err(error) => {
+                    control.shutdown();
+                    mesh.shutdown().await;
+                    return Err(error.into());
+                }
+            }
+        } else {
+            None
+        };
         registry.set_mesh_peers(&status.peers, peer_port);
 
         let poll_task = tokio::spawn(peer_sync_loop(
@@ -2224,6 +2339,7 @@ impl Core {
         ));
 
         Ok(Active {
+            controller_host,
             mesh,
             control: Some(control),
             registry,
@@ -2660,6 +2776,11 @@ async fn teardown_active(mut active: Active, mesh_logout: bool) -> Option<MeshEr
     }
     if let Some(control) = active.control.take() {
         control.shutdown();
+    }
+    if let Some(host) = active.controller_host.take() {
+        if let Err(error) = host.shutdown(mesh_logout).await {
+            tracing::error!(%error, "controller host shutdown incomplete");
+        }
     }
     if mesh_logout {
         match active.mesh.logout().await {

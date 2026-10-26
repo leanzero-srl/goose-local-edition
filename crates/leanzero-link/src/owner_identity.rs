@@ -73,7 +73,7 @@ fn io_error(path: &Path, source: io::Error) -> OwnerIdentityError {
     }
 }
 
-fn read_private(path: &Path) -> Result<Option<Vec<u8>>, OwnerIdentityError> {
+pub(crate) fn read_private(path: &Path) -> Result<Option<Vec<u8>>, OwnerIdentityError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),

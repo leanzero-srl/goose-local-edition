@@ -760,6 +760,46 @@ impl MeshEngine {
     /// [`AuthKeyFile`]'s drop guard if this future is dropped before `up` returns (a
     /// goosed exiting mid-join, a caller's abort).
     pub async fn join(&self, auth_key: &str, hostname: &str) -> Result<(), MeshError> {
+        self.join_with_reauthentication(auth_key, hostname, false)
+            .await
+    }
+
+    pub async fn reauthenticate(&self, auth_key: &str, hostname: &str) -> Result<(), MeshError> {
+        self.join_with_reauthentication(auth_key, hostname, true)
+            .await
+    }
+
+    /// Resume the already provider-bound identity without consuming or rotating a key.
+    pub async fn resume(&self) -> Result<(), MeshError> {
+        let mut argv = self.config.cli_prefix();
+        argv.push("up".into());
+        argv.push(format!("--timeout={}s", self.config.join_timeout.as_secs()));
+        let output = run_cli(
+            "tailscale up",
+            argv,
+            self.config.join_timeout + JOIN_WAIT_GRACE,
+        )
+        .await?;
+        if !output.status.success() {
+            return Err(MeshError::JoinFailed {
+                stderr: cli_failure_text(&output),
+            });
+        }
+        let status = self.status().await?;
+        if status.backend_state != BackendState::Running {
+            return Err(MeshError::JoinIncomplete {
+                state: status.backend_state,
+            });
+        }
+        Ok(())
+    }
+
+    async fn join_with_reauthentication(
+        &self,
+        auth_key: &str,
+        hostname: &str,
+        force: bool,
+    ) -> Result<(), MeshError> {
         if auth_key.trim().is_empty() {
             return Err(MeshError::EmptyAuthKey);
         }
@@ -769,9 +809,15 @@ impl MeshEngine {
                 .join(format!("{AUTH_KEY_FILE_PREFIX}{}", std::process::id())),
             auth_key.as_bytes(),
         )?;
+        let mut argv = self.config.up_argv(key_file.path(), hostname);
+        // up --reset only resets preferences; it does not consume a new auth key.
+        // https://tailscale.com/docs/reference/tailscale-cli/up#flags
+        if force {
+            argv.push("--force-reauth".into());
+        }
         let result = run_cli(
             "tailscale up",
-            self.config.up_argv(key_file.path(), hostname),
+            argv,
             self.config.join_timeout + JOIN_WAIT_GRACE,
         )
         .await;

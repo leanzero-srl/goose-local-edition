@@ -85,7 +85,7 @@ while True:
 const FAKE_TAILSCALE_CLI: &str = r#"#!/usr/bin/env python3
 import sys
 if sys.argv[1:] == ["--warm"]: sys.exit(0)
-import os, sys
+import os, sys, json
 args = sys.argv[1:]
 def flag(name):
     for a in args:
@@ -102,6 +102,12 @@ if not os.path.exists(sock):
     print("failed to connect to local tailscaled; is it running?", file=sys.stderr)
     sys.exit(1)
 if "up" in args:
+    with open(os.path.join(base, "last-up-args.json"), "w") as f:
+        json.dump(args, f)
+    if flag("--auth-key") is None:
+        if not os.path.exists(marker):
+            sys.exit(4)
+        sys.exit(0)
     if "--accept-routes=false" not in args or "--reset" not in args:
         print("fake tailscale: missing pinned settings in %r" % (args,), file=sys.stderr)
         sys.exit(3)
@@ -375,6 +381,33 @@ async fn starts_reports_needs_login_and_shuts_down_without_orphans() {
     let stopped = engine.status().await.unwrap();
     assert_eq!(stopped.backend_state, BackendState::Stopped);
     assert!(stopped.peers.is_empty());
+}
+
+#[tokio::test]
+async fn host_reauthentication_consumes_key_explicitly_and_resume_preserves_it() {
+    let root = tempfile::tempdir().unwrap();
+    let config = fake_config(root.path());
+    let argv_path = config.state_dir.join("last-up-args.json");
+    let engine = MeshEngine::start(config).await.unwrap();
+    engine
+        .join("tskey-auth-good", "fixture-host")
+        .await
+        .unwrap();
+    let args: Vec<String> = serde_json::from_slice(&std::fs::read(&argv_path).unwrap()).unwrap();
+    assert!(!args.iter().any(|a| a == "--force-reauth"));
+    engine
+        .reauthenticate("tskey-auth-good", "fixture-host")
+        .await
+        .unwrap();
+    let args: Vec<String> = serde_json::from_slice(&std::fs::read(&argv_path).unwrap()).unwrap();
+    assert!(args.iter().any(|a| a == "--force-reauth"));
+    assert!(args.iter().any(|a| a.starts_with("--auth-key=file:")));
+    engine.resume().await.unwrap();
+    let args: Vec<String> = serde_json::from_slice(&std::fs::read(&argv_path).unwrap()).unwrap();
+    assert!(!args
+        .iter()
+        .any(|a| a.starts_with("--auth-key=") || a == "--force-reauth"));
+    engine.shutdown().await;
 }
 
 /// Q-137: a `*.ts.net` login server (Headscale behind the node's Funnel) gets the

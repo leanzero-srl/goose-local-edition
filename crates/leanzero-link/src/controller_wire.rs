@@ -126,6 +126,7 @@ pub struct RegisteredPeers {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostRegistration {
+    pub runtime_id: Uuid,
     pub owner_node_id: Uuid,
     pub registration_id: Uuid,
     pub host_name: String,
@@ -147,6 +148,49 @@ pub struct HostLeaseRequest {
     pub store_generation: Uuid,
     pub catalog_revision: u64,
     pub mesh_node_key: String,
+    pub capabilities: Vec<ControllerScope>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostBootstrap {
+    pub account_id: Uuid,
+    pub owner_node_id: Uuid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostEnrollmentStatus {
+    Pending,
+    Issued,
+    Confirmed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostMeshEnrollment {
+    pub enrollment_id: Uuid,
+    pub status: HostEnrollmentStatus,
+    pub mesh_node_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostMeshContext {
+    pub login_server: String,
+    pub enrollment: Option<HostMeshEnrollment>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct HostMeshJoin {
+    pub enrollment_id: Uuid,
+    pub auth_key: String,
+    pub login_server: String,
+    pub expiry_seconds: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostMeshConfirmation {
+    pub owner_node_id: Uuid,
+    pub mesh_node_key: String,
+    pub host_revision: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

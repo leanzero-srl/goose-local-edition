@@ -674,6 +674,11 @@ impl PeerRegistry {
         *current = admission;
     }
 
+    /// Expire admission without erasing accepted host continuation identity.
+    pub fn peer_authority_unavailable(&self) {
+        self.inner.admission.lock().unwrap().authority_unavailable();
+    }
+
     /// Reconcile only after installing the authority's current admission snapshot.
     pub fn set_mesh_peers(&self, peers: &[MeshPeer], control_port: u16) {
         self.set_peers(

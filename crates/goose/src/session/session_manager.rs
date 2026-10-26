@@ -402,6 +402,10 @@ impl SessionManager {
         &self.storage
     }
 
+    pub fn controller_state_dir(&self) -> PathBuf {
+        self.storage.session_dir.join("controller-host")
+    }
+
     pub async fn work_catalog(&self) -> Result<super::work_catalog::WorkCatalog> {
         Ok(super::work_catalog::WorkCatalog::new(
             self.storage.pool().await?.clone(),

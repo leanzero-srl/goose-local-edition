@@ -46,6 +46,8 @@ pub struct RequestCodeResult {
 /// `200` body of `POST /v1/auth/verify`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct VerifyResult {
+    #[serde(rename = "nodeSecret", default)]
+    pub node_secret: Option<String>,
     pub token: String,
     /// The worker-normalized account email (the JWT `sub`).
     pub email: String,
@@ -96,6 +98,8 @@ pub struct Capabilities {
 
 #[derive(Debug, Error)]
 pub enum WorkerError {
+    #[error("update_required: worker at {url} does not implement controller route {what}")]
+    ControllerUpdateRequired { what: &'static str, url: String },
     #[error("cannot build the worker HTTP client: {source}")]
     BuildClient { source: reqwest::Error },
     /// `route` is how the request travelled ([`RoutePath`]'s text); `detail` is the whole
@@ -229,6 +233,121 @@ pub struct WorkerClient {
 }
 
 impl WorkerClient {
+    pub async fn withdraw_controller_host(
+        &self,
+        credential: &str,
+        runtime_id: uuid::Uuid,
+    ) -> Result<(), WorkerError> {
+        #[derive(Deserialize)]
+        struct Withdrawn {
+            withdrawn: bool,
+        }
+        let result: Withdrawn = self
+            .controller_request(
+                reqwest::Method::POST,
+                "/v1/controller/hosts/withdraw",
+                credential,
+                None,
+                Some(&serde_json::json!({"runtime_id":runtime_id})),
+            )
+            .await?;
+        if !result.withdrawn {
+            return Err(WorkerError::Unexpected {
+                status: 503,
+                what: "host withdraw",
+                url: self.url("/v1/controller/hosts/withdraw"),
+                error: "host withdrawal was not confirmed".into(),
+            });
+        }
+        Ok(())
+    }
+    pub async fn bootstrap_controller_host(
+        &self,
+        credential: &str,
+    ) -> Result<crate::controller_wire::HostBootstrap, WorkerError> {
+        self.controller_request(
+            reqwest::Method::GET,
+            "/v1/controller/hosts/bootstrap",
+            credential,
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn controller_host_mesh_context(
+        &self,
+        credential: &str,
+    ) -> Result<crate::controller_wire::HostMeshContext, WorkerError> {
+        self.controller_request(
+            reqwest::Method::GET,
+            "/v1/controller/hosts/mesh/context",
+            credential,
+            None,
+            None,
+        )
+        .await
+    }
+
+    pub async fn join_controller_host(
+        &self,
+        credential: &str,
+        enrollment_id: uuid::Uuid,
+    ) -> Result<crate::controller_wire::HostMeshJoin, WorkerError> {
+        self.controller_request(
+            reqwest::Method::POST,
+            "/v1/controller/hosts/mesh/join-key",
+            credential,
+            None,
+            Some(&serde_json::json!({"enrollment_id":enrollment_id})),
+        )
+        .await
+    }
+
+    pub async fn confirm_controller_host(
+        &self,
+        credential: &str,
+        enrollment_id: uuid::Uuid,
+        mesh_node_key: &str,
+    ) -> Result<crate::controller_wire::HostMeshConfirmation, WorkerError> {
+        self.controller_request(
+            reqwest::Method::POST,
+            "/v1/controller/hosts/mesh/confirm",
+            credential,
+            None,
+            Some(&serde_json::json!({"enrollment_id":enrollment_id,"mesh_node_key":mesh_node_key})),
+        )
+        .await
+    }
+
+    pub async fn release_controller_host(
+        &self,
+        credential: &str,
+        runtime_id: uuid::Uuid,
+    ) -> Result<(), WorkerError> {
+        #[derive(Deserialize)]
+        struct Released {
+            released: bool,
+        }
+        let result: Released = self
+            .controller_request(
+                reqwest::Method::POST,
+                "/v1/controller/hosts/release",
+                credential,
+                None,
+                Some(&serde_json::json!({"runtime_id":runtime_id})),
+            )
+            .await?;
+        if !result.released {
+            return Err(WorkerError::Unexpected {
+                status: 503,
+                what: "host release",
+                url: self.url("/v1/controller/hosts/release"),
+                error: "host release was not confirmed".into(),
+            });
+        }
+        Ok(())
+    }
     /// Controller tokens remain opaque: only the worker verifies JWTs and registry state.
     /// https://www.rfc-editor.org/rfc/rfc7662#section-2.1
     pub(crate) async fn controller_request<T: serde::de::DeserializeOwned>(
@@ -270,6 +389,9 @@ impl WorkerClient {
             .await?;
         if response.status().is_success() {
             return decode(path, &url, response).await;
+        }
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(WorkerError::ControllerUpdateRequired { what: path, url });
         }
         Err(WorkerError::Unexpected {
             status: response.status().as_u16(),
@@ -580,6 +702,21 @@ impl WorkerClient {
             url,
             error: envelope.raw,
         })
+    }
+}
+
+impl WorkerError {
+    pub fn has_controller_code(&self, code: &str) -> bool {
+        match self {
+            Self::Unexpected { error, .. } => serde_json::from_str::<serde_json::Value>(error)
+                .is_ok_and(|body| {
+                    body.get("error")
+                        .and_then(|e| e.get("code"))
+                        .and_then(|c| c.as_str())
+                        == Some(code)
+                }),
+            _ => false,
+        }
     }
 }
 

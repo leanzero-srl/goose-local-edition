@@ -3,9 +3,9 @@
 The additive Rust protocol is in `src/controller_wire.rs`. This source slice implements
 the owner router, opaque device introspection client, monotonic authorization leases,
 immutable owner identity, pinned TLS listener, mesh public-key preservation, and an
-authoritative role filter. It does not install a live Goose catalog/run adapter or start
-controller hosting in `LinkManager`. A compiled fixture is not proof that an installed
-Mac or phone can control work.
+authoritative role filter. `GooseAcpAgent::build_link_manager` now installs host lifecycle
+and the actual shared SessionManager/OwnerRunRegistry adapter. A compiled fixture is not
+proof that an installed Mac or phone can control work.
 
 ## Owner adapter contract
 
@@ -61,9 +61,9 @@ connection; no last-known allowance is reused. WS 4401 means expired credentials
 denied/revoked/wrong binding, 4413 authority or freshness unavailable. Running work is
 not cancelled by a viewer disconnect or revoke.
 
-The host must renew its separate runtime lease and register catalog high-water. If the
-lease changes, stop/recreate the router with the new binding. This service does not yet
-own that host renewal lifecycle. Access tokens are never locally decoded or verified.
+The host renews its separate runtime lease and catalog high-water, and replaces the
+authorized router with the current binding. Authority loss closes access and expires
+new peer admission while accepted owner work stays alive. Access tokens are never locally decoded or verified.
 Worker requests require HTTPS and refuse redirects to avoid replaying token-containing
 JSON at a redirect destination.
 
@@ -80,6 +80,21 @@ discovery uses `MeshEndpoint={url,tls_spki_sha256}`. The URL's mesh IP is a loca
 client validates the expected owner SAN, leaf validity/EKU and the worker-authorized
 SPKI. There is no trust-all or ATS exception. `start_controller_tls` serves the injected
 router on the configured address (default controller port 41227; tests use 0).
+
+`controller_host::ControllerHostFactory` supplies the actual store directory, catalog
+watermark and backend. Production uses a loopback TLS listener reached through the owned
+userspace mesh; local write scopes also require the current remote-execution switch.
+The account-bound node secret comes only from the existing verified host sign-in and is
+persisted privately beside identity.json. Missing or corrupt secret refuses new connect
+before daemon startup. Host bootstrap returns account/owner UUIDs, never that secret.
+
+Provider-confirmed enrollment resumes its exact existing node identity. New enrollment
+persists its request UUID before minting, consumes the scoped key through explicit
+`--force-reauth`, and verifies the returned provider node binding. Lost acknowledgements
+are checked against the existing enrollment before spending another key. Disconnect
+awaits listener shutdown and withdraws its own runtime lease; logout suspends the host
+credential, removes local sign-in secrets, and retains the session store's account
+boundary. Exact worker routes are in `leanzero-link/worker/CONTROLLER-API.md`.
 
 ## Roles and mixed versions
 
@@ -105,10 +120,10 @@ tasks and clear mirrored sessions on registry expiry. That approach was not appl
 The implemented alternative retains those objects and fences new work instead. No
 approval workaround, daemon termination, or persistent session deletion occurred.
 
-The manager still defaults to legacy admission; its worker-registry lifecycle hookup is
-not implemented in this slice. The worker's separately owned A3 slice adds provider-verified
-mesh enrollment and `/v1/controller/hosts/peers`; do not enable controller mesh enrollment
-until that worker binding and manager rollout are proved. `NodeState.controller` is
+Production Goose injects host lifecycle and authenticated `/v1/controller/hosts/peers`
+admission before publishing mesh peers. Library embedders without that factory retain
+legacy compatibility; a failed host bootstrap never falls back to it. Do not deploy
+controller mesh enrollment until the worker binding and manager rollout are proved. `NodeState.controller` is
 optional advertisement only: absent means
 update_required and zero controller capabilities. It cannot authenticate a role.
 
