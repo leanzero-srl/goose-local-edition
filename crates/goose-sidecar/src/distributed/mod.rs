@@ -38,6 +38,7 @@ pub mod compaction;
 pub mod config;
 pub mod exec;
 pub mod launch;
+pub mod layer_split;
 pub mod link_control;
 pub mod link_host;
 pub mod local_network;

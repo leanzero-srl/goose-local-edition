@@ -22,7 +22,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tokio::sync::watch;
@@ -2251,6 +2251,10 @@ fn launch_specs(
             let launches = preflight.tensor_launches()?;
             launch::rank_specs(&ctx.config, &ctx.served, &launches, context, report_seconds)
         }
+        Runner::MlxLmPipeline => bail!(
+            "the mlx_lm pipeline launch (mimo_v2) is not wired yet: the rank wrapper's \
+             pipeline_split prelude is the open item (HANDOFF.md)"
+        ),
         Runner::PipelineQwen4 => {
             let starts = preflight
                 .pipeline_starts
@@ -3401,6 +3405,9 @@ mod tests {
             max_context_fits: None,
             pipeline_starts: None,
             slots: None,
+            layer_split: None,
+            split_reason: None,
+            plan_reserve_ratio: None,
             checks: Vec::new(),
             nodes: vec![node_preflight(0, None), node_preflight(1, Some(3 * GIB))],
             repairs: Vec::new(),
@@ -4092,6 +4099,9 @@ mod tests {
             max_context_fits: None,
             pipeline_starts: Some(plan.starts.clone()),
             slots: Some(2),
+            layer_split: None,
+            split_reason: None,
+            plan_reserve_ratio: None,
             checks: Vec::new(),
             nodes: (0..2)
                 .map(|rank| preflight::NodePreflight {
@@ -5108,6 +5118,9 @@ mod tests {
             max_context_fits: None,
             pipeline_starts: None,
             slots: None,
+            layer_split: None,
+            split_reason: None,
+            plan_reserve_ratio: None,
             checks: Vec::new(),
             nodes: vec![short],
             repairs: Vec::new(),

@@ -121,7 +121,7 @@ pub(crate) struct ServingWay {
 /// `Err` says why none does.
 #[cfg(unix)]
 pub(crate) async fn serving_way() -> Result<ServingWay, String> {
-    use goose_sidecar::placement::store::{PlacementKey, PlacementKind};
+    use goose_sidecar::placement::store::PlacementKey;
 
     let dist = goose_sidecar::distributed::global_manager().status();
     if let Some(route) = super::mlx_remote::read().live() {

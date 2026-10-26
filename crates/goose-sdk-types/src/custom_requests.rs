@@ -3817,6 +3817,11 @@ pub struct MlxDistributedConfigDto {
     /// Must satisfy 0 < critical < warn < 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watchdog_critical_ratio: Option<f64>,
+    /// The share of each node's RAM the split's plan keeps free (budget = available − RAM × this,
+    /// at most the GPU ceiling). Absent = goose's shared reserve (0.093, every runner). An explicit
+    /// override for one config: at least the WARN reserve in force and below the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_reserve_ratio: Option<f64>,
     pub nodes: Vec<MlxDistributedNodeConfigDto>,
 }
 

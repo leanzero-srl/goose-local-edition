@@ -1057,6 +1057,7 @@ pub(super) fn compose(
             hang_ratio_only: false,
             watchdog_warn_ratio: None,
             watchdog_critical_ratio: None,
+            plan_reserve_ratio: None,
             nodes,
         },
         backend_reason,

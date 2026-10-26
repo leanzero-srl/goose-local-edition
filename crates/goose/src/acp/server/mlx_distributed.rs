@@ -69,6 +69,7 @@ fn config_from_dto(dto: MlxDistributedConfigDto) -> anyhow::Result<DistributedCo
         hang_ratio_only: dto.hang_ratio_only,
         watchdog_warn_ratio: dto.watchdog_warn_ratio,
         watchdog_critical_ratio: dto.watchdog_critical_ratio,
+        plan_reserve_ratio: dto.plan_reserve_ratio,
         nodes: dto
             .nodes
             .into_iter()
@@ -102,6 +103,7 @@ pub(super) fn config_to_dto(config: DistributedConfig) -> MlxDistributedConfigDt
         hang_ratio_only: config.hang_ratio_only,
         watchdog_warn_ratio: config.watchdog_warn_ratio,
         watchdog_critical_ratio: config.watchdog_critical_ratio,
+        plan_reserve_ratio: config.plan_reserve_ratio,
         nodes: config
             .nodes
             .into_iter()
@@ -545,9 +547,9 @@ fn split_way(
     runner: Option<distributed::Runner>,
 ) -> Option<MlxPlacementKeyDto> {
     let kind = match runner?.placement_kind() {
-        PlacementKind::Single => MlxPlacementKindDto::Single,
-        PlacementKind::Tensor => MlxPlacementKindDto::Tensor,
-        PlacementKind::Pipeline => MlxPlacementKindDto::Pipeline,
+        goose_sidecar::placement::store::PlacementKind::Single => MlxPlacementKindDto::Single,
+        goose_sidecar::placement::store::PlacementKind::Tensor => MlxPlacementKindDto::Tensor,
+        goose_sidecar::placement::store::PlacementKind::Pipeline => MlxPlacementKindDto::Pipeline,
     };
     Some(MlxPlacementKeyDto {
         kind,
@@ -588,7 +590,7 @@ fn record_split_load(
     config: DistributedConfig,
 ) {
     use goose_sidecar::distributed::supervisor::RunState;
-    use goose_sidecar::placement::store::{PlacementKey, PlacementKind};
+    use goose_sidecar::placement::store::PlacementKey;
     tokio::spawn(async move {
         let manager = distributed::global_manager();
         let mut marks = super::nodes_loader::rows::PhaseMarks::default();
@@ -623,7 +625,11 @@ fn record_split_load(
             }
         };
         let phases = marks.times(std::time::Instant::now());
-        let kind = match manager.status().runner.map(distributed::Runner::placement_kind) {
+        let kind = match manager
+            .status()
+            .runner
+            .map(distributed::Runner::placement_kind)
+        {
             Some(kind) => kind,
             None => {
                 tracing::warn!(model = %config.model_id, "a split's load ended, but it reports no runner to key it by; not recorded");
@@ -1160,6 +1166,7 @@ mod tests {
             hang_ratio_only: false,
             watchdog_warn_ratio: None,
             watchdog_critical_ratio: None,
+            plan_reserve_ratio: None,
             nodes: vec![
                 MlxDistributedNodeConfigDto {
                     name: "MacBook Pro".to_string(),

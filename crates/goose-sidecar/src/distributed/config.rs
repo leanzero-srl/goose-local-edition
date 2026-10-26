@@ -80,11 +80,11 @@ impl Runner {
     }
 
     /// How the placement store and planner key this runner's splits.
-    pub fn placement_kind(self) -> crate::placement::PlacementKind {
+    pub fn placement_kind(self) -> crate::placement::store::PlacementKind {
         match self {
-            Runner::MlxLmTensor => crate::placement::PlacementKind::Tensor,
+            Runner::MlxLmTensor => crate::placement::store::PlacementKind::Tensor,
             Runner::PipelineQwen4 | Runner::MlxLmPipeline => {
-                crate::placement::PlacementKind::Pipeline
+                crate::placement::store::PlacementKind::Pipeline
             }
         }
     }
@@ -204,6 +204,15 @@ pub struct DistributedConfig {
     /// `None` = `WATCHDOG_CRITICAL_RESERVE_RATIO`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watchdog_critical_ratio: Option<f64>,
+    /// The plan's reserve as a fraction of each node's RAM: budget = min(available − RAM × this,
+    /// GPU ceiling). `None` = the shared `AVAILABLE_MARGIN_RATIO` every runner plans with. An
+    /// explicit per-config override for a split that measured fine inside the shared reserve
+    /// (mimo_v2, 2026-10-26: the manual 19/29 run served at 68.7 / 100.7 GB footprints, swap
+    /// peak ~1 GB, no watchdog trip, where the shared reserve leaves 67.11 + 98.22 GB for 168.6 GB
+    /// of weights). Validated: at least the WARN reserve in force (below it the watchdog closes
+    /// admission on a plan that fits) and below the shared default (it only ever loosens).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_reserve_ratio: Option<f64>,
     /// Rank order: `nodes[0]` is this Mac.
     pub nodes: Vec<NodeConfig>,
 }
@@ -275,6 +284,15 @@ impl DistributedConfig {
             0.0 < critical && critical < warn && warn < 1.0,
             "watchdog ratios must satisfy 0 < critical ({critical}) < warn ({warn}) < 1"
         );
+        if let Some(reserve) = self.plan_reserve_ratio {
+            ensure!(
+                reserve >= warn && reserve < super::AVAILABLE_MARGIN_RATIO,
+                "plan_reserve_ratio {reserve} must be at least the watchdog WARN reserve ({warn}: \
+                 below it the watchdog closes admission on a plan that fits) and below the shared \
+                 reserve ({}); remove it to plan with the shared reserve",
+                super::AVAILABLE_MARGIN_RATIO
+            );
+        }
         let mut names: Vec<&str> = self.nodes.iter().map(|n| n.name.as_str()).collect();
         names.sort_unstable();
         names.dedup();
@@ -290,6 +308,12 @@ impl DistributedConfig {
             self.watchdog_critical_ratio
                 .unwrap_or(super::WATCHDOG_CRITICAL_RESERVE_RATIO),
         )
+    }
+
+    /// The plan reserve in force: the override, else the shared `AVAILABLE_MARGIN_RATIO`.
+    pub fn plan_reserve_ratio(&self) -> f64 {
+        self.plan_reserve_ratio
+            .unwrap_or(super::AVAILABLE_MARGIN_RATIO)
     }
 
     /// The slot count in force for a pipeline run.
@@ -322,6 +346,7 @@ pub(crate) mod tests {
             hang_ratio_only: false,
             watchdog_warn_ratio: None,
             watchdog_critical_ratio: None,
+            plan_reserve_ratio: None,
             nodes: vec![
                 NodeConfig {
                     name: "MacBook Pro".to_string(),

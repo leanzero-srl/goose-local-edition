@@ -179,6 +179,15 @@ pub struct PreflightReport {
     /// has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slots: Option<u32>,
+    /// mlx_lm pipeline only: layers per rank, rank 0 first (rank 0 holds the LAST layers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer_split: Option<Vec<u32>>,
+    /// mlx_lm pipeline only: why this split (the planner's max-min-spare sentence).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_reason: Option<String>,
+    /// mlx_lm pipeline only: the plan reserve (share of RAM) the split was planned at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_reserve_ratio: Option<f64>,
     /// Cluster-wide checks (runner, cross-node model/version agreement, the plan).
     pub checks: Vec<Check>,
     pub nodes: Vec<NodePreflight>,
@@ -1228,6 +1237,9 @@ pub async fn run_preflight(
         max_context_fits: None,
         pipeline_starts: None,
         slots: None,
+        layer_split: None,
+        split_reason: None,
+        plan_reserve_ratio: None,
         checks: Vec::new(),
         nodes: Vec::new(),
         repairs: Vec::new(),
@@ -1412,6 +1424,9 @@ pub async fn run_preflight(
             Runner::PipelineQwen4 => {
                 pipeline_ratios =
                     plan_pipeline(config, &exec, &budgets, &mut report, &mut plans).await;
+            }
+            Runner::MlxLmPipeline => {
+                plan_mlx_pipeline(config, &budgets, &mut report, &mut plans);
             }
         }
     } else if runner.is_some() {
@@ -1652,6 +1667,67 @@ fn plan_tensor(
             facts.act_bytes,
         ),
     ));
+}
+
+/// goose's own layer split for the mlx_lm pipeline (`layer_split::plan_layer_split`) at the
+/// config's plan reserve; a refusal names the numbers and the reserve at which a split fits.
+fn plan_mlx_pipeline(
+    config: &DistributedConfig,
+    budgets: &[NodeFigures],
+    report: &mut PreflightReport,
+    plans: &mut [Option<RankPlan>],
+) {
+    use super::layer_split::{plan_layer_split, read_layer_split_facts, SplitNode};
+    let facts = match read_layer_split_facts(Path::new(&config.nodes[0].model_dir)) {
+        Ok(facts) => facts,
+        Err(e) => {
+            report.checks.push(Check::fail("plan", format!("{e:#}")));
+            return;
+        }
+    };
+    let nodes: Vec<SplitNode> = config
+        .nodes
+        .iter()
+        .zip(budgets)
+        .map(|(node, figures)| SplitNode {
+            name: node.name.clone(),
+            available: figures.available,
+            total: figures.total,
+            ceiling: figures.ceiling,
+        })
+        .collect();
+    let (warn, _) = config.watchdog_ratios();
+    report.context_source = Some(
+        if config.context.is_some() {
+            "requested"
+        } else {
+            "derived"
+        }
+        .to_string(),
+    );
+    match plan_layer_split(
+        &facts,
+        &nodes,
+        config.plan_reserve_ratio(),
+        warn,
+        config.context,
+    ) {
+        Ok(split) => {
+            report.context_limit = Some(split.context);
+            report.max_context_fits = Some(split.context);
+            report.pipeline_starts = Some(split.plans.iter().map(|p| p.layer_start).collect());
+            report.layer_split = Some(split.layers.clone());
+            report.split_reason = Some(split.reason.clone());
+            report.plan_reserve_ratio = Some(split.reserve_ratio);
+            report
+                .checks
+                .push(Check::pass("plan", split.reason.clone()));
+            for (rank, plan) in split.plans.into_iter().enumerate() {
+                plans[rank] = Some(plan);
+            }
+        }
+        Err(e) => report.checks.push(Check::fail("plan", format!("{e:#}"))),
+    }
 }
 
 /// One pipeline rank's plan line: its layers and the fork's bytes against the fork's budget, with
@@ -2665,6 +2741,9 @@ pub(crate) mod tests {
             max_context_fits: None,
             pipeline_starts: None,
             slots: None,
+            layer_split: None,
+            split_reason: None,
+            plan_reserve_ratio: None,
             checks: Vec::new(),
             nodes: Vec::new(),
             repairs: Vec::new(),

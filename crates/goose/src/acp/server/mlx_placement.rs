@@ -32,7 +32,7 @@ mod imp {
     };
     use goose_sidecar::placement::predict::Calibration;
     use goose_sidecar::placement::store::{
-        context_bucket, PlacementKey, PlacementKind, RecordSource, SpeedRecord,
+        context_bucket, PlacementKey, RecordSource, SpeedRecord,
     };
     use leanzero_link::state::MlxOp;
     use leanzero_link::wire::NodeStatus;

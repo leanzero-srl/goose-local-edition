@@ -48,6 +48,7 @@ pub fn recorded_config() -> DistributedConfig {
         hang_ratio_only: false,
         watchdog_warn_ratio: None,
         watchdog_critical_ratio: None,
+        plan_reserve_ratio: None,
         nodes: vec![
             NodeConfig {
                 name: "MacBook Pro".to_string(),

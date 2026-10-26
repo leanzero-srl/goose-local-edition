@@ -198,7 +198,7 @@ impl EnvSpec {
     pub fn for_runner(runner: Runner) -> Self {
         match runner {
             Runner::MlxLmTensor => Self::tensor(),
-            Runner::PipelineQwen4 => Self::pipeline(),
+            Runner::PipelineQwen4 | Runner::MlxLmPipeline => Self::pipeline(),
         }
     }
 
