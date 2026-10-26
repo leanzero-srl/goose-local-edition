@@ -59,3 +59,14 @@ The existing Apple membership and notarization login can serve iOS distribution;
 ## Continuation
 
 The active goal owns continuation through compaction. Keep small tested commits, exact receipts and actionable handoffs; do not stop at a phase boundary. Prior failed experiments remain in git history and linked proof records. A fixture passing does not complete the production-journey gate. Ask only for an actual necessary owner-held login, unlock, device, legal declaration or final external release action.
+
+## Live account walkthrough, late 26 October
+
+Owner approved the isolated laptop/workhorse/iPhone/iPad simulator profiles joining his real Link account, with control enabled only on test owners. He then went offline for the night and explicitly asked for no further codes. Reuse established credentials; do not request more OTPs or reset profiles.
+
+- The isolated laptop profile at `/tmp/gc-owner-a` completed real email sign-in and first mesh join. Its ordinary My Macs UI now exposes management separately from inference serving. Selecting only Manage models and sessions left chat, split inference and incoming jobs disabled. `7384256935` repairs old-account sign-in recovery; `7713fe8f67` repairs this individual-permission entry path.
+- Reconnect after the management change failed with Tailscale's non-default-flags refusal. The measured defect is under repair in `mesh.rs`, with a negative-control regression and a guarded workhorse build. Do not call the owner connected until the rebuilt executable passes the real reconnect.
+- The iPad used the supplied enrollment code successfully and now displays Goose Remote iPad test / Role Controller. Credentials survived a subsequent mesh refusal: “All existing mesh nodes must complete verified host enrollment”. Migration/security prerequisites are being traced; never remove old nodes or weaken the fence to force a pass. This is successful authentication, not end-to-end session control.
+- Native `6cdcd9ae8e` adds exact-action permission before session data sharing; 10 focused iPhone tests and independent review pass. A normal stream revision can advance without changing the approved payload; a typed pre-admission stale-revision refusal no longer strands a receiptless journal entry. Unknown delivery remains pending. Actual AI/tool recipient disclosure is still a release gap.
+- Native `b60185041` adds policy/support links and resets Settings navigation for explicit Connect actions. One rendered navigation regression and independent review pass. Updated installation must preserve the same bundle/team/Keychain group; do not uninstall the enrolled iPad.
+- Apple organization conversion is submitted with corrected D-U-N-S 303218286. The refreshed portal confirms the owner accepted the agreement issued 14 October on 26 October. First TestFlight app record is held to preserve the requested organization developer name; simulator and direct-device testing continue.
