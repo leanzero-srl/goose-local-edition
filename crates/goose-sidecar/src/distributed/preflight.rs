@@ -584,8 +584,9 @@ pub(crate) fn repair_licence(node: &NodeConfig, services_text: &str) -> Result<(
     Ok(())
 }
 
-/// JACCL's link state on a node: the TB IPv4 present and its IPv4-mapped GID at index 1 (the
-/// soak: a restored IPv4 at GID index 2 made the next start fail `RTR ... errno 96`).
+/// JACCL's link state on a node: the TB IPv4 present and its IPv4-mapped GID in the table with
+/// no empty index below it (the soak: a restored IPv4 at GID[2] over an empty GID[1] made the
+/// next start fail `RTR ... errno 96`).
 fn link_checks(
     node: &NodeConfig,
     backend: Backend,
@@ -621,19 +622,26 @@ fn link_checks(
                 let table = probe::parse_gid_table(text);
                 let want = probe::ipv4_gid(&node.tb_ip);
                 let at = table.iter().find(|(_, g)| *g == want).map(|(i, _)| *i);
+                // Two measurements bound this. The 2026-09-24 soak's post-restore table was
+                // GID[0] fe80, (no GID[1]), GID[2] ::ffff:v4, and the next start failed `RTR ...
+                // errno 96`. On 2026-10-26 workhorse <-> workmule carried GID[0] ULA, GID[1] fe80,
+                // GID[2] ::ffff:v4 on both ends and JACCL all_sum ran (8.95 GB/s at 1 GiB). So
+                // the index alone does not decide it; a hole below the IPv4 GID is what failed.
                 match at {
-                    Some(1) => checks.push(Check::pass(
-                        "rdmaGid",
-                        format!("{} GID[1] = {want}", node.rdma_device),
-                    )),
+                    Some(index) if (0..index).all(|i| table.iter().any(|(j, _)| *j == i)) => checks
+                        .push(Check::pass(
+                            "rdmaGid",
+                            format!("{} GID[{index}] = {want}", node.rdma_device),
+                        )),
                     Some(index) => {
                         needs_repair = true;
                         checks.push(Check::fail(
                             "rdmaGid",
                             format!(
-                                "{} carries {want} at GID[{index}], not GID[1] — the next JACCL \
-                                 start fails `Changing queue pair to RTR failed with errno 96` \
-                                 (STEP1b); repair: toggle '{}' off/on and re-apply the manual IP",
+                                "{} carries {want} at GID[{index}] with an empty GID index below \
+                                 it — the next JACCL start fails `Changing queue pair to RTR \
+                                 failed with errno 96` (STEP1b); repair: toggle '{}' off/on and \
+                                 re-apply the manual IP",
                                 node.rdma_device, node.tb_service
                             ),
                         ));
@@ -2239,7 +2247,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_gid_at_index_two_fails_with_the_documented_repair() {
+    fn an_ipv4_gid_over_a_hole_fails_and_a_contiguous_one_passes() {
         let node = two_mac_config().nodes.remove(1);
         let mut sections = BTreeMap::new();
         sections.insert(
@@ -2255,6 +2263,18 @@ pub(crate) mod tests {
         let gid = checks.iter().find(|c| c.id == "rdmaGid").unwrap();
         assert_eq!(gid.verdict, CheckVerdict::Fail);
         assert!(gid.message.contains("GID[2]") && gid.message.contains("errno 96"));
+        // The workhorse <-> workmule table of 2026-10-26, on which JACCL ran.
+        let mut contiguous = sections.clone();
+        contiguous.insert(
+            "gid".to_string(),
+            "GID[  0]:\t\tfc7c:27f7:1fb:454d::1\nGID[  1]:\t\tfe80::1\nGID[  2]:\t\t::ffff:192.168.0.2\n"
+                .to_string(),
+        );
+        let (checks, needs_repair) = link_checks(&node, Backend::Jaccl, &contiguous);
+        assert!(!needs_repair);
+        let gid = checks.iter().find(|c| c.id == "rdmaGid").unwrap();
+        assert_eq!(gid.verdict, CheckVerdict::Pass);
+        assert!(gid.message.contains("GID[2] = ::ffff:192.168.0.2"));
         // Ring does not read the GID table at all.
         let (checks, needs_repair) = link_checks(&node, Backend::Ring, &sections);
         assert!(!needs_repair && checks.iter().all(|c| c.id != "rdmaGid"));

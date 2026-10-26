@@ -626,12 +626,16 @@ pub(super) fn compose(
         };
         let gid = probe::ipv4_gid(&fact.ipv4.to_string());
         let gid_note = match device.gids.iter().find(|(_, g)| *g == gid) {
-            Some((1, _)) => format!("GID[1] = {gid}"),
+            Some((i, _)) if (0..*i).all(|j| device.gids.iter().any(|(k, _)| *k == j)) => {
+                format!("GID[{i}] = {gid}")
+            }
             Some((i, _)) => format!(
-                "{gid} sits at GID[{i}], not GID[1] — the next JACCL start would fail `RTR errno 96`; \
-                 preflight's link repair re-seats it"
+                "{gid} sits at GID[{i}] over an empty index — the next JACCL start would fail \
+                 `RTR errno 96`; preflight's link repair re-seats it"
             ),
-            None => format!("no IPv4-mapped GID {gid} yet — preflight's link repair re-applies the address"),
+            None => format!(
+                "no IPv4-mapped GID {gid} yet — preflight's link repair re-applies the address"
+            ),
         };
         if !device.active {
             c.gap(
