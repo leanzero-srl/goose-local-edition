@@ -1209,6 +1209,7 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   launcher, Link control plane, Local Network privacy, Flash/pipeline server, image input, compaction, Q-65,
   Q-66/71, Q-75, Q-114), moved verbatim from the `mlx-jaccl-cluster` skill, which now keeps only the raw two-Mac
   MLX/JACCL layer. `scripts/link-live-test.sh` + `scripts/tailscale_identity.py` moved with it.
+- `references/prompt-lookup-ngram.md` — the per-model prompt-lookup (n-gram) lever: lanes (inside MTP / suffix / unavailable on hybrids), the 2026-10-26 numbers (27B Q8 code edit 42.8 -> 134.8 tok/s, 99.3% accepted; summarise/chat no gain), the streaming space-drop bug and why Flash-Next gets no MTP.
 - Edit this file from either Mac and COMMIT it in the goose repo; an uncommitted edit only reaches the other Mac
   as a projsync wip snapshot.
 - RC13 CONTROL, FIRST FULL LOCAL FORGE 2.0 BUILD WITH NO ENGINE INCIDENT (2026-10-17, Gabee 64 GB, Qwen3.8-27B Q8-base,
