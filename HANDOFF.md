@@ -45,12 +45,19 @@ B. UI: ui/desktop/src/components/leanzero-swarm/MlxKvCacheFields.tsx is the patt
    lane caption ("inside MTP", "suffix decoding, greedy only, batch 1", or disabled + reason). Vitest
    beside MlxEngineView.test.tsx. i18n keys in ALL 15 catalogs (round-trip JSON in file order,
    ensure_ascii=False, indent=2). Gate: pnpm install --frozen-lockfile; pnpm run lint:check; pnpm run test:run.
-C. Measurement: DELEGATED to a background agent at ~19:40 (it reports to the coordinator that spawned
-   the second agent). Data dir: /Volumes/AI-workhorse/runs/2026-10-26-pld-qwen38 (NOTES.md there).
-   Matrix: MTP off / MTP+PLD off (RAPID_MLX_MTP_PROMPT_LOOKUP=0) / MTP+PLD on (family default ON for
-   qwen3_5: min 8, max 64, 31 tokens) x code-edit / summarise-quote / free-chat, greedy, N>=3, port 8471,
-   SHA-256 of outputs; secondary Mellum2.1 --suffix-decoding off/on. If NOTES.md has no results table,
-   re-run it (method in the brief above).
+C. Measurement DONE (data + NOTES.md: /Volumes/AI-workhorse/runs/2026-10-26-pld-qwen38). Qwen3.8-27B-Q8,
+   lz.14, greedy, N=3, decode tok/s median (client: (tokens-1)/first-to-last chunk):
+   code_edit  MTP off 21.4 | MTP+PLD off 42.8 (MTP acc 85.7%) | MTP+PLD on 134.8 (PLD 1926/1940 = 99.3%) -> 3.15x
+   doc_quote  22.1 | 33.3 | 32.4 (PLD 64/123 = 52%) -> no gain
+   free_chat  22.0 | 37.3 | 37.1 (PLD never proposes) -> no gain
+   PLD=1 explicit == default (family default ON). SHA: code_edit all 12 outputs identical across all
+   configs; doc_quote/free_chat NOT identical, including repeat-to-repeat INSIDE MTP+PLD-off and a
+   free_chat run where PLD drafted 0 -> nondeterminism is MTP's (adaptive K), not PLD's (cause unproven).
+   Engine bug seen: streamed output drops the space before " [" / " &" tokens (4x per code_edit,
+   all configs; non-stream correct on Mellum build) -> file for the engine owner.
+   Mellum2.1-12B (lz/mellum-lz12 435781119): --suffix-decoding SLOWER (90.4 vs 99.5, 99.7 vs 109.4),
+   6660 "non_trimmable_cache" skips, 8/96 accepted, free_chat output diverges -> suffix lane is not
+   lossless/useful there; consider showing a warning or keeping it off by default (it is: auto = off).
 D. Skill notes: local-edition/skills/goose-mlx-inference/references/prompt-lookup-ngram.md (+ one-line
    pointer in that SKILL.md) and a dated changelog line in ~/.claude/skills/goose-knob-turning/SKILL.md.
 
