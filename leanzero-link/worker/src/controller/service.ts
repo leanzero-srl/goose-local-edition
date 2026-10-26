@@ -2,7 +2,14 @@ import { constantTimeEqual } from "../lib/otp";
 import { EMAIL_RATE_LIMIT, OTP_MAX_ATTEMPTS, OTP_TTL_SECONDS, RATE_WINDOW_SECONDS, VERIFY_RATE_LIMIT } from "../lib/config";
 import { ACCESS_TTL_SECONDS, REFRESH_TTL_SECONDS, digest, randomSecret, seal, signAccess, unseal, verifyAccess } from "./crypto";
 import { CONTROLLER_SCOPES, type AccessClaims, type AccountState, type DeviceCredentials, type DeviceRecord, type DeviceState, type Platform } from "./types";
-import { Registry, fail, splitCredential, parseAccount } from "./registry";
+import { ControllerError, Registry, fail, splitCredential, parseAccount } from "./registry";
+
+// Constructed only after a recognized refresh secret revokes its family in CAS.
+export class AuthenticatedRefreshReplay extends ControllerError {
+  constructor(readonly accountKey: string, readonly deviceId: string) {
+    super(401, "refresh_replayed", "Refresh replay revoked this device");
+  }
+}
 
 export function newAccount(email: string): AccountState {
   return { schema: 1, account_id: crypto.randomUUID(), email, challenges: {}, devices: {}, hosts: {}, revocations: {}, rate_windows: {} };
@@ -132,7 +139,7 @@ export class ControllerService {
       d.refresh_hash = await digest(credentials.refresh_token);
       return { state, result: { credentials } };
     });
-    if (!outcome.credentials) fail(401, "refresh_replayed", "Refresh replay revoked this device");
+    if (!outcome.credentials) throw new AuthenticatedRefreshReplay(key, id);
     return outcome.credentials;
   }
 

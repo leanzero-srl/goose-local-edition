@@ -7,7 +7,7 @@ import { sendOtpEmail } from "../lib/resend";
 import { normalizeCode, normalizeEmail } from "../lib/validate";
 import { ACCOUNT_KEY, UUID } from "./crypto";
 import { ControllerError, Registry, fail, integer, object, string, uuid } from "./registry";
-import { ControllerService } from "./service";
+import { AuthenticatedRefreshReplay, ControllerService } from "./service";
 import { HostService } from "./hosts";
 import { MeshService } from "./mesh";
 import { nodeKey } from "./mesh-provider";
@@ -78,9 +78,9 @@ export async function handleController(request: Request, deps: Deps): Promise<Re
         requireMethod(request, "POST"); const f = await fields(request);
         const refresh = string(f.refresh_token, "refresh_token");
         try { result = await service.refresh(uuid(f.device_id, "device_id"), refresh, uuid(f.request_id, "request_id")); }
-        finally {
-          const parts = refresh.split(".");
-          if (parts[0] === "r1" && ACCOUNT_KEY.test(parts[1] ?? "") && UUID.test(parts[2] ?? "")) await mesh.cleanup(parts[1]!, parts[2]!);
+        catch (error) {
+          if (error instanceof AuthenticatedRefreshReplay) await mesh.cleanup(error.accountKey, error.deviceId);
+          throw error;
         }
         break;
       }

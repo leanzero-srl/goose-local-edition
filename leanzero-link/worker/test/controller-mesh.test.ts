@@ -208,6 +208,51 @@ for (const backend of ["sqlite", "durable"] as const) {
       expect(Date.parse(rotationKey.expiration)).toBeLessThan(f.h.clock.now());
       expect((await f.get("/devices", renewed.access_token)).status).toBe(200);
     });
+    it("requires authenticated refresh replay for cleanup and never rearms completed cleanup", async () => {
+      const f = await setup(store()); await f.bindHost(); const phone = await f.device(); const actor = await f.device();
+      const enrollment_id = crypto.randomUUID();
+      const issued = await f.post("/mesh/join-key", { enrollment_id }, phone.access_token);
+      expect(issued.status).toBe(200);
+      const key = await issued.json() as MeshJoinCredential; const node = provider.join(key.auth_key, "b");
+      expect((await f.post("/mesh/confirm", { enrollment_id, mesh_node_key: node.nodeKey }, phone.access_token)).status).toBe(200);
+      const accountKey = await digest(f.email);
+      const fake = `r1.${accountKey}.${phone.device.device_id}.${"A".repeat(43)}`;
+      const refresh = (body: unknown) => handleRequest(postJson("/v1/controller/auth/refresh", body), f.h.deps);
+      const request = { device_id: phone.device.device_id, refresh_token: phone.refresh_token, request_id: crypto.randomUUID() };
+      const invalid = [
+        { ...request, refresh_token: fake },
+        { ...request, refresh_token: fake.slice(0, -10) },
+        { ...request, refresh_token: `r1.${accountKey}.${crypto.randomUUID()}.${"A".repeat(43)}` },
+        { ...request, device_id: actor.device.device_id },
+        { ...request, device_id: "not-a-uuid", refresh_token: fake },
+        { ...request, request_id: "not-a-uuid" },
+      ];
+      const assertNoCleanup = async () => {
+        const before = await store().read(accountKey); const calls = provider.calls.length;
+        for (const body of invalid) expect((await refresh(body)).status).toBeGreaterThanOrEqual(400);
+        expect(provider.calls.slice(calls)).toEqual([]);
+        expect(await store().read(accountKey)).toEqual(before);
+      };
+      await assertNoCleanup();
+      const rotated = await refresh(request); expect(rotated.status).toBe(200);
+      const credentials = await rotated.json() as DeviceCredentials;
+      const calls = provider.calls.length;
+      expect(await (await refresh(request)).json()).toEqual(credentials); // Lost ACK.
+      expect(provider.calls.slice(calls)).toEqual([]);
+      const replay = await refresh({ ...request, request_id: crypto.randomUUID() });
+      expect(replay.status).toBe(401); expect(await replay.json()).toMatchObject({ error: { code: "refresh_replayed" } });
+      expect(provider.nodes.some(n => n.id === node.id)).toBe(false);
+      expect(Date.parse(provider.keys.find(k => k.key === key.auth_key)!.expiration)).toBeLessThan(f.h.clock.now());
+      expect((await f.service.registry.read(accountKey))!.mesh_enrollments![enrollment_id]!.cleanup_pending).toBe(false);
+      await assertNoCleanup(); // Known revoked IDs still convey no authority.
+      const completedCalls = provider.calls.length;
+      for (let i = 0; i < 3; i++) {
+        expect((await refresh(request)).status).toBe(401);
+        const retry = await f.post("/devices/" + phone.device.device_id + "/mesh/cleanup", {}, actor.access_token);
+        expect(retry.status).toBe(200); expect(await retry.json()).toMatchObject({ mesh_cleanup: "complete" });
+      }
+      expect(provider.calls.slice(completedCalls)).toEqual([]);
+    });
     it("caps peer and host authorization at provider expiry and rejects unsupported providers", async () => {
       const f = await setup(store()); const host = await f.bindHost(); const phone = await f.device();
       host.node.expiry = new Date(f.h.clock.now() + 5_000).toISOString();

@@ -184,10 +184,10 @@ export class MeshService {
     const d = state.devices[deviceId];
     if (!d) return "complete";
     const revokedDevice = d.record.revoked_at !== null || d.refresh_expires_at <= this.c.now();
-    if (!revokedDevice && !enrollments(state).some(e => e.role === "controller" && e.subject_id === deviceId && e.status === "revoked" && e.cleanup_pending)) return "complete";
+    if (!enrollments(state).some(e => e.role === "controller" && e.subject_id === deviceId && (e.cleanup_pending || (revokedDevice && e.status !== "revoked")))) return "complete";
     await this.c.registry.update(accountKey, s => {
       if (!s) throw new Error("missing revoked account");
-      for (const e of enrollments(s)) if (e.role === "controller" && e.subject_id === deviceId && revokedDevice) { e.status = "revoked"; e.cleanup_pending = true; }
+      for (const e of enrollments(s)) if (e.role === "controller" && e.subject_id === deviceId && revokedDevice && e.status !== "revoked") { e.status = "revoked"; e.cleanup_pending = true; }
       return { state: s, result: undefined };
     });
     const current = (await this.c.registry.read(accountKey))!;
@@ -204,7 +204,8 @@ export class MeshService {
       const complete = targets.every(e => e.key_id !== null || e.expires_at <= this.c.now());
       if (complete) await this.c.registry.update(accountKey, s => {
         if (!s) throw new Error("missing revoked account");
-        for (const e of targets) { const saved = s.mesh_enrollments?.[e.enrollment_id]; if (saved) saved.cleanup_pending = false; }
+        // A mint finalizer may have learned a new key since this cleanup began.
+        for (const e of targets) { const saved = s.mesh_enrollments?.[e.enrollment_id]; if (saved && saved.key_id === e.key_id) saved.cleanup_pending = false; }
         return { state: s, result: undefined };
       });
       return complete ? "complete" : "pending";
