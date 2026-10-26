@@ -1228,6 +1228,8 @@ pub(crate) mod tests {
                 keep_every_conversation: true,
                 name_conversations: true,
                 sampling_defaults: _,
+                pipeline_split: None,
+                pipeline_cache_weights: None,
             }
         ));
         assert!(
