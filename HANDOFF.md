@@ -22,9 +22,8 @@ Do NOT load the skills goose-mlx-inference / goose-feature-dev / node-dispatch w
   `pub fn build_serve_env(settings, model_id)`; `ManagerState::Running` carries `env`; mount reuse
   compares argv AND env; config.env = sidecar_spawn_env() + serve env; restart_required compares both.
   Test `prompt_lookup_rides_env_on_mtp_flags_on_pure_attention_and_nothing_on_a_hybrid`.
-- Gate run at handoff: `cargo test -p goose-sidecar --lib prompt_lookup` 11 passed. Full
-  `cargo clippy -p goose-sidecar --all-targets -D warnings` + `cargo test -p goose-sidecar` were
-  started; RE-RUN them first (results not recorded).
+- Gate at 7e360e4223: `cargo clippy -p goose-sidecar --all-targets -D warnings` clean;
+  `cargo test -p goose-sidecar` all green (lib 499 passed, 12 ignored; integration suites ok).
 
 ## OPEN
 A2. ACP wire (not started):
