@@ -102,10 +102,12 @@ the device ID from the token. A request body cannot supply identity.
 
 `GET /events?after=N` upgrades to WSS. Envelopes are
 `{type,runID,ownerID,epoch,sequence,payload:{nonce,deviceID,command?}}`.
-Sequence starts at 1 and is per device. Each connection adds a `connected`
-event; a reconnection first replays events after the requested cursor, then that
-new connection event. Command acceptance produces `command_accepted`. Cursors
-ahead of the stream return 409; invalid cursors return 400. Events remain in
+Sequence starts at 1 and is per device. Without `after`, a connection begins at
+the current stream tail and receives its own newly appended `connected` event.
+With an explicit cursor, it first replays events after that cursor, then receives
+the new connection event. Explicit `after=0` replays from the start. Command
+acceptance produces `command_accepted`. Cursors ahead of the stream return 409;
+invalid, empty or repeated cursors return 400. Events remain in
 memory for this run, without retention gaps. The next run has a new epoch.
 
 `POST /commands` accepts only this diagnostic action:
@@ -147,7 +149,9 @@ requests never invoked the diagnostic sink twice.
 
 The contract tests cover wrong credentials, real HTTP lost acknowledgement,
 same-device retry, cross-device conflict/status isolation, payload conflicts,
-identity spoof rejection, both controller identities, WSS cursor replay, and CA
+identity spoof rejection, both controller identities, a fresh connection after
+an earlier connection followed by new-command replay, explicit zero-cursor
+history, invalid/future cursors, and CA
 trust/IP-SAN validation. They use host loopback and do not prove simulator mesh
 transport. The long-lived fixture's clean exit does not assert a simulator pass.
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +82,18 @@ func TestFixtureCommandsAndReplay(t *testing.T) {
 		t.Fatal("first connection envelope mismatch")
 	}
 	_ = first.CloseNow()
+	second := connect("/events", phone.Token)
+	fresh := readEvent(second)
+	if fresh.Type != "connected" || fresh.Sequence != connected.Sequence+1 {
+		t.Fatalf("new connection without cursor replayed history: first=%d second=%d type=%s", connected.Sequence, fresh.Sequence, fresh.Type)
+	}
+	_ = second.CloseNow()
+	for _, path := range []string{"/events?after=", "/events?after=1&after=2", "/events?after=invalid"} {
+		code, _, err := request("GET", path, phone.Token, "")
+		if err != nil || code != http.StatusBadRequest {
+			t.Fatalf("invalid cursor %s: status=%d err=%v", path, code, err)
+		}
+	}
 	body := `{"commandID":"command-1","kind":"fixture-command","payload":{"text":"fixture only"},"dropAcknowledgement":true}`
 	code, _, err = request("POST", "/commands", "wrong-token", body)
 	if err != nil || code != http.StatusUnauthorized {
@@ -120,13 +133,22 @@ func TestFixtureCommandsAndReplay(t *testing.T) {
 	if err != nil || code != http.StatusOK {
 		t.Fatalf("own status: status=%d err=%v", code, err)
 	}
-	reconnected := connect("/events?after=1", phone.Token)
+	reconnected := connect("/events?after="+strconv.FormatUint(fresh.Sequence, 10), phone.Token)
 	accepted := readEvent(reconnected)
-	if accepted.Type != "command_accepted" || accepted.Sequence != 2 || accepted.Payload.Command == nil || accepted.Payload.Command.DeliveryCount != 1 {
+	if accepted.Type != "command_accepted" || accepted.Sequence != fresh.Sequence+1 || accepted.Payload.Command == nil || accepted.Payload.Command.DeliveryCount != 1 {
 		t.Fatal("lost-ACK command was not replayed exactly once")
 	}
-	if e := readEvent(reconnected); e.Type != "connected" || e.Sequence != 3 {
+	if e := readEvent(reconnected); e.Type != "connected" || e.Sequence != accepted.Sequence+1 {
 		t.Fatal("reconnect sequence mismatch")
+	}
+	fromStart := connect("/events?after=0", phone.Token)
+	if e := readEvent(fromStart); e.Type != "connected" || e.Sequence != connected.Sequence {
+		t.Fatal("explicit zero cursor no longer replays the first event")
+	}
+	_ = fromStart.CloseNow()
+	code, _, err = request("GET", "/events?after=999", phone.Token, "")
+	if err != nil || code != http.StatusConflict {
+		t.Fatalf("future cursor: status=%d err=%v", code, err)
 	}
 	for _, invalid := range []string{
 		`{"commandID":"command-2","kind":"fixture-command","payload":{"text":"x"},"deviceID":"spoofed"}`,

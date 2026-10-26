@@ -253,9 +253,14 @@ func (f *fixture) appendEventLocked(deviceID, kind string, command *commandRecei
 
 func (f *fixture) events(w http.ResponseWriter, r *http.Request, deviceID string) {
 	var after uint64
-	if value := r.URL.Query().Get("after"); value != "" {
+	values, hasCursor := r.URL.Query()["after"]
+	if hasCursor {
+		if len(values) != 1 || values[0] == "" {
+			http.Error(w, "invalid cursor", http.StatusBadRequest)
+			return
+		}
 		var err error
-		after, err = strconv.ParseUint(value, 10, 64)
+		after, err = strconv.ParseUint(values[0], 10, 64)
 		if err != nil {
 			http.Error(w, "invalid cursor", http.StatusBadRequest)
 			return
@@ -275,6 +280,9 @@ func (f *fixture) events(w http.ResponseWriter, r *http.Request, deviceID string
 	defer conn.CloseNow()
 	ctx := conn.CloseRead(r.Context())
 	f.mu.Lock()
+	if !hasCursor {
+		after = uint64(len(f.streams[deviceID].Events))
+	}
 	f.appendEventLocked(deviceID, "connected", nil)
 	f.mu.Unlock()
 	for {
