@@ -6959,6 +6959,9 @@
   "navigation.itemNodes": {
     "defaultMessage": "Nodi"
   },
+  "navigation.itemSessions": {
+    "defaultMessage": "Sessioni"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Impostazioni"
   },

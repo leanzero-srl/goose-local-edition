@@ -6959,6 +6959,9 @@
   "navigation.itemNodes": {
     "defaultMessage": "节点"
   },
+  "navigation.itemSessions": {
+    "defaultMessage": "会话"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "设置"
   },

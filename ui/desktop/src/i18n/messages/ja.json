@@ -6959,6 +6959,9 @@
   "navigation.itemNodes": {
     "defaultMessage": "ノード"
   },
+  "navigation.itemSessions": {
+    "defaultMessage": "セッション"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "設定"
   },

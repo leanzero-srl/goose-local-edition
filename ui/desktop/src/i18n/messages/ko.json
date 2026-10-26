@@ -6959,6 +6959,9 @@
   "navigation.itemNodes": {
     "defaultMessage": "노드"
   },
+  "navigation.itemSessions": {
+    "defaultMessage": "세션"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "설정"
   },

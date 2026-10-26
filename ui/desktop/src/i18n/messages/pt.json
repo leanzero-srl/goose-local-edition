@@ -6959,6 +6959,9 @@
   "navigation.itemNodes": {
     "defaultMessage": "Nós"
   },
+  "navigation.itemSessions": {
+    "defaultMessage": "Sessões"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Definições"
   },

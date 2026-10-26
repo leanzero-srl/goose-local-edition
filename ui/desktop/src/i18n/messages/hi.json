@@ -6959,6 +6959,9 @@
   "navigation.itemNodes": {
     "defaultMessage": "नोड"
   },
+  "navigation.itemSessions": {
+    "defaultMessage": "सत्र"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Settings"
   },

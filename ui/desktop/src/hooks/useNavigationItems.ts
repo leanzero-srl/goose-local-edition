@@ -1,4 +1,4 @@
-import { Brain, Network, Plug, Settings, Zap } from 'lucide-react';
+import { Brain, MessageSquare, Network, Plug, Settings, Zap } from 'lucide-react';
 import { Goose } from '../components/icons';
 import type React from 'react';
 import { defineMessages, type IntlShape, type MessageDescriptor } from 'react-intl';
@@ -20,6 +20,7 @@ export interface NavItem {
  *
  * Goose Swarm pass A declutter: Recipes, Apps, Scheduler, Loop, Extensions and Session History left
  * the nav on purpose — their routes and views stay in code and reachable by URL (see App.tsx routes).
+ * Sessions returns as the entry to both this Mac and linked Macs; Projects still creates sessions.
  *
  * Pass C: the "Leanzero MLX" entry became the swarm hub — the three-tab management view
  * (LeanZero MLX | Cloud Providers | Swarm Settings). /mlx-engine redirects to /leanzero-swarm.
@@ -43,6 +44,7 @@ export interface NavItem {
  */
 export const NAV_ITEMS: NavItem[] = [
   { id: 'nodes', path: '/nodes', label: 'Nodes', icon: Network, requires: 'localOrMlx' },
+  { id: 'sessions', path: '/sessions', label: 'Sessions', icon: MessageSquare },
   { id: 'extensions', path: '/extensions', label: 'MCPs', icon: Plug },
   { id: 'skills', path: '/skills', label: 'Skills', icon: Zap },
   { id: 'memories', path: '/memories', label: 'Memories', icon: Brain },
@@ -67,6 +69,7 @@ export const SETTINGS_NAV_ITEM: NavItem = {
 // stay in sync.
 const navItemMessages = defineMessages({
   nodes: { id: 'navigation.itemNodes', defaultMessage: 'Nodes' },
+  sessions: { id: 'navigation.itemSessions', defaultMessage: 'Sessions' },
   extensions: { id: 'navigation.itemMcps', defaultMessage: 'MCPs' },
   skills: {
     id: 'navigation.itemSkills',

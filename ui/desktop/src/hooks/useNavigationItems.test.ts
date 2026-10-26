@@ -8,7 +8,8 @@ import { NAV_ITEMS, SETTINGS_NAV_ITEM } from './useNavigationItems';
  * became "Goose Swarm" (/leanzero-swarm — the three-tab management view; /mlx-engine
  * redirects). Pass D (owner): "New Chat" is GONE — sessions start from a project, and the only
  * session-creating affordance is the Projects tree's "+ New session here". 2026-09-27 (owner, Q-193):
- * Nodes is the FIRST row, gated with Providers on the local edition or the MLX engine.
+ * Nodes is the FIRST row, gated with Providers on the local edition or the MLX engine. Sessions
+ * now follows it to expose both local history and the linked Macs catalog.
  *
  * Drift guard by design: adding or removing a nav entry MUST fail here so the change is a decision,
  * not an accident. Extend the fixture when the nav legitimately changes.
@@ -17,6 +18,7 @@ describe('NAV_ITEMS fixture', () => {
   it('contains exactly the expected entries, in order', () => {
     expect(NAV_ITEMS.map((i) => i.id)).toEqual([
       'nodes',
+      'sessions',
       'extensions',
       'skills',
       'memories',
@@ -24,6 +26,7 @@ describe('NAV_ITEMS fixture', () => {
     ]);
     expect(NAV_ITEMS.map((i) => i.path)).toEqual([
       '/nodes',
+      '/sessions',
       '/extensions',
       '/skills',
       '/memories',
@@ -31,6 +34,7 @@ describe('NAV_ITEMS fixture', () => {
     ]);
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
       'Nodes',
+      'Sessions',
       'MCPs',
       'Skills',
       'Memories',

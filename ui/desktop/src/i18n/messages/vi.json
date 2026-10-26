@@ -6959,6 +6959,9 @@
   "navigation.itemNodes": {
     "defaultMessage": "Nút"
   },
+  "navigation.itemSessions": {
+    "defaultMessage": "Phiên"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Cài đặt"
   },

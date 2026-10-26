@@ -7277,6 +7277,9 @@
   "navigation.itemNodes": {
     "defaultMessage": "Nodes"
   },
+  "navigation.itemSessions": {
+    "defaultMessage": "Sessions"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Settings"
   },

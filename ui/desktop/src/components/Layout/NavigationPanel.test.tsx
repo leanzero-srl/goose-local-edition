@@ -89,9 +89,9 @@ describe('NavigationPanel (Studio shell)', () => {
       .getAllByRole('button')
       .map((b) => b.textContent);
 
-  it('Nodes is the FIRST row (Q-193), above MCPs, and opens /nodes; Providers stays last', () => {
+  it('Nodes is the FIRST row (Q-193), followed by Sessions; Providers stays last', () => {
     renderNav('/nodes');
-    expect(primaryRows()).toEqual(['Nodes', 'MCPs', 'Skills', 'Memories', 'Providers']);
+    expect(primaryRows()).toEqual(['Nodes', 'Sessions', 'MCPs', 'Skills', 'Memories', 'Providers']);
     const nodes = within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', {
       name: /Nodes/,
     });
@@ -105,13 +105,29 @@ describe('NavigationPanel (Studio shell)', () => {
   ])('Nodes shows exactly when Providers does (%o)', (gate) => {
     Object.assign(gateMock, gate);
     renderNav();
-    expect(primaryRows()).toEqual(['Nodes', 'MCPs', 'Skills', 'Memories', 'Providers']);
+    expect(primaryRows()).toEqual(['Nodes', 'Sessions', 'MCPs', 'Skills', 'Memories', 'Providers']);
   });
 
   it('an upstream-flavoured build with no MLX engine hides Nodes and Providers together', () => {
     Object.assign(gateMock, { isLocal: false, mlxEngine: false });
     renderNav();
-    expect(primaryRows()).toEqual(['MCPs', 'Skills', 'Memories']);
+    expect(primaryRows()).toEqual(['Sessions', 'MCPs', 'Skills', 'Memories']);
+  });
+
+  it('opens the Sessions route from its visible row, independently of inference Nodes', () => {
+    renderNav('/nodes');
+    const primary = within(screen.getByRole('navigation', { name: 'Primary' }));
+    const sessions = primary.getByRole('button', { name: 'Sessions' });
+    expect(sessions.querySelector('svg')).not.toBeNull();
+    expect(sessions).not.toHaveAttribute('aria-current');
+
+    fireEvent.click(sessions);
+
+    expect(sessions).toHaveAttribute('aria-current', 'page');
+    expect(primary.getByRole('button', { name: 'Nodes' })).not.toHaveAttribute('aria-current');
+    expect(screen.getAllByRole('button').filter((row) => row.hasAttribute('aria-current'))).toEqual(
+      [sessions]
+    );
   });
 
   it('opens with the brand block: a solid accent square mark beside the wordmark in the h2 step', () => {

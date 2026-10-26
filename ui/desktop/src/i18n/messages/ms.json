@@ -6959,6 +6959,9 @@
   "navigation.itemNodes": {
     "defaultMessage": "Nod"
   },
+  "navigation.itemSessions": {
+    "defaultMessage": "Sesi"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Tetapan"
   },

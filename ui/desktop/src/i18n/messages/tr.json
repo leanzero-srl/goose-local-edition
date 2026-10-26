@@ -6959,6 +6959,9 @@
   "navigation.itemNodes": {
     "defaultMessage": "Düğümler"
   },
+  "navigation.itemSessions": {
+    "defaultMessage": "Oturumlar"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "Ayarlar"
   },

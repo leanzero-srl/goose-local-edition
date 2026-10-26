@@ -6959,6 +6959,9 @@
   "navigation.itemNodes": {
     "defaultMessage": "節點"
   },
+  "navigation.itemSessions": {
+    "defaultMessage": "工作階段"
+  },
   "navigation.itemSettings": {
     "defaultMessage": "設定"
   },
