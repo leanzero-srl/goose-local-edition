@@ -174,3 +174,36 @@ here verbatim. Where they and SKILL.md disagree, the dates decide (newest wins) 
   the pre-fix file + a shim that accepts-and-ignores the new argument → behavioural assertion failures, not TypeErrors.
 - WORKTREE-ISOLATION TRAP: bash lines with `$VAR` operands, heredocs to python or `git` inside compound commands are
   refused; write scripts to the scratchpad and run them with literal paths; `git -C <worktree> …` plain.
+
+## 2026-10-26 — workmule (M5 Max 128 GB, macOS 27.0.1, LocalHostName Work-Mule-Studio) joins as a goose node
+- INSTALL = the workhorse's exact release, no build: `gh release download v3.0.132 -R leanzero-srl/goose-local-edition -p
+  'Goose-Swarm-3.0.132.dmg'` on the workhorse, scp, `hdiutil attach -nobrowse`, `ditto` the .app to /Applications,
+  `xattr -dr com.apple.quarantine`. Installed pin read from the binary: `Rapid-MLX@v0.14.3-lz.14` (the repo's engine.rs
+  on the workhorse's main checkout still says lz.12 — it is behind; ALWAYS read the pin from the installed binary).
+- ENGINE PREREQ: the sidecar spawns `uvx` from the FIXED PATH /opt/homebrew/bin:/usr/local/bin:… (sidecar_spawn_path),
+  never the app's bundled bin/uvx shim. A fresh Mac needs `brew install uv` or the first Mount fails. Pre-warm:
+  `uvx --from "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14" rapid-mlx serve --help`
+  (36 s on the M5 Max). brew `rapid-mlx` (core 0.13.1) is NOT what the app runs.
+- CONFIG: ~/.config/goose/config.yaml copied from the workhorse verbatim (mlx_engine.model_id
+  rapid-mlx/Qwen3.8-Flash-Next-4bit, no persisted spawn_command = follows the pin) + secrets.yaml (OPENROUTER_API_KEY,
+  GOOGLE_API_KEY: the only two, both used by provider_default_models). The three LEANZERO_LINK_ALLOW_* keys came along;
+  added LEANZERO_LINK_ALLOW_REMOTE_JOBS: true like Gabee (a 4th switch, exists only in the 3.0.13x binary: the peer
+  record's `allows.run_jobs`; the workhorse itself does NOT set it). Backup config.yaml.before-remote-jobs-20261026.
+- LINK JOIN = copy ~/.leanzero/identity.json (email + worker JWT, exp 2027-03) and link-intent.json ("connected") from
+  the workhorse, then start the app: goosed calls the worker /v1/mesh/join-key with the JWT, gets a headscale key and
+  joins by itself. NO headscale CLI preauth key needed and no email code. Result: headscale node `mac-lan-369cb5`
+  100.64.0.4. TRAP: the mule's HostName is DHCP `Mac.lan` like Gabee's, so the peer `hostname` collides; the tray and
+  Models tab use `computer_name` ("Work Mule Studio") and stay distinct.
+- VERIFY FROM THE WORKHORSE without the UI: token = HMAC-SHA256(key = the worker KV value of
+  `nodesecret:<email>` in ~/.leanzero/link-kv/*.json, msg = "leanzero-link/v1/node-token") hex; then
+  `curl -H "Authorization: Bearer <tok>" http://127.0.0.1:41226/v1/swarm/nodes` lists every peer with status, allows
+  and load. The mule read Idle, allows manage_models/answer_chat/run_split true. TRAP: link-kv holds one nodesecret per
+  account (mihai@, gabriela@) — pick by key, not the last file.
+- MODELS: machine-sync models-mount.sh tb lane (`Mihai-Macbook-2|Work-Mule-Studio|*`, machine-sync 3712b55); the
+  workhorse en3 is 192.168.0.2/30, the mule en9 192.168.0.1 (the laptop's old TB address — the laptop's tb mount is
+  down while the cable is on the mule). Plist installed with `sed s#/Users/mihaiperdum#$HOME#`, `launchctl enable`
+  then `bootstrap`. Mounted on the first pass; the Models tab lists the SSD models as On disk and the folder bar shows the
+  SSD's free space (690 of 1863 GB), not the internal disk.
+- CDP on a remote Mac: `open -a "Goose Swarm" --args --remote-debugging-port=9897` over ssh (auto-login GUI session),
+  node 24 global WebSocket, Runtime.evaluate. Routes: `#/nodes`, `#/leanzero-swarm?tab=mlx&mlx=models`. A React
+  search input needs the native value setter + input event.
