@@ -15,7 +15,7 @@ import { signJwt } from "../src/lib/jwt";
 import { handleRequest } from "../src/router";
 import { FULL_ENV, makeHarness } from "./helpers";
 import { HeadscaleWireMock } from "./controller-mesh-provider";
-import type { ControllerScope, MeshJoinCredential } from "../src/controller/types";
+import type { ControllerScope, DeviceCredentials, MeshJoinCredential } from "../src/controller/types";
 
 interface ApiResponse { status: number; headers: { get(name: string): string | null }; json(): Promise<unknown> }
 type Backend = "node-sqlite" | "cloudflare-worker-durable-object";
@@ -69,9 +69,9 @@ async function setup(backend: Backend) {
   const service = new ControllerService(new Registry(store), FULL_ENV.LINK_JWT_SECRET!, Date.now);
   const iat = Math.floor(Date.now() / 1000);
   const accountToken = await signJwt(service.secret, { sub: email, iat, exp: iat + 3600, ver: 1 });
-  const send = async (path: string, method: "GET" | "POST", token?: string, body?: unknown): Promise<ApiResponse> => {
+  const send = async (path: string, method: "GET" | "POST", token?: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<ApiResponse> => {
     const url = "https://worker.test/v1/controller" + path;
-    const headers = { ...(token === undefined ? {} : { Authorization: "Bearer " + token }), ...(body === undefined ? {} : { "Content-Type": "application/json" }) };
+    const headers = { ...extraHeaders, ...(token === undefined ? {} : { Authorization: "Bearer " + token }), ...(body === undefined ? {} : { "Content-Type": "application/json" }) };
     const init = { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) };
     return backend === "node-sqlite" ? handleRequest(new Request(url, init), h.deps) : mf.dispatchFetch(url, init);
   };
@@ -101,7 +101,7 @@ async function setup(backend: Backend) {
     expect(leased.status).toBe(200);
     return { enrollment_id, key, node, confirm, leaseRequest, lease: await leased.json() as { lease_id: string } };
   };
-  return { user, service, accountKey, accountToken, state, phone, get, post, registration, reg, owner_node_id, runtime_id, store_generation, enroll };
+  return { user, service, accountKey, accountToken, state, phone, get, post, send, registration, reg, owner_node_id, runtime_id, store_generation, enroll };
 }
 
 async function error(response: ApiResponse, status: number, code: string): Promise<void> {
@@ -112,6 +112,50 @@ async function error(response: ApiResponse, status: number, code: string): Promi
 
 for (const backend of ["node-sqlite", "cloudflare-worker-durable-object"] as const) {
   describe("host lifecycle over " + backend, () => {
+    it("issues one desktop identity from both live host credentials, with narrow scopes and durable revocation", async () => {
+      const f = await setup(backend); const other = await setup(backend);
+      const body = { enrollment_id: crypto.randomUUID(), device_name: "My desktop" };
+      const desktop = (account = f.accountToken, host = f.reg.host_credential, payload: unknown = body) => f.send("/hosts/controller", "POST", account, payload, { "X-Link-Host-Credential": host });
+      await error(await desktop(), 403, "host_unavailable");
+      await f.enroll();
+      await error(await desktop(other.accountToken), 403, "wrong_account");
+      await error(await desktop(f.accountToken, other.reg.host_credential), 403, "wrong_account");
+      await error(await desktop(f.phone.access_token), 401, "invalid_credential");
+      await error(await desktop(f.accountToken, f.reg.host_credential, { ...body, scopes: ["models.manage"] }), 400, "invalid_request");
+      const parts = f.reg.host_credential.split(".");
+      await error(await desktop(f.accountToken, `h1.${f.accountKey}.${crypto.randomUUID()}.${parts[3]}`), 401, "invalid_credential");
+      const results = await Promise.all(Array.from({ length: 10 }, () => desktop()));
+      expect(results.every(r => r.status === 200)).toBe(true);
+      const credentials = await Promise.all(results.map(r => r.json() as Promise<DeviceCredentials>));
+      expect(credentials.every(c => JSON.stringify(c) === JSON.stringify(credentials[0]))).toBe(true);
+      const device = credentials[0]!;
+      expect(device.device.scopes).toEqual(["catalog.read", "history.read", "work.send", "work.steer", "work.stop", "input.answer"]);
+      expect(Object.keys(device).sort()).toEqual(["access_token", "device", "expires_at", "refresh_token", "token_type"]);
+      expect(device.device.platform).toBe("desktop"); expect(device.device.role).toBe("controller");
+      expect((await f.get("/hosts", device.access_token)).status).toBe(200);
+      await error(await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, device.access_token), 403, "desktop_mesh_denied");
+      await error(await f.post("/mesh/confirm", { enrollment_id: crypto.randomUUID(), mesh_node_key: "nodekey:" + "a".repeat(64) }, device.access_token), 403, "desktop_mesh_denied");
+      await error(await f.get("/devices", device.access_token), 403, "scope_denied");
+      const logout = { request_id: crypto.randomUUID() };
+      expect(await (await f.post("/auth/logout", logout, device.access_token)).json()).toEqual({ revoked: true });
+      expect((await f.post("/auth/logout", logout, device.access_token)).status).toBe(200);
+      await error(await desktop(), 409, "enrollment_consumed");
+      await error(await f.get("/hosts", device.access_token), 401, "invalid_credential");
+      expect((await f.get("/hosts", f.phone.access_token)).status).toBe(200);
+      expect((await f.get("/hosts/bootstrap", f.reg.host_credential)).status).toBe(200);
+      const state = (await f.state())!;
+      expect(Object.values(state.mesh_enrollments!).filter(e => e.role === "controller")).toHaveLength(0);
+    });
+
+    it("denies desktop enrollment after host lease expiry and release", async () => {
+      const f = await setup(backend); await f.enroll();
+      const request = () => f.send("/hosts/controller", "POST", f.accountToken, { enrollment_id: crypto.randomUUID(), device_name: "Desktop" }, { "X-Link-Host-Credential": f.reg.host_credential });
+      await f.service.registry.update(f.accountKey, state => { state!.hosts[f.owner_node_id]!.lease!.expires_at = Date.now() - 1; return { state: state!, result: null }; });
+      await error(await request(), 403, "host_unavailable");
+      expect((await f.post("/hosts/release", { runtime_id: f.runtime_id }, f.reg.host_credential)).status).toBe(200);
+      await error(await request(), 401, "invalid_credential");
+    });
+
     it("bootstraps only a registered host and exposes precisely account and owner IDs", async () => {
       const f = await setup(backend); const other = await setup(backend);
       const bootstrap = await f.get("/hosts/bootstrap", f.reg.host_credential);

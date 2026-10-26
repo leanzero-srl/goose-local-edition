@@ -6,6 +6,10 @@
 //! A restored/cloned database cannot identify itself: the host must compare its generation
 //! and high-water with the external registry and acquire an exclusive runtime lease.
 
+mod external;
+pub(crate) use external::create_objects as create_external_objects;
+pub use external::ExternalWork;
+
 use anyhow::{bail, Result};
 use sqlx::{Pool, Sqlite, Transaction};
 use std::collections::HashMap;
@@ -193,9 +197,10 @@ impl WorkCatalog {
             None => (current, ""),
         };
         let mut records = sqlx::query_as::<_, CatalogRecord>(
-            "SELECT v.* FROM work_identity i JOIN catalog_versions v ON v.revision = \
-             (SELECT MAX(revision) FROM catalog_versions WHERE work_id = i.work_id AND revision <= ?) \
-             WHERE i.work_id > ? ORDER BY i.work_id LIMIT ?")
+            "WITH versions AS (SELECT * FROM catalog_versions UNION ALL SELECT * FROM external_catalog_versions) \
+             SELECT v.* FROM versions v WHERE v.revision = \
+             (SELECT MAX(revision) FROM versions WHERE work_id = v.work_id AND revision <= ?) \
+             AND v.work_id > ? ORDER BY v.work_id LIMIT ?")
             .bind(watermark.revision).bind(after).bind(limit).fetch_all(&mut *tx).await?;
         let has_more = records.len() > page_size;
         records.truncate(page_size);
@@ -225,7 +230,40 @@ impl WorkCatalog {
         let current = read_watermark(&mut tx).await?;
         validate_cursor(&current, cursor)?;
         let mut records = sqlx::query_as::<_, CatalogRecord>(
-            "SELECT * FROM catalog_versions WHERE revision > ? AND revision <= ? ORDER BY revision LIMIT ?")
+            "SELECT * FROM (SELECT * FROM catalog_versions UNION ALL SELECT * FROM external_catalog_versions) WHERE revision > ? AND revision <= ? ORDER BY revision LIMIT ?")
+            .bind(cursor.revision).bind(current.revision).bind(limit).fetch_all(&mut *tx).await?;
+        let has_more = records.len() > page_size;
+        records.truncate(page_size);
+        let revision = if has_more {
+            records.last().expect("nonempty page").revision
+        } else {
+            current.revision
+        };
+        tx.commit().await?;
+        Ok(CatalogChanges {
+            cursor: StoreWatermark {
+                generation: current.generation,
+                revision,
+            },
+            records,
+            has_more,
+        })
+    }
+
+    pub async fn latest_changes(
+        &self,
+        cursor: &StoreWatermark,
+        page_size: usize,
+    ) -> Result<CatalogChanges> {
+        let limit = page_limit(page_size)?;
+        let mut tx = self.pool.begin().await?;
+        let current = read_watermark(&mut tx).await?;
+        validate_cursor(&current, cursor)?;
+        let mut records = sqlx::query_as::<_, CatalogRecord>(
+            "WITH versions AS (SELECT * FROM catalog_versions UNION ALL SELECT * FROM external_catalog_versions) \
+             SELECT v.* FROM versions v WHERE v.revision IN \
+             (SELECT MAX(revision) FROM versions WHERE revision > ? AND revision <= ? GROUP BY work_id) \
+             ORDER BY v.revision LIMIT ?")
             .bind(cursor.revision).bind(current.revision).bind(limit).fetch_all(&mut *tx).await?;
         let has_more = records.len() > page_size;
         records.truncate(page_size);
@@ -371,7 +409,7 @@ impl WorkCatalog {
         validate_cursor(&current, cursor)?;
         lookup_at(&mut tx, work_id, current.revision).await?;
         let records = sqlx::query_as(
-            "SELECT revision, work_id, event_kind, message_id, row_id FROM work_events WHERE work_id = ? AND revision > ? AND revision <= ? ORDER BY revision LIMIT ?")
+            "SELECT * FROM (SELECT revision, work_id, event_kind, message_id, row_id FROM work_events UNION ALL SELECT revision, work_id, event_kind, NULL AS message_id, NULL AS row_id FROM external_catalog_versions) WHERE work_id = ? AND revision > ? AND revision <= ? ORDER BY revision LIMIT ?")
             .bind(work_id).bind(cursor.revision).bind(current.revision).bind(limit).fetch_all(&mut *tx).await?;
         tx.commit().await?;
         Ok(records)
@@ -495,7 +533,7 @@ async fn lookup_at(
     work_id: &str,
     revision: i64,
 ) -> Result<CatalogRecord> {
-    Ok(sqlx::query_as("SELECT * FROM catalog_versions WHERE work_id = ? AND revision <= ? ORDER BY revision DESC LIMIT 1")
+    Ok(sqlx::query_as("SELECT * FROM (SELECT * FROM catalog_versions UNION ALL SELECT * FROM external_catalog_versions) WHERE work_id = ? AND revision <= ? ORDER BY revision DESC LIMIT 1")
         .bind(work_id).bind(revision).fetch_optional(&mut **tx).await?.ok_or(CatalogError::WorkNotFound)?)
 }
 
@@ -539,6 +577,7 @@ pub(crate) fn notify_commit(path: &Path) {
 }
 
 pub(crate) async fn create_objects(tx: &mut Transaction<'_, Sqlite>) -> Result<()> {
+    external::create_objects(tx).await?;
     let uuid_sql = "lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)), 2) || '-' || substr('89ab', 1 + (random() & 3), 1) || substr(hex(randomblob(2)), 2) || '-' || hex(randomblob(6)))";
     for statement in [
         "CREATE TABLE IF NOT EXISTS controller_store (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), generation TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision >= 0))",

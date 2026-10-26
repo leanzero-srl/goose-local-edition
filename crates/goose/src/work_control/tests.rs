@@ -232,8 +232,8 @@ struct PermissionReceiver {
 
 #[async_trait]
 impl InputHandler for PermissionReceiver {
-    fn run_id(&self) -> &str {
-        &self.run_id
+    fn run_id(&self) -> Option<&str> {
+        Some(&self.run_id)
     }
     fn observe(&self, _: &ConnectionTo<Client>, _: Arc<OwnerRunRegistry>, _: PendingInput) {}
     fn validate(&self, _: &InputAnswer) -> anyhow::Result<()> {
@@ -768,6 +768,7 @@ async fn crash_reconciliation_never_replays_a_dispatch_without_persisted_proof()
         agent_manager: OnceLock::new(),
         initialized: OnceCell::new(),
         input_handlers: Mutex::default(),
+        preflights: RwLock::default(),
         queued: Mutex::default(),
         observers: RwLock::default(),
     };
@@ -789,8 +790,8 @@ struct AnswerOnce {
 }
 #[async_trait]
 impl InputHandler for AnswerOnce {
-    fn run_id(&self) -> &str {
-        &self.run_id
+    fn run_id(&self) -> Option<&str> {
+        Some(&self.run_id)
     }
     fn observe(&self, _: &ConnectionTo<Client>, _: Arc<OwnerRunRegistry>, _: PendingInput) {}
     fn validate(&self, _: &InputAnswer) -> anyhow::Result<()> {
@@ -910,4 +911,109 @@ async fn competing_input_answers_consume_exactly_once_and_partial_snapshots_reco
         "older snapshot must still see the then-uncommitted answer"
     );
     fixture.runs.stop(&fixture.session, None).await.unwrap();
+}
+
+struct PreflightReceiver {
+    sender: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+}
+#[async_trait]
+impl InputHandler for PreflightReceiver {
+    fn run_id(&self) -> Option<&str> {
+        None
+    }
+    fn observe(&self, _: &ConnectionTo<Client>, _: Arc<OwnerRunRegistry>, _: PendingInput) {}
+    fn validate(&self, _: &InputAnswer) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn answer(&self, _: InputAnswer) -> anyhow::Result<()> {
+        self.sender
+            .lock()
+            .await
+            .take()
+            .unwrap()
+            .send(())
+            .map_err(|_| anyhow::anyhow!("original recipe callback receiver is gone"))
+    }
+}
+
+#[tokio::test]
+async fn preflight_blocks_prompts_and_dropped_callback_never_reports_delivered() {
+    let fixture = Fixture::new().await;
+    let setup = fixture
+        .runs
+        .begin_preflight(&fixture.session)
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .submit(fixture.command(send("must not activate this recipe")).await)
+            .await
+            .unwrap_err()
+            .body
+            .code,
+        "setup_pending"
+    );
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let input = fixture
+        .runs
+        .register_preflight_input(
+            &fixture.session,
+            "Recipe setup".into(),
+            serde_json::json!({"type":"object"}),
+            Arc::new(PreflightReceiver {
+                sender: Mutex::new(Some(sender)),
+            }),
+        )
+        .await
+        .unwrap();
+    let command = fixture
+        .command(ActionPayload::AnswerInput {
+            input_id: input.input_id,
+            option_id: "accept".into(),
+            value: Some("{}".into()),
+        })
+        .await;
+    let device = authorize(
+        fixture.authority.as_ref(),
+        "fixture-device",
+        &fixture.receiver,
+        ControllerScope::InputAnswer,
+    )
+    .await
+    .unwrap();
+    let guard = DispatchAuthorization::new(
+        fixture.authority.clone(),
+        "fixture-device".into(),
+        fixture.receiver.clone(),
+        ControllerScope::InputAnswer,
+        device.clone(),
+    );
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let resume = Arc::new(tokio::sync::Notify::new());
+    *fixture.authority.barrier.lock().await = Some((entered.clone(), resume.clone()));
+    let accepted = fixture
+        .runs
+        .accept_command(&device, command, guard)
+        .await
+        .unwrap();
+    entered.notified().await;
+    assert!(fixture.runs.runs.try_lock().is_err());
+    drop(receiver);
+    resume.notify_one();
+    let receipt = settled_receipt(&fixture, accepted.command_id).await;
+    assert!(matches!(receipt.state, CommandState::Rejected));
+    assert!(receipt
+        .reason
+        .unwrap()
+        .contains("original recipe callback receiver is gone"));
+    assert!(receipt.run_id.is_none());
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    assert!(fixture.runs.current_run(&fixture.session).await.is_none());
+    assert!(fixture
+        .runs
+        .pending_inputs(accepted.work.work_id)
+        .await
+        .unwrap()
+        .is_empty());
+    setup.finish(false).await.unwrap();
 }

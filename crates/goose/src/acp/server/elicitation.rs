@@ -100,8 +100,8 @@ struct OwnerElicitation {
 
 #[async_trait::async_trait]
 impl crate::work_control::InputHandler for OwnerElicitation {
-    fn run_id(&self) -> &str {
-        &self.run_id
+    fn run_id(&self) -> Option<&str> {
+        Some(&self.run_id)
     }
     fn observe(
         &self,

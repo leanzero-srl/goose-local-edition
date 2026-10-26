@@ -553,30 +553,7 @@ impl GooseAcpAgent {
         &self,
         req: CustomProviderCreateRequest,
     ) -> Result<CustomProviderCreateResponse, agent_client_protocol::Error> {
-        let provider = normalize_custom_provider_upsert(req.provider, true)?;
-        let config = declarative_providers::create_custom_provider(
-            declarative_providers::CreateCustomProviderParams {
-                engine: provider.engine,
-                display_name: provider.display_name,
-                api_url: provider.api_url,
-                api_key: provider.api_key,
-                models: provider.models,
-                supports_streaming: provider.supports_streaming,
-                headers: custom_provider_headers(provider.headers),
-                requires_auth: provider.requires_auth,
-                catalog_provider_id: provider.catalog_provider_id,
-                base_path: provider.base_path,
-                preserves_thinking: provider.preserves_thinking,
-            },
-        )
-        .internal_err_ctx("Failed to create custom provider")?;
-
-        Config::global().invalidate_secrets_cache();
-        crate::providers::refresh_custom_providers()
-            .await
-            .internal_err_ctx("Failed to refresh custom providers")?;
-
-        let provider_id = config.name;
+        let provider_id = create_provider_core(req.provider).await?;
         let provider_ids = [provider_id.clone()];
         let status = Self::provider_config_status(provider_id.clone()).await;
         let refresh = self.start_provider_inventory_refresh(&provider_ids).await?;
@@ -910,104 +887,7 @@ impl GooseAcpAgent {
         &self,
         req: ProviderConfigSaveRequest,
     ) -> Result<ProviderConfigChangeResponse, agent_client_protocol::Error> {
-        let _connection_guard = crate::providers::key_connection::lock().await;
-        let entry = crate::providers::get_from_registry(&req.provider_id)
-            .await
-            .invalid_params_err_ctx("Unknown provider")?;
-        let metadata = entry.metadata().clone();
-        let config = Config::global();
-        let mut config_updates = Vec::new();
-        let mut secret_updates = Vec::new();
-
-        for field in &req.fields {
-            let Some(config_key) = metadata
-                .config_keys
-                .iter()
-                .find(|config_key| config_key.name == field.key)
-            else {
-                return Err(agent_client_protocol::Error::invalid_params()
-                    .data(format!("Unsupported provider config field: {}", field.key)));
-            };
-
-            let value = field.value.trim();
-            if value.is_empty() {
-                return Err(agent_client_protocol::Error::invalid_params().data(format!(
-                    "Provider config field cannot be empty: {}",
-                    field.key
-                )));
-            }
-
-            if config_key.secret {
-                secret_updates.push((
-                    config_key.name.clone(),
-                    serde_json::Value::String(value.to_string()),
-                ));
-            } else {
-                config_updates.push((config_key.name.clone(), value.to_string()));
-            }
-        }
-
-        let field_keys: Vec<(&str, bool)> = req
-            .fields
-            .iter()
-            .map(|field| {
-                let key = metadata
-                    .config_keys
-                    .iter()
-                    .find(|key| key.name == field.key)
-                    .expect("validated field");
-                (field.key.as_str(), key.secret)
-            })
-            .collect();
-        let mut pending =
-            crate::providers::key_connection::PendingConfig::capture(config, &field_keys)
-                .internal_err_ctx("Failed to snapshot provider settings")?;
-        for (key, value) in config_updates {
-            config
-                .set_param(&key, &value)
-                .internal_err_ctx("Failed to save provider config field")?;
-        }
-        config
-            .set_secret_values(&secret_updates)
-            .internal_err_ctx("Failed to save provider secret fields")?;
-
-        if crate::providers::key_connection::requires_connection_check(
-            &req.provider_id,
-            entry.provider_type(),
-        ) {
-            for (key, secret) in &field_keys {
-                let submitted = req
-                    .fields
-                    .iter()
-                    .find(|field| field.key == *key)
-                    .expect("validated field");
-                let effective = config
-                    .get(key, *secret)
-                    .internal_err_ctx("Cannot read effective provider setting")?;
-                if effective.as_str() != Some(submitted.value.trim()) {
-                    pending
-                        .restore()
-                        .internal_err_ctx("Failed to restore previous provider settings")?;
-                    return Err(agent_client_protocol::Error::invalid_params().data(format!("{key} is overridden by the process environment. Remove that override before saving a different value.")));
-                }
-            }
-            let verification = crate::providers::key_connection::check(
-                &req.provider_id,
-                &metadata,
-                req.test_model.as_deref(),
-            )
-            .await;
-            if let Err(error) = &verification {
-                pending
-                    .restore()
-                    .internal_err_ctx("Failed to restore previous provider settings")?;
-                return Err(agent_client_protocol::Error::invalid_params()
-                    .data(crate::providers::key_connection::save_failure_text(error)));
-            }
-            crate::providers::key_connection::record(&req.provider_id, &verification);
-        }
-
-        pending.commit();
+        save_provider_config_core(&req).await?;
         let provider_ids = [req.provider_id.clone()];
         let status = Self::provider_config_status(req.provider_id.clone()).await;
         let refresh = self.start_provider_inventory_refresh(&provider_ids).await?;
@@ -1140,4 +1020,138 @@ impl GooseAcpAgent {
 
         Ok(CanonicalModelInfoResponse { model_info })
     }
+}
+
+/// Shared by desktop setup and authenticated host management.
+pub(crate) async fn save_provider_config_core(
+    req: &ProviderConfigSaveRequest,
+) -> Result<(), agent_client_protocol::Error> {
+    let _connection_guard = crate::providers::key_connection::lock().await;
+    let entry = crate::providers::get_from_registry(&req.provider_id)
+        .await
+        .invalid_params_err_ctx("Unknown provider")?;
+    let metadata = entry.metadata().clone();
+    let config = Config::global();
+    let mut config_updates = Vec::new();
+    let mut secret_updates = Vec::new();
+
+    for field in &req.fields {
+        let Some(config_key) = metadata
+            .config_keys
+            .iter()
+            .find(|config_key| config_key.name == field.key)
+        else {
+            return Err(agent_client_protocol::Error::invalid_params()
+                .data(format!("Unsupported provider config field: {}", field.key)));
+        };
+
+        let value = field.value.trim();
+        if value.is_empty() {
+            return Err(agent_client_protocol::Error::invalid_params().data(format!(
+                "Provider config field cannot be empty: {}",
+                field.key
+            )));
+        }
+
+        if config_key.secret {
+            secret_updates.push((
+                config_key.name.clone(),
+                serde_json::Value::String(value.to_string()),
+            ));
+        } else {
+            config_updates.push((config_key.name.clone(), value.to_string()));
+        }
+    }
+
+    let field_keys: Vec<(&str, bool)> = req
+        .fields
+        .iter()
+        .map(|field| {
+            let key = metadata
+                .config_keys
+                .iter()
+                .find(|key| key.name == field.key)
+                .expect("validated field");
+            (field.key.as_str(), key.secret)
+        })
+        .collect();
+    let mut pending = crate::providers::key_connection::PendingConfig::capture(config, &field_keys)
+        .internal_err_ctx("Failed to snapshot provider settings")?;
+    for (key, value) in config_updates {
+        config
+            .set_param(&key, &value)
+            .internal_err_ctx("Failed to save provider config field")?;
+    }
+    config
+        .set_secret_values(&secret_updates)
+        .internal_err_ctx("Failed to save provider secret fields")?;
+
+    if crate::providers::key_connection::requires_connection_check(
+        &req.provider_id,
+        entry.provider_type(),
+    ) {
+        for (key, secret) in &field_keys {
+            let submitted = req
+                .fields
+                .iter()
+                .find(|field| field.key == *key)
+                .expect("validated field");
+            let effective = config
+                .get(key, *secret)
+                .internal_err_ctx("Cannot read effective provider setting")?;
+            if effective.as_str() != Some(submitted.value.trim()) {
+                pending
+                    .restore()
+                    .internal_err_ctx("Failed to restore previous provider settings")?;
+                return Err(agent_client_protocol::Error::invalid_params().data(format!("{key} is overridden by the process environment. Remove that override before saving a different value.")));
+            }
+        }
+        let verification = crate::providers::key_connection::check(
+            &req.provider_id,
+            &metadata,
+            req.test_model.as_deref(),
+        )
+        .await;
+        if let Err(error) = &verification {
+            pending
+                .restore()
+                .internal_err_ctx("Failed to restore previous provider settings")?;
+            return Err(agent_client_protocol::Error::invalid_params()
+                .data(crate::providers::key_connection::save_failure_text(error)));
+        }
+        crate::providers::key_connection::record(&req.provider_id, &verification);
+    }
+
+    pending.commit();
+    Ok(())
+}
+
+pub(crate) async fn create_provider_core(
+    provider: CustomProviderUpsertDto,
+) -> Result<String, agent_client_protocol::Error> {
+    let provider = normalize_custom_provider_upsert(provider, true)?;
+    let config = declarative_providers::create_custom_provider(
+        declarative_providers::CreateCustomProviderParams {
+            engine: provider.engine,
+            display_name: provider.display_name,
+            api_url: provider.api_url,
+            api_key: provider.api_key,
+            models: provider.models,
+            supports_streaming: provider.supports_streaming,
+            headers: custom_provider_headers(provider.headers),
+            requires_auth: provider.requires_auth,
+            catalog_provider_id: provider.catalog_provider_id,
+            base_path: provider.base_path,
+            preserves_thinking: provider.preserves_thinking,
+        },
+    )
+    .internal_err_ctx("Failed to create custom provider")?;
+
+    Config::global().invalidate_secrets_cache();
+    crate::providers::refresh_custom_providers()
+        .await
+        .internal_err_ctx("Failed to refresh custom providers")?;
+
+    let provider_id = config.name;
+    Ok(provider_id)
 }

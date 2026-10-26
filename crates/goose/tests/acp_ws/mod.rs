@@ -371,6 +371,15 @@ pub const SETTLE: Duration = Duration::from_secs(20);
 impl Window {
     /// A window; `hears_goose` = it declares goose's own notifications, as the desktop does.
     pub async fn open(addr: std::net::SocketAddr, hears_goose: bool) -> Self {
+        let capabilities = if hears_goose {
+            json!({"_meta": {"goose": {"customNotifications": true}}})
+        } else {
+            json!({})
+        };
+        Self::open_with_capabilities(addr, capabilities).await
+    }
+
+    pub async fn open_with_capabilities(addr: std::net::SocketAddr, capabilities: Value) -> Self {
         let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/acp"))
             .await
             .expect("the websocket opens");
@@ -378,11 +387,6 @@ impl Window {
             socket,
             next_id: 0,
             seen: Vec::new(),
-        };
-        let capabilities = if hears_goose {
-            json!({"_meta": {"goose": {"customNotifications": true}}})
-        } else {
-            json!({})
         };
         window
             .request(

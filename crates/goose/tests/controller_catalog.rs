@@ -22,6 +22,61 @@ use std::{path::Path, sync::Arc, time::Duration};
 use uuid::Uuid;
 
 struct Authority(AuthorizationLease);
+
+#[tokio::test]
+async fn catalog_metadata_coalesces_wire_bytes_without_losing_selected_events() {
+    let f = Fixture::new(128, 256).await;
+    let (_, work) = f.create("A real visible session", SessionType::User).await;
+    let initial = f.backend.catalog(&f.device, None).await.unwrap();
+    let mut cursor = initial.resume_cursor.clone();
+    let mut separate_bytes = 0;
+    for index in 0..64 {
+        f.catalog
+            .record_runtime(
+                &work.work_id.to_string(),
+                &f.generation.to_string(),
+                if index % 2 == 0 { "running" } else { "idle" },
+                None,
+            )
+            .await
+            .unwrap();
+        let change = f.backend.changes(&f.device, &cursor).await.unwrap();
+        separate_bytes += serde_json::to_vec(&change).unwrap().len();
+        cursor = change.resume_cursor;
+    }
+    let coalesced = f
+        .backend
+        .changes(&f.device, &initial.resume_cursor)
+        .await
+        .unwrap();
+    assert_eq!(coalesced.changes.len(), 1);
+    let preview = coalesced.changes[0]
+        .entry
+        .as_ref()
+        .unwrap()
+        .last_event
+        .as_ref()
+        .unwrap();
+    assert_eq!(preview.kind, "run_state");
+    assert!(!preview.text.is_empty());
+    let bytes = serde_json::to_vec(&coalesced).unwrap().len();
+    assert!(bytes * 60 < separate_bytes);
+    let events = f
+        .catalog
+        .work_events(
+            &work.work_id.to_string(),
+            &goose::session::work_catalog::StoreWatermark {
+                generation: f.generation.to_string(),
+                revision: initial.watermark.revision as i64,
+            },
+            128,
+        )
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 64);
+    eprintln!("controller metadata wire: {separate_bytes} bytes/64 replies -> {bytes} bytes/1 reply; selected replay keeps 64 events");
+}
+
 #[async_trait]
 impl ControllerAuthority for Authority {
     async fn introspect(

@@ -14,7 +14,7 @@ pub struct InputAnswer {
 
 #[async_trait]
 pub trait InputHandler: Send + Sync {
-    fn run_id(&self) -> &str;
+    fn run_id(&self) -> Option<&str>;
     fn observe(
         &self,
         cx: &agent_client_protocol::ConnectionTo<agent_client_protocol::Client>,
@@ -38,6 +38,16 @@ impl OwnerRunRegistry {
         .fetch_all(self.pool().await.map_err(unavailable)?)
         .await
         .map_err(unavailable)?;
+        let mut rows = rows;
+        rows.extend(
+            sqlx::query_scalar::<_, String>(
+                "SELECT input_json FROM owner_preflights WHERE work_id=? AND state='waiting_input'",
+            )
+            .bind(work_id.to_string())
+            .fetch_all(self.pool().await.map_err(unavailable)?)
+            .await
+            .map_err(unavailable)?,
+        );
         let mut pending = rows
             .into_iter()
             .map(|row| serde_json::from_str(&row).map_err(unavailable))
@@ -62,7 +72,7 @@ impl OwnerRunRegistry {
             .get(session_id)
             .ok_or_else(|| anyhow::anyhow!("no active owner run"))?;
         anyhow::ensure!(
-            run.run_id == handler.run_id(),
+            Some(run.run_id.as_str()) == handler.run_id(),
             "input belongs to a stale run"
         );
         let input = PendingInput {

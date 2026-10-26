@@ -176,7 +176,7 @@ impl OwnerRunRegistry {
         };
         for (input_id, handler) in pending {
             if let Ok(Some(json)) = async {
-                Ok::<_, anyhow::Error>(sqlx::query_scalar::<_, String>("SELECT input_json FROM owner_inputs WHERE input_id=? AND session_id=? AND state='open'")
+                Ok::<_, anyhow::Error>(sqlx::query_scalar::<_, String>("SELECT input_json FROM owner_inputs WHERE input_id=?1 AND session_id=?2 AND state='open' UNION ALL SELECT input_json FROM owner_preflights WHERE input_id=?1 AND session_id=?2 AND state='waiting_input'")
                     .bind(input_id.to_string()).bind(session_id).fetch_optional(self.pool().await?).await?)
             }.await {
                 match serde_json::from_str(&json) {

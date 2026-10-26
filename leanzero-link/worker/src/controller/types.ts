@@ -4,6 +4,7 @@ export const CONTROLLER_SCOPES = [
   "providers.manage", "devices.read", "devices.manage",
 ] as const;
 export type ControllerScope = typeof CONTROLLER_SCOPES[number];
+export const DESKTOP_CONTROLLER_SCOPES: ControllerScope[] = ["catalog.read", "history.read", "work.send", "work.steer", "work.stop", "input.answer"];
 export type Platform = "ios" | "ipados" | "desktop";
 export interface DeviceRecord {
   device_id: string; name: string; platform: Platform; role: "controller"; revision: number;
@@ -38,6 +39,7 @@ export interface HostState {
   generation: string | null; catalog_high_water: number;
 }
 export interface AccountState {
+  desktop_enrollments?: Record<string, { owner_node_id: string; request_hash: string; device_id: string; receipt: string }>;
   legacy_mesh_mints?: { in_flight: number; expires_at: number };
   mesh_enrollments?: Record<string, MeshEnrollment>;
   generation_recoveries?: Record<string, { digest: string; host_revision: number; store_generation: string }>;

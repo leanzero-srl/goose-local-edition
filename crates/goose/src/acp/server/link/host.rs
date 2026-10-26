@@ -59,6 +59,14 @@ impl ControllerHostFactory for GooseHostFactory {
             .work_catalog()
             .await
             .map_err(|e| ControllerError::unavailable(e.to_string()))?;
+        let management = crate::work_control::management::GooseManagement::new(
+            &self.runs,
+            host.owner_node_id,
+            account_id,
+            Arc::new(crate::acp::server::GoosedMlxControl::new()),
+            Arc::new(super::remote_execution_allowed),
+        )
+        .await?;
         let backend = GooseControllerBackend::new(
             ControllerBackendConfig {
                 host,
@@ -73,6 +81,13 @@ impl ControllerHostFactory for GooseHostFactory {
                 Box::pin(async move { Ok(sample.await) })
             })),
         )
+        .await?
+        .with_management(management)
+        .with_adapters(Arc::new(crate::work_control::adapters::WorkAdapters::new(
+            leanzero_link::jobs::JobRegistry::shared(super::jobs_config()),
+            crate::config::paths::Paths::config_dir(),
+            crate::work_control::adapters::DesktopBridge::from_env(),
+        )))
         .await?
         .with_scope_policy(Arc::new(|scope| {
             !matches!(

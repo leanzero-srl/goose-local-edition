@@ -98,6 +98,9 @@ impl IntoResponse for ControllerError {
 pub trait ControllerBackend: Send + Sync {
     fn host(&self) -> HostDescriptor;
     fn allowed_scopes(&self) -> Vec<ControllerScope>;
+    fn management(&self) -> Option<Arc<dyn crate::controller_management::ManagementBackend>> {
+        None
+    }
     async fn catalog(
         &self,
         device: &AuthenticatedDevice,
@@ -199,6 +202,7 @@ pub fn router(ctx: ControllerContext) -> Result<Router, ControllerError> {
         )
         .route("/v1/controller/commands/{command_id}", get(receipt))
         .route("/v1/controller/resources", get(resources))
+        .merge(crate::controller_management::router())
         .layer(axum::middleware::from_fn(reject_origin))
         .with_state(ctx))
 }
@@ -243,7 +247,7 @@ async fn reject_origin(request: Request, next: Next) -> Response {
     response
 }
 
-fn bearer(headers: &HeaderMap) -> Result<String, AuthorizationError> {
+pub(crate) fn bearer(headers: &HeaderMap) -> Result<String, AuthorizationError> {
     if headers.get_all(header::AUTHORIZATION).iter().count() != 1 {
         return Err(AuthorizationError::InvalidCredential);
     }
@@ -256,7 +260,7 @@ fn bearer(headers: &HeaderMap) -> Result<String, AuthorizationError> {
     Ok(value.to_string())
 }
 
-async fn authenticate(
+pub(crate) async fn authenticate(
     ctx: &ControllerContext,
     headers: &HeaderMap,
     scope: ControllerScope,
@@ -367,7 +371,10 @@ fn work_ref(ctx: &ControllerContext, kind: WorkKind, work_id: Uuid) -> WorkRef {
     }
 }
 
-fn check_generation(ctx: &ControllerContext, generation: Uuid) -> Result<(), ControllerError> {
+pub(crate) fn check_generation(
+    ctx: &ControllerContext,
+    generation: Uuid,
+) -> Result<(), ControllerError> {
     if generation != ctx.receiver.store_generation {
         return Err(ControllerError::new(
             StatusCode::CONFLICT,

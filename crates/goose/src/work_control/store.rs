@@ -16,6 +16,8 @@ impl OwnerRunRegistry {
                 "CREATE TABLE IF NOT EXISTS owner_commands (account_id TEXT NOT NULL, device_id TEXT NOT NULL, command_id TEXT NOT NULL, work_id TEXT NOT NULL, generation TEXT NOT NULL, session_id TEXT NOT NULL, command_json TEXT NOT NULL, receipt_json TEXT NOT NULL, state TEXT NOT NULL, message_id TEXT, run_id TEXT, PRIMARY KEY(account_id,device_id,command_id))",
                 "CREATE TABLE IF NOT EXISTS owner_inputs (input_id TEXT PRIMARY KEY, work_id TEXT NOT NULL, session_id TEXT NOT NULL, generation TEXT NOT NULL, run_id TEXT NOT NULL, request_id TEXT NOT NULL, input_json TEXT NOT NULL, state TEXT NOT NULL, answer_json TEXT, UNIQUE(work_id,run_id,request_id))",
                 "CREATE INDEX IF NOT EXISTS owner_inputs_work ON owner_inputs(work_id,state)",
+                "CREATE TABLE IF NOT EXISTS owner_preflights (setup_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, work_id TEXT NOT NULL, generation TEXT NOT NULL, state TEXT NOT NULL, input_id TEXT UNIQUE, input_json TEXT, answer_json TEXT)",
+                "CREATE INDEX IF NOT EXISTS owner_preflights_work ON owner_preflights(work_id,state)",
                 "CREATE TABLE IF NOT EXISTS owner_partial_events (revision INTEGER PRIMARY KEY, work_id TEXT NOT NULL, run_id TEXT NOT NULL, message_id TEXT NOT NULL, message_json TEXT NOT NULL, offset_bytes INTEGER NOT NULL, text_bytes INTEGER NOT NULL)",
                 "CREATE INDEX IF NOT EXISTS owner_partial_by_message ON owner_partial_events(work_id,run_id,message_id,revision)",
                 "CREATE TABLE IF NOT EXISTS owner_partial_clears (revision INTEGER PRIMARY KEY, work_id TEXT NOT NULL, run_id TEXT NOT NULL, message_ids_json TEXT NOT NULL)",
@@ -42,7 +44,15 @@ impl OwnerRunRegistry {
             }
             sqlx::query("UPDATE owner_inputs SET state='interrupted' WHERE state IN ('open','dispatching')").execute(&mut *tx).await?;
             sqlx::query("UPDATE work_identity SET state='interrupted', current_run_id=NULL, event_kind='owner_restarted' WHERE deleted=0 AND current_run_id IS NOT NULL").execute(&mut *tx).await?;
+            sqlx::query("UPDATE owner_preflights SET state='interrupted' WHERE state IN ('starting','waiting_input','dispatching','answered')").execute(&mut *tx).await?;
+            sqlx::query("UPDATE work_identity SET state='interrupted',event_kind='owner_restarted' WHERE deleted=0 AND work_id IN (SELECT work_id FROM owner_preflights WHERE state='interrupted')").execute(&mut *tx).await?;
+            let setups: Vec<(String,String,String)> = sqlx::query_as("SELECT p.session_id,p.setup_id,p.work_id FROM owner_preflights p JOIN work_identity w ON w.work_id=p.work_id WHERE p.state='interrupted' AND w.deleted=0")
+                .fetch_all(&mut *tx).await?;
             tx.commit().await?;
+            let mut preflights=self.preflights.write().expect("owner preflights poisoned");
+            for (session_id,setup_id,work_id) in setups {
+                preflights.insert(session_id,super::preflights::Preflight { setup_id:uuid::Uuid::parse_str(&setup_id)?,work_id:uuid::Uuid::parse_str(&work_id)?,phase:super::PreflightPhase::Interrupted });
+            }
             Ok::<(), anyhow::Error>(())
         }).await?;
         Ok(())

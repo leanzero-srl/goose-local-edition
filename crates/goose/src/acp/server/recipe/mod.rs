@@ -20,6 +20,7 @@ use goose_sdk_types::custom_requests::{
 use tokio::sync::oneshot;
 
 mod conversions;
+mod owner_input;
 
 use super::{meta_string, GooseAcpAgent, ResultExt};
 use crate::agents::Agent;
@@ -426,7 +427,7 @@ impl GooseAcpAgent {
 
     async fn render_recipe_with_params(
         &self,
-        cx: &ConnectionTo<Client>,
+        _cx: &ConnectionTo<Client>,
         session_id: &str,
         recipe: &Recipe,
         recipe_dir: &Path,
@@ -443,7 +444,7 @@ impl GooseAcpAgent {
         }
 
         let response = self
-            .request_recipe_params(cx, session_id, parameters)
+            .request_owned_recipe_params(session_id, recipe, recipe_dir, parameters)
             .await?;
         if matches!(response.action, RecipeParamsAction::Cancel) {
             return Err(recipe_params_cancelled_error());
@@ -453,32 +454,6 @@ impl GooseAcpAgent {
             Some(rendered) => Ok((rendered, Some(values))),
             None => Err(agent_client_protocol::Error::invalid_params()
                 .data("recipe still missing required parameters")),
-        }
-    }
-
-    async fn request_recipe_params(
-        &self,
-        cx: &ConnectionTo<Client>,
-        session_id: &str,
-        parameters: Vec<RecipeParameter>,
-    ) -> Result<RecipeParamsResponse, agent_client_protocol::Error> {
-        let request = RequestRecipeParams {
-            session_id: session_id.to_string(),
-            parameters: parameters
-                .into_iter()
-                .map(RecipeParameterDto::from)
-                .collect(),
-        };
-        let (tx, rx) = oneshot::channel();
-        cx.send_request(RequestRecipeParamsMessage(request))
-            .on_receiving_result(move |result| async move {
-                let _ = tx.send(result.map(|response| response.0));
-                Ok(())
-            })?;
-        match rx.await {
-            Ok(response) => response,
-            Err(_) => Err(agent_client_protocol::Error::internal_error()
-                .data("recipe params request was dropped")),
         }
     }
 }

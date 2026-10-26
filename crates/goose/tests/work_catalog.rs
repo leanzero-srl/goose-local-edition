@@ -188,6 +188,9 @@ async fn migration_from_v15_is_atomic_and_backfills_without_copying_transcript_b
             .unwrap();
     }
     for table in [
+        "external_catalog_versions",
+        "external_work_runs",
+        "external_work_identity",
         "work_events",
         "catalog_versions",
         "controller_message_versions",
@@ -201,7 +204,7 @@ async fn migration_from_v15_is_atomic_and_backfills_without_copying_transcript_b
             .await
             .unwrap();
     }
-    sqlx::query("DELETE FROM schema_version WHERE version = 16")
+    sqlx::query("DELETE FROM schema_version WHERE version >= 16")
         .execute(&mut *tx)
         .await
         .unwrap();

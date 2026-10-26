@@ -1,5 +1,6 @@
 //! Original-owner execution. Connections observe work; they do not own its lifetime.
 
+pub mod adapters;
 pub mod backend;
 mod commands;
 mod cursors;
@@ -7,6 +8,7 @@ mod inputs;
 pub mod management;
 mod observers;
 mod partials;
+mod preflights;
 mod questions;
 mod store;
 
@@ -26,6 +28,7 @@ use uuid::Uuid;
 pub use backend::{ControllerBackendConfig, GooseControllerBackend};
 pub use cursors::CursorPolicy;
 pub use inputs::{InputAnswer, InputHandler};
+pub(crate) use preflights::PreflightPhase;
 
 pub(crate) struct ActivePromptRun {
     pub run_id: String,
@@ -65,6 +68,7 @@ pub struct OwnerRunRegistry {
     agent_manager: OnceLock<Arc<AgentManager>>,
     initialized: OnceCell<()>,
     input_handlers: Mutex<HashMap<Uuid, Arc<dyn InputHandler>>>,
+    preflights: RwLock<HashMap<String, preflights::Preflight>>,
     queued: Mutex<HashMap<String, Vec<commands::QueuedCommand>>>,
     observers: RwLock<observers::OwnerObservers>,
 }
@@ -84,6 +88,7 @@ impl OwnerRunRegistry {
             agent_manager: OnceLock::new(),
             initialized: OnceCell::new(),
             input_handlers: Mutex::new(HashMap::new()),
+            preflights: RwLock::new(HashMap::new()),
             queued: Mutex::new(HashMap::new()),
             observers: RwLock::new(observers::OwnerObservers::default()),
         });
@@ -166,6 +171,12 @@ impl OwnerRunRegistry {
                 ControllerError::unavailable("owner prompt executor is not initialized")
             })?;
         let session_id = args.session_id.0.to_string();
+        if self.preflight_state(&session_id).is_some() {
+            return Err(conflict(
+                "setup_pending",
+                "finish the original recipe setup before sending a prompt",
+            ));
+        }
         let (agent, manager) = executor.prepare(&session_id).await.map_err(unavailable)?;
         let mut runs = self.runs.lock().await;
         if runs.contains_key(&session_id) || manager.is_session_busy(&session_id).await {
@@ -229,6 +240,10 @@ impl OwnerRunRegistry {
         if runs.contains_key(session_id) {
             anyhow::bail!("session already has an active owner run");
         }
+        anyhow::ensure!(
+            self.preflight_state(session_id).is_none(),
+            "original recipe setup is not complete"
+        );
         let catalog = self.session_manager.work_catalog().await?;
         let record = catalog.lookup_local_session(session_id).await?;
         let generation = catalog.watermark().await?.generation;
@@ -283,7 +298,7 @@ impl OwnerRunRegistry {
         self.input_handlers
             .lock()
             .await
-            .retain(|_, handler| handler.run_id() != run_id);
+            .retain(|_, handler| handler.run_id() != Some(run_id));
         self.dispatch_next(session_id.to_owned(), run.run_id);
     }
 

@@ -44,6 +44,10 @@ pub(crate) enum Position {
         after_timestamp: i64,
         after_row_id: i64,
     },
+    ExternalLog {
+        work_id: Uuid,
+        offset: u64,
+    },
     WorkResume {
         work_id: Uuid,
     },

@@ -194,6 +194,23 @@ impl GooseAcpAgent {
                     .data(format!("Session not found: {}", session_id_str))
             })?;
 
+        self.owner_runs.ensure_store().await.internal_err()?;
+        if self.owner_runs.preflight_state(&session_id_str).is_some() {
+            if args.cwd != session.working_dir || !args.mcp_servers.is_empty() {
+                return Err(agent_client_protocol::Error::invalid_params()
+                    .data("cannot reconfigure an unfinished recipe setup"));
+            }
+            self.owner_runs
+                .attach_observer(
+                    self.observer_id,
+                    &session_id_str,
+                    cx.clone(),
+                    self.supports_goose_custom_notifications(),
+                )
+                .await;
+            return Ok(LoadSessionResponse::new().meta(session_response_meta(&session, &[])));
+        }
+
         session = self
             .prepare_session_for_activation(session, args.cwd.clone(), args.mcp_servers, true)
             .await?;

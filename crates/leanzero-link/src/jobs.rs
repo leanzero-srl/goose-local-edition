@@ -28,6 +28,7 @@
 //!   must not see them). The ledger on disk keeps it.
 
 use std::collections::HashMap;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
@@ -1270,21 +1271,72 @@ impl JobRegistry {
     }
 
     pub fn log(&self, id: &str, from: u64) -> Option<JobLogChunk> {
-        let e = self.get(id)?;
-        let done = e.snapshot().state.is_terminal();
-        let path = e.dir.join("log");
-        let data = std::fs::read(&path).unwrap_or_default();
-        let len = data.len() as u64;
-        let from = from.min(len);
-        let next = (from + LOG_CHUNK_MAX).min(len);
-        Some(JobLogChunk {
-            from,
-            next,
-            data: String::from_utf8_lossy(&data[from as usize..next as usize]).into_owned(),
-            done: done && next == len,
-        })
+        match self.read_log(id, from) {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                tracing::error!(%error, job_id=id, "job log could not be read");
+                None
+            }
+        }
     }
 
+    pub fn read_log(&self, id: &str, from: u64) -> std::io::Result<Option<JobLogChunk>> {
+        let Some(e) = self.get(id) else {
+            return Ok(None);
+        };
+        let done = e.snapshot().state.is_terminal();
+        read_log_range(&e.dir.join("log"), from, done).map(Some)
+    }
+}
+
+fn read_log_range(path: &Path, from: u64, done: bool) -> std::io::Result<JobLogChunk> {
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    let from = from.min(len);
+    file.seek(SeekFrom::Start(from))?;
+    let mut data = Vec::new();
+    file.take(LOG_CHUNK_MAX.min(len - from))
+        .read_to_end(&mut data)?;
+    let next = from + data.len() as u64;
+    Ok(JobLogChunk {
+        from,
+        next,
+        data: String::from_utf8_lossy(&data).into_owned(),
+        done: done && next == len,
+    })
+}
+
+#[cfg(test)]
+mod controller_log_range_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn sparse_large_log_reads_only_the_selected_range() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("log");
+        let mut file = std::fs::File::create(&path).unwrap();
+        let offset = 1024 * 1024 * 1024;
+        file.seek(SeekFrom::Start(offset)).unwrap();
+        file.write_all(b"actual tail").unwrap();
+        let chunk = read_log_range(&path, offset, true).unwrap();
+        assert_eq!(chunk.data, "actual tail");
+        assert_eq!(chunk.from, offset);
+        assert_eq!(chunk.next, offset + 11);
+        assert!(chunk.done);
+        let first = read_log_range(&path, 0, false).unwrap();
+        assert_eq!(first.next, LOG_CHUNK_MAX);
+        assert_eq!(first.data.len(), LOG_CHUNK_MAX as usize);
+        assert!(!first.done);
+        let beyond = read_log_range(&path, u64::MAX, true).unwrap();
+        assert_eq!(beyond.from, offset + 11);
+        assert_eq!(beyond.next, beyond.from);
+        assert!(beyond.data.is_empty());
+        assert!(read_log_range(&root.path().join("missing"), 0, true).is_err());
+    }
+}
+
+impl JobRegistry {
     /// Cancel: the watchdog TERMs the group (KILL after the grace) and records 143. Waits for
     /// that (the grace plus [`CANCEL_SLACK`]) and answers the FINAL view; a group still alive
     /// then answers `cancelling` (the record says so too), never the pre-cancel `running`.

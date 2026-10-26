@@ -49,8 +49,52 @@ impl GooseAcpAgent {
             .create_session(args.cwd.clone(), session_name, session_type, current_mode)
             .await
             .internal_err_ctx("Failed to create session")?;
+        let needs_input = recipe.as_ref().is_some_and(|(recipe, _)| {
+            recipe
+                .parameters
+                .as_ref()
+                .is_some_and(|parameters| !parameters.is_empty())
+        }) && self.supports_recipe_param_requests();
+        if needs_input {
+            let setup = self
+                .owner_runs
+                .begin_preflight(&session.id)
+                .await
+                .internal_err()?;
+            self.owner_runs
+                .attach_observer(
+                    self.observer_id,
+                    &session.id,
+                    cx.clone(),
+                    self.supports_goose_custom_notifications(),
+                )
+                .await;
+            let owner = self.clone();
+            let cx = cx.clone();
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            tokio::spawn(async move {
+                let result = owner
+                    .finish_created_session(&cx, &session, args, recipe, project_id)
+                    .await;
+                let settled = setup.finish(result.is_ok()).await.internal_err();
+                let _ = sender.send(settled.and(result));
+            });
+            return receiver.await.internal_err()?;
+        }
+        self.finish_created_session(cx, &session, args, recipe, project_id)
+            .await
+    }
+
+    async fn finish_created_session(
+        &self,
+        cx: &ConnectionTo<Client>,
+        session: &Session,
+        args: NewSessionRequest,
+        recipe: Option<(Recipe, PathBuf)>,
+        project_id: Option<String>,
+    ) -> Result<NewSessionResponse, agent_client_protocol::Error> {
         match self
-            .finish_new_session_setup(cx, config, &session, args, recipe, project_id)
+            .finish_new_session_setup(cx, Config::global(), session, args, recipe, project_id)
             .await
         {
             Ok(response) => Ok(response),
@@ -86,11 +130,11 @@ impl GooseAcpAgent {
         let response = self
             .build_new_session_response(&reloaded_session, &extension_results)
             .await?;
-        super::send_session_setup_notifications(
+        let _ = super::send_session_setup_notifications(
             cx,
             &reloaded_session,
             self.supports_goose_custom_notifications(),
-        )?;
+        );
         Ok(response)
     }
 

@@ -26,7 +26,10 @@ export class MeshService {
   constructor(private readonly c: ControllerService, private readonly deps: Deps) { this.provider = new MeshProvider(deps); }
   private check(actor: Actor, state: AccountState | null): AccountState {
     if (actor.role === "host") checkedHost(state, actor.id, actor.hash!);
-    else deviceFrom(state, actor.claims!, this.c.now());
+    else {
+      const device = deviceFrom(state, actor.claims!, this.c.now());
+      if (device.record.platform === "desktop") fail(403, "desktop_mesh_denied", "Desktop controllers use their existing host mesh");
+    }
     return state!;
   }
   private async actor(token: string, role: Role): Promise<Actor> {
@@ -36,6 +39,7 @@ export class MeshService {
       this.check(actor, await this.c.registry.read(key)); return actor;
     }
     const a = await this.c.authenticate(token);
+    if (a.device.record.platform === "desktop") fail(403, "desktop_mesh_denied", "Desktop controllers use their existing host mesh");
     return { key: a.claims.account_key, id: a.claims.device_id, role, claims: a.claims };
   }
   private compatible(state: AccountState, nodes: ProviderNode[]): void {

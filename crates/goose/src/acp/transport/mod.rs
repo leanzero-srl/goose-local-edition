@@ -1,4 +1,5 @@
 pub mod auth;
+mod desktop_lifetime;
 #[cfg(any(feature = "rustls-tls", feature = "native-tls"))]
 pub mod tls;
 
@@ -276,5 +277,6 @@ pub fn create_router(
 
     acp_routes
         .merge(aux_routes)
+        .merge(desktop_lifetime::routes(server.clone(), secret_key.clone()))
         .merge(api_routes(server, require_token.then_some(secret_key)))
 }

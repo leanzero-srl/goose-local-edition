@@ -73,7 +73,7 @@ struct HostSecret {
     secret: String,
 }
 
-fn private_json<T: serde::de::DeserializeOwned>(
+pub(crate) fn private_json<T: serde::de::DeserializeOwned>(
     path: &Path,
 ) -> Result<Option<T>, OwnerIdentityError> {
     read_private(path)?
@@ -86,7 +86,7 @@ fn private_json<T: serde::de::DeserializeOwned>(
         .transpose()
 }
 
-fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), OwnerIdentityError> {
+pub(crate) fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<(), OwnerIdentityError> {
     read_private(path)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|source| OwnerIdentityError::Io {

@@ -908,6 +908,37 @@ impl LinkManager {
             .map(|active| active.registry.clone())
     }
 
+    /// This grants only a separately revocable desktop viewer identity. The host's
+    /// account token and credential stay in Rust and never reach an owner endpoint.
+    pub async fn enroll_desktop_controller(
+        &self,
+        enrollment_id: uuid::Uuid,
+        device_name: &str,
+    ) -> Result<crate::controller_wire::DeviceCredentials, LinkError> {
+        let factory = self
+            .seams
+            .controller_host
+            .as_ref()
+            .ok_or(LinkError::NotConnected)?;
+        let identity = self.core.identity.load()?.ok_or(LinkError::NotConnected)?;
+        let credentials: crate::controller_wire::HostCredentials =
+            crate::controller_host::private_json(
+                &factory.directory().join("host-credential.json"),
+            )?
+            .ok_or(LinkError::NotConnected)?;
+        Ok(self
+            .core
+            .worker
+            .controller_request(
+                reqwest::Method::POST,
+                "/v1/controller/hosts/controller",
+                &identity.token,
+                Some(&credentials.host_credential),
+                Some(&serde_json::json!({"enrollment_id":enrollment_id,"device_name":device_name})),
+            )
+            .await?)
+    }
+
     /// The live connection's `/v1/swarm` bearer (`None` when not connected) — what the
     /// host's loopback proxy presents to this node's own control service. Derived from
     /// the worker-issued account secret at connect time; never the template value.

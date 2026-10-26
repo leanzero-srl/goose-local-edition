@@ -1,9 +1,10 @@
 import { constantTimeEqual } from "../lib/otp";
 import { verifyJwt } from "../lib/jwt";
-import { AUTH_LEASE_SECONDS, HOST_LEASE_SECONDS, digest, randomSecret, seal, unseal, verifyAccess } from "./crypto";
+import { AUTH_LEASE_SECONDS, HOST_LEASE_SECONDS, REFRESH_TTL_SECONDS, digest, randomSecret, seal, unseal, verifyAccess } from "./crypto";
 import { fail, splitCredential } from "./registry";
 import { ControllerService, deviceFrom, newAccount } from "./service";
-import type { AccountState, AuthorizationLease, HostState, ControllerScope } from "./types";
+import type { AccountState, AuthorizationLease, HostState, ControllerScope, DeviceCredentials, DeviceRecord } from "./types";
+import { DESKTOP_CONTROLLER_SCOPES } from "./types";
 
 export interface HostRegistration {
   owner_node_id: string; registration_id: string; host_name: string; protocol_version: 1;
@@ -24,6 +25,36 @@ export function checkedHost(state: AccountState | null, id: string, hash: string
 
 export class HostService {
   constructor(private readonly controller: ControllerService) {}
+
+  async desktopController(accountToken: string, credential: string, enrollmentId: string, name: string): Promise<DeviceCredentials> {
+    const c = this.controller;
+    const verified = await verifyJwt(c.secret, accountToken, Math.floor(c.now() / 1000));
+    if (!verified.ok) fail(401, "invalid_credential", "A current host account credential is required");
+    const { key, id } = splitCredential(credential, "h1");
+    if (key !== await digest(verified.claims.sub)) fail(403, "wrong_account", "Host and account credentials do not match");
+    const hostHash = await digest(credential);
+    const requestHash = await digest(JSON.stringify({ owner_node_id: id, enrollment_id: enrollmentId, name }));
+    return c.registry.update(key, async state => {
+      const host = checkedHost(state, id, hostHash);
+      if (host.registration_pending || !host.lease || host.lease.expires_at <= c.now()) fail(403, "host_unavailable", "Desktop enrollment requires a current host lease");
+      const receipts = state!.desktop_enrollments ??= {};
+      const old = receipts[enrollmentId];
+      if (old) {
+        if (old.owner_node_id !== id || old.request_hash !== requestHash) fail(409, "enrollment_conflict", "Desktop enrollment has different contents");
+        const device = state!.devices[old.device_id];
+        if (!device || device.record.revoked_at !== null || device.record.revision !== 1) fail(409, "enrollment_consumed", "Desktop enrollment has already completed or been revoked");
+        return { state: state!, result: await unseal<DeviceCredentials>(c.secret, `${key}.desktop.${enrollmentId}`, old.receipt) };
+      }
+      // A desktop viewer has only the operations this facade implements. No model,
+      // provider, shell, mesh enrollment or account-host authority is inherited.
+      const scopes = [...DESKTOP_CONTROLLER_SCOPES];
+      const record: DeviceRecord = { device_id: crypto.randomUUID(), name, platform: "desktop", role: "controller", revision: 1, scopes, created_at: new Date(c.now()).toISOString(), revoked_at: null };
+      const credentials = await c.credentials(key, state!, record);
+      state!.devices[record.device_id] = { record, refresh_hash: await digest(credentials.refresh_token), refresh_expires_at: c.now() + REFRESH_TTL_SECONDS * 1000, used_refreshes: {} };
+      receipts[enrollmentId] = { owner_node_id: id, request_hash: requestHash, device_id: record.device_id, receipt: await seal(c.secret, `${key}.desktop.${enrollmentId}`, credentials) };
+      return { state: state!, result: credentials };
+    });
+  }
 
   async bootstrap(credential: string): Promise<{ account_id: string; owner_node_id: string }> {
     const { key, id } = splitCredential(credential, "h1");

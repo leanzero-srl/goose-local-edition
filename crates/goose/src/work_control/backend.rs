@@ -44,6 +44,10 @@ pub struct ControllerBackendConfig {
 pub struct GooseControllerBackend(Arc<BackendState>);
 
 struct BackendState {
+    adapters: std::sync::OnceLock<Arc<super::adapters::WorkAdapters>>,
+    adapter_error: std::sync::RwLock<Option<String>>,
+    management:
+        std::sync::RwLock<Option<Arc<dyn leanzero_link::controller_management::ManagementBackend>>>,
     scope_policy: std::sync::RwLock<Option<ScopePolicy>>,
     host: HostDescriptor,
     account_id: Uuid,
@@ -84,6 +88,9 @@ impl GooseControllerBackend {
             &config.policy,
         )?;
         Ok(Self(Arc::new(BackendState {
+            adapters: std::sync::OnceLock::new(),
+            adapter_error: std::sync::RwLock::new(None),
+            management: std::sync::RwLock::new(None),
             scope_policy: std::sync::RwLock::new(None),
             host: config.host,
             account_id: config.account_id,
@@ -95,6 +102,42 @@ impl GooseControllerBackend {
             signer,
             policy: config.policy,
         })))
+    }
+
+    pub fn with_management(
+        self,
+        management: Arc<dyn leanzero_link::controller_management::ManagementBackend>,
+    ) -> Self {
+        *self.0.management.write().expect("management lock poisoned") = Some(management);
+        self
+    }
+
+    pub async fn with_adapters(
+        self,
+        adapters: Arc<super::adapters::WorkAdapters>,
+    ) -> Result<Self, ControllerError> {
+        adapters.refresh(&self.0.catalog).await?;
+        self.0
+            .adapters
+            .set(adapters)
+            .map_err(|_| ControllerError::unavailable("work adapters already installed"))?;
+        let weak = Arc::downgrade(&self.0);
+        let interval = self.0.policy.journal_poll_interval;
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                let Some(state) = weak.upgrade() else {
+                    break;
+                };
+                let Some(adapters) = state.adapters.get() else {
+                    break;
+                };
+                let result = adapters.refresh(&state.catalog).await;
+                *state.adapter_error.write().expect("adapter error poisoned") =
+                    result.err().map(|e| e.body.message);
+            }
+        });
+        Ok(self)
     }
 
     pub fn with_scope_policy(
@@ -137,6 +180,15 @@ impl GooseControllerBackend {
     }
 
     async fn fence(&self) -> Result<StoreWatermark, ControllerError> {
+        if let Some(error) = self
+            .0
+            .adapter_error
+            .read()
+            .expect("adapter error poisoned")
+            .as_ref()
+        {
+            return Err(ControllerError::unavailable(error.clone()));
+        }
         let watermark = self
             .0
             .catalog
@@ -164,7 +216,7 @@ impl GooseControllerBackend {
         if generation != self.0.generation {
             return Err(snapshot_required("store generation changed"));
         }
-        if work.kind != WorkKind::Chat {
+        if work.kind != WorkKind::Chat && self.0.adapters.get().is_none() {
             return Err(unsupported("this work kind has no controller adapter"));
         }
         Ok(())
@@ -213,16 +265,14 @@ impl GooseControllerBackend {
             .lookup_at(&work.work_id.to_string(), watermark)
             .await
             .map_err(store_error)?;
-        if !visible(&record) {
+        if !visible(&record) || stored_kind(&record.kind)? != work.kind {
             return Err(not_found());
         }
         Ok(record)
     }
 
     fn entry(&self, record: &CatalogRecord) -> Result<CatalogEntry, ControllerError> {
-        if record.kind != "chat" {
-            return Err(ControllerError::unavailable("unsupported stored work kind"));
-        }
+        let kind = stored_kind(&record.kind)?;
         let state = match record.state.as_str() {
             "idle" => WorkState::Idle,
             "running" => WorkState::Running,
@@ -239,7 +289,59 @@ impl GooseControllerBackend {
             .as_deref()
             .map(parse_uuid)
             .transpose()?;
-        let capabilities = if self.0.runs.has_executor() && visible(record) {
+        let capabilities = if kind == WorkKind::Chat {
+            self.chat_capabilities(record, state, current_run_id)
+        } else {
+            self.0
+                .adapters
+                .get()
+                .map_or_else(Vec::new, |adapters| adapters.capabilities(record))
+        };
+        Ok(CatalogEntry {
+            work: WorkRef {
+                owner_node_id: self.0.host.owner_node_id,
+                kind: stored_kind(&record.kind)?,
+                work_id: parse_uuid(&record.work_id)?,
+            },
+            store_generation: self.0.generation,
+            revision: self.watermark(record.revision)?.revision,
+            title: record.title.clone(),
+            working_dir: (!record.working_dir.is_empty()).then(|| record.working_dir.clone()),
+            state,
+            current_run_id,
+            capabilities,
+            parent: None,
+            related: Vec::new(),
+            updated_at: DateTime::parse_from_rfc3339(&record.updated_at)
+                .map_err(|_| ControllerError::unavailable("invalid catalog timestamp"))?
+                .with_timezone(&Utc),
+            last_event: Some(EventPreview {
+                kind: record.event_kind.clone(),
+                text: record
+                    .event_kind
+                    .replace('_', " ")
+                    .chars()
+                    .take(256)
+                    .collect(),
+            }),
+            archived: record.archived,
+        })
+    }
+
+    fn chat_capabilities(
+        &self,
+        record: &CatalogRecord,
+        state: WorkState,
+        current_run_id: Option<Uuid>,
+    ) -> Vec<WorkAction> {
+        if let Some(phase) = self.0.runs.preflight_state(&record.local_locator) {
+            return if phase == super::PreflightPhase::WaitingInput && visible(record) {
+                vec![WorkAction::AnswerInput]
+            } else {
+                Vec::new()
+            };
+        }
+        if self.0.runs.has_executor() && visible(record) {
             if current_run_id.is_some() {
                 let mut actions = vec![WorkAction::Steer, WorkAction::Stop];
                 if state == WorkState::WaitingInput {
@@ -255,34 +357,14 @@ impl GooseControllerBackend {
             }
         } else {
             Vec::new()
-        };
-        Ok(CatalogEntry {
-            work: WorkRef {
-                owner_node_id: self.0.host.owner_node_id,
-                kind: WorkKind::Chat,
-                work_id: parse_uuid(&record.work_id)?,
-            },
-            store_generation: self.0.generation,
-            revision: self.watermark(record.revision)?.revision,
-            title: record.title.clone(),
-            working_dir: (!record.working_dir.is_empty()).then(|| record.working_dir.clone()),
-            state,
-            current_run_id,
-            capabilities,
-            parent: None,
-            related: Vec::new(),
-            updated_at: DateTime::parse_from_rfc3339(&record.updated_at)
-                .map_err(|_| ControllerError::unavailable("invalid catalog timestamp"))?
-                .with_timezone(&Utc),
-            last_event: None,
-            archived: record.archived,
-        })
+        }
     }
 
     async fn change(
         &self,
         device: &AuthenticatedDevice,
         record: CatalogRecord,
+        previous_revision: i64,
     ) -> Result<Option<CatalogChange>, ControllerError> {
         let entry = if visible(&record) {
             Some(self.entry(&record)?)
@@ -294,7 +376,7 @@ impl GooseControllerBackend {
                     &record.work_id,
                     &StoreWatermark {
                         generation: self.0.generation.to_string(),
-                        revision: record.revision - 1,
+                        revision: previous_revision,
                     },
                 )
                 .await;
@@ -321,7 +403,7 @@ impl GooseControllerBackend {
             },
             work: WorkRef {
                 owner_node_id: self.0.host.owner_node_id,
-                kind: WorkKind::Chat,
+                kind: stored_kind(&record.kind)?,
                 work_id: parse_uuid(&record.work_id)?,
             },
             entry,
@@ -337,12 +419,12 @@ impl GooseControllerBackend {
         let page = self
             .0
             .catalog
-            .changes(watermark, self.0.policy.page_size)
+            .latest_changes(watermark, self.0.policy.page_size)
             .await
             .map_err(store_error)?;
         let mut changes = Vec::new();
         for record in page.records {
-            if let Some(change) = self.change(device, record).await? {
+            if let Some(change) = self.change(device, record, watermark.revision).await? {
                 changes.push(change);
             }
         }
@@ -520,6 +602,16 @@ impl GooseControllerBackend {
 
 #[async_trait]
 impl ControllerBackend for GooseControllerBackend {
+    fn management(
+        &self,
+    ) -> Option<Arc<dyn leanzero_link::controller_management::ManagementBackend>> {
+        self.0
+            .management
+            .read()
+            .expect("management lock poisoned")
+            .clone()
+    }
+
     fn host(&self) -> HostDescriptor {
         let mut host = self.0.host.clone();
         host.capabilities = self.allowed_scopes();
@@ -528,7 +620,7 @@ impl ControllerBackend for GooseControllerBackend {
 
     fn allowed_scopes(&self) -> Vec<ControllerScope> {
         let mut scopes = vec![ControllerScope::CatalogRead, ControllerScope::HistoryRead];
-        if self.0.runs.has_executor() {
+        if self.0.runs.has_executor() || self.0.adapters.get().is_some() {
             scopes.extend([
                 ControllerScope::WorkSend,
                 ControllerScope::WorkSteer,
@@ -538,6 +630,9 @@ impl ControllerBackend for GooseControllerBackend {
         }
         if self.0.resources.is_some() {
             scopes.push(ControllerScope::ResourcesRead);
+        }
+        if let Some(management) = self.management() {
+            scopes.extend(management.scopes());
         }
         if let Some(policy) = self
             .0
@@ -712,7 +807,11 @@ impl ControllerBackend for GooseControllerBackend {
         self.work_path(work, generation)?;
         let watermark = self.fence().await?;
         let record = self.visible_work(work, &watermark).await?;
-        let pending_inputs = self.0.runs.pending_inputs(work.work_id).await?;
+        let pending_inputs = if work.kind == WorkKind::Chat {
+            self.0.runs.pending_inputs(work.work_id).await?
+        } else {
+            Vec::new()
+        };
         let mut live_messages = Vec::new();
         for partial in self
             .0
@@ -749,7 +848,58 @@ impl ControllerBackend for GooseControllerBackend {
         self.authenticate(device, ControllerScope::HistoryRead)?;
         self.work_path(work, generation)?;
         let current = self.fence().await?;
-        self.visible_work(work, &current).await?;
+        let record = self.visible_work(work, &current).await?;
+        if work.kind != WorkKind::Chat {
+            let from = match page_token
+                .map(|token| self.decode(device, token))
+                .transpose()?
+            {
+                Some(Cursor {
+                    position: Position::ExternalLog { work_id, offset },
+                    ..
+                }) if work_id == work.work_id => offset,
+                Some(_) => return Err(invalid_cursor()),
+                None => 0,
+            };
+            let adapters = self
+                .0
+                .adapters
+                .get()
+                .ok_or_else(|| unsupported("work adapters unavailable"))?;
+            let chunk = adapters.log(&record, from).await?;
+            let next_page_token = (!chunk.done && chunk.next > from)
+                .then(|| {
+                    self.new_token(
+                        device,
+                        current.revision,
+                        Position::ExternalLog {
+                            work_id: work.work_id,
+                            offset: chunk.next,
+                        },
+                    )
+                })
+                .transpose()?;
+            let message = Message::assistant().with_text(chunk.data);
+            return Ok(HistoryPage {
+                work_cursor: self.new_token(
+                    device,
+                    current.revision,
+                    Position::WorkResume {
+                        work_id: work.work_id,
+                    },
+                )?,
+                work: work.clone(),
+                store_generation: generation,
+                revision: current.revision as u64,
+                items: vec![HistoryItem {
+                    message_id: format!("log_{}", chunk.from),
+                    revision: record.revision as u64,
+                    message: serde_json::to_value(message)
+                        .map_err(|error| store_error(error.into()))?,
+                }],
+                next_page_token,
+            });
+        }
         let token = page_token
             .map(|token| self.decode(device, token))
             .transpose()?;
@@ -873,6 +1023,9 @@ impl ControllerBackend for GooseControllerBackend {
             .lookup_at(&work.work_id.to_string(), &current)
             .await
             .map_err(store_error)?;
+        if stored_kind(&latest.kind)? != work.kind {
+            return Err(not_found());
+        }
         if !visible(&latest) {
             self.visible_work(work, &watermark).await?;
             let frame = self.frame(device, work, &latest, "tombstone", Value::Null)?;
@@ -1014,6 +1167,22 @@ impl ControllerBackend for GooseControllerBackend {
         self.work_path(&command.work, command.expected_store_generation)?;
         let watermark = self.fence().await?;
         self.visible_work(&command.work, &watermark).await?;
+        if command.work.kind != WorkKind::Chat {
+            let adapters = self
+                .0
+                .adapters
+                .get()
+                .ok_or_else(|| unsupported("work adapters unavailable"))?;
+            return adapters
+                .accept(
+                    &self.0.catalog,
+                    &self.0.runs,
+                    device,
+                    command,
+                    dispatch_auth,
+                )
+                .await;
+        }
         self.0
             .runs
             .accept_command(device, command, dispatch_auth)
@@ -1027,7 +1196,15 @@ impl ControllerBackend for GooseControllerBackend {
     ) -> Result<CommandReceipt, ControllerError> {
         self.authenticate(device, ControllerScope::CatalogRead)?;
         self.fence().await?;
-        self.0.runs.receipt(device, command_id).await
+        let receipt = self.0.runs.receipt(device, command_id).await?;
+        if receipt.work.kind != WorkKind::Chat {
+            if let Some(adapters) = self.0.adapters.get() {
+                return adapters
+                    .reconcile(&self.0.runs, &self.0.catalog, device.account_id(), receipt)
+                    .await;
+            }
+        }
+        Ok(receipt)
     }
 
     async fn resources(
@@ -1048,10 +1225,23 @@ impl ControllerBackend for GooseControllerBackend {
     }
 }
 
+fn stored_kind(kind: &str) -> Result<WorkKind, ControllerError> {
+    match kind {
+        "chat" => Ok(WorkKind::Chat),
+        "agent_work" => Ok(WorkKind::AgentWork),
+        "benchmark" => Ok(WorkKind::Benchmark),
+        "shell_job" => Ok(WorkKind::ShellJob),
+        _ => Err(ControllerError::unavailable("unsupported stored work kind")),
+    }
+}
+
 fn visible(record: &CatalogRecord) -> bool {
     !record.deleted
-        && record.kind == "chat"
-        && matches!(record.session_type.as_str(), "user" | "scheduled" | "acp")
+        && (matches!(
+            record.kind.as_str(),
+            "agent_work" | "benchmark" | "shell_job"
+        ) || record.kind == "chat"
+            && matches!(record.session_type.as_str(), "user" | "scheduled" | "acp"))
 }
 
 fn visible_message(record: &HistoryRecord) -> Result<Option<HistoryItem>, ControllerError> {

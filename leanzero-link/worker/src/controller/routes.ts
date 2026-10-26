@@ -45,6 +45,11 @@ export async function handleController(request: Request, deps: Deps): Promise<Re
     const path = new URL(request.url).pathname.slice("/v1/controller".length);
     let result: unknown;
     switch (path) {
+      case "/hosts/controller": {
+        requireMethod(request, "POST"); const f = await fields(request);
+        if (Object.keys(f).some(k => !["enrollment_id", "device_name"].includes(k))) fail(400, "invalid_request", "Desktop controller scopes and role are assigned by the server");
+        result = await hosts.desktopController(bearer(request), string(request.headers.get("X-Link-Host-Credential"), "host_credential"), uuid(f.enrollment_id, "enrollment_id"), name(f.device_name)); break;
+      }
       case "/auth/request-code": {
         requireMethod(request, "POST");
         const f = await fields(request); const email = normalizeEmail(f.email);
@@ -83,6 +88,12 @@ export async function handleController(request: Request, deps: Deps): Promise<Re
           throw error;
         }
         break;
+      }
+      case "/auth/logout": {
+        requireMethod(request, "POST"); const f = await fields(request);
+        const actor = await service.claims(bearer(request));
+        result = await service.logout(bearer(request), uuid(f.request_id, "request_id"));
+        await mesh.cleanup(actor.account_key, actor.device_id); break;
       }
       case "/mesh/join-key":
       case "/hosts/mesh/join-key": {

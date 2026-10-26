@@ -1,7 +1,7 @@
 import { constantTimeEqual } from "../lib/otp";
 import { EMAIL_RATE_LIMIT, OTP_MAX_ATTEMPTS, OTP_TTL_SECONDS, RATE_WINDOW_SECONDS, VERIFY_RATE_LIMIT } from "../lib/config";
 import { ACCESS_TTL_SECONDS, REFRESH_TTL_SECONDS, digest, randomSecret, seal, signAccess, unseal, verifyAccess } from "./crypto";
-import { CONTROLLER_SCOPES, type AccessClaims, type AccountState, type DeviceCredentials, type DeviceRecord, type DeviceState, type Platform } from "./types";
+import { CONTROLLER_SCOPES, DESKTOP_CONTROLLER_SCOPES, type AccessClaims, type AccountState, type DeviceCredentials, type DeviceRecord, type DeviceState, type Platform } from "./types";
 import { ControllerError, Registry, fail, splitCredential, parseAccount } from "./registry";
 
 // Constructed only after a recognized refresh secret revokes its family in CAS.
@@ -73,7 +73,7 @@ export class ControllerService {
     });
   }
 
-  private async credentials(key: string, account: AccountState, record: DeviceRecord): Promise<DeviceCredentials> {
+  async credentials(key: string, account: AccountState, record: DeviceRecord): Promise<DeviceCredentials> {
     const iat = Math.floor(this.now() / 1000);
     const exp = iat + ACCESS_TTL_SECONDS;
     return {
@@ -105,7 +105,7 @@ export class ControllerService {
       if (c.attempts >= OTP_MAX_ATTEMPTS) fail(401, "invalid_code", "Invalid or expired code");
       c.attempts += 1;
       if (!constantTimeEqual(c.hash, hash)) return { state, result: { credentials: null } };
-      const record: DeviceRecord = { device_id: crypto.randomUUID(), name, platform, role: "controller", revision: 1, scopes: [...CONTROLLER_SCOPES], created_at: new Date(this.now()).toISOString(), revoked_at: null };
+      const record: DeviceRecord = { device_id: crypto.randomUUID(), name, platform, role: "controller", revision: 1, scopes: [...(platform === "desktop" ? DESKTOP_CONTROLLER_SCOPES : CONTROLLER_SCOPES)], created_at: new Date(this.now()).toISOString(), revoked_at: null };
       const credentials = await this.credentials(key, state, record);
       state.devices[record.device_id] = { record, refresh_hash: await digest(credentials.refresh_token), refresh_expires_at: this.now() + REFRESH_TTL_SECONDS * 1000, used_refreshes: {} };
       c.status = "consumed"; c.request_hash = requestHash; c.device_id = record.device_id;
@@ -141,6 +141,19 @@ export class ControllerService {
     });
     if (!outcome.credentials) throw new AuthenticatedRefreshReplay(key, id);
     return outcome.credentials;
+  }
+
+  async logout(token: string, requestId: string): Promise<{ revoked: true }> {
+    const claims = await this.claims(token);
+    return this.registry.update(claims.account_key, state => {
+      const key = `${claims.device_id}.${requestId}`;
+      const old = state?.revocations[key];
+      if (old && old.request_id === claims.device_id) return { state: state!, result: { revoked: true as const } };
+      const device = deviceFrom(state, claims, this.now());
+      device.record.revoked_at = new Date(this.now()).toISOString(); device.record.revision += 1;
+      state!.revocations[key] = { request_id: claims.device_id, expected_revision: claims.device_revision, revision: device.record.revision, revoked_at: device.record.revoked_at };
+      return { state: state!, result: { revoked: true as const } };
+    });
   }
 
   async revoke(token: string, deviceId: string, requestId: string, expectedRevision: number): Promise<{ device_id: string; revision: number; revoked_at: string }> {

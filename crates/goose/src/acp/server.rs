@@ -3932,8 +3932,8 @@ struct OwnerPermission {
 
 #[async_trait::async_trait]
 impl InputHandler for OwnerPermission {
-    fn run_id(&self) -> &str {
-        &self.run_id
+    fn run_id(&self) -> Option<&str> {
+        Some(&self.run_id)
     }
     fn observe(
         &self,

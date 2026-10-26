@@ -109,6 +109,14 @@ impl OwnerRunRegistry {
             .bind(command.work.work_id.to_string()).fetch_optional(&mut *tx).await.map_err(unavailable)?;
         let (session_id, kind, revision, persisted_run) =
             record.ok_or_else(|| conflict("work_not_found", "work was deleted or replaced"))?;
+        if self.preflight_state(&session_id).is_some()
+            && !matches!(command.action, ActionPayload::AnswerInput { .. })
+        {
+            return Err(conflict(
+                "setup_pending",
+                "finish the original recipe setup before sending a prompt",
+            ));
+        }
         if kind != "chat" {
             return Err(unsupported(
                 "only chat commands have an owner execution adapter",
@@ -332,6 +340,14 @@ impl OwnerRunRegistry {
             .read()
             .expect("owner executor poisoned")
             .clone();
+        if self.preflight_state(&record.local_locator).is_some()
+            && !matches!(command.action, ActionPayload::AnswerInput { .. })
+        {
+            return Err(conflict(
+                "setup_pending",
+                "finish the original recipe setup before sending a prompt",
+            ));
+        }
         // Preparation can load extensions, but cannot run the model or mutate its transcript.
         // It happens before the lock so other work's stop/approval never waits for MCP startup.
         let question_continuation = match &command.action {
@@ -481,6 +497,26 @@ impl OwnerRunRegistry {
                 value,
             } => {
                 if command.expected_run_id.is_none() {
+                    if self.is_preflight_input(*input_id).await? {
+                        self.answer_preflight_locked(
+                            *input_id,
+                            Some(command.work.work_id),
+                            InputAnswer {
+                                option_id: option_id.clone(),
+                                value: value.clone(),
+                            },
+                        )
+                        .await?;
+                        self.update_receipt(
+                            account,
+                            device,
+                            receipt.clone(),
+                            CommandState::Delivered,
+                            None,
+                        )
+                        .await?;
+                        return Ok(());
+                    }
                     if self
                         .question_input(&record.local_locator, *input_id)
                         .await?

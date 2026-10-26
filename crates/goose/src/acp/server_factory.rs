@@ -29,6 +29,12 @@ pub struct AcpServer {
 }
 
 impl AcpServer {
+    pub(crate) fn owner_runs(&self) -> Arc<crate::work_control::OwnerRunRegistry> {
+        crate::work_control::OwnerRunRegistry::for_store(
+            self.config.data_dir.clone(),
+            Arc::new(SessionManager::new(self.config.data_dir.clone())),
+        )
+    }
     pub fn new(config: AcpServerFactoryConfig) -> Self {
         crate::session_loops::agent_sync::install();
         Self {

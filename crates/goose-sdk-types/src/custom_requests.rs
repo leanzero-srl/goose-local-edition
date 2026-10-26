@@ -24,6 +24,8 @@ mod notes;
 pub use notes::*;
 mod model_fields;
 pub use model_fields::*;
+mod controller;
+pub use controller::*;
 
 /// Schema descriptor for a single custom method, produced by the
 /// `#[custom_methods]` macro's generated `custom_method_schemas()` function.

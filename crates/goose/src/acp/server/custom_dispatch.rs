@@ -3,6 +3,175 @@ use goose_acp_macros::custom_methods;
 
 #[custom_methods]
 impl GooseAcpAgent {
+    #[custom_method(ControllerStatusRequest)]
+    async fn dispatch_controller_status(
+        &self,
+        req: ControllerStatusRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "status",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
+    #[custom_method(ControllerRequestCodeRequest)]
+    async fn dispatch_controller_request_code(
+        &self,
+        req: ControllerRequestCodeRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "requestCode",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
+    #[custom_method(ControllerVerifyRequest)]
+    async fn dispatch_controller_verify(
+        &self,
+        req: ControllerVerifyRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "verify",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
+    #[custom_method(ControllerLogoutRequest)]
+    async fn dispatch_controller_logout(
+        &self,
+        req: ControllerLogoutRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "logout",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
+    #[custom_method(ControllerHostsRequest)]
+    async fn dispatch_controller_hosts(
+        &self,
+        req: ControllerHostsRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "hosts",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
+    #[custom_method(ControllerCatalogRequest)]
+    async fn dispatch_controller_catalog(
+        &self,
+        req: ControllerCatalogRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "catalog",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
+    #[custom_method(ControllerSyncRequest)]
+    async fn dispatch_controller_sync(
+        &self,
+        req: ControllerSyncRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "sync",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
+    #[custom_method(ControllerOpenWorkRequest)]
+    async fn dispatch_controller_open_work(
+        &self,
+        req: ControllerOpenWorkRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "openWork",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
+    #[custom_method(ControllerHistoryRequest)]
+    async fn dispatch_controller_history(
+        &self,
+        req: ControllerHistoryRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "history",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
+    #[custom_method(ControllerWorkChangesRequest)]
+    async fn dispatch_controller_work_changes(
+        &self,
+        req: ControllerWorkChangesRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "workChanges",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
+    #[custom_method(ControllerCommandRequest)]
+    async fn dispatch_controller_command(
+        &self,
+        req: ControllerCommandRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "command",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
+    #[custom_method(ControllerReceiptRequest)]
+    async fn dispatch_controller_receipt(
+        &self,
+        req: ControllerReceiptRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "receipt",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
+    #[custom_method(ControllerPendingCommandsRequest)]
+    async fn dispatch_controller_pending_commands(
+        &self,
+        req: ControllerPendingCommandsRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "pendingCommands",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
     pub async fn dispatch_custom_request(
         &self,
         method: &str,
