@@ -62,3 +62,5 @@ This installation is laptop-owned. Canonical source: `~/.claude/skills/ios-ipado
 2026-10-26: Added saved-node recovery against a real isolated control server, pre-request versus sent-command retry proof, and the immediate WebSocket authorization-close race measured on iPad.
 
 2026-10-26: Verify the deployed authority URL before defining client URL validation. A legitimate HTTPS service can live below a reverse-proxy base path. Preserve that base path when appending API routes; reject credentials, queries, fragments, encoded separators and traversal. Test exact final request URLs against the real deployment shape. A localhost root-only fixture cannot prove this integration.
+
+2026-10-26: Added embedded-runtime diagnostic suppression proof, forced framework rebuild and binary provenance checks, and actual-screen theme/navigation verification. A silent logger or accessibility label alone did not prove the intended outcome.

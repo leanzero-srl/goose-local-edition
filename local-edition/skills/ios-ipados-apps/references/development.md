@@ -87,3 +87,14 @@ A transport fixture that requires its enrollment key on every restart cannot pro
 Distinguish connection establishment from a sent application request. A transient proxy connection failure may be retried within the transport deadline before an HTTP command body is sent, retaining the same owner pin and route and respecting cancellation. Never retry a sent mutation merely because its acknowledgement is missing. Prove both directions with actual owner counters: first POST after saved-node restart is applied once; deliberately drop the acknowledgement after applying another POST and verify the transport does not send it again. Reconciliation belongs to the durable command identity protocol.
 
 For Network.framework WebSockets, an immediate close can race the socket terminal error. Stop the connection-start state handler once ready; do not let it cancel an established socket before the reader drains a close frame. When a received close frame carries the authenticated owner's authorization code, preserve it even if the same receive reports a terminal transport error. Stress immediate close codes through a real TLS/WebSocket fixture; a pure error-code mapping test will not expose the race.
+
+
+## Embedded networking privacy and build identity (2026-10-26)
+
+Inspect the embedded networking SDK at its pinned source revision. A nil host-language logger or discarded console output does not prove that its background telemetry is disabled. Cross-language environment changes may miss a runtime's cached environment. Disable diagnostic collection/upload inside the embedded runtime before constructing its first node, then prove the actual constructor with a local capture server: a positive control must upload, the protected build must not, including pre-existing buffered logs. Do not send test telemetry to the vendor.
+
+Require a rebuilt binary after source/privacy changes. A build target that depends only on a configuration file can leave a stale archive despite a successful make invocation. Force the archive build when needed; record the upstream revision and hashes of the final framework, privacy policy source and bundled manifest. Verify those inputs before embedding. Keep the framework's required-reason API declarations based on actual linked calls, separate from the app's collected-data declarations.
+
+## Theme proof on the actual native screen (2026-10-26)
+
+Test visible navigation titles as well as accessibility text. Forced SwiftUI navigation-bar background modifiers can cover a large title even while its accessibility label exists. Validate every theme on the actual iPhone and iPad layouts; preserve native navigation behavior before adding more styling overrides. Prove preference persistence by selecting a theme, terminating and relaunching the app, and verify System tracks an OS appearance change. Respect Reduce Motion and stop decorative animations when the scene is inactive.
