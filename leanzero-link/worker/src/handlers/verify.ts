@@ -1,6 +1,9 @@
+import { reserveAccountOperation } from "../controller/account-lifecycle";
+import { ControllerError, Registry } from "../controller/registry";
 import { JWT_TTL_SECONDS, OTP_MAX_ATTEMPTS, RATE_WINDOW_SECONDS, VERIFY_RATE_LIMIT } from "../lib/config";
 import type { Deps, KVStore } from "../lib/deps";
 import { jsonResponse, readJsonBody } from "../lib/http";
+import { digest } from "../controller/crypto";
 import { signJwt } from "../lib/jwt";
 import { ensureNodeSecretStatus } from "../lib/nodeSecret";
 import { constantTimeEqual, hashOtp } from "../lib/otp";
@@ -92,6 +95,17 @@ export async function handleVerify(request: Request, deps: Deps): Promise<Respon
     return jsonResponse(400, { error: "code must be a 6-digit string" });
   }
 
+  let release: () => Promise<void>;
+  try { const operation = await reserveAccountOperation(deps, email); release = operation.release; deps = operation.deps; }
+  catch (error) {
+    if (error instanceof ControllerError) return jsonResponse(error.status, { error: error.code });
+    return jsonResponse(503, { error: "account authority unavailable" });
+  }
+  try {
+  if (deps.deviceRegistry) {
+    const state = await new Registry(deps.deviceRegistry).read(await digest(email));
+    if (state?.legacy_revoked_before !== undefined && Math.floor(deps.now() / 1000) <= state.legacy_revoked_before) return jsonResponse(409, { error: "account_signin_retry", retryAfterSeconds: 1 });
+  }
   const verifyLimit = await bumpFixedWindow(deps.kv, `rl:verify:${email}`, VERIFY_RATE_LIMIT, RATE_WINDOW_SECONDS, deps.now());
   if (verifyLimit.limited) {
     deps.log("rate_limited", { scope: "verify", email, retryAfterSeconds: verifyLimit.retryAfterSeconds });
@@ -134,10 +148,9 @@ export async function handleVerify(request: Request, deps: Deps): Promise<Respon
   deps.log("auth_verified", { email, audienceSync, newAccount });
   // After the answer, never in its way: the record is the operator's, not the user's.
   const recorded = recordSiteEvent(deps, { kind: newAccount ? "link-signup" : "link-signin", email });
-  if (deps.waitUntil !== undefined) {
-    deps.waitUntil(recorded);
-  } else {
-    void recorded;
-  }
+  // Included in the account reservation so deletion cannot race a late event write.
+  deps.waitUntil?.(recorded);
+  await recorded;
   return jsonResponse(200, { token, email, audienceSync, nodeSecret });
+  } finally { await release(); }
 }

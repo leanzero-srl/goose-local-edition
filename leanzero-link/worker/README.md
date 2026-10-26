@@ -243,3 +243,7 @@ and holds the **segment id** — existing Resend audiences were migrated in plac
   garbage collection.
 - `POST /v1/mesh/join-key` performs the OAuth token exchange per request (tokens are not
   cached in KV) — one extra upstream call, zero secret-lifetime bookkeeping.
+
+## Device controller authority
+
+See [CONTROLLER-API.md](CONTROLLER-API.md) for the separate device-token protocol, strong registry, provider-confirmed mesh enrollment, host endpoint/role authority and explicit generation recovery. Controller mesh enrollment currently supports Headscale v0.29.3 only. Its local tests do not establish fleet/mobile readiness; independent security review and installed integration proof precede deployment.

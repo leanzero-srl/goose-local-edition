@@ -2,9 +2,12 @@ import { parseConfig, type WorkerEnvVars } from "./lib/config";
 import type { Deps, KVStore, KvMutation } from "./lib/deps";
 import { generateOtp } from "./lib/otp";
 import { handleRequest } from "./router";
+import { DurableDeviceRegistry } from "./controller/durable-registry";
+export { DeviceRegistryDurableObject } from "./controller/durable-registry";
 
 export interface Env extends WorkerEnvVars {
   LINK_KV: KVNamespace;
+  LINK_DEVICE_REGISTRY: DurableObjectNamespace;
 }
 
 function kvStore(env: Env): KVStore {
@@ -44,6 +47,7 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const deps: Deps = {
       kv: kvStore(env),
+      deviceRegistry: env.LINK_DEVICE_REGISTRY === undefined ? undefined : new DurableDeviceRegistry(env.LINK_DEVICE_REGISTRY),
       fetchFn: (url, init) => fetch(url, init),
       now: () => Date.now(),
       randomOtp: generateOtp,
