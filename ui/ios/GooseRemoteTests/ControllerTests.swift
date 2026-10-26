@@ -17,6 +17,10 @@ final class MemoryCredentials: CredentialStorage, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         values[account] = nil
     }
+    func removeRevocationRequests() throws {
+        lock.lock(); defer { lock.unlock() }
+        values = values.filter { !($0.key.hasPrefix("revoke-") && UUID(uuidString: String($0.key.dropFirst(7))) != nil) }
+    }
 }
 
 actor ScriptedTransport: HTTPTransport {

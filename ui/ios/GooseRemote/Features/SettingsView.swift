@@ -8,7 +8,7 @@ struct SettingsView: View {
     var body: some View {
         @Bindable var store = store
         Form {
-            if let envelope = store.envelope {
+            if store.authenticated, let envelope = store.envelope {
                 Section("This device") {
                     LabeledContent("Name", value: envelope.credentials.device.name)
                     LabeledContent("Role", value: "Controller")
@@ -20,9 +20,9 @@ struct SettingsView: View {
                     NavigationLink("Connected devices") { deviceList }
                     Button("Revoke this device", role: .destructive) { deviceToRevoke = envelope.credentials.device }
                         .disabled(store.authBusy || store.syncRunning)
-                    Button("Remove local access", role: .destructive) { removingLocal = true }.disabled(store.syncRunning || store.sending)
+                    Button("Remove local access", role: .destructive) { removingLocal = true }.disabled(store.authBusy || store.syncRunning || store.sending)
                 }.listRowBackground(Studio.surface)
-            } else {
+            } else if store.accountDeletion == nil {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Connect to Link").font(.title2.bold())
@@ -58,6 +58,9 @@ struct SettingsView: View {
                         Text("Code expires \(challenge.expiresAt, style: .time).").font(.caption).foregroundStyle(Studio.secondaryInk)
                     }.listRowBackground(Studio.surface)
                 }
+            }
+            if store.authenticated || store.accountDeletion != nil || store.accountDeletionCompleted {
+                AccountDeletionSection()
             }
             Section("About") {
                 LabeledContent("Goose Swarm Remote", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown")
@@ -104,7 +107,7 @@ struct SettingsView: View {
                 Text("This build does not include analytics, advertising, or tracking SDKs.")
             }
             Section("Remove data") {
-                Text("Revoke this device to remove its server access, then remove local access to erase credentials, drafts, and recovery records. Deleting the app alone may leave Keychain items on iOS.")
+                Text("Revoke this device to remove its server access, then remove local access to erase credentials, drafts, and command recovery records. Delete Link account removes your Link account and connected-device access. An unfinished account deletion keeps its recovery receipt in Keychain until cleanup completes. Deleting the app alone may leave Keychain items on iOS.")
             }
         }.navigationTitle("Connection & privacy").studioScreen()
     }

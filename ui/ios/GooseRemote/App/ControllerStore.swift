@@ -23,6 +23,11 @@ final class ControllerStore {
     var code = ""
     var errorMessage: String?
     var authBusy = false
+    var deletionCode = ""
+    private(set) var accountDeletion: SavedAccountDeletion?
+    private(set) var accountDeletionCompleted = false
+    private(set) var accountDeletionRetention: [String] = []
+    static let deletionAccount = "account-deletion"
     private(set) var envelope: CredentialEnvelope?
     private(set) var enrollment: EnrollmentAttempt?
     private(set) var connection: ConnectionState = .signedOut
@@ -45,6 +50,7 @@ final class ControllerStore {
     @ObservationIgnored private let credentials: any CredentialStorage
     @ObservationIgnored private let owner: any OwnerControllerService
     @ObservationIgnored private let local: LocalControllerStore?
+    @ObservationIgnored private var localDirectory: URL?
     @ObservationIgnored private let transport: any HTTPTransport
     @ObservationIgnored private let mesh: (any ControllerMeshSession)?
     @ObservationIgnored private var syncTask: Task<Void, Never>?
@@ -67,12 +73,14 @@ final class ControllerStore {
         do {
             let base = try directory ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 .appendingPathComponent("GooseRemote", isDirectory: true)
+            localDirectory = base
             local = try LocalControllerStore(directory: base)
         } catch {
             local = nil
             errorMessage = "Local drafts could not be opened. Sending is disabled until storage is available."
         }
         do {
+            accountDeletion = try credentials.read(SavedAccountDeletion.self, account: Self.deletionAccount)
             envelope = try credentials.read(CredentialEnvelope.self, account: "device")
             if let envelope { authorityText = envelope.authority.absoluteString; deviceName = envelope.credentials.device.name }
             else if let saved = try credentials.read(SavedEnrollment.self, account: "enrollment") {
@@ -82,7 +90,7 @@ final class ControllerStore {
                 deviceName = saved.attempt.deviceName
             }
         } catch { errorMessage = error.localizedDescription }
-        if envelope != nil, let local {
+        if authenticated, let local {
             entries = local.data.catalogs.values.flatMap(\.entries)
             selectedWork = local.data.selected
             selectedError = selectedWork == nil ? nil : "Saved view. Reconnect to verify this session with its owner."
@@ -90,9 +98,12 @@ final class ControllerStore {
         }
     }
 
-    var authenticated: Bool { envelope != nil }
+    var authenticated: Bool { envelope != nil && accountDeletion?.blocksAccountAccess != true }
+    var canDeleteAccount: Bool {
+        authenticated && envelope?.credentials.device.scopes.contains("devices.manage") == true && !authBusy && !syncRunning && !sending && refreshTask == nil
+    }
     var canRequestCode: Bool {
-        !authBusy && (try? ControllerCodec.authority(authorityText)) != nil && email.contains("@") && !deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !authBusy && accountDeletion == nil && (try? ControllerCodec.authority(authorityText)) != nil && email.contains("@") && !deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     var canStoreDrafts: Bool { local != nil }
     var pendingCommands: [PendingCommand] { _ = pendingRevision; return local?.data.pendingCommands ?? [] }
@@ -109,9 +120,9 @@ final class ControllerStore {
             let snapshot: OwnerCatalogSnapshot
             if let saved = local?.data.catalogs[host.id.uuidString] { snapshot = saved }
             else { snapshot = try await owner.catalog(host: currentHost, credential: identity.credentials.accessToken) }
-            guard envelope?.credentials.device.id == identity.credentials.device.id, snapshot.watermark.ownerNodeId == host.id else { throw ControllerError.malformedResponse }
+            guard authenticated, envelope?.credentials.device.id == identity.credentials.device.id, snapshot.watermark.ownerNodeId == host.id else { throw ControllerError.malformedResponse }
             return ManagementContext(host: currentHost, identity: identity, generation: snapshot.watermark.storeGeneration)
-        }, isCurrent: { [weak self] device in self?.envelope?.credentials.device.id == device })
+        }, isCurrent: { [weak self] device in self?.authenticated == true && self?.envelope?.credentials.device.id == device })
     }
     func ownerName(_ id: UUID) -> String { hosts.first { $0.id == id }?.name ?? "Unknown owner" }
     func draft(for work: WorkRef) -> String { _ = draftRevision; return local?.data.drafts[work.id] ?? "" }
@@ -124,7 +135,7 @@ final class ControllerStore {
     }
 
     func requestCode(platform: String) async {
-        guard !authBusy, !authenticated else { return }
+        guard !authBusy, !authenticated, accountDeletion == nil else { return }
         authBusy = true
         defer { authBusy = false }
         do {
@@ -149,7 +160,7 @@ final class ControllerStore {
     }
 
     func verify(platform: String) async {
-        guard !authBusy, let enrollment else { return }
+        guard !authBusy, accountDeletion == nil, let enrollment else { return }
         authBusy = true
         defer { authBusy = false }
         do {
@@ -165,6 +176,7 @@ final class ControllerStore {
             // A failed secure write leaves the enrollment receipt retryable with the same code/id.
             try credentials.write(next, account: "device")
             envelope = next
+            accountDeletionCompleted = false
             code = ""
             self.enrollment = nil
             try credentials.remove(account: "enrollment")
@@ -174,7 +186,7 @@ final class ControllerStore {
     }
 
     func validCredential(forceRefresh: Bool = false) async throws -> CredentialEnvelope {
-        guard let current = envelope else { throw ControllerError.unavailable("Connect this device to Link first.") }
+        guard authenticated, let current = envelope else { throw ControllerError.unavailable("Connect this device to Link first.") }
         if let refreshTask { return try await refreshTask.value }
         if !forceRefresh, current.refreshRequestId == nil && current.credentials.expiresAt > Date() { return current }
         let task = Task { @MainActor [self] in
@@ -344,7 +356,9 @@ final class ControllerStore {
     func loadResources(_ host: HostDescriptor) async {
         do {
             let identity = try await validCredential()
-            resources[host.id] = try await owner.resources(host: host, credential: identity.credentials.accessToken)
+            let sample = try await owner.resources(host: host, credential: identity.credentials.accessToken)
+            guard authenticated, envelope?.credentials.device.id == identity.credentials.device.id else { return }
+            resources[host.id] = sample
         } catch { errorMessage = error.localizedDescription }
     }
     func loadMoreHistory() async {
@@ -371,7 +385,9 @@ final class ControllerStore {
     func loadDevices() async {
         do {
             let identity = try await validCredential()
-            devices = try await ControllerAPI(authority: identity.authority, transport: transport).devices(token: identity.credentials.accessToken).devices
+            let page = try await ControllerAPI(authority: identity.authority, transport: transport).devices(token: identity.credentials.accessToken)
+            guard authenticated, envelope?.credentials.device.id == identity.credentials.device.id else { return }
+            devices = page.devices
         } catch { errorMessage = error.localizedDescription }
     }
     func revoke(_ device: DeviceRecord) async {
@@ -392,19 +408,140 @@ final class ControllerStore {
     }
     func forgetDevice() async throws {
         guard !syncRunning, refreshTask == nil, !sending else { throw ControllerError.invalid("Wait for the current request to finish before removing local access.") }
-        try local?.clear()
+        if accountDeletion?.canCancel == true { try cancelAccountDeletion() }
+        try await removeLocalAccess()
+    }
+    private func removeLocalAccess() async throws {
         stopStreams()
-        try await mesh?.removeLocalIdentity()
-        try credentials.remove(account: "device")
-        try credentials.remove(account: "enrollment")
-        try credentials.remove(account: ManagementModel.outboxAccount)
+        selectedRequest = UUID()
         envelope = nil
         enrollment = nil
-        code = ""
+        code = ""; email = ""
         hosts = []; entries = []; devices = []; resources = [:]; syncResults = []
-        selectedWork = nil; selectedRef = nil; lastSync = nil
+        selectedWork = nil; selectedRef = nil; selectedError = nil; lastSync = nil
         draftRevision += 1; pendingRevision += 1
         connection = .signedOut
+        var failure: Error?
+        for account in ["device", "enrollment", "mesh", ManagementModel.outboxAccount] {
+            do { try credentials.remove(account: account) }
+            catch { if failure == nil { failure = error } }
+        }
+        do { try credentials.removeRevocationRequests() }
+        catch { if failure == nil { failure = error } }
+        do {
+            if let local { try local.clear() }
+            else if let localDirectory {
+                let state = localDirectory.appendingPathComponent("controller-state.json")
+                if FileManager.default.fileExists(atPath: state.path) { try FileManager.default.removeItem(at: state) }
+            } else { throw ControllerError.unavailable("Local storage is unavailable. Unlock this device and retry cleanup.") }
+        } catch { if failure == nil { failure = error } }
+        do { try await mesh?.removeLocalIdentity() }
+        catch { if failure == nil { failure = error } }
+        if let failure { throw failure }
+    }
+
+    func requestAccountDeletionCode() async {
+        guard canDeleteAccount, accountDeletion?.blocksAccountAccess != true else { return }
+        authBusy = true
+        defer { authBusy = false }
+        do {
+            let identity = try await validCredential()
+            let saved: SavedAccountDeletion
+            if let previous = accountDeletion, previous.phase == .requestingCode,
+               previous.authority == identity.authority, previous.deviceId == identity.credentials.device.id {
+                saved = previous
+            } else {
+                saved = .init(authority: identity.authority, requestId: UUID(), deviceId: identity.credentials.device.id, phase: .requestingCode)
+            }
+            try saveDeletion(saved)
+            accountDeletionCompleted = false
+            let api = try ControllerAPI(authority: saved.authority, transport: transport)
+            var next = saved
+            next.challenge = try await api.requestAccountDeletionCode(requestId: saved.requestId, token: identity.credentials.accessToken)
+            next.phase = .awaitingCode
+            try saveDeletion(next)
+            deletionCode = ""
+            errorMessage = nil
+        } catch {
+            if case ControllerError.remote(_, let code, _) = error,
+               ["mail_failed", "deletion_challenge_expired", "deletion_challenge_changed"].contains(code) {
+                do { try cancelAccountDeletion() } catch { errorMessage = error.localizedDescription; return }
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func cancelAccountDeletion() throws {
+        guard accountDeletion?.canCancel == true else { return }
+        try credentials.remove(account: Self.deletionAccount)
+        accountDeletion = nil
+        deletionCode = ""
+    }
+
+    func confirmAccountDeletion() async {
+        guard canDeleteAccount, var saved = accountDeletion, saved.phase == .awaitingCode else { return }
+        let code = deletionCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard code.count == 6, code.utf8.allSatisfy({ (48...57).contains($0) }) else {
+            errorMessage = "Enter the six-digit deletion code from your email."
+            return
+        }
+        authBusy = true
+        defer { authBusy = false }
+        do {
+            // An interrupted confirmation must recover by receipt before normal access resumes.
+            saved.phase = .confirming
+            try saveDeletion(saved)
+            stopStreams()
+            selectedRequest = UUID()
+            let api = try ControllerAPI(authority: saved.authority, transport: transport)
+            let receipt = try await api.confirmAccountDeletion(saved, code: code)
+            try await acceptDeletion(receipt, saved: saved)
+            errorMessage = nil
+        } catch {
+            if case ControllerError.remote(401, "invalid_code", _) = error {
+                saved.phase = .awaitingCode
+                do { try saveDeletion(saved) } catch { errorMessage = error.localizedDescription; return }
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func checkAccountDeletion() async {
+        guard !authBusy, let saved = accountDeletion, saved.blocksAccountAccess else { return }
+        authBusy = true
+        defer { authBusy = false }
+        do {
+            let receipt = try await ControllerAPI(authority: saved.authority, transport: transport).accountDeletionStatus(saved)
+            try await acceptDeletion(receipt, saved: saved)
+            errorMessage = nil
+        } catch {
+            if case ControllerError.remote(409, "deletion_not_confirmed", _) = error, saved.phase == .confirming {
+                var next = saved
+                next.phase = .awaitingCode
+                do { try saveDeletion(next) } catch { errorMessage = error.localizedDescription; return }
+            }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func saveDeletion(_ saved: SavedAccountDeletion) throws {
+        try credentials.write(saved, account: Self.deletionAccount)
+        accountDeletion = saved
+    }
+    private func acceptDeletion(_ receipt: AccountDeletionReceipt, saved: SavedAccountDeletion) async throws {
+        var next = saved
+        next.phase = receipt.status == .deleted ? .deleted : .pending
+        next.receipt = receipt
+        // Keep the recovery receipt until every local cleanup step has succeeded.
+        try saveDeletion(next)
+        deletionCode = ""
+        try await removeLocalAccess()
+        if receipt.status == .deleted {
+            try credentials.remove(account: Self.deletionAccount)
+            accountDeletion = nil
+            accountDeletionCompleted = true
+            accountDeletionRetention = receipt.retentionSummary
+        }
     }
 
     private func synchronizedCatalog(host: HostDescriptor, credential: String) async throws -> OwnerCatalogSnapshot {
@@ -550,8 +687,9 @@ final class ControllerStore {
         let pending = syncTask
         Task { @MainActor [weak self] in
             await pending?.value
-            guard let self, foreground, authenticated else { return }
-            manualSync()
+            guard let self, foreground else { return }
+            if accountDeletion?.blocksAccountAccess == true { await checkAccountDeletion() }
+            else if authenticated { manualSync() }
         }
     }
     func sceneBackground() async {

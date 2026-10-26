@@ -12,7 +12,10 @@ struct GooseRemoteApp: App {
     var body: some Scene {
         WindowGroup {
             RootView().environment(store).tint(Studio.accent)
-                .task { if store.authenticated { store.manualSync() } }
+                .task {
+                    if store.accountDeletion?.blocksAccountAccess == true { await store.checkAccountDeletion() }
+                    else if store.authenticated { store.manualSync() }
+                }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active { store.sceneActive() }
                     if phase == .background { Task { await store.sceneBackground() } }
@@ -45,6 +48,9 @@ struct RootView: View {
             Tab("Settings", systemImage: AppSection.settings.symbol, value: AppSection.settings) {
                 NavigationStack { SettingsView() }
             }
+        }
+        .onChange(of: store.accountDeletion?.phase, initial: true) { _, phase in
+            if phase != nil { section = .settings }
         }
         .alert("Could not complete the request", isPresented: Binding(get: { store.errorMessage != nil }, set: { if !$0 { store.errorMessage = nil } })) {
             Button("OK") { store.errorMessage = nil }

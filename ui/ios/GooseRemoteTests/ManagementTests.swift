@@ -10,6 +10,7 @@ final class FailingManagementCredentials: CredentialStorage, @unchecked Sendable
         try underlying.write(value, account: account)
     }
     func remove(account: String) throws { try underlying.remove(account: account) }
+    func removeRevocationRequests() throws { try underlying.removeRevocationRequests() }
 }
 
 actor ManagementServiceProbe: OwnerManagementService {
