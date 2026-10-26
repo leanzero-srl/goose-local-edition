@@ -396,9 +396,26 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
     ],
 ];
 
-/// The MTP head file an MTPLX-style artefact ships next to its trunk shards. Its presence
-/// is the whole MTP auto-detection: the engine's injector probes exactly this name first.
+/// The MTP head file an MTPLX-style artefact ships next to its trunk shards. One of the two ways
+/// a checkpoint carries an MTP head (`MtpHead::Sidecar`); the engine's injector probes exactly this
+/// name first.
 pub const MTP_SIDECAR_FILE: &str = "mtp.safetensors";
+
+/// Model families whose engine injector reads the MTP head straight from the checkpoint's own
+/// shards (`mtp.*` tensors in `model.safetensors.index.json`) when no sidecar is named
+/// (`MtpHead::InShard`). Rapid-MLX v0.14.3-lz.14-ple.1: engine/batched.py falls back to the
+/// checkpoint as the sidecar for `qwen4_exp` only, and qwen4_exp_inject.py `_mtp_weight_files`
+/// lists the shards from the index. Every other family's injector looks for a sidecar FILE
+/// (qwen3_5_inject.py `_find_mtp_weights_file`), so in-shard tensors there are not a head the
+/// engine can serve and must not turn MTP on.
+pub const IN_SHARD_MTP_FAMILIES: [&str; 1] = ["qwen4_exp"];
+
+/// The MTP draft depth for Qwen3.8-Flash-Next (`qwen4_exp`). The engine accepts only 1 or 2 for
+/// this family and exits 2 on anything else (cli.py `_resolve_mtp_depth_for_model`); an explicit
+/// 2 also turns on its indexed-QSA split-K verify. Measured 2026-10-26 on workmule (M5 Max 128 GB,
+/// n-gram table on disk, MTP K=2, prompt lookup): code-edit decode 105.9 / 87.0 / 72.2 tok/s at
+/// 8k / 32k / 64k against 38.8 / 35.7 / 31.8 without MTP.
+pub const QWEN4_EXP_MTP_SPECULATIVE_TOKENS: u32 = 2;
 
 /// Draft depth handed to the engine's MTP speculative decoder (`num_speculative_tokens`). It
 /// is the CEILING of the engine's EV auto-K controller, which picks K in 0..=this per round
@@ -436,8 +453,8 @@ pub struct ModelProfile {
     pub frequency_penalty: Option<f64>,
     pub context_limit: Option<u32>,
     /// `"mtp"` demands MTP speculative decoding (skipped with a warning when the directory
-    /// has no `mtp.safetensors`), `"off"` refuses it, `None` = auto (on when the head file
-    /// is there).
+    /// has no MTP head: no `mtp.safetensors` and no in-shard head, see [`MtpHead`]), `"off"`
+    /// refuses it, `None` = auto (on when the model has a head).
     pub speculative: Option<String>,
     /// Directory of an mlx-lm LoRA/DoRA adapter to fuse at load (`--adapter-path`);
     /// `~` expands. Validated at argv build: missing files fail the mount.
@@ -634,31 +651,117 @@ pub fn served_model_id(settings: &EngineSettings, model_id: &str) -> String {
 /// time — not persisted — so a re-download (an MTP head appearing, a vision-config
 /// checkpoint replacing a text one) changes the argv, and with it `restart_required`,
 /// without anyone editing a setting.
+/// Where a checkpoint keeps the MTP head the engine can serve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MtpHead {
+    /// `<dir>/mtp.safetensors` (MTPLX layout, the Qwen3.8-27B family).
+    Sidecar,
+    /// `mtp.*` tensors inside the checkpoint's own shards, on a family in
+    /// [`IN_SHARD_MTP_FAMILIES`] (Qwen3.8-Flash-Next).
+    InShard,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModelDirFacts {
-    /// `<dir>/mtp.safetensors` is a file.
-    pub has_mtp_sidecar: bool,
+    /// The MTP head the engine can serve from this directory, if any. THE one "has an MTP head"
+    /// fact: the serve argv, the prompt-lookup lane and the desktop's `hasMtpHead` all read it.
+    pub mtp_head: Option<MtpHead>,
+    /// `num_speculative_tokens` for that head (0 without one): [`mtp_depth_for`].
+    pub mtp_depth: u32,
     /// config.json declares `vision_config`, or is a `qwen3_5` `*ForConditionalGeneration`
     /// checkpoint — either way the engine's auto-detection may route it to the serialized
     /// single-request MLLM lane unless `--text-only` pins the text lane.
     pub vision_bearing: bool,
 }
 
+impl ModelDirFacts {
+    pub fn has_mtp_head(&self) -> bool {
+        self.mtp_head.is_some()
+    }
+}
+
 pub fn inspect_model_dir(dir: &Path) -> ModelDirFacts {
-    let has_mtp_sidecar = dir.join(MTP_SIDECAR_FILE).is_file();
-    let vision_bearing = match std::fs::read(dir.join("config.json")) {
+    let config = match std::fs::read(dir.join("config.json")) {
         Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
-            Ok(config) => config_declares_vision(&config),
+            Ok(config) => Some(config),
             Err(e) => {
                 tracing::warn!(dir = %dir.display(), error = %e, "config.json is not JSON; assuming a text-only checkpoint");
-                false
+                None
             }
         },
-        Err(_) => false,
+        Err(_) => None,
+    };
+    let model_type = config
+        .as_ref()
+        .and_then(|c| c.get("model_type"))
+        .and_then(|v| v.as_str());
+    let mtp_head = if dir.join(MTP_SIDECAR_FILE).is_file() {
+        Some(MtpHead::Sidecar)
+    } else if model_type.is_some_and(|t| IN_SHARD_MTP_FAMILIES.contains(&t))
+        && shards_hold_mtp_tensors(dir)
+    {
+        Some(MtpHead::InShard)
+    } else {
+        None
     };
     ModelDirFacts {
-        has_mtp_sidecar,
-        vision_bearing,
+        mtp_head,
+        mtp_depth: mtp_head.map_or(0, |_| mtp_depth_for(dir, model_type)),
+        vision_bearing: config.as_ref().is_some_and(config_declares_vision),
+    }
+}
+
+/// Whether the checkpoint's own weights carry `mtp.*` tensors: the shard index's `weight_map`
+/// keys, or a single `model.safetensors` header — the two places the engine's qwen4_exp injector
+/// looks (`_mtp_weight_files`). Headers only; no tensor is read.
+fn shards_hold_mtp_tensors(dir: &Path) -> bool {
+    let is_mtp = |key: &str| key.starts_with("mtp.");
+    if let Ok(bytes) = std::fs::read(dir.join("model.safetensors.index.json")) {
+        return match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(index) => index
+                .get("weight_map")
+                .and_then(|m| m.as_object())
+                .is_some_and(|m| m.keys().any(|k| is_mtp(k))),
+            Err(e) => {
+                tracing::warn!(dir = %dir.display(), error = %e, "model.safetensors.index.json is not JSON; no in-shard MTP head");
+                false
+            }
+        };
+    }
+    #[cfg(unix)]
+    {
+        let single = dir.join("model.safetensors");
+        if single.is_file() {
+            return match crate::distributed::plan::read_safetensors_header(&single) {
+                Ok(header) => header.keys().any(|k| is_mtp(k)),
+                Err(e) => {
+                    tracing::warn!(dir = %dir.display(), error = %e, "model.safetensors header unreadable; no in-shard MTP head");
+                    false
+                }
+            };
+        }
+    }
+    false
+}
+
+/// The MTP draft depth goose asks the engine for (`num_speculative_tokens`), per checkpoint:
+/// - `qwen4_exp` (Flash-Next): [`QWEN4_EXP_MTP_SPECULATIVE_TOKENS`], the engine's own rule.
+/// - otherwise the checkpoint's `mtplx_runtime.json` `mtp_depth_max` when it is lower than the
+///   measured [`MTP_SPECULATIVE_TOKENS`] (a head trained for fewer steps), else that 3.
+pub fn mtp_depth_for(dir: &Path, model_type: Option<&str>) -> u32 {
+    if model_type == Some("qwen4_exp") {
+        return QWEN4_EXP_MTP_SPECULATIVE_TOKENS;
+    }
+    let declared = std::fs::read(dir.join("mtplx_runtime.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|runtime| runtime.get("mtp_depth_max").and_then(|v| v.as_u64()))
+        .filter(|&depth| depth >= 1);
+    match declared {
+        Some(depth) => u32::try_from(depth)
+            .unwrap_or(u32::MAX)
+            .min(MTP_SPECULATIVE_TOKENS),
+        None => MTP_SPECULATIVE_TOKENS,
     }
 }
 
@@ -680,11 +783,19 @@ fn config_declares_vision(config: &serde_json::Value) -> bool {
     qwen3_5 && conditional_generation
 }
 
-/// The `--speculative-config` value for an MTP head living in `model_dir`. The `model`
-/// field is REQUIRED: the engine resolves the MTP sidecar from it (a directory is probed
-/// for `mtp.safetensors` first); a bare `{"method":"mtp"}` on a local directory reaches
-/// the injector with `sidecar=None` and hard-fails at boot.
-fn mtp_speculative_config(model_dir: &Path) -> String {
+/// The `--speculative-config` value for the MTP head `facts` found in `model_dir`.
+/// - `Sidecar`: the `model` field is REQUIRED: the engine resolves the MTP sidecar from it (a
+///   directory is probed for `mtp.safetensors` first); a bare `{"method":"mtp"}` on a local
+///   directory reaches the injector with `sidecar=None` and hard-fails at boot.
+/// - `InShard`: NO `model` field. The engine hands the qwen4_exp injector the loaded checkpoint
+///   itself as the sidecar (engine/batched.py); naming the directory again would also work
+///   (`_mtp_weight_files` reads the index) but is the "artificial sidecar" the engine avoids, and
+///   the argv measured on 2026-10-26 had none.
+fn mtp_speculative_config(model_dir: &Path, facts: &ModelDirFacts) -> String {
+    let depth = facts.mtp_depth;
+    if facts.mtp_head == Some(MtpHead::InShard) {
+        return format!(r#"{{"method":"mtp","num_speculative_tokens":{depth}}}"#);
+    }
     let dir = if model_dir.is_absolute() {
         model_dir.to_path_buf()
     } else {
@@ -693,9 +804,7 @@ fn mtp_speculative_config(model_dir: &Path) -> String {
             .unwrap_or_else(|_| model_dir.to_path_buf())
     };
     let dir_json = serde_json::to_string(&dir.to_string_lossy()).expect("a string serializes");
-    format!(
-        r#"{{"method":"mtp","model":{dir_json},"num_speculative_tokens":{MTP_SPECULATIVE_TOKENS}}}"#
-    )
+    format!(r#"{{"method":"mtp","model":{dir_json},"num_speculative_tokens":{depth}}}"#)
 }
 
 /// The adapter directory the profile names, expanded and PROVEN to be an mlx-lm adapter
@@ -775,23 +884,23 @@ fn serves_mtp(
     match speculative.as_deref() {
         Some("off") => false,
         Some("mtp") => {
-            if !facts.has_mtp_sidecar {
+            if !facts.has_mtp_head() {
                 tracing::warn!(
                     model_id,
                     dir = %model_path.display(),
-                    "profile asks for MTP but {MTP_SIDECAR_FILE} is missing; serving without speculative decoding"
+                    "profile asks for MTP but the model has no MTP head ({MTP_SIDECAR_FILE}, or mtp.* tensors in the shards of a {IN_SHARD_MTP_FAMILIES:?} checkpoint); serving without speculative decoding"
                 );
             }
-            facts.has_mtp_sidecar
+            facts.has_mtp_head()
         }
-        None => facts.has_mtp_sidecar,
+        None => facts.has_mtp_head(),
         Some(other) => {
             tracing::warn!(
                 model_id,
                 value = other,
                 "unknown profile.speculative value (expected \"mtp\" or \"off\"); treating as auto"
             );
-            facts.has_mtp_sidecar
+            facts.has_mtp_head()
         }
     }
 }
@@ -853,7 +962,7 @@ pub fn build_serve_command(
     let want_mtp = serves_mtp(profile, &facts, model_id, &model_path);
     if want_mtp {
         argv.push("--speculative-config".to_string());
-        argv.push(mtp_speculative_config(&model_path));
+        argv.push(mtp_speculative_config(&model_path, &facts));
     }
     if facts.vision_bearing && profile.text_only.unwrap_or(true) {
         argv.push("--text-only".to_string());
@@ -3425,6 +3534,124 @@ mod tests {
         );
     }
 
+    const QWEN4_EXP_CONFIG: &str = r#"{"model_type":"qwen4_exp","architectures":["Qwen4ExpForCausalLM"],"text_config":{"mtp_num_hidden_layers":1}}"#;
+
+    /// A checkpoint whose shard index lists `keys` (headers only, as the real Flash index does).
+    fn write_index(settings: &EngineSettings, keys: &[&str]) {
+        let map: serde_json::Map<String, serde_json::Value> = keys
+            .iter()
+            .map(|k| {
+                (
+                    (*k).to_string(),
+                    serde_json::json!("model-00001-of-00002.safetensors"),
+                )
+            })
+            .collect();
+        std::fs::write(
+            expand_tilde(&settings.models_dir).join("pub/model/model.safetensors.index.json"),
+            serde_json::json!({ "metadata": {}, "weight_map": map }).to_string(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn an_in_shard_flash_head_serves_mtp_at_depth_2_without_a_model_key() {
+        let (_root, settings) = model_dir_with(QWEN4_EXP_CONFIG, &[]);
+        write_index(
+            &settings,
+            &["model.layers.0.self_attn.q_proj.weight", "mtp.fc.weight"],
+        );
+        let facts = inspect_model_dir(&expand_tilde(&settings.models_dir).join("pub/model"));
+        assert_eq!(facts.mtp_head, Some(MtpHead::InShard));
+        assert_eq!(facts.mtp_depth, QWEN4_EXP_MTP_SPECULATIVE_TOKENS);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert_eq!(
+            flag_value(&argv, "--speculative-config").as_deref(),
+            Some(r#"{"method":"mtp","num_speculative_tokens":2}"#),
+            "{argv:?}"
+        );
+        assert_eq!(
+            prompt_lookup_lane(&settings, "pub/model"),
+            PromptLookupLane::Mtp
+        );
+    }
+
+    #[test]
+    fn in_shard_mtp_tensors_count_only_on_a_family_the_engine_reads_them_for() {
+        // qwen3_5's injector wants a sidecar FILE: in-shard tensors are not a servable head.
+        let (_root, settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[]);
+        write_index(&settings, &["mtp.fc.weight"]);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(
+            !argv.iter().any(|a| a == "--speculative-config"),
+            "{argv:?}"
+        );
+        // A qwen4_exp checkpoint whose shards carry no mtp.* tensors has no head either.
+        let (_root, settings) = model_dir_with(QWEN4_EXP_CONFIG, &[]);
+        write_index(&settings, &["model.layers.0.self_attn.q_proj.weight"]);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(
+            !argv.iter().any(|a| a == "--speculative-config"),
+            "{argv:?}"
+        );
+        assert!(
+            !inspect_model_dir(&expand_tilde(&settings.models_dir).join("pub/model"))
+                .has_mtp_head()
+        );
+    }
+
+    #[test]
+    fn the_sidecar_depth_is_3_unless_the_checkpoint_declares_a_shallower_head() {
+        for (runtime, depth) in [
+            (None, 3),
+            (Some(r#"{"mtp_depth_max": 3}"#), 3),
+            (Some(r#"{"mtp_depth_max": 2}"#), 2),
+            (Some(r#"{"mtp_depth_max": 5}"#), 3),
+            (Some(r#"{"mtp_depth_max": 0}"#), 3),
+        ] {
+            let (_root, settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[MTP_SIDECAR_FILE]);
+            let dir = expand_tilde(&settings.models_dir).join("pub/model");
+            if let Some(runtime) = runtime {
+                std::fs::write(dir.join("mtplx_runtime.json"), runtime).unwrap();
+            }
+            let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+            let json: serde_json::Value =
+                serde_json::from_str(&flag_value(&argv, "--speculative-config").unwrap()).unwrap();
+            assert_eq!(json["num_speculative_tokens"], depth, "{runtime:?}");
+            assert_eq!(json["model"], dir.to_string_lossy().as_ref());
+        }
+    }
+
+    /// The real Qwen3.8-Flash-Next checkpoint on the AI SSD (headers and the index only; no
+    /// weight is loaded). Skipped where the SSD is not mounted.
+    #[test]
+    fn the_real_flash_checkpoint_gets_the_measured_mtp_argv() {
+        let models_dir = "/Volumes/AI-workhorse/models/goose";
+        let model_id = "rapid-mlx/Qwen3.8-Flash-Next-4bit";
+        let dir = Path::new(models_dir).join(model_id);
+        if !dir.join("model.safetensors.index.json").is_file() {
+            eprintln!("skipped: {} is not reachable", dir.display());
+            return;
+        }
+        let facts = inspect_model_dir(&dir);
+        assert_eq!(facts.mtp_head, Some(MtpHead::InShard));
+        assert_eq!(facts.mtp_depth, 2);
+        let settings = EngineSettings {
+            models_dir: models_dir.to_string(),
+            ..Default::default()
+        };
+        let argv = build_serve_command(&settings, model_id, &[]).unwrap();
+        assert_eq!(
+            flag_value(&argv, "--speculative-config").as_deref(),
+            Some(r#"{"method":"mtp","num_speculative_tokens":2}"#),
+            "{argv:?}"
+        );
+        assert_eq!(
+            prompt_lookup_lane(&settings, model_id),
+            PromptLookupLane::Mtp
+        );
+    }
+
     #[test]
     fn speculative_off_suppresses_mtp_even_with_the_head_present() {
         let (_root, mut settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[MTP_SIDECAR_FILE]);
@@ -3492,7 +3719,8 @@ mod tests {
         assert_eq!(
             facts,
             ModelDirFacts {
-                has_mtp_sidecar: false,
+                mtp_head: None,
+                mtp_depth: 0,
                 vision_bearing: true
             }
         );

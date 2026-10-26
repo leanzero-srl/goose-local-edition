@@ -921,7 +921,7 @@ async fn core_models_list(
                     Ok(hybrid) => (Some(hybrid), None),
                     Err(e) => (None, Some(format!("{e:#}"))),
                 };
-                let has_mtp_head = inspect_model_dir(&dir).has_mtp_sidecar;
+                let has_mtp_head = inspect_model_dir(&dir).has_mtp_head();
                 let has_ngram_table = ple_offload::has_table(&dir);
                 let ngram_table_auto_on = has_ngram_table
                     && ple_offload_on(&dir, &ModelProfile::default(), ple_offload::Machine::local);
