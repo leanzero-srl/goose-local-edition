@@ -1470,3 +1470,12 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
 - **Speed math for a dense model at long context (laptop Granite 4.2 30B, 2026-10-19):** decode tok/s ~= bandwidth / (weights +
   KV bytes per token x context). Granite 30B KV = 64 x 8 x 128 x 2 x 2 B = 256 KB/token -> 25.6 GB read per token at 100k + 32 GB
   weights -> ~9 tok/s ceiling on an M4 Max (546 GB/s); measured ~7. Slow is the architecture, not the NFS model mount.
+- **2026-10-19 — Providers > Models delete refused SSD-linked models ("refusing to delete '<id>': /Volumes/AI-workhorse/... resolves
+  outside /Users/workhorse/.goose/models").** The Studio's ~/.goose/models/<publisher> are SYMLINKS to the SSD; the listing follows
+  them (a20f78b5b) but `hf::delete_local_model`, `hf::remove_partial_repo` and leanzero-link `replica::remove_partial` refused any
+  canonical path outside the models dir. Fixed on main ec7ba61d7 (74f751335 + review fix; ships in the release after 3.0.119): one helper `remove_model_dir`, Need::Model
+  requires config.json behind a link, never the models dir or an ancestor, per-model link removed with its target, publisher link kept;
+  read-only error hint; a CANCELLED download/copy removes the folder only if that job CREATED it, else only `.part` files - review D1 found a Resume+Cancel of an existing incomplete model wiped it, also before the change; ancestor check by dev+inode for macOS firmlinks). Until it ships: delete on the Studio with `rm -rf` of the EXACT SSD path after the marker check, and log it in
+  /Volumes/AI-workhorse/models/goose/DELETED-2026-10-19.log. The LAPTOP column is the SAME files over a read-only rclone NFS share
+  (192.168.0.2:/ = models/goose), so a laptop-side delete can never work and both columns vanish together; the laptop's listing lags a
+  deletion by minutes (rclone dir cache).
