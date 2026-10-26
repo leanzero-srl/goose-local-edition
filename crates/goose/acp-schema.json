@@ -9407,6 +9407,13 @@
           ],
           "description": "`false` lets a vision-bearing checkpoint take the engine's MLLM lane; absent/`true` pins\nthe text lane (`--text-only`). No effect on a checkpoint that declares no vision."
         },
+        "pleOffload": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Keep the n-gram (PLE) table on disk (`--qwen4-ple-offload`). Absent = auto: on for a\nQwen3.8-Flash-Next checkpoint that would not otherwise fit this Mac. Ignored for a\ncheckpoint without the table (`MlxLocalModelDto::has_ngram_table`)."
+        },
         "thinking": {
           "anyOf": [
             {
@@ -9660,6 +9667,16 @@
             "string",
             "null"
           ]
+        },
+        "hasNgramTable": {
+          "type": "boolean",
+          "description": "The checkpoint carries an n-gram (PLE) table the engine can leave on disk: the\n\"Keep n-gram table on disk\" lever is offered only then.",
+          "default": false
+        },
+        "ngramTableAutoOn": {
+          "type": "boolean",
+          "description": "What auto resolves to on this Mac (on = the model would not otherwise fit).",
+          "default": false
         }
       },
       "required": [

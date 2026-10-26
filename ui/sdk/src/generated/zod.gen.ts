@@ -3842,6 +3842,10 @@ export const zMlxModelProfileDto = z.object({
         z.boolean(),
         z.null()
     ]).optional(),
+    pleOffload: z.union([
+        z.boolean(),
+        z.null()
+    ]).optional(),
     thinking: z.union([
         zMlxThinkingModeDto,
         z.null()
@@ -4050,7 +4054,9 @@ export const zMlxLocalModelDto = z.object({
     hybridError: z.union([
         z.string(),
         z.null()
-    ]).optional()
+    ]).optional(),
+    hasNgramTable: z.boolean().optional().default(false),
+    ngramTableAutoOn: z.boolean().optional().default(false)
 });
 
 export const zMlxEngineModelsListResponse_unstable = z.object({

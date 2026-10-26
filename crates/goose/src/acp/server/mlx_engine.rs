@@ -9,8 +9,9 @@ use crate::providers::mlx_serving_intent::{
     self, DeletedOn, IntentKind, IntentRecord, ServingIntent,
 };
 use goose_sidecar::engine::{
-    expand_tilde, global_manager, inspect_model_dir, EngineLoad, EngineSettings, MlxEngineManager,
-    ModelProfile, MountRefused, StrayListenerHolder, StrayListenerStep, ThinkingMode,
+    expand_tilde, global_manager, inspect_model_dir, ple_offload_on, EngineLoad, EngineSettings,
+    MlxEngineManager, ModelProfile, MountRefused, StrayListenerHolder, StrayListenerStep,
+    ThinkingMode,
 };
 use goose_sidecar::fit::{FitVerdict, AVAILABLE_MARGIN_RATIO};
 use goose_sidecar::hf::{self, DownloadTracker};
@@ -18,6 +19,7 @@ use goose_sidecar::kv_cache::{
     self, KvCacheFacts, KvCacheMeasurement, KvCacheMode, KvModeMeasurement,
 };
 use goose_sidecar::model_identity::NodeModel;
+use goose_sidecar::ple_offload;
 use goose_sidecar::prompt_lookup::{self, PromptLookupMode, PromptLookupProfile};
 use goose_sidecar::thinking::{self, ThinkingCapabilities};
 use serde::de::DeserializeOwned;
@@ -357,6 +359,7 @@ fn profile_to_dto(profile: ModelProfile) -> MlxModelProfileDto {
         speculative: profile.speculative,
         adapter_path: profile.adapter_path,
         text_only: profile.text_only,
+        ple_offload: profile.ple_offload,
         thinking: profile.thinking.map(|mode| match mode {
             ThinkingMode::On => MlxThinkingModeDto::On,
             ThinkingMode::Off => MlxThinkingModeDto::Off,
@@ -437,6 +440,7 @@ fn profile_from_dto(dto: MlxModelProfileDto) -> ModelProfile {
         speculative: dto.speculative,
         adapter_path: dto.adapter_path,
         text_only: dto.text_only,
+        ple_offload: dto.ple_offload,
         thinking: dto.thinking.map(|mode| match mode {
             MlxThinkingModeDto::On => ThinkingMode::On,
             MlxThinkingModeDto::Off => ThinkingMode::Off,
@@ -918,6 +922,9 @@ async fn core_models_list(
                     Err(e) => (None, Some(format!("{e:#}"))),
                 };
                 let has_mtp_head = inspect_model_dir(&dir).has_mtp_sidecar;
+                let has_ngram_table = ple_offload::has_table(&dir);
+                let ngram_table_auto_on = has_ngram_table
+                    && ple_offload_on(&dir, &ModelProfile::default(), ple_offload::Machine::local);
                 MlxLocalModelDto {
                     id: m.id,
                     size_bytes: m.size_bytes,
@@ -932,6 +939,8 @@ async fn core_models_list(
                     has_mtp_head,
                     hybrid,
                     hybrid_error,
+                    has_ngram_table,
+                    ngram_table_auto_on,
                 }
             })
             .collect(),
@@ -1946,6 +1955,26 @@ mod tests {
         assert!(auto.prompt_lookup.is_auto());
         assert_eq!(
             serde_json::to_value(profile_to_dto(auto)).unwrap(),
+            serde_json::json!({})
+        );
+    }
+
+    #[test]
+    fn profile_ngram_table_choice_survives_the_dto_round_trip_and_auto_stays_off_the_wire() {
+        for on in [true, false] {
+            let profile = ModelProfile {
+                ple_offload: Some(on),
+                ..Default::default()
+            };
+            let wire = serde_json::to_value(profile_to_dto(profile.clone())).unwrap();
+            assert_eq!(wire, serde_json::json!({ "pleOffload": on }));
+            assert_eq!(
+                profile_from_dto(serde_json::from_value(wire).unwrap()),
+                profile
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(profile_to_dto(ModelProfile::default())).unwrap(),
             serde_json::json!({})
         );
     }

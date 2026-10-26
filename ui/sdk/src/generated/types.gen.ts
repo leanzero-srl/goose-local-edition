@@ -3811,6 +3811,12 @@ export type MlxModelProfileDto = {
      */
     textOnly?: boolean | null;
     /**
+     * Keep the n-gram (PLE) table on disk (`--qwen4-ple-offload`). Absent = auto: on for a
+     * Qwen3.8-Flash-Next checkpoint that would not otherwise fit this Mac. Ignored for a
+     * checkpoint without the table (`MlxLocalModelDto::has_ngram_table`).
+     */
+    pleOffload?: boolean | null;
+    /**
      * Sent as `chat_template_kwargs.enable_thinking` on every turn a session routes to this
      * model: `"on"` | `"off"`. Absent = auto — nothing is sent and the engine decides (Rapid-MLX
      * turns thinking off whenever the request carries tools). Captured once per session.
@@ -3932,6 +3938,15 @@ export type MlxLocalModelDto = {
      */
     hybrid?: boolean | null;
     hybridError?: string | null;
+    /**
+     * The checkpoint carries an n-gram (PLE) table the engine can leave on disk: the
+     * "Keep n-gram table on disk" lever is offered only then.
+     */
+    hasNgramTable?: boolean;
+    /**
+     * What auto resolves to on this Mac (on = the model would not otherwise fit).
+     */
+    ngramTableAutoOn?: boolean;
 };
 
 /**

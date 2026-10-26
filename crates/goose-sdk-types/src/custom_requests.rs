@@ -2362,6 +2362,11 @@ pub struct MlxModelProfileDto {
     /// the text lane (`--text-only`). No effect on a checkpoint that declares no vision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_only: Option<bool>,
+    /// Keep the n-gram (PLE) table on disk (`--qwen4-ple-offload`). Absent = auto: on for a
+    /// Qwen3.8-Flash-Next checkpoint that would not otherwise fit this Mac. Ignored for a
+    /// checkpoint without the table (`MlxLocalModelDto::has_ngram_table`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ple_offload: Option<bool>,
     /// Sent as `chat_template_kwargs.enable_thinking` on every turn a session routes to this
     /// model: `"on"` | `"off"`. Absent = auto — nothing is sent and the engine decides (Rapid-MLX
     /// turns thinking off whenever the request carries tools). Captured once per session.
@@ -3079,6 +3084,13 @@ pub struct MlxLocalModelDto {
     pub hybrid: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hybrid_error: Option<String>,
+    /// The checkpoint carries an n-gram (PLE) table the engine can leave on disk: the
+    /// "Keep n-gram table on disk" lever is offered only then.
+    #[serde(default)]
+    pub has_ngram_table: bool,
+    /// What auto resolves to on this Mac (on = the model would not otherwise fit).
+    #[serde(default)]
+    pub ngram_table_auto_on: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
