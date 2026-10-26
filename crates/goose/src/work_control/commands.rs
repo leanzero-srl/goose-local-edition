@@ -248,8 +248,8 @@ impl OwnerRunRegistry {
             .begin_with("BEGIN IMMEDIATE")
             .await
             .map_err(unavailable)?;
-        sqlx::query("UPDATE owner_commands SET receipt_json=?,state=? WHERE account_id=? AND device_id=? AND command_id=?")
-            .bind(serde_json::to_string(&receipt).map_err(unavailable)?).bind(state).bind(account.to_string()).bind(device.to_string()).bind(receipt.command_id.to_string())
+        sqlx::query("UPDATE owner_commands SET receipt_json=?,state=?,message_id=?,run_id=? WHERE account_id=? AND device_id=? AND command_id=?")
+            .bind(serde_json::to_string(&receipt).map_err(unavailable)?).bind(state).bind(&receipt.message_id).bind(receipt.run_id.map(|id| id.to_string())).bind(account.to_string()).bind(device.to_string()).bind(receipt.command_id.to_string())
             .execute(&mut *tx).await.map_err(unavailable)?;
         sqlx::query(
             "UPDATE work_identity SET event_kind='command_receipt' WHERE work_id=? AND deleted=0",
@@ -334,19 +334,31 @@ impl OwnerRunRegistry {
             .clone();
         // Preparation can load extensions, but cannot run the model or mutate its transcript.
         // It happens before the lock so other work's stop/approval never waits for MCP startup.
-        let prepared = if matches!(command.action, ActionPayload::Send { .. }) {
-            let executor = executor.as_ref().ok_or_else(|| {
-                ControllerError::unavailable("owner prompt executor is not initialized")
-            })?;
-            Some(
-                executor
-                    .prepare(&record.local_locator)
-                    .await
-                    .map_err(unavailable)?,
-            )
-        } else {
-            None
+        let question_continuation = match &command.action {
+            ActionPayload::AnswerInput {
+                input_id,
+                option_id,
+                ..
+            } if command.expected_run_id.is_none() && option_id != "dismiss" => self
+                .question_input(&record.local_locator, *input_id)
+                .await?
+                .is_some(),
+            _ => false,
         };
+        let prepared =
+            if matches!(command.action, ActionPayload::Send { .. }) || question_continuation {
+                let executor = executor.as_ref().ok_or_else(|| {
+                    ControllerError::unavailable("owner prompt executor is not initialized")
+                })?;
+                Some(
+                    executor
+                        .prepare(&record.local_locator)
+                        .await
+                        .map_err(unavailable)?,
+                )
+            } else {
+                None
+            };
         let mut runs = self.runs.lock().await;
         let fresh = auth.recheck().await?;
         fresh.check_fresh()?;
@@ -422,46 +434,7 @@ impl OwnerRunRegistry {
                     content_blocks(content)?,
                 );
                 let executor = executor.expect("send executor prepared above");
-                let registry = self.clone();
-                let receipt = receipt.clone();
-                // This task owns the same complete ACP turn used by local sends. The HTTP ACK
-                // and every viewer may disappear while it continues polling the actual Agent.
-                tokio::spawn(async move {
-                    let result = executor.execute(args, ticket.clone()).await;
-                    if let Err(error) = result {
-                        tracing::warn!(?error, run_id = %ticket.run_id, "controller owner turn failed");
-                    }
-                    registry
-                        .finish(&ticket.session_id, &ticket.run_id.to_string())
-                        .await;
-                    let proof: Result<bool, _> = sqlx::query_scalar(
-                        "SELECT EXISTS(SELECT 1 FROM messages WHERE session_id=? AND message_id=?)",
-                    )
-                    .bind(&ticket.session_id)
-                    .bind(&receipt.message_id)
-                    .fetch_one(match registry.pool().await {
-                        Ok(pool) => pool,
-                        Err(error) => {
-                            tracing::error!(%error, "owner send reconciliation store unavailable");
-                            return;
-                        }
-                    })
-                    .await;
-                    let (state, reason) = match proof {
-                        Ok(true) => (CommandState::Delivered, None),
-                        Ok(false) => (
-                            CommandState::OutcomeUnknown,
-                            Some("prompt ended without persisted message proof".into()),
-                        ),
-                        Err(error) => (CommandState::OutcomeUnknown, Some(error.to_string())),
-                    };
-                    if let Err(error) = registry
-                        .update_receipt(account, device, receipt, state, reason)
-                        .await
-                    {
-                        tracing::error!(%error, "owner send receipt could not be persisted");
-                    }
-                });
+                self.spawn_command_prompt(executor, args, ticket, account, device, receipt.clone());
             }
             ActionPayload::Steer { content } => {
                 let run = runs
@@ -507,6 +480,79 @@ impl OwnerRunRegistry {
                 option_id,
                 value,
             } => {
+                if command.expected_run_id.is_none() {
+                    if self
+                        .question_input(&record.local_locator, *input_id)
+                        .await?
+                        .is_none()
+                    {
+                        return Err(conflict("input_not_found", "idle input no longer exists"));
+                    }
+                    let args = self
+                        .resolve_question(
+                            &record.local_locator,
+                            command.work.work_id,
+                            command.expected_store_generation,
+                            *input_id,
+                            &InputAnswer {
+                                option_id: option_id.clone(),
+                                value: value.clone(),
+                            },
+                        )
+                        .await?;
+                    if let Some(args) = args {
+                        let (agent, manager) = prepared.ok_or_else(|| {
+                            unavailable("question continuation has no prepared owner")
+                        })?;
+                        let mut receipt = receipt.clone();
+                        let run_id = Uuid::new_v4();
+                        receipt.run_id = Some(run_id);
+                        receipt.message_id = Some(format!(
+                            "controller_{account}_{device}_{}",
+                            command.command_id
+                        ));
+                        self.update_receipt(
+                            account,
+                            device,
+                            receipt.clone(),
+                            CommandState::Dispatching,
+                            None,
+                        )
+                        .await?;
+                        let ticket = self
+                            .reserve_locked(
+                                &mut runs,
+                                &record.local_locator,
+                                run_id,
+                                CancellationToken::new(),
+                                agent,
+                                manager,
+                                receipt.message_id.clone(),
+                            )
+                            .await
+                            .map_err(unavailable)?;
+                        self.spawn_command_prompt(
+                            executor.ok_or_else(|| {
+                                unavailable("question continuation has no owner executor")
+                            })?,
+                            args,
+                            ticket,
+                            account,
+                            device,
+                            receipt,
+                        );
+                    } else {
+                        self.update_receipt(
+                            account,
+                            device,
+                            receipt.clone(),
+                            CommandState::Delivered,
+                            None,
+                        )
+                        .await?;
+                    }
+                    return Ok(());
+                }
                 self.answer_input_locked(
                     &runs,
                     *input_id,
@@ -531,6 +577,57 @@ impl OwnerRunRegistry {
             _ => return Err(unsupported("action has no execution adapter")),
         }
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_command_prompt(
+        self: &Arc<Self>,
+        executor: Arc<dyn super::OwnerExecutor>,
+        args: PromptRequest,
+        ticket: super::RunTicket,
+        account: Uuid,
+        device: Uuid,
+        receipt: CommandReceipt,
+    ) {
+        let registry = self.clone();
+        // This task owns the same complete ACP turn used by local sends. The HTTP ACK
+        // and every viewer may disappear while it continues polling the actual Agent.
+        tokio::spawn(async move {
+            let result = executor.execute(args, ticket.clone()).await;
+            if let Err(error) = result {
+                tracing::warn!(?error, run_id = %ticket.run_id, "controller owner turn failed");
+            }
+            registry
+                .finish(&ticket.session_id, &ticket.run_id.to_string())
+                .await;
+            let proof: Result<bool, _> = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM messages WHERE session_id=? AND message_id=?)",
+            )
+            .bind(&ticket.session_id)
+            .bind(&receipt.message_id)
+            .fetch_one(match registry.pool().await {
+                Ok(pool) => pool,
+                Err(error) => {
+                    tracing::error!(%error, "owner send reconciliation store unavailable");
+                    return;
+                }
+            })
+            .await;
+            let (state, reason) = match proof {
+                Ok(true) => (CommandState::Delivered, None),
+                Ok(false) => (
+                    CommandState::OutcomeUnknown,
+                    Some("prompt ended without persisted message proof".into()),
+                ),
+                Err(error) => (CommandState::OutcomeUnknown, Some(error.to_string())),
+            };
+            if let Err(error) = registry
+                .update_receipt(account, device, receipt, state, reason)
+                .await
+            {
+                tracing::error!(%error, "owner send receipt could not be persisted");
+            }
+        });
     }
 
     pub(super) fn dispatch_next(self: &Arc<Self>, session_id: String, completed_run: String) {
@@ -579,7 +676,11 @@ fn validate_action(command: &WorkCommand) -> Result<(), ControllerError> {
         ActionPayload::Stop {} | ActionPayload::AnswerInput { .. } => {}
         _ => return Err(unsupported("this action has no control adapter")),
     }
-    if !matches!(command.action, ActionPayload::Send { .. }) && command.expected_run_id.is_none() {
+    if matches!(
+        command.action,
+        ActionPayload::Steer { .. } | ActionPayload::Stop {}
+    ) && command.expected_run_id.is_none()
+    {
         return Err(conflict(
             "stale_run",
             "this action needs an exact active run",

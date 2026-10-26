@@ -38,9 +38,12 @@ impl OwnerRunRegistry {
         .fetch_all(self.pool().await.map_err(unavailable)?)
         .await
         .map_err(unavailable)?;
-        rows.into_iter()
+        let mut pending = rows
+            .into_iter()
             .map(|row| serde_json::from_str(&row).map_err(unavailable))
-            .collect()
+            .collect::<Result<Vec<_>, _>>()?;
+        pending.extend(self.pending_questions(work_id).await?);
+        Ok(pending)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -64,7 +67,7 @@ impl OwnerRunRegistry {
         );
         let input = PendingInput {
             input_id: Uuid::new_v4(),
-            run_id: Uuid::parse_str(&run.run_id)?,
+            run_id: Some(Uuid::parse_str(&run.run_id)?),
             prompt,
             options,
             payload,

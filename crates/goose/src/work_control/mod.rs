@@ -5,6 +5,7 @@ mod commands;
 mod cursors;
 mod inputs;
 mod partials;
+mod questions;
 mod store;
 
 use crate::agents::Agent;
@@ -184,6 +185,18 @@ impl OwnerRunRegistry {
             .await
             .get(session_id)
             .and_then(|run| Uuid::parse_str(&run.run_id).ok())
+    }
+
+    pub async fn active_run_ids(&self) -> Vec<String> {
+        let mut ids = self
+            .runs
+            .lock()
+            .await
+            .values()
+            .map(|run| run.run_id.clone())
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids
     }
 
     pub async fn active_agent(&self, session_id: &str) -> Option<Arc<Agent>> {

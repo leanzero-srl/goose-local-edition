@@ -355,7 +355,7 @@ pub struct HistoryPage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingInput {
     pub input_id: Uuid,
-    pub run_id: Uuid,
+    pub run_id: Option<Uuid>,
     pub prompt: String,
     pub options: Vec<InputOption>,
     pub payload: PendingInputPayload,
@@ -371,6 +371,12 @@ pub enum PendingInputPayload {
     },
     Form {
         schema: serde_json::Value,
+    },
+    Question {
+        item_id: String,
+        why: String,
+        recommended_answer: String,
+        origin_run_id: Option<Uuid>,
     },
 }
 
@@ -388,6 +394,13 @@ pub struct WorkSnapshot {
     pub entry: CatalogEntry,
     pub pending_inputs: Vec<PendingInput>,
     pub history_watermark: CatalogCursor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkChanges {
+    pub frames: Vec<WorkFrame>,
+    pub resume_cursor: String,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

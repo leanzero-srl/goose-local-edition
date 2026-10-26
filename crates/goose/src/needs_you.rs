@@ -48,6 +48,13 @@ pub enum NeedsYouStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestionOrigin {
+    pub work_id: Uuid,
+    pub store_generation: Uuid,
+    pub run_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NeedsYouItem {
     pub id: String,
     pub question: String,
@@ -69,6 +76,8 @@ pub struct NeedsYouItem {
     /// honoured once, so a stale mark cannot shield a later typed message.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer_delivered_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_origin: Option<QuestionOrigin>,
 }
 
 /// Resolved items stay in the list: the record of what was asked and what the person said.
@@ -145,6 +154,9 @@ pub async fn raise(
     question: NewQuestion,
 ) -> Result<NeedsYouItem> {
     let question = validated(question)?;
+    let catalog = session_manager.work_catalog().await?;
+    let work = catalog.lookup_local_session(session_id).await?;
+    let watermark = catalog.watermark().await?;
     let item = NeedsYouItem {
         id: format!("ny_{}", Uuid::new_v4().simple()),
         question: question.question,
@@ -157,14 +169,25 @@ pub async fn raise(
         superseded_by: None,
         resolved_at: None,
         answer_delivered_at: None,
+        controller_origin: Some(QuestionOrigin {
+            work_id: Uuid::parse_str(&work.work_id)?,
+            store_generation: Uuid::parse_str(&watermark.generation)?,
+            run_id: work
+                .current_run_id
+                .as_deref()
+                .map(Uuid::parse_str)
+                .transpose()?,
+        }),
     };
-    session_manager
+    let item = session_manager
         .update_extension_state::<NeedsYouState, _>(session_id, |state| {
             let mut state = state.unwrap_or_default();
             state.items.push(item.clone());
             Ok((state, item))
         })
-        .await
+        .await?;
+    record_pending_change(session_manager, session_id).await?;
+    Ok(item)
 }
 
 pub async fn resolve(
@@ -173,7 +196,7 @@ pub async fn resolve(
     item_id: &str,
     resolution: Resolution,
 ) -> Result<NeedsYouItem> {
-    session_manager
+    let item = session_manager
         .update_extension_state::<NeedsYouState, _>(session_id, |state| {
             let mut state = state.unwrap_or_default();
             let item = state
@@ -199,7 +222,9 @@ pub async fn resolve(
             let resolved = item.clone();
             Ok((state, resolved))
         })
-        .await
+        .await?;
+    record_pending_change(session_manager, session_id).await?;
+    Ok(item)
 }
 
 /// The person's chat message arrived while questions were open: every open item of the session is
@@ -212,7 +237,7 @@ pub async fn supersede_open(
     session_id: &str,
     message_text: &str,
 ) -> Result<Vec<NeedsYouItem>> {
-    session_manager
+    let items = session_manager
         .update_extension_state::<NeedsYouState, _>(session_id, |state| {
             let mut state = state.unwrap_or_default();
             let now = Utc::now();
@@ -230,7 +255,17 @@ pub async fn supersede_open(
             superseded.sort_by_key(|item| item.created_at);
             Ok((state, superseded))
         })
-        .await
+        .await?;
+    if !items.is_empty() {
+        record_pending_change(session_manager, session_id).await?;
+    }
+    Ok(items)
+}
+
+async fn record_pending_change(session_manager: &SessionManager, session_id: &str) -> Result<()> {
+    sqlx::query("UPDATE work_identity SET state=CASE WHEN current_run_id IS NOT NULL THEN state WHEN EXISTS(SELECT 1 FROM sessions s, json_each(s.extension_data, '$.\"needs_you.v0\".items') item WHERE s.id=? AND json_extract(item.value,'$.status')='open') THEN 'waiting_input' ELSE 'idle' END, event_kind='pending_input' WHERE local_locator=? AND deleted=0")
+        .bind(session_id).bind(session_id).execute(session_manager.storage().pool().await?).await?;
+    Ok(())
 }
 
 /// The prompt `_meta` key under `goose` that marks a chat message as the card's answer (Q-344).

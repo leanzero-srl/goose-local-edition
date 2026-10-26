@@ -113,6 +113,10 @@ impl crate::work_control::InputHandler for OwnerElicitation {
             .send_request(CreateElicitationRequestMessage(self.request.clone()))
             .on_receiving_result(move |result| async move {
                 if let Ok(response) = result {
+                    let run_id = input.run_id.ok_or_else(|| {
+                        agent_client_protocol::Error::internal_error()
+                            .data("form input has no owner run")
+                    })?;
                     let answer = match elicitation_response_from_acp(response.0) {
                         ElicitationOutcome::Accept(value) => crate::work_control::InputAnswer {
                             option_id: "accept".into(),
@@ -127,9 +131,7 @@ impl crate::work_control::InputHandler for OwnerElicitation {
                             value: None,
                         },
                     };
-                    if let Err(error) = registry
-                        .answer_input(input.input_id, input.run_id, answer)
-                        .await
+                    if let Err(error) = registry.answer_input(input.input_id, run_id, answer).await
                     {
                         tracing::debug!(%error, "elicitation answer was not current");
                     }

@@ -132,6 +132,13 @@ pub trait ControllerBackend: Send + Sync {
         work: &WorkRef,
         cursor: &str,
     ) -> Result<BoxStream<'static, Result<WorkFrame, ControllerError>>, ControllerError>;
+    async fn work_changes(
+        &self,
+        device: &AuthenticatedDevice,
+        work: &WorkRef,
+        generation: Uuid,
+        cursor: &str,
+    ) -> Result<WorkChanges, ControllerError>;
     /// Acknowledge only after durable acceptance. Keep `dispatch_auth` with any queue item
     /// and invoke its dispatch guard under the owner lock immediately before side effects.
     async fn accept_command(
@@ -178,6 +185,10 @@ pub fn router(ctx: ControllerContext) -> Result<Router, ControllerError> {
         .route("/v1/controller/catalog/stream", get(catalog_stream))
         .route("/v1/controller/work/{kind}/{work_id}", get(snapshot))
         .route("/v1/controller/work/{kind}/{work_id}/history", get(history))
+        .route(
+            "/v1/controller/work/{kind}/{work_id}/changes",
+            get(work_changes),
+        )
         .route(
             "/v1/controller/work/{kind}/{work_id}/stream",
             get(work_stream),
@@ -296,6 +307,33 @@ struct WorkQuery {
     page_token: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct WorkChangesQuery {
+    store_generation: Uuid,
+    cursor: String,
+}
+
+async fn work_changes(
+    State(ctx): State<ControllerContext>,
+    headers: HeaderMap,
+    Path((kind, id)): Path<(WorkKind, Uuid)>,
+    Query(q): Query<WorkChangesQuery>,
+) -> Result<Json<WorkChanges>, ControllerError> {
+    let (_, device) = authenticate(&ctx, &headers, ControllerScope::HistoryRead).await?;
+    check_generation(&ctx, q.store_generation)?;
+    let result = ctx
+        .backend
+        .work_changes(
+            &device,
+            &work_ref(&ctx, kind, id),
+            q.store_generation,
+            &q.cursor,
+        )
+        .await?;
+    device.check_fresh()?;
+    Ok(Json(result))
+}
+
 async fn catalog(
     State(ctx): State<ControllerContext>,
     headers: HeaderMap,
@@ -400,7 +438,7 @@ async fn command(
     check_generation(&ctx, command.expected_store_generation)?;
     if matches!(
         command.action.action(),
-        WorkAction::Steer | WorkAction::Stop | WorkAction::AnswerInput
+        WorkAction::Steer | WorkAction::Stop
     ) && command.expected_run_id.is_none()
     {
         return Err(ControllerError::bad_request(

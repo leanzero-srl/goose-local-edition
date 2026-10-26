@@ -94,6 +94,15 @@ impl ControllerBackend for Backend {
     ) -> Result<HistoryPage, ControllerError> {
         Err(unused())
     }
+    async fn work_changes(
+        &self,
+        _: &AuthenticatedDevice,
+        _: &WorkRef,
+        _: Uuid,
+        _: &str,
+    ) -> Result<WorkChanges, ControllerError> {
+        Err(unused())
+    }
     async fn work_stream(
         &self,
         _: &AuthenticatedDevice,

@@ -247,7 +247,11 @@ impl GooseControllerBackend {
                 }
                 actions
             } else {
-                vec![WorkAction::Send]
+                let mut actions = vec![WorkAction::Send];
+                if state == WorkState::WaitingInput {
+                    actions.push(WorkAction::AnswerInput);
+                }
+                actions
             }
         } else {
             Vec::new()
@@ -826,6 +830,86 @@ impl ControllerBackend for GooseControllerBackend {
                     work_id: work.work_id,
                 },
             )?,
+        })
+    }
+
+    async fn work_changes(
+        &self,
+        device: &AuthenticatedDevice,
+        work: &WorkRef,
+        generation: Uuid,
+        cursor: &str,
+    ) -> Result<WorkChanges, ControllerError> {
+        self.authenticate(device, ControllerScope::HistoryRead)?;
+        self.work_path(work, generation)?;
+        let cursor = self.decode(device, cursor)?;
+        if cursor.position
+            != (Position::WorkResume {
+                work_id: work.work_id,
+            })
+        {
+            return Err(invalid_cursor());
+        }
+        let current = self.fence().await?;
+        let watermark = StoreWatermark {
+            generation: cursor.generation.to_string(),
+            revision: cursor.revision,
+        };
+        let limit = self
+            .0
+            .policy
+            .page_size
+            .checked_add(1)
+            .ok_or_else(|| ControllerError::unavailable("work page size overflow"))?;
+        let mut events = self
+            .0
+            .catalog
+            .work_events(&work.work_id.to_string(), &watermark, limit)
+            .await
+            .map_err(store_error)?;
+        let latest = self
+            .0
+            .catalog
+            .lookup_at(&work.work_id.to_string(), &current)
+            .await
+            .map_err(store_error)?;
+        if !visible(&latest) {
+            self.visible_work(work, &watermark).await?;
+            let frame = self.frame(device, work, &latest, "tombstone", Value::Null)?;
+            return Ok(WorkChanges {
+                resume_cursor: frame.resume_cursor.clone(),
+                frames: vec![frame],
+                has_more: false,
+            });
+        }
+        let mut has_more = events.len() > self.0.policy.page_size;
+        events.truncate(self.0.policy.page_size);
+        let mut revision = watermark.revision;
+        let mut frames = Vec::new();
+        for event in events {
+            revision = event.revision;
+            if let Some(frame) = self.work_event(device, work, event).await? {
+                let terminal = frame.kind == "tombstone";
+                frames.push(frame);
+                if terminal {
+                    has_more = false;
+                    break;
+                }
+            }
+        }
+        if !has_more {
+            revision = revision.max(current.revision);
+        }
+        Ok(WorkChanges {
+            frames,
+            resume_cursor: self.new_token(
+                device,
+                revision,
+                Position::WorkResume {
+                    work_id: work.work_id,
+                },
+            )?,
+            has_more,
         })
     }
 

@@ -750,6 +750,132 @@ async fn backpressure_reports_a_gap_and_last_cursor_replays_the_committed_events
 }
 
 #[tokio::test]
+async fn finite_work_changes_match_stream_replay_and_empty_cursor_stays_usable() {
+    let f = Fixture::new(2, 32).await;
+    let (session, work) = f.create("selected", SessionType::User).await;
+    let (other, other_work) = f.create("other", SessionType::User).await;
+    let snapshot = f
+        .backend
+        .snapshot(&f.device, &work, f.generation)
+        .await
+        .unwrap();
+    for (id, text, visible) in [
+        ("one", "first", true),
+        ("hidden", "internal only", false),
+        ("two", "second", true),
+    ] {
+        f.manager
+            .add_message(
+                &session.id,
+                &Message::assistant()
+                    .with_id(id)
+                    .with_text(text)
+                    .with_visibility(visible, true),
+            )
+            .await
+            .unwrap();
+    }
+    f.manager
+        .add_message(
+            &other.id,
+            &Message::assistant()
+                .with_id("other")
+                .with_text("other private"),
+        )
+        .await
+        .unwrap();
+    let mut cursor = snapshot.work_cursor.clone();
+    let mut frames = Vec::new();
+    loop {
+        let page = f
+            .backend
+            .work_changes(&f.device, &work, f.generation, &cursor)
+            .await
+            .unwrap();
+        assert_ne!(page.resume_cursor, cursor);
+        cursor = page.resume_cursor;
+        frames.extend(page.frames);
+        if !page.has_more {
+            break;
+        }
+    }
+    assert!(frames
+        .iter()
+        .any(|frame| frame.payload["item"]["message_id"] == "one"));
+    assert!(frames
+        .iter()
+        .any(|frame| frame.payload["item"]["message_id"] == "two"));
+    assert!(!serde_json::to_string(&frames)
+        .unwrap()
+        .contains("internal only"));
+    assert!(!serde_json::to_string(&frames)
+        .unwrap()
+        .contains("other private"));
+    let mut stream = f
+        .backend
+        .work_stream(&f.device, &work, &snapshot.work_cursor)
+        .await
+        .unwrap();
+    for expected in &frames {
+        let actual = next_frame(&mut stream).await.unwrap();
+        assert_eq!(actual.sequence, expected.sequence);
+        assert_eq!(actual.kind, expected.kind);
+        assert_eq!(actual.payload, expected.payload);
+    }
+    let empty = tokio::time::timeout(
+        Duration::from_secs(1),
+        f.backend
+            .work_changes(&f.device, &work, f.generation, &cursor),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(empty.frames.is_empty());
+    assert!(!empty.has_more);
+    f.manager
+        .add_message(
+            &session.id,
+            &Message::assistant()
+                .with_id("later")
+                .with_text("after empty poll"),
+        )
+        .await
+        .unwrap();
+    let later = f
+        .backend
+        .work_changes(&f.device, &work, f.generation, &empty.resume_cursor)
+        .await
+        .unwrap();
+    assert!(later
+        .frames
+        .iter()
+        .any(|frame| frame.payload["item"]["message_id"] == "later"));
+    error_code(
+        f.backend
+            .work_changes(&f.device, &other_work, f.generation, &cursor)
+            .await,
+        "invalid_cursor",
+    );
+    let other_device = device(f.owner, f.account, f.generation, Uuid::new_v4()).await;
+    error_code(
+        f.backend
+            .work_changes(&other_device, &work, f.generation, &cursor)
+            .await,
+        "cursor_binding_mismatch",
+    );
+    f.catalog
+        .reset_generation(&f.generation.to_string(), "test replacement")
+        .await
+        .unwrap();
+    error_code(
+        f.backend
+            .work_changes(&f.device, &work, f.generation, &cursor)
+            .await,
+        "snapshot_required",
+    );
+}
+
+#[tokio::test]
 async fn catalog_stream_delivers_committed_changes_and_visibility_tombstones() {
     let f = Fixture::new(4, 8).await;
     let page = f.backend.catalog(&f.device, None).await.unwrap();

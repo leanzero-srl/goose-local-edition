@@ -146,7 +146,7 @@ async fn original_viewer_close_does_not_answer_permission_and_reconnected_view_r
     let late = registry
         .answer_input(
             input.input_id,
-            input.run_id,
+            input.run_id.unwrap(),
             InputAnswer {
                 option_id: "allow_once".into(),
                 value: None,

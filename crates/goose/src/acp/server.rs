@@ -3974,13 +3974,16 @@ impl InputHandler for OwnerPermission {
             cx.send_request(self.request.clone())
                 .on_receiving_result(move |result| async move {
                     if let Ok(response) = result {
+                        let run_id = input.run_id.ok_or_else(|| {
+                            agent_client_protocol::Error::internal_error()
+                                .data("permission input has no owner run")
+                        })?;
                         let answer = InputAnswer {
                             option_id: PermissionDecision::from(&response.outcome).to_string(),
                             value: None,
                         };
-                        if let Err(error) = registry
-                            .answer_input(input.input_id, input.run_id, answer)
-                            .await
+                        if let Err(error) =
+                            registry.answer_input(input.input_id, run_id, answer).await
                         {
                             tracing::debug!(%error, "permission answer was not current");
                         }

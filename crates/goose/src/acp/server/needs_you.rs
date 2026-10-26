@@ -479,6 +479,7 @@ mod tests {
             superseded_by: Some(String::new()),
             resolved_at: None,
             answer_delivered_at: None,
+            controller_origin: None,
         };
         let note = needs_you::superseded_note(&[item("Comma?"), item("Which folder?")], "  ");
         assert!(

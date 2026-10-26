@@ -140,6 +140,17 @@ impl ControllerBackend for Backend {
             "fixture does not serve history",
         ))
     }
+    async fn work_changes(
+        &self,
+        _: &AuthenticatedDevice,
+        _: &WorkRef,
+        _: Uuid,
+        _: &str,
+    ) -> Result<WorkChanges, ControllerError> {
+        Err(ControllerError::unavailable(
+            "fixture does not serve work changes",
+        ))
+    }
     async fn work_stream(
         &self,
         _: &AuthenticatedDevice,

@@ -54,7 +54,7 @@ impl OwnerRunRegistry {
             .bind(run.work_id.to_string()).bind(&run.generation).bind(&run.run_id).bind(chrono::Utc::now().to_rfc3339()).execute(&mut *tx).await?;
         sqlx::query("UPDATE owner_inputs SET state='interrupted' WHERE work_id=? AND run_id=? AND state='open'")
             .bind(run.work_id.to_string()).bind(&run.run_id).execute(&mut *tx).await?;
-        sqlx::query("UPDATE work_identity SET state='idle', current_run_id=NULL, event_kind='run_state' WHERE work_id=? AND current_run_id=? AND deleted=0 AND (SELECT generation FROM controller_store WHERE singleton=1)=?")
+        sqlx::query("UPDATE work_identity SET state=CASE WHEN EXISTS(SELECT 1 FROM sessions s, json_each(s.extension_data, '$.\"needs_you.v0\".items') item WHERE s.id=work_identity.local_locator AND json_extract(item.value,'$.status')='open') THEN 'waiting_input' ELSE 'idle' END, current_run_id=NULL, event_kind='pending_input' WHERE work_id=? AND current_run_id=? AND deleted=0 AND (SELECT generation FROM controller_store WHERE singleton=1)=?")
             .bind(run.work_id.to_string()).bind(&run.run_id).bind(&run.generation).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())

@@ -32,6 +32,7 @@ struct Executor {
     manager: Arc<AgentManager>,
     agent: Arc<Agent>,
     calls: Arc<AtomicUsize>,
+    requests: Arc<Mutex<Vec<PromptRequest>>>,
 }
 #[async_trait]
 impl OwnerExecutor for Executor {
@@ -43,6 +44,7 @@ impl OwnerExecutor for Executor {
         args: PromptRequest,
         ticket: RunTicket,
     ) -> Result<PromptResponse, agent_client_protocol::Error> {
+        self.requests.lock().await.push(args.clone());
         self.session_manager
             .add_message(
                 &ticket.session_id,
@@ -65,6 +67,7 @@ pub(crate) struct Fixture {
     authority: Arc<Authority>,
     receiver: ReceiverBinding,
     calls: Arc<AtomicUsize>,
+    requests: Arc<Mutex<Vec<PromptRequest>>>,
 }
 impl Fixture {
     pub(crate) async fn new() -> Self {
@@ -141,11 +144,13 @@ impl Fixture {
             .unwrap(),
         );
         let calls = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(Mutex::new(Vec::new()));
         runs.bind_executor(Arc::new(Executor {
             session_manager: manager.clone(),
             manager: agent_manager,
             agent: Arc::new(Agent::new()),
             calls: calls.clone(),
+            requests: requests.clone(),
         }));
         Self {
             _dir: dir,
@@ -155,6 +160,7 @@ impl Fixture {
             authority,
             receiver,
             calls,
+            requests,
         }
     }
     async fn command(&self, action: ActionPayload) -> WorkCommand {
@@ -434,6 +440,200 @@ async fn permission_live_receiver_accepts_once_and_only_then_reports_delivery() 
         .runs
         .finish(&fixture.session, &ticket.run_id.to_string())
         .await;
+}
+
+async fn raise_question(fixture: &Fixture) -> crate::needs_you::NeedsYouItem {
+    crate::needs_you::raise(
+        &fixture.manager,
+        &fixture.session,
+        crate::needs_you::NewQuestion {
+            question: "Which deployment target?".into(),
+            why: "The deployment needs a target.".into(),
+            recommended_answer: "staging".into(),
+            options: vec!["staging".into(), "production".into()],
+        },
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn idle_question_choice_has_original_origin_and_one_marked_owner_continuation() {
+    let fixture = Fixture::new().await;
+    let original = fixture.reserve_run().await;
+    let item = raise_question(&fixture).await;
+    let origin = item.controller_origin.as_ref().unwrap();
+    assert_eq!(origin.run_id, Some(original.run_id));
+    fixture
+        .runs
+        .finish(&fixture.session, &original.run_id.to_string())
+        .await;
+    let record = fixture
+        .manager
+        .work_catalog()
+        .await
+        .unwrap()
+        .lookup_local_session(&fixture.session)
+        .await
+        .unwrap();
+    assert_eq!(record.state, "waiting_input");
+    assert!(record.current_run_id.is_none());
+    let input = fixture
+        .runs
+        .pending_inputs(record.work_id.parse().unwrap())
+        .await
+        .unwrap()
+        .remove(0);
+    assert!(input.run_id.is_none());
+    assert_eq!(input.options[0].label, "staging");
+    assert!(
+        matches!(input.payload, PendingInputPayload::Question { origin_run_id: Some(run), .. } if run == original.run_id)
+    );
+    let command = fixture
+        .command(ActionPayload::AnswerInput {
+            input_id: input.input_id,
+            option_id: "choice_0".into(),
+            value: None,
+        })
+        .await;
+    assert!(command.expected_run_id.is_none());
+    let accepted = fixture.submit(command.clone()).await.unwrap();
+    until(|| fixture.calls.load(Ordering::SeqCst) == 1).await;
+    let request = fixture.requests.lock().await[0].clone();
+    assert_eq!(
+        request.meta.unwrap()["goose"]["needsYouAnswers"],
+        serde_json::json!([item.id])
+    );
+    assert!(serde_json::to_string(&request.prompt)
+        .unwrap()
+        .contains("staging"));
+    let replay = fixture.submit(command).await.unwrap();
+    assert_eq!(replay.command_id, accepted.command_id);
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+    assert!(crate::needs_you::resolve(
+        &fixture.manager,
+        &fixture.session,
+        &item.id,
+        crate::needs_you::Resolution::Answered("production".into())
+    )
+    .await
+    .is_err());
+    fixture.runs.stop(&fixture.session, None).await.unwrap();
+    let receipt = settled_receipt(&fixture, accepted.command_id).await;
+    assert!(matches!(receipt.state, CommandState::Delivered));
+    assert_ne!(receipt.run_id, Some(original.run_id));
+    assert!(receipt.message_id.is_some());
+}
+
+#[tokio::test]
+async fn invalid_idle_question_answer_stays_open_and_dismiss_starts_no_model() {
+    let fixture = Fixture::new().await;
+    let item = raise_question(&fixture).await;
+    let input_id = item.id.trim_start_matches("ny_").parse().unwrap();
+    for (option, value) in [
+        ("choice_9", None),
+        ("choice_0", Some("override")),
+        ("answer", Some("  ")),
+    ] {
+        let accepted = fixture
+            .submit(
+                fixture
+                    .command(ActionPayload::AnswerInput {
+                        input_id,
+                        option_id: option.into(),
+                        value: value.map(str::to_owned),
+                    })
+                    .await,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            settled_receipt(&fixture, accepted.command_id).await.state,
+            CommandState::Rejected
+        ));
+        assert_eq!(
+            crate::needs_you::open_items(&fixture.manager)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+    }
+    let accepted = fixture
+        .submit(
+            fixture
+                .command(ActionPayload::AnswerInput {
+                    input_id,
+                    option_id: "dismiss".into(),
+                    value: None,
+                })
+                .await,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        settled_receipt(&fixture, accepted.command_id).await.state,
+        CommandState::Delivered
+    ));
+    assert!(crate::needs_you::open_items(&fixture.manager)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn local_question_resolution_during_dispatch_wins_without_remote_continuation() {
+    let fixture = Fixture::new().await;
+    let item = raise_question(&fixture).await;
+    let input_id = item.id.trim_start_matches("ny_").parse().unwrap();
+    let command = fixture
+        .command(ActionPayload::AnswerInput {
+            input_id,
+            option_id: "answer".into(),
+            value: Some("production".into()),
+        })
+        .await;
+    let device = authorize(
+        fixture.authority.as_ref(),
+        "fixture-device",
+        &fixture.receiver,
+        ControllerScope::InputAnswer,
+    )
+    .await
+    .unwrap();
+    let guard = DispatchAuthorization::new(
+        fixture.authority.clone(),
+        "fixture-device".into(),
+        fixture.receiver.clone(),
+        ControllerScope::InputAnswer,
+        device.clone(),
+    );
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let resume = Arc::new(tokio::sync::Notify::new());
+    *fixture.authority.barrier.lock().await = Some((entered.clone(), resume.clone()));
+    let accepted = fixture
+        .runs
+        .accept_command(&device, command, guard)
+        .await
+        .unwrap();
+    entered.notified().await;
+    let local = crate::needs_you::resolve(
+        &fixture.manager,
+        &fixture.session,
+        &item.id,
+        crate::needs_you::Resolution::Answered("staging".into()),
+    )
+    .await
+    .unwrap();
+    resume.notify_one();
+    assert!(matches!(
+        settled_receipt(&fixture, accepted.command_id).await.state,
+        CommandState::Rejected
+    ));
+    assert_eq!(local.answer.as_deref(), Some("staging"));
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 0);
 }
 async fn until(mut condition: impl FnMut() -> bool) {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
