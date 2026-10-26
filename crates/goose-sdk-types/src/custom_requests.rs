@@ -3818,8 +3818,9 @@ pub struct MlxDistributedConfigDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watchdog_critical_ratio: Option<f64>,
     /// The share of each node's RAM the split's plan keeps free (budget = available − RAM × this,
-    /// at most the GPU ceiling). Absent = goose's shared reserve (0.093, every runner). An explicit
-    /// override for one config: at least the WARN reserve in force and below the default.
+    /// at most the GPU ceiling). Absent = the model's own reserve when goose has one (mimo_v2:
+    /// 0.05), else goose's shared reserve (0.093). An explicit override for one config: at least
+    /// the WARN reserve in force and below the shared default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_reserve_ratio: Option<f64>,
     pub nodes: Vec<MlxDistributedNodeConfigDto>,
@@ -3986,11 +3987,30 @@ pub struct MlxDistributedPreflightDto {
     pub ran_at_ms: u64,
     /// "jaccl" | "ring".
     pub backend: String,
-    /// "mlxLmTensor" (qwen3_5) | "pipelineQwen4" (qwen4_exp); absent when the model type has none.
+    /// "mlxLmTensor" (qwen3_5) | "pipelineQwen4" (qwen4_exp) | "mlxLmPipeline" (mimo_v2);
+    /// absent when the model type has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_type: Option<String>,
+    /// mlxLmPipeline only: layers per rank, rank 0 first (rank 0 holds the LAST layers). Each
+    /// node's `plan` carries its range and bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer_split: Option<Vec<u32>>,
+    /// mlxLmPipeline only: why this split, in the planner's words (shown verbatim).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_reason: Option<String>,
+    /// mlxLmPipeline only: the plan reserve (share of each node's RAM) in force, also on a refusal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_reserve_ratio: Option<f64>,
+    /// Where `planReserveRatio` came from: "default" (goose's shared reserve) | "model" (the
+    /// model's own reserve) | "user" (the config's `planReserveRatio`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_reserve_source: Option<String>,
+    /// mlxLmPipeline refusal only: the highest `planReserveRatio` a config may set at which a split
+    /// fits (the plan check's message names it too); absent when no settable reserve fits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fitting_reserve_ratio: Option<f64>,
     /// The context this launch allows (goose-side bookkeeping — the chat context limit).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_limit: Option<u64>,

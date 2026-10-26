@@ -3408,6 +3408,8 @@ mod tests {
             layer_split: None,
             split_reason: None,
             plan_reserve_ratio: None,
+            plan_reserve_source: None,
+            fitting_reserve_ratio: None,
             checks: Vec::new(),
             nodes: vec![node_preflight(0, None), node_preflight(1, Some(3 * GIB))],
             repairs: Vec::new(),
@@ -4102,6 +4104,8 @@ mod tests {
             layer_split: None,
             split_reason: None,
             plan_reserve_ratio: None,
+            plan_reserve_source: None,
+            fitting_reserve_ratio: None,
             checks: Vec::new(),
             nodes: (0..2)
                 .map(|rank| preflight::NodePreflight {
@@ -5121,6 +5125,8 @@ mod tests {
             layer_split: None,
             split_reason: None,
             plan_reserve_ratio: None,
+            plan_reserve_source: None,
+            fitting_reserve_ratio: None,
             checks: Vec::new(),
             nodes: vec![short],
             repairs: Vec::new(),

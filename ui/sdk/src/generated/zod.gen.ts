@@ -4544,6 +4544,26 @@ export const zMlxDistributedPreflightDto = z.object({
         z.string(),
         z.null()
     ]).optional(),
+    layerSplit: z.union([
+        z.array(z.number().int().gte(0)),
+        z.null()
+    ]).optional(),
+    splitReason: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    planReserveRatio: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    planReserveSource: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    fittingReserveRatio: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
     contextLimit: z.union([
         z.number().int().gte(0),
         z.null()
@@ -4631,6 +4651,10 @@ export const zMlxDistributedConfigDto = z.object({
         z.null()
     ]).optional(),
     watchdogCriticalRatio: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    planReserveRatio: z.union([
         z.number(),
         z.null()
     ]).optional(),

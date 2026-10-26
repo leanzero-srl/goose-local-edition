@@ -50,6 +50,37 @@ pub const RUNNERS: &[(&str, Runner)] = &[
     ("mimo_v2", Runner::MlxLmPipeline),
 ];
 
+/// Per-model plan reserves, used when the config sets no `plan_reserve_ratio`: a model whose
+/// split measured fine inside the shared reserve plans at its own thinner one instead of being
+/// refused. Floored at the watchdog WARN reserve in force (`DistributedConfig::plan_reserve`).
+/// The shared default (`AVAILABLE_MARGIN_RATIO`) is never lowered for every model.
+pub const MODEL_PLAN_RESERVES: &[(&str, f64)] = &[
+    // ratio: of each node's RAM; mimo_v2's 19/29 run served at 68.7 / 100.7 GB footprints with a ~1 GB swap peak and no watchdog trip (2026-10-26), the owner budgets ~80 GB workhorse / ~110 GB mule; the shared 9.3% refuses it, 7.7% is the highest that fits.
+    ("mimo_v2", 0.05),
+];
+
+/// Where the plan reserve in force came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReserveSource {
+    /// The shared `AVAILABLE_MARGIN_RATIO` every runner plans with.
+    Default,
+    /// The model's own entry in [`MODEL_PLAN_RESERVES`].
+    Model,
+    /// The config's `plan_reserve_ratio`.
+    User,
+}
+
+impl ReserveSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReserveSource::Default => "default",
+            ReserveSource::Model => "model",
+            ReserveSource::User => "user",
+        }
+    }
+}
+
 impl Runner {
     pub fn for_model_type(model_type: &str) -> Result<Self> {
         match RUNNERS.iter().find(|(t, _)| *t == model_type) {
@@ -310,10 +341,25 @@ impl DistributedConfig {
         )
     }
 
-    /// The plan reserve in force: the override, else the shared `AVAILABLE_MARGIN_RATIO`.
-    pub fn plan_reserve_ratio(&self) -> f64 {
-        self.plan_reserve_ratio
-            .unwrap_or(super::AVAILABLE_MARGIN_RATIO)
+    /// The plan reserve in force for a checkpoint of `model_type`, with where it came from: the
+    /// config's override, else the model's entry in [`MODEL_PLAN_RESERVES`] (never below the WARN
+    /// reserve in force), else the shared `AVAILABLE_MARGIN_RATIO`.
+    pub fn plan_reserve(&self, model_type: Option<&str>) -> (f64, ReserveSource) {
+        if let Some(reserve) = self.plan_reserve_ratio {
+            return (reserve, ReserveSource::User);
+        }
+        let model = model_type
+            .and_then(|t| MODEL_PLAN_RESERVES.iter().find(|(m, _)| *m == t))
+            .map(|(_, r)| *r);
+        match model {
+            Some(reserve) => (
+                reserve
+                    .max(self.watchdog_ratios().0)
+                    .min(super::AVAILABLE_MARGIN_RATIO),
+                ReserveSource::Model,
+            ),
+            None => (super::AVAILABLE_MARGIN_RATIO, ReserveSource::Default),
+        }
     }
 
     /// The slot count in force for a pipeline run.

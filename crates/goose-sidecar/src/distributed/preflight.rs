@@ -182,12 +182,24 @@ pub struct PreflightReport {
     /// mlx_lm pipeline only: layers per rank, rank 0 first (rank 0 holds the LAST layers).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layer_split: Option<Vec<u32>>,
+    /// mlx_lm pipeline only: full-attention layers per rank, rank 0 first (`LayerSplit::full_layers`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_full_layers: Option<Vec<u32>>,
     /// mlx_lm pipeline only: why this split (the planner's max-min-spare sentence).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split_reason: Option<String>,
-    /// mlx_lm pipeline only: the plan reserve (share of RAM) the split was planned at.
+    /// mlx_lm pipeline only: the plan reserve (share of RAM) the split was planned at, also on
+    /// a refusal (the reserve that refused).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_reserve_ratio: Option<f64>,
+    /// Where `plan_reserve_ratio` came from: the shared default, the model's own entry
+    /// (`config::MODEL_PLAN_RESERVES`) or the config's override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_reserve_source: Option<super::config::ReserveSource>,
+    /// mlx_lm pipeline refusal only: the highest reserve a config may set at which a split fits
+    /// (the refusal's sentence names it too); `None` when no settable reserve fits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fitting_reserve_ratio: Option<f64>,
     /// Cluster-wide checks (runner, cross-node model/version agreement, the plan).
     pub checks: Vec<Check>,
     pub nodes: Vec<NodePreflight>,
@@ -258,6 +270,31 @@ impl PreflightReport {
             .collect::<Option<Vec<_>>>()
             .context("the preflight produced no per-rank plan")?;
         super::launch::TensorLaunch::for_ranks(&plans)
+    }
+
+    /// The mlx_lm pipeline ranks' launch figures and prompt-cache weights, from the plans and the
+    /// split the preflight approved (`TensorLaunch::for_pipeline_ranks`).
+    pub fn mlx_pipeline_launches(
+        &self,
+    ) -> Result<(
+        Vec<super::launch::TensorLaunch>,
+        Vec<super::launch::PipelineCacheWeights>,
+    )> {
+        let plans = self
+            .nodes
+            .iter()
+            .map(|n| n.plan.as_ref())
+            .collect::<Option<Vec<_>>>()
+            .context("the preflight produced no per-rank plan")?;
+        let layers = self
+            .layer_split
+            .as_deref()
+            .context("the preflight approved no layer split")?;
+        let full = self
+            .pipeline_full_layers
+            .as_deref()
+            .context("the preflight carries no full-attention layers per rank: run it again")?;
+        super::launch::TensorLaunch::for_pipeline_ranks(&plans, layers, full)
     }
 }
 
@@ -969,6 +1006,13 @@ fn read_answer(
         ));
     }
 
+    if runner == Some(Runner::MlxLmPipeline) && node.pipeline_python.is_none() {
+        answer.checks.push(Check::fail(
+            "pipeline",
+            "no pipeline_python: the mlx_lm pipeline rank (mimo_v2) runs the Rapid-MLX fork's \
+             interpreter (its vendored mlx_lm architectures)",
+        ));
+    }
     if runner == Some(Runner::PipelineQwen4) {
         answer.checks.extend(pipeline_runner_checks(
             node,
@@ -1238,8 +1282,11 @@ pub async fn run_preflight(
         pipeline_starts: None,
         slots: None,
         layer_split: None,
+        pipeline_full_layers: None,
         split_reason: None,
         plan_reserve_ratio: None,
+        plan_reserve_source: None,
+        fitting_reserve_ratio: None,
         checks: Vec::new(),
         nodes: Vec::new(),
         repairs: Vec::new(),
@@ -1705,18 +1752,16 @@ fn plan_mlx_pipeline(
         }
         .to_string(),
     );
-    match plan_layer_split(
-        &facts,
-        &nodes,
-        config.plan_reserve_ratio(),
-        warn,
-        config.context,
-    ) {
+    let (reserve, source) = config.plan_reserve(report.model_type.as_deref());
+    report.plan_reserve_ratio = Some(reserve);
+    report.plan_reserve_source = Some(source);
+    match plan_layer_split(&facts, &nodes, reserve, warn, config.context) {
         Ok(split) => {
             report.context_limit = Some(split.context);
             report.max_context_fits = Some(split.context);
             report.pipeline_starts = Some(split.plans.iter().map(|p| p.layer_start).collect());
             report.layer_split = Some(split.layers.clone());
+            report.pipeline_full_layers = Some(split.full_layers.clone());
             report.split_reason = Some(split.reason.clone());
             report.plan_reserve_ratio = Some(split.reserve_ratio);
             report
@@ -1726,7 +1771,12 @@ fn plan_mlx_pipeline(
                 plans[rank] = Some(plan);
             }
         }
-        Err(e) => report.checks.push(Check::fail("plan", format!("{e:#}"))),
+        Err(e) => {
+            report.fitting_reserve_ratio = e
+                .downcast_ref::<super::layer_split::SplitRefusal>()
+                .and_then(|r| r.fitting_reserve_ratio);
+            report.checks.push(Check::fail("plan", format!("{e:#}")));
+        }
     }
 }
 
@@ -2742,8 +2792,11 @@ pub(crate) mod tests {
             pipeline_starts: None,
             slots: None,
             layer_split: None,
+            pipeline_full_layers: None,
             split_reason: None,
             plan_reserve_ratio: None,
+            plan_reserve_source: None,
+            fitting_reserve_ratio: None,
             checks: Vec::new(),
             nodes: Vec::new(),
             repairs: Vec::new(),

@@ -240,6 +240,8 @@ impl SplitNode {
 pub struct LayerSplit {
     /// Layers per rank, rank 0 first (rank 0 holds the LAST layers): mlx_lm's `split`.
     pub layers: Vec<u32>,
+    /// Full-attention layers per rank, rank 0 first (the rest are sliding window).
+    pub full_layers: Vec<u32>,
     /// Each rank's plan (`layer_start..layer_end`, bytes, budget).
     pub plans: Vec<RankPlan>,
     pub context: u64,
@@ -330,6 +332,23 @@ fn gb(bytes: i128) -> String {
     format!("{:.2} GB", bytes as f64 / 1e9)
 }
 
+/// The planner's refusal when no split fits at the reserve in force: the sentence with every
+/// node's numbers, and the highest reserve a config may set (at least the WARN floor) at which a
+/// split fits, so the app can offer it without parsing the sentence.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitRefusal {
+    pub message: String,
+    pub fitting_reserve_ratio: Option<f64>,
+}
+
+impl std::fmt::Display for SplitRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for SplitRefusal {}
+
 /// Plans the split. `context`: the requested context, `None` = the largest the chosen split
 /// fits. `warn_floor`: the lowest reserve a config may choose (the watchdog WARN reserve), named
 /// in the refusal so the owner sees whether an override can make it fit.
@@ -379,7 +398,13 @@ pub fn plan_layer_split(
                 })
                 .collect::<Vec<_>>()
                 .join("; ");
-        let fit = match fitting_reserve(facts, nodes, reserve_ratio, select_context) {
+        let found = fitting_reserve(facts, nodes, reserve_ratio, select_context);
+        // ratio: the search steps by 0.1% of RAM, so the named reserve is rounded to that step.
+        let settable = found
+            .as_ref()
+            .map(|(ratio, _, _)| (ratio * 1000.0).round() / 1000.0)
+            .filter(|ratio| *ratio >= warn_floor);
+        let fit = match found {
             Some((ratio, fit_split, fit_spares)) => format!(
                 "a split fits at reserve {:.1}% ({} layers, spare {}){}",
                 ratio * 100.0,
@@ -406,12 +431,19 @@ pub fn plan_layer_split(
             ),
             None => "no split fits even with no reserve".to_string(),
         };
-        bail!(
-            "no layer split fits at reserve {:.1}% of RAM: the best ({} layers, rank 0 = the last) \
-             leaves {per_node}. {fit}",
-            reserve_ratio * 100.0,
-            split.iter().map(usize::to_string).collect::<Vec<_>>().join("/"),
-        );
+        return Err(anyhow::Error::new(SplitRefusal {
+            message: format!(
+                "no layer split fits at reserve {:.1}% of RAM: the best ({} layers, rank 0 = the \
+                 last) leaves {per_node}. {fit}",
+                reserve_ratio * 100.0,
+                split
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join("/"),
+            ),
+            fitting_reserve_ratio: settable,
+        }));
     }
 
     let stages = ranges(&split);
@@ -524,6 +556,7 @@ pub fn plan_layer_split(
     );
     Ok(LayerSplit {
         layers,
+        full_layers: needs.iter().map(|n| n.full_layers as u32).collect(),
         plans,
         context: planned_context,
         chunk,
@@ -563,13 +596,13 @@ pub fn tensors_from_table(layers: &[u64], shared: u64) -> BTreeMap<String, u64> 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const GIB: u64 = 1 << 30;
 
     /// The MiMo-V2.6-Flash-RL-mxfp4-q8 checkpoint's header bytes (2026-10-26, all 45 files).
-    fn mimo_facts() -> LayerSplitFacts {
+    pub(crate) fn mimo_facts() -> LayerSplitFacts {
         let full = [0, 5, 11, 17, 23, 29, 35, 41, 47];
         let pattern: Vec<u64> = (0..48).map(|i| u64::from(!full.contains(&i))).collect();
         let layers: Vec<u64> = (0..48)
@@ -591,7 +624,7 @@ mod tests {
 
     /// workhorse (M3 Ultra 96 GiB) as rank 0, the mule (128 GiB) as rank 1: measured available
     /// and GPU ceilings from the manual run.
-    fn nodes() -> Vec<SplitNode> {
+    pub(crate) fn nodes() -> Vec<SplitNode> {
         vec![
             SplitNode {
                 name: "workhorse".to_string(),
@@ -620,15 +653,21 @@ mod tests {
 
     #[test]
     fn the_shared_reserve_refuses_naming_the_numbers_and_the_reserve_that_fits() {
-        let err = plan_layer_split(
+        let refusal = plan_layer_split(
             &mimo_facts(),
             &nodes(),
             crate::fit::AVAILABLE_MARGIN_RATIO,
             super::super::WATCHDOG_WARN_RESERVE_RATIO,
             None,
         )
-        .unwrap_err()
-        .to_string();
+        .unwrap_err();
+        assert_eq!(
+            refusal
+                .downcast_ref::<SplitRefusal>()
+                .and_then(|r| r.fitting_reserve_ratio),
+            Some(0.077)
+        );
+        let err = refusal.to_string();
         assert!(err.contains("no layer split fits at reserve 9.3%"), "{err}");
         assert!(err.contains("workhorse layers 29-47"), "{err}");
         assert!(err.contains("budget 67.11 GB"), "{err}");
@@ -719,6 +758,39 @@ mod tests {
         assert!(config.validate().is_err());
         config.plan_reserve_ratio = Some(0.05);
         config.validate().unwrap();
-        assert_eq!(config.plan_reserve_ratio(), 0.05);
+        assert_eq!(
+            config.plan_reserve(Some("mimo_v2")),
+            (0.05, super::super::config::ReserveSource::User)
+        );
+    }
+
+    #[test]
+    fn mimo_v2_plans_at_its_own_reserve_unless_the_config_sets_one() {
+        use super::super::config::ReserveSource;
+        let mut config = super::super::config::tests::two_mac_config();
+        assert_eq!(
+            config.plan_reserve(Some("mimo_v2")),
+            (0.05, ReserveSource::Model)
+        );
+        assert_eq!(
+            config.plan_reserve(Some("qwen3_5")),
+            (super::super::AVAILABLE_MARGIN_RATIO, ReserveSource::Default)
+        );
+        assert_eq!(
+            config.plan_reserve(None),
+            (super::super::AVAILABLE_MARGIN_RATIO, ReserveSource::Default)
+        );
+        // The model's reserve never goes under the WARN reserve in force.
+        config.watchdog_warn_ratio = Some(0.06);
+        config.watchdog_critical_ratio = Some(0.03);
+        assert_eq!(
+            config.plan_reserve(Some("mimo_v2")),
+            (0.06, ReserveSource::Model)
+        );
+        config.plan_reserve_ratio = Some(0.07);
+        assert_eq!(
+            config.plan_reserve(Some("mimo_v2")),
+            (0.07, ReserveSource::User)
+        );
     }
 }
