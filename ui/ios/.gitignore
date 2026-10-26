@@ -1,0 +1,8 @@
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcresult/
+*.xcarchive/
+*.ipa
+*.framework/
+*.xcframework/
