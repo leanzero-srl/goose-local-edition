@@ -406,3 +406,9 @@ default OFF, read per request — flips without a reconnect). The ssh path is un
   `cargo test -p goose-sidecar --features rustls-tls --test distributed_live -- --ignored --nocapture live_q114` with
   GOOSE_DIST_LOCAL_PYTHON / GOOSE_DIST_REMOTE_PYTHON = the managed envs and GOOSE_DIST_REMOTE_MODEL=/Users/workhorse/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx
   (the recorded_config defaults point at the deleted jaccl-smoke venvs).
+
+## 2026-10-26 MiMo-V2.6-Flash (mimo_v2, 48 layers, 256 experts) across workhorse + workmule
+- goose's distributed engine refuses mimo_v2 (config.rs only qwen3_5 tensor / qwen4_exp pipeline); run raw mlx_lm via
+  ~/jaccl-smoke/mimo-serve.sh (mlx_lm PR #1219 branch, pipeline split 19,29, port 8097). TP even split (~84 GB/rank) does not fit the M3U.
+- KV is tiny: 9 full-attn layers x 2560 B/token (4 kv heads, k192/v128, bf16); 39 SWA layers windowed at 128.
+- The JACCL pipeline crash seen on the random tiny model came from an mxfp4 embedding only; real layout passes (mlx-jaccl-cluster changelog).
