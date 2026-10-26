@@ -1,0 +1,81 @@
+# HANDOFF: sticky "Failed" engine card + Engine panel stuck "Checking" (workmule, 3.0.132)
+
+Branch `fix/engine-failure-card-sticks` (created `--no-track` off origin/main 0925b96990), worktree
+`~/Projects/goose-wt-enginecard`. NOTHING edited yet except this file. Do not commit the primary checkout
+(~/Projects/goose has someone else's staged skill edit). Public repo: no Co-Authored-By trailer (hook rejects).
+Push: `git push -u origin HEAD:fix/engine-failure-card-sticks`. No DMG / release.
+
+## The task (owner bug report)
+Sidebar red card "Failed · Single · this Mac · <model> · the engine process (pid 25606) exited: exit status: 143 —
+no goose path stopped it" stayed for hours; Engine panel showed spinner "Checking · Single · this Mac",
+"Served model: no model mounted", RUN IT "Measuring your Macs and the model…" forever. Cause of the death: an
+agent ran `kill -TERM` on the rapid-mlx pid at 15:49 local (13:49Z). App restart cleared it.
+Asked: (1) dismiss works + card clears itself when status moves on; (2) panel never stuck in Checking/Measuring
+(bounded timeout -> real state with retry); (3) external SIGTERM (143) of an idle engine = neutral
+"Stopped outside goose", not red; one rule for every place the state is derived; regression test; live check
+per goose-feature-dev skill (packaged app + CDP, isolated GOOSE_PATH_ROOT/GOOSE_USER_DATA_DIR) or say unverified.
+
+## Findings so far (file:line at origin/main 0925b96990)
+- Sidebar card = `ui/desktop/src/components/engineGlance/EngineGlanceInApp.tsx` `EngineGlanceDockSlot`
+  rendering `EngineGlanceCard` (variant dock). The eye-slash = `engine-glance-hide`
+  (EngineGlanceCard.tsx:990-997, i18n `engineGlance.hide`) -> `setGlancePrefs({inApp:false})`: it HIDES THE
+  WHOLE CARD (persistent pref, replaced by a "Show the engine card" row, `dockRestorable`), it is not a
+  dismiss of the failure. Not broken, means something else. Rules: `utils/engineGlanceRules.ts:56-63`.
+- Card content: `utils/engineGlance.ts:705-740` single engine: `single.mode==='failed'` -> stage 'failed',
+  detail = `single.failedError`. Snapshot built in main by `utils/mlxEngineMonitor.ts` `readSingle` (~588-668):
+  `failedError = report.state==='failed' ? report.lastError`.
+- ENGINE TRUTH keeps "failed" forever: `crates/goose-sidecar/src/engine.rs:2373-2398` — ManagerState::Running
+  with an exited sidecar -> status.state="failed", last_error=`engine_exit_message(&exit)` (engine.rs:1462-1484)
+  on EVERY poll until a Mount/Unmount changes ManagerState. The exit sentence is built in
+  `crates/goose-sidecar/src/lib.rs:1316-1345` `exit_account` (signal case "the signal came from outside").
+  Note: exit status 143 is a normal exit code (launcher/uvx turned SIGTERM into 143), so `signal` is None there —
+  the "outside" branch does not fire; a 143 rule must match exit code 143 OR signal SIGTERM with stopped_by None.
+  Other copies of the "failed" derivation to unify: engine.rs:1871, 2106 (mount failures — keep red),
+  `utils/mlxTray.ts:1027`, `components/leanzero-swarm/MlxStateTile.tsx:1390-1470` (word/phase; Q-254 swap
+  rule `swapStopsEngine`), `MlxEngineView.tsx:913`, `utils/engineGlance.ts:519 nodesNavChip`,
+  fixtures `utils/nodeSwap.fixtures.ts:194` (already models exit 143 = swap's stop).
+- "Checking": `MlxStateTile.tsx:1456` word = state ?? (unreachable ? 'unreachable' : 'checking'); state comes
+  from `MlxEngineView.tsx:2651-2680` via `useLocalEngineStatus` (`components/leanzero-swarm/useMlxEngineStatus.ts`)
+  -> `createSharedPoll` in `components/leanzero-swarm/sharedStatusPoll.ts`. ROOT of "forever": `tick()` returns
+  while `inFlight > 0` and `readNow` has NO timeout — one ACP `mlxEngine/status` call that never resolves freezes
+  every watcher of that store for the life of the window (reads stays 0 -> Checking). Same likely for the
+  placement plan behind "Measuring your Macs and the model…" (`PlacementCard.tsx:1569`, `NewNodeDialog.tsx:112`):
+  check its call for a timeout too.
+- Why a status call could hang on the mule: Engine tab passes `fitModelId` -> `core_status`
+  (`crates/goose/src/acp/server/mlx_engine.rs:650-682`) runs `manager.mount_fit(model_id)` which reads the model
+  folder; the mule's models dir `~/.goose/models` is an NFS mount `192.168.0.2:/` (Thunderbolt from workhorse).
+  A stalled NFS read hangs the call; main's monitor (no fitModelId) kept working, which matches the symptom
+  (card updated, panel stuck). Also `manager.status()` takes the state lock + `sidecar.exited()` ->
+  `last_words()` (lib.rs:313) awaits the stderr reader. NOT PROVEN from logs (only errors are logged;
+  log on mule: ~/.local/state/goose/logs/cli/2026-10-26/20261026_154156.log, 6317 "executing a remote mlx op over
+  the mesh", 16 status errors all peerUnreachable for the Studio). Fix must not depend on which await hung.
+
+## Plan (do all)
+1. sharedStatusPoll.ts: bound every read (e.g. a `timeoutMs` option, default ~3x interval, min 10 s): a read
+   that does not land in time counts as FAILED with a clear error ("goose did not answer the engine status in
+   Ns") so the view shows the err banner + Retry, and the next tick reads again (in-flight slot released;
+   a late answer from the abandoned read is dropped by seq). vitest in sharedStatusPoll test file (fake timers,
+   a never-resolving read -> failed snapshot -> next tick reads again).
+2. Same bound for the placement plan fetch (find it from PlacementCard `loading`), resolving to an error state
+   with retry. Grep every `createSharedPoll(` user; all inherit the bound.
+3. Engine-side bound: wrap `manager.mount_fit` in core_status with `tokio::time::timeout` (few s) ->
+   mount_fit_error "reading the model folder did not finish in Ns (a network-mounted models folder can stall)".
+   Rust test if cheap.
+4. External stop rule, ONE place: sidecar/engine side — classify exit with stopped_by None and (exit code 143
+   or signal SIGTERM/SIGINT) as "stopped outside goose": status.state "stopped" (not "failed") + a neutral
+   `stopped_by`/detail "Stopped outside goose (SIGTERM from another process)". There is already a
+   `status.stopped_by = stopped_by_wire(...)` field (mlx_engine.rs:670) and ENGINE_STOPPED_BY — reuse it. Then
+   UI: mlxEngineMonitor readSingle gets 'off' for stopped -> card goes grey/away (dockShown needs
+   engine.present; stage 'off' => present false). Keep SIGKILL/other codes red. Table test on the pure
+   classifier (engine.rs tests near 4009 already assert exit wording).
+5. Card clears itself: with (4) + engine truth (Mount/Unmount change ManagerState) it already follows status;
+   add a glance-level dismiss of a failure? Prefer: make the eye control's label/tooltip say "Hide the engine
+   card" (it is) and add an explicit "Dismiss" (X) on a failed card that clears it until the status's
+   lastError changes (renderer-side key = lastError string, held in glanceStore). Test in EngineGlanceCard.test.tsx.
+6. i18n: new strings into en.json + all 15 catalogs (file order, not sorted). Gate: see skill (cargo fmt,
+   clippy -D warnings, cargo test -p goose-sidecar, cd ui/desktop && pnpm run lint:check && pnpm run test:run).
+   In a worktree: `cd ui && pnpm install --frozen-lockfile`, `source bin/activate-hermit`,
+   `export CARGO_TARGET_DIR=~/Projects/goose/target` AFTER hermit.
+7. Live: packaged app isolated (skill recipe), crafted ACP override via skill references/cdp-acp-override.mjs to
+   show (a) status that never answers -> panel leaves Checking after the bound, (b) failed 143 -> neutral.
+   Never open a window on the owner's screen without saying so (this is the workhorse; owner may be at it).
