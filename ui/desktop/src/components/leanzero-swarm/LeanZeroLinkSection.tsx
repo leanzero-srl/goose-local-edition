@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, Link2, Loader2, Mail, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Check, Link2, Loader2, LogOut, Mail, RefreshCw } from 'lucide-react';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { defineMessages, useIntl } from '../../i18n';
 import {
@@ -45,6 +45,10 @@ const i18n = defineMessages({
     id: 'leanzeroLink.tagline',
     defaultMessage:
       'Sign in to link your devices into a private mesh — no password, just a code by email.',
+  },
+  signInAgain: {
+    id: 'leanzeroLink.signInAgain',
+    defaultMessage: 'Log out / Sign in again',
   },
 });
 
@@ -360,6 +364,7 @@ function ConnectCard({
   connectedIntent,
   audienceSyncFailed,
   onConnect,
+  onLogout,
 }: {
   email: string;
   connecting: boolean;
@@ -372,7 +377,9 @@ function ConnectCard({
   connectedIntent: boolean;
   audienceSyncFailed: boolean;
   onConnect: () => void;
+  onLogout: () => void;
 }) {
+  const intl = useIntl();
   const reconnectFailed = reconnect?.state === 'failed' ? reconnect : null;
   const meshLine = reconnectFailed
     ? {
@@ -447,6 +454,17 @@ function ConnectCard({
             icon={connecting ? <Loader2 className="animate-spin" /> : <Link2 />}
           >
             {error || reconnectFailed ? 'Retry connect' : 'Connect to mesh'}
+          </Button>
+          <Button
+            variant="secondary"
+            type="button"
+            disabled={connecting}
+            data-testid="link-logout"
+            onClick={onLogout}
+            className="w-full"
+            icon={<LogOut />}
+          >
+            {intl.formatMessage(i18n.signInAgain)}
           </Button>
         </div>
       </Panel>
@@ -663,7 +681,7 @@ const LeanZeroLinkSectionBody: React.FC = () => {
   }, []);
 
   /**
-   * "Load and download models" is built into the running mesh service: a change to it applies when
+   * Model management is built into the running mesh service: a change to it applies when
    * this Mac reconnects. Disconnect + Connect is that reconnect — the Mac comes straight back.
    */
   const reconnectMesh = useCallback(async (): Promise<void> => {
@@ -789,6 +807,7 @@ const LeanZeroLinkSectionBody: React.FC = () => {
           connectedIntent={linkState?.intent?.intent === 'connected'}
           audienceSyncFailed={audienceSyncFailed}
           onConnect={() => void connect()}
+          onLogout={() => setLogoutOpen(true)}
         />
       )}
 

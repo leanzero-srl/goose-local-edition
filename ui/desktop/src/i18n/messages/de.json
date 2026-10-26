@@ -3287,6 +3287,9 @@
   "launcher.placeholder": {
     "defaultMessage": "Frag goose irgendetwas..."
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "Abmelden / Erneut anmelden"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "Melde dich an, um deine Geräte zu einem privaten Mesh zu verbinden — kein Passwort, nur ein Code per E-Mail."
   },

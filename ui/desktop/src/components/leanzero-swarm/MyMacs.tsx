@@ -69,26 +69,27 @@ const i18n = defineMessages({
   chip: { id: 'myMacs.chip', defaultMessage: 'Chip' },
   chipCores: { id: 'myMacs.chipCores', defaultMessage: '{brand} · {cores}-core GPU' },
   cantRead: { id: 'myMacs.cantRead', defaultMessage: 'Can’t read: {reason}' },
-  lets: { id: 'myMacs.lets', defaultMessage: 'Lets your other Macs' },
+  lets: { id: 'myMacs.lets', defaultMessage: 'Lets your other devices' },
   letsUnknown: {
     id: 'myMacs.letsUnknown',
     defaultMessage: 'Its goose does not say what it allows — update goose there.',
   },
   on: { id: 'myMacs.on', defaultMessage: 'on' },
   off: { id: 'myMacs.off', defaultMessage: 'off' },
-  master: { id: 'myMacs.master', defaultMessage: 'Let my other Macs use this Mac' },
+  master: { id: 'myMacs.master', defaultMessage: 'Let my other devices use this Mac' },
   masterHint: {
     id: 'myMacs.masterHint',
     defaultMessage:
-      'Only Macs signed in to your LeanZero Link account. These switches cover goose’s own operations: models, chat, and prompt sessions your other Macs start here. Shell commands and prompt jobs are a separate switch, “Run jobs other Macs send”, off until you turn it on.',
+      'Only devices signed in to your LeanZero Link account. Choose what they can do on this Mac. “Run jobs other Macs send” is a separate switch below.',
   },
   manageHint: {
     id: 'myMacs.manageHint',
-    defaultMessage: 'Your other Macs see, download, copy and delete the models on this Mac.',
+    defaultMessage:
+      'Your linked devices can manage models and provider settings, start or steer sessions, stop runs and answer requests for input on this Mac.',
   },
   chatHint: {
     id: 'myMacs.chatHint',
-    defaultMessage: 'A model loaded here answers chat started on your other Macs.',
+    defaultMessage: 'A model loaded here answers chat started on your other devices.',
   },
   splitHint: {
     id: 'myMacs.splitHint',
@@ -96,8 +97,7 @@ const i18n = defineMessages({
   },
   applyOnReconnect: {
     id: 'myMacs.applyOnReconnect',
-    defaultMessage:
-      '“Load and download models” takes effect when this Mac reconnects to LeanZero Link.',
+    defaultMessage: 'Reconnect this Mac to apply the change to all linked devices.',
   },
   reconnect: { id: 'myMacs.reconnect', defaultMessage: 'Reconnect now' },
   saveFailed: { id: 'myMacs.saveFailed', defaultMessage: 'The switch was not saved' },

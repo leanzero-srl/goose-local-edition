@@ -3287,6 +3287,9 @@
   "launcher.placeholder": {
     "defaultMessage": "Спросите goose о чем угодно..."
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "Выйти / Войти снова"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "Войдите, чтобы объединить свои устройства в приватную mesh-сеть — без пароля, только код по электронной почте."
   },

@@ -338,6 +338,70 @@ describe('LeanZeroLinkSection — login flow', () => {
 });
 
 describe('LeanZeroLinkSection — connect lifecycle', () => {
+  it('recovers a signed-in identity without a node secret through logout, email code and reconnect', async () => {
+    const missingSecret =
+      'the auth worker did not issue a node secret; update the worker and sign in again';
+    currentState = LOGGED_IN;
+    mockConnect.mockRejectedValueOnce(rpcError(missingSecret));
+    mockLogout.mockImplementation(async () => {
+      currentState = LOGGED_OUT;
+      return currentState;
+    });
+    mockRequestCode.mockImplementation(async () => {
+      currentState = codeSent();
+      return { email: 'user@example.com', expiresInSeconds: 300 };
+    });
+    mockVerify.mockImplementation(async () => {
+      currentState = LOGGED_IN;
+      return { state: 'loggedIn', email: 'user@example.com', audienceSync: 'synced' };
+    });
+    render();
+    await screen.findByTestId('link-connect-card');
+    await userEvent.click(screen.getByTestId('link-connect'));
+
+    expect(await screen.findByText(missingSecret)).toBeInTheDocument();
+    expect(screen.getByTestId('link-connect')).toHaveTextContent('Retry connect');
+    expect(mockLogout).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Log out / Sign in again' }));
+    const checkbox = await screen.findByTestId('link-wipe-checkbox');
+    expect(checkbox).toHaveAttribute('aria-checked', 'false');
+    expect(mockLogout).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Log out' }));
+
+    expect(mockLogout).toHaveBeenCalledExactlyOnceWith(false);
+    await screen.findByTestId('link-login-card');
+    expect(screen.queryByText(missingSecret)).not.toBeInTheDocument();
+    await userEvent.type(screen.getByTestId('link-email-input'), 'user@example.com');
+    await userEvent.click(screen.getByTestId('link-send-code'));
+    expect(mockRequestCode).toHaveBeenCalledExactlyOnceWith('user@example.com');
+    await screen.findByTestId('link-code-input');
+    await userEvent.type(screen.getByTestId('link-code-input'), '123456');
+    await userEvent.click(screen.getByTestId('link-verify'));
+    expect(mockVerify).toHaveBeenCalledExactlyOnceWith('user@example.com', '123456');
+    await screen.findByTestId('link-connect-card');
+
+    mockConnect.mockImplementation(async () => {
+      currentState = CONNECTED;
+      return currentState;
+    });
+    await userEvent.click(screen.getByTestId('link-connect'));
+    expect(await screen.findByTestId('link-connected')).toBeInTheDocument();
+    expect(mockConnect).toHaveBeenCalledTimes(2);
+  });
+
+  it('allows a signed-in disconnected user to cancel logout without changing the account', async () => {
+    currentState = LOGGED_IN;
+    render();
+    await screen.findByTestId('link-connect-card');
+    await userEvent.click(screen.getByRole('button', { name: 'Log out / Sign in again' }));
+    await screen.findByTestId('link-wipe-checkbox');
+    await userEvent.click(screen.getByRole('button', { name: 'No' }));
+    expect(screen.queryByTestId('link-wipe-checkbox')).not.toBeInTheDocument();
+    expect(screen.getByTestId('link-connect-card')).toHaveTextContent('user@example.com');
+    expect(mockLogout).not.toHaveBeenCalled();
+    expect(mockRequestCode).not.toHaveBeenCalled();
+  });
+
   it('connect goes connecting → connected via the resolved state and loads peers', async () => {
     currentState = LOGGED_IN;
     render();
@@ -469,7 +533,7 @@ describe('LeanZeroLinkSection — My Macs', () => {
     render();
     const peer = await macCard('mihai-macbook-2-ff99aa');
     expect(within(peer).getByTestId('my-mac-off')).toHaveTextContent(
-      'Load and download models is off on Work’s Mac Studio — turn on “Let my other Macs use this Mac” there'
+      'Manage models and sessions is off on Work’s Mac Studio — turn on “Let my other devices use this Mac” there'
     );
     expect(within(peer).getByTestId('my-mac-state')).toHaveTextContent('Off');
     expect(peer).not.toHaveTextContent(/403/);
@@ -478,7 +542,7 @@ describe('LeanZeroLinkSection — My Macs', () => {
     expect(mockEngineStatus).not.toHaveBeenCalledWith('mihai-macbook-2-ff99aa');
     expect(mockModelsList).not.toHaveBeenCalledWith('mihai-macbook-2-ff99aa');
     const lets = within(peer).getByTestId('my-mac-lets-mihai-macbook-2-ff99aa');
-    expect(lets).toHaveTextContent('Load and download models · off');
+    expect(lets).toHaveTextContent('Manage models and sessions · off');
     expect(lets).toHaveTextContent('Answer chat · on');
   });
 
@@ -500,7 +564,7 @@ describe('LeanZeroLinkSection — My Macs', () => {
     const peer = await macCard('mihai-macbook-2-ff99aa');
     await waitFor(() =>
       expect(peer).toHaveTextContent(
-        'Can’t read: Load and download models is off on Work’s Mac Studio'
+        'Can’t read: Manage models and sessions is off on Work’s Mac Studio'
       )
     );
     expect(peer).not.toHaveTextContent('peer returned 403');
@@ -510,8 +574,14 @@ describe('LeanZeroLinkSection — My Macs', () => {
     currentState = { ...CONNECTED, remoteExecutionAllowed: false, chatServingAllowed: false };
     render();
     const self = await macCard('self');
-    const master = within(self).getByRole('switch', { name: 'Let my other Macs use this Mac' });
+    const master = within(self).getByRole('switch', { name: 'Let my other devices use this Mac' });
     expect(master).toHaveAttribute('aria-checked', 'false');
+    expect(within(self).getByTestId('my-mac-permission-manage')).toHaveTextContent(
+      'Manage models and sessions'
+    );
+    expect(self).toHaveTextContent(
+      'Your linked devices can manage models and provider settings, start or steer sessions, stop runs and answer requests for input on this Mac.'
+    );
     // Off: the three parts wait for the master.
     expect(within(self).getByTestId('my-mac-permission-chat')).toBeDisabled();
 
@@ -553,7 +623,7 @@ describe('LeanZeroLinkSection — My Macs', () => {
     render();
     const self = await macCard('self');
     const note = await within(self).findByTestId('my-mac-apply-on-reconnect');
-    expect(note).toHaveTextContent('takes effect when this Mac reconnects');
+    expect(note).toHaveTextContent('Reconnect this Mac to apply the change to all linked devices.');
     await userEvent.click(within(note).getByRole('button', { name: 'Reconnect now' }));
     await waitFor(() => expect(mockConnect).toHaveBeenCalledTimes(1));
     expect(mockDisconnect).toHaveBeenCalledTimes(1);

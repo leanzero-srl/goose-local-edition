@@ -3287,6 +3287,9 @@
   "launcher.placeholder": {
     "defaultMessage": "向 goose 詢問任何問題…"
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "登出 / 重新登入"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "登入即可把你的裝置連成一個私有 mesh 網路——不需要密碼,只需電子郵件收到的一組驗證碼。"
   },

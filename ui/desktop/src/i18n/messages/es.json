@@ -3287,6 +3287,9 @@
   "launcher.placeholder": {
     "defaultMessage": "Pregúntale lo que sea a goose..."
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "Cerrar sesión / Volver a iniciar sesión"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "Inicia sesión para enlazar tus dispositivos en una malla privada — sin contraseña, solo un código por correo."
   },

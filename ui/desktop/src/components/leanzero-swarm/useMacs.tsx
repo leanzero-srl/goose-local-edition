@@ -58,7 +58,7 @@ import {
  * EVERY linked Mac's facts, read once for the whole Providers view: the Link roster (names,
  * switches), each Mac's engine status and models folder, the downloads and copies in flight. My
  * Macs, the Models table, Run it and the Engine tab all read THIS — so the same Mac never says two
- * things in two places. A peer whose owner turned "Load and download models" off is not asked at
+ * things in two places. A peer whose owner turned "Manage models and sessions" off is not asked at
  * all: its own roster entry already says why, and the surfaces say it in words.
  */
 
@@ -67,9 +67,9 @@ const i18n = defineMessages({
   offThere: {
     id: 'macs.offThere',
     defaultMessage:
-      '{what} is off on {name} — turn on “Let my other Macs use this Mac” there (LeanZero MLX › My Macs)',
+      '{what} is off on {name} — turn on “Let my other devices use this Mac” there (LeanZero MLX › My Macs)',
   },
-  permManage: { id: 'macs.permission.manage', defaultMessage: 'Load and download models' },
+  permManage: { id: 'macs.permission.manage', defaultMessage: 'Manage models and sessions' },
   permChat: { id: 'macs.permission.chat', defaultMessage: 'Answer chat' },
   permSplit: { id: 'macs.permission.split', defaultMessage: 'Run part of a split model' },
   listFailed: { id: 'macs.listFailed', defaultMessage: 'The models folder could not be read.' },

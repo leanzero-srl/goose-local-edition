@@ -3287,6 +3287,9 @@
   "launcher.placeholder": {
     "defaultMessage": "Hỏi goose bất cứ điều gì..."
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "Đăng xuất / Đăng nhập lại"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "Đăng nhập để liên kết các thiết bị của bạn vào một mạng mesh riêng — không cần mật khẩu, chỉ cần một mã gửi qua email."
   },

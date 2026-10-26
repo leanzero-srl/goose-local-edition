@@ -3287,6 +3287,9 @@
   "launcher.placeholder": {
     "defaultMessage": "goose에게 무엇이든 물어보세요..."
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "로그아웃 / 다시 로그인"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "로그인하여 기기를 비공개 메시로 연결하세요. 비밀번호 없이 이메일로 받은 코드만 있으면 됩니다."
   },

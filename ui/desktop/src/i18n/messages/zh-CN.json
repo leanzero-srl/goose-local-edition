@@ -3287,6 +3287,9 @@
   "launcher.placeholder": {
     "defaultMessage": "问 goose 任何问题…"
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "退出登录 / 重新登录"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "登录即可把你的设备连成一个私有 mesh 网络——无需密码,只需邮箱收到的一个验证码。"
   },

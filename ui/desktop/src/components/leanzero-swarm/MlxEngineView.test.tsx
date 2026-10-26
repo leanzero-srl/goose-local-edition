@@ -2935,7 +2935,7 @@ describe('MlxEngineView — Models: one row per model, one column per Mac', () =
     await openModelsTab();
     const why = await screen.findByTestId(`model-column-gap-${PEER}`);
     expect(why).toHaveTextContent(
-      `is off on ${STUDIO} — turn on “Let my other Macs use this Mac” there`
+      `is off on ${STUDIO} — turn on “Let my other devices use this Mac” there`
     );
     expect(screen.getByTestId(`model-cell-${PEER}-${QWEN}`)).toHaveAttribute(
       'data-cell',
@@ -2960,7 +2960,7 @@ describe('MlxEngineView — Models: one row per model, one column per Mac', () =
     await openModelsTab();
     const why = await screen.findByTestId(`model-column-gap-${PEER}`);
     expect(why).toHaveTextContent(
-      `is off on ${STUDIO} — turn on “Let my other Macs use this Mac” there`
+      `is off on ${STUDIO} — turn on “Let my other devices use this Mac” there`
     );
     expect(why).not.toHaveTextContent('403');
     unmount();

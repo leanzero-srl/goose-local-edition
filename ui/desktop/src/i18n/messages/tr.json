@@ -3287,6 +3287,9 @@
   "launcher.placeholder": {
     "defaultMessage": "goose'a herhangi bir şey sorun..."
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "Çıkış yap / Yeniden giriş yap"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "Cihazlarınızı özel bir mesh ağında birbirine bağlamak için oturum açın — parola yok, yalnızca e-postayla bir kod."
   },

@@ -1500,7 +1500,7 @@
     "defaultMessage": "Search linked sessions"
   },
   "controller.catalog.signIn": {
-    "defaultMessage": "Sign in to LeanZero Link in Settings to see your Macs here."
+    "defaultMessage": "Sign in to LeanZero Link under Providers → LeanZero MLX → My Macs, then connect to see your Macs here."
   },
   "controller.catalog.stale": {
     "defaultMessage": "Saved state — reconnecting"
@@ -3572,6 +3572,9 @@
   "launcher.placeholder": {
     "defaultMessage": "Ask goose anything..."
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "Log out / Sign in again"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "Sign in to link your devices into a private mesh — no password, just a code by email."
   },
@@ -4707,7 +4710,7 @@
     "defaultMessage": "The models folder could not be read."
   },
   "macs.offThere": {
-    "defaultMessage": "{what} is off on {name} — turn on “Let my other Macs use this Mac” there (LeanZero MLX › My Macs)"
+    "defaultMessage": "{what} is off on {name} — turn on “Let my other devices use this Mac” there (LeanZero MLX › My Macs)"
   },
   "macs.pauseFailed": {
     "defaultMessage": "Pause failed."
@@ -4716,7 +4719,7 @@
     "defaultMessage": "Answer chat"
   },
   "macs.permission.manage": {
-    "defaultMessage": "Load and download models"
+    "defaultMessage": "Manage models and sessions"
   },
   "macs.permission.split": {
     "defaultMessage": "Run part of a split model"
@@ -5799,7 +5802,7 @@
     "defaultMessage": "The other Mac"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "Turn on “Let my other Macs use this Mac › Run part of a split model” on {name} (LeanZero MLX › My Macs there)."
+    "defaultMessage": "Turn on “Let my other devices use this Mac › Run part of a split model” on {name} (LeanZero MLX › My Macs there)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "Its goose cannot serve"
@@ -7146,13 +7149,13 @@
     "defaultMessage": "Add another Mac"
   },
   "myMacs.applyOnReconnect": {
-    "defaultMessage": "“Load and download models” takes effect when this Mac reconnects to LeanZero Link."
+    "defaultMessage": "Reconnect this Mac to apply the change to all linked devices."
   },
   "myMacs.cantRead": {
     "defaultMessage": "Can’t read: {reason}"
   },
   "myMacs.chatHint": {
-    "defaultMessage": "A model loaded here answers chat started on your other Macs."
+    "defaultMessage": "A model loaded here answers chat started on your other devices."
   },
   "myMacs.chip": {
     "defaultMessage": "Chip"
@@ -7182,7 +7185,7 @@
     "defaultMessage": "Last read failed"
   },
   "myMacs.lets": {
-    "defaultMessage": "Lets your other Macs"
+    "defaultMessage": "Lets your other devices"
   },
   "myMacs.letsUnknown": {
     "defaultMessage": "Its goose does not say what it allows — update goose there."
@@ -7191,13 +7194,13 @@
     "defaultMessage": "Log out / Switch account"
   },
   "myMacs.manageHint": {
-    "defaultMessage": "Your other Macs see, download, copy and delete the models on this Mac."
+    "defaultMessage": "Your linked devices can manage models and provider settings, start or steer sessions, stop runs and answer requests for input on this Mac."
   },
   "myMacs.master": {
-    "defaultMessage": "Let my other Macs use this Mac"
+    "defaultMessage": "Let my other devices use this Mac"
   },
   "myMacs.masterHint": {
-    "defaultMessage": "Only Macs signed in to your LeanZero Link account. These switches cover goose’s own operations: models, chat, and prompt sessions your other Macs start here. Shell commands and prompt jobs are a separate switch, “Run jobs other Macs send”, off until you turn it on."
+    "defaultMessage": "Only devices signed in to your LeanZero Link account. Choose what they can do on this Mac. “Run jobs other Macs send” is a separate switch below."
   },
   "myMacs.memory": {
     "defaultMessage": "Memory"

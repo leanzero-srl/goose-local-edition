@@ -3287,6 +3287,9 @@
   "launcher.placeholder": {
     "defaultMessage": "Chiedi qualsiasi cosa a goose..."
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "Esci / Accedi di nuovo"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "Accedi per collegare i tuoi dispositivi in una mesh privata — niente password, solo un codice via e-mail."
   },

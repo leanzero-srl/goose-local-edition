@@ -3287,6 +3287,9 @@
   "launcher.placeholder": {
     "defaultMessage": "Demandez n'importe quoi à goose..."
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "Se déconnecter / Se reconnecter"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "Connectez-vous pour relier vos appareils dans un maillage privé — pas de mot de passe, juste un code par e-mail."
   },

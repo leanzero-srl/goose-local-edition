@@ -3287,6 +3287,9 @@
   "launcher.placeholder": {
     "defaultMessage": "gooseに何でも聞いて..."
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "ログアウト / 再度サインイン"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "サインインしてデバイスをプライベートメッシュに接続します。パスワードは不要で、メールで届くコードだけです。"
   },

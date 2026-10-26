@@ -3287,6 +3287,9 @@
   "launcher.placeholder": {
     "defaultMessage": "Tanyakan apa saja kepada goose..."
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "Keluar / Masuk lagi"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "Masuk untuk menautkan perangkat Anda ke dalam mesh privat — tanpa kata sandi, cukup kode lewat email."
   },

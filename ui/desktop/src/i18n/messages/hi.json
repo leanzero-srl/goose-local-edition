@@ -3287,6 +3287,9 @@
   "launcher.placeholder": {
     "defaultMessage": "goose से कुछ भी पूछें..."
   },
+  "leanzeroLink.signInAgain": {
+    "defaultMessage": "साइन आउट करें / फिर से साइन इन करें"
+  },
   "leanzeroLink.tagline": {
     "defaultMessage": "अपने डिवाइस को एक निजी मेश में जोड़ने के लिए साइन इन करें — कोई पासवर्ड नहीं, बस ईमेल से एक कोड।"
   },
