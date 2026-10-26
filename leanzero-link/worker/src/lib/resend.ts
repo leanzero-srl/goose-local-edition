@@ -11,21 +11,22 @@ export type SendMailResult = { ok: true } | { ok: false; status: number; detail:
 //   Body: from (required; may be `Name <email@example.com>`), to (string | string[], required),
 //         subject (required), html (optional), text (optional)
 //   Success response: { "id": "<email id>" }
-export async function sendOtpEmail(deps: Deps, email: string, code: string): Promise<SendMailResult> {
+export async function sendOtpEmail(deps: Deps, email: string, code: string, purpose: "sign-in" | "account-deletion" = "sign-in"): Promise<SendMailResult> {
   const { resendApiKey, mailFrom } = deps.config;
   if (!resendApiKey || !mailFrom) {
     return { ok: false, status: 0, detail: "mail not configured" };
   }
+  const label = purpose === "account-deletion" ? "account deletion" : "sign-in";
   const body = {
     from: mailFrom,
     to: email,
-    subject: `${code} is your LeanZero Link sign-in code`,
+    subject: `${code} is your LeanZero Link ${label} code`,
     text:
-      `Your LeanZero Link sign-in code is ${code}.\n\n` +
+      `Your LeanZero Link ${label} code is ${code}.\n\n` +
       `It expires in 10 minutes and can be used once.\n` +
       `If you didn't request this code, you can ignore this email.`,
     html:
-      `<p>Your LeanZero Link sign-in code is:</p>` +
+      `<p>Your LeanZero Link ${label} code is:</p>` +
       `<p style="font-size:28px;font-weight:700;letter-spacing:6px;font-family:monospace">${code}</p>` +
       `<p>It expires in 10 minutes and can be used once.<br>` +
       `If you didn't request this code, you can ignore this email.</p>`,

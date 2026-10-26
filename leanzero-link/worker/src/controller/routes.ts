@@ -1,3 +1,4 @@
+import { AccountDeletionService } from "./account-deletion";
 import type { Deps } from "../lib/deps";
 import { EMAIL_RATE_LIMIT, IP_RATE_LIMIT, VERIFY_RATE_LIMIT, RATE_WINDOW_SECONDS } from "../lib/config";
 import { resolveClientIp } from "../lib/clientIp";
@@ -45,6 +46,20 @@ export async function handleController(request: Request, deps: Deps): Promise<Re
     const path = new URL(request.url).pathname.slice("/v1/controller".length);
     let result: unknown;
     switch (path) {
+      case "/account/deletion/request-code": {
+        requireMethod(request, "POST"); const f = await fields(request);
+        if (!deps.config.resendApiKey || !deps.config.mailFrom) fail(503, "mail_unconfigured", "Mail is not configured");
+        result = await new AccountDeletionService(service, deps).requestCode(bearer(request), uuid(f.request_id, "request_id")); break;
+      }
+      case "/account/deletion/confirm": {
+        requireMethod(request, "POST"); const f = await fields(request); const code = normalizeCode(f.code);
+        if (!code) fail(400, "invalid_request", "A six-digit code is required");
+        result = await new AccountDeletionService(service, deps).confirm(bearer(request), code); break;
+      }
+      case "/account/deletion/status": {
+        requireMethod(request, "POST");
+        result = await new AccountDeletionService(service, deps).status(bearer(request)); break;
+      }
       case "/hosts/controller": {
         requireMethod(request, "POST"); const f = await fields(request);
         if (Object.keys(f).some(k => !["enrollment_id", "device_name"].includes(k))) fail(400, "invalid_request", "Desktop controller scopes and role are assigned by the server");

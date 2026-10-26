@@ -65,11 +65,38 @@ export function parseAccount(value: string): AccountState {
     }
     if (a.legacy_mesh_mints !== undefined) {
       const m = object(a.legacy_mesh_mints);
+      if (m.reservations !== undefined) for (const [id, raw] of Object.entries(object(m.reservations))) {
+        const r = object(raw);
+        if (!UUID.test(id) || !Number.isSafeInteger(r.expires_at) || typeof r.external_started !== "boolean" || (r.uncertain !== undefined && (!Number.isSafeInteger(r.uncertain) || (r.uncertain as number) < 0))) throw new Error();
+      }
       if (!Number.isSafeInteger(m.in_flight) || (m.in_flight as number) < 0 || !Number.isSafeInteger(m.expires_at)) throw new Error();
+    }
+    if (a.deletion !== undefined) {
+      const d = object(a.deletion);
+      if (d.cleanup_lease !== null) {
+        const lease = object(d.cleanup_lease);
+        if (!UUID.test(string(lease.id, "id")) || !Number.isSafeInteger(lease.expires_at)) throw new Error();
+      }
+      if (!UUID.test(string(d.request_id, "request_id")) || !UUID.test(string(d.actor_device_id, "actor_device_id")) || !ACCOUNT_KEY.test(string(d.token_hash, "token_hash")) || !["sending", "ready", "failed", "pending", "deleted"].includes(d.status as string) || !Number.isSafeInteger(d.attempts) || !Number.isSafeInteger(d.expires_at) || !Array.isArray(d.pending) || !d.pending.every(p => typeof p === "string") || !Array.isArray(d.retained) || !d.retained.every(r => typeof r === "string")) throw new Error();
+    }
+    if (a.completed_deletion !== undefined) {
+      const d = object(a.completed_deletion);
+      if (!UUID.test(string(d.request_id, "request_id")) || !ACCOUNT_KEY.test(string(d.token_hash, "token_hash")) || typeof d.completed_at !== "string" || !Array.isArray(d.retained) || !d.retained.every(r => typeof r === "string")) throw new Error();
+    }
+    if (a.legacy_revoked_before !== undefined && (!Number.isSafeInteger(a.legacy_revoked_before) || (a.legacy_revoked_before as number) < 0)) throw new Error();
+    if (a.legacy_operations !== undefined) {
+      for (const [id, raw] of Object.entries(object(a.legacy_operations))) {
+        const op = object(raw);
+        if (!UUID.test(id) || !Number.isSafeInteger(op.expires_at) || !Number.isSafeInteger(op.external_pending) || (op.external_pending as number) < 0) throw new Error();
+      }
     }
     if (a.generation_recoveries !== undefined) object(a.generation_recoveries);
     return a as unknown as AccountState;
   } catch { throw new Error("corrupt controller account registry"); }
+}
+
+export function assertAccountActive(state: AccountState | null): void {
+  if (state?.deletion && ["pending", "deleted"].includes(state.deletion.status)) fail(401, "account_deleted", "Account deletion has revoked access");
 }
 
 export class Registry {
@@ -78,10 +105,12 @@ export class Registry {
     const row = await this.store.read(key);
     return row === null ? null : parseAccount(row.value);
   }
-  async update<T>(key: string, operation: (state: AccountState | null) => Promise<{ state: AccountState; result: T }> | { state: AccountState; result: T }): Promise<T> {
+  async update<T>(key: string, operation: (state: AccountState | null) => Promise<{ state: AccountState; result: T }> | { state: AccountState; result: T }, allowDeletion = false): Promise<T> {
     for (;;) {
       const row = await this.store.read(key);
-      const { state, result } = await operation(row === null ? null : parseAccount(row.value));
+      const before = row === null ? null : parseAccount(row.value);
+      if (!allowDeletion) assertAccountActive(before);
+      const { state, result } = await operation(before);
       if (await this.store.compareAndSwap(key, row?.revision ?? null, JSON.stringify(state))) return result;
     }
   }

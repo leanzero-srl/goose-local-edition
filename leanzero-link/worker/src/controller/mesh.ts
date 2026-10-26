@@ -109,7 +109,7 @@ export class MeshService {
       try { this.check(actor, s); } catch { authorized = false; }
       e.status = authorized ? "issued" : "revoked"; e.cleanup_pending = !authorized;
       return { state: s, result: authorized };
-    });
+    }, true);
     if (!allowed) { await this.cleanup(actor.key, actor.id); fail(401, "invalid_credential", "Enrollment authorization changed"); }
     return result;
   }

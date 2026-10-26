@@ -38,9 +38,20 @@ export interface HostState {
     catalog_revision: number; mesh_node_key: string; capabilities?: ControllerScope[] } | null;
   generation: string | null; catalog_high_water: number;
 }
+export interface AccountDeletion {
+  request_id: string; actor_device_id: string; token_hash: string; token_receipt: string | null;
+  code_hash: string; attempts: number; expires_at: number;
+  status: "sending" | "ready" | "failed" | "pending" | "deleted";
+  cleanup_lease: { id: string; expires_at: number } | null;
+  requested_at: number | null; completed_at: string | null; pending: string[]; retained: string[];
+}
 export interface AccountState {
+  deletion?: AccountDeletion;
+  legacy_revoked_before?: number;
+  completed_deletion?: { request_id: string; token_hash: string; completed_at: string; retained: string[] };
+  legacy_operations?: Record<string, { expires_at: number; external_pending: number }>;
   desktop_enrollments?: Record<string, { owner_node_id: string; request_hash: string; device_id: string; receipt: string }>;
-  legacy_mesh_mints?: { in_flight: number; expires_at: number };
+  legacy_mesh_mints?: { in_flight: number; expires_at: number; reservations?: Record<string, { expires_at: number; external_started: boolean; uncertain?: number }> };
   mesh_enrollments?: Record<string, MeshEnrollment>;
   generation_recoveries?: Record<string, { digest: string; host_revision: number; store_generation: string }>;
   schema: 1; account_id: string; email: string;

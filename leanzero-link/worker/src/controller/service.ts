@@ -2,7 +2,7 @@ import { constantTimeEqual } from "../lib/otp";
 import { EMAIL_RATE_LIMIT, OTP_MAX_ATTEMPTS, OTP_TTL_SECONDS, RATE_WINDOW_SECONDS, VERIFY_RATE_LIMIT } from "../lib/config";
 import { ACCESS_TTL_SECONDS, REFRESH_TTL_SECONDS, digest, randomSecret, seal, signAccess, unseal, verifyAccess } from "./crypto";
 import { CONTROLLER_SCOPES, DESKTOP_CONTROLLER_SCOPES, type AccessClaims, type AccountState, type DeviceCredentials, type DeviceRecord, type DeviceState, type Platform } from "./types";
-import { ControllerError, Registry, fail, splitCredential, parseAccount } from "./registry";
+import { ControllerError, Registry, fail, splitCredential, parseAccount, assertAccountActive } from "./registry";
 
 // Constructed only after a recognized refresh secret revokes its family in CAS.
 export class AuthenticatedRefreshReplay extends ControllerError {
@@ -14,13 +14,20 @@ export class AuthenticatedRefreshReplay extends ControllerError {
 export function newAccount(email: string): AccountState {
   return { schema: 1, account_id: crypto.randomUUID(), email, challenges: {}, devices: {}, hosts: {}, revocations: {}, rate_windows: {} };
 }
-function spendLimit(state: AccountState, name: string, limit: number, now: number): void {
+export function enrollmentAccount(state: AccountState | null, email: string): AccountState {
+  if (state?.deletion?.status === "pending") assertAccountActive(state);
+  if (state?.deletion?.status !== "deleted") return state ?? newAccount(email);
+  const old = state.deletion;
+  return { ...newAccount(email), legacy_revoked_before: state.legacy_revoked_before!, completed_deletion: { request_id: old.request_id, token_hash: old.token_hash, completed_at: old.completed_at!, retained: [...old.retained] } };
+}
+export function spendLimit(state: AccountState, name: string, limit: number, now: number): void {
   let window = state.rate_windows[name];
   if (!window || now >= window.start + RATE_WINDOW_SECONDS * 1000) window = { start: now, count: 0 };
   if (window.count >= limit) fail(429, "rate_limited", "Too many enrollment attempts");
   window.count += 1; state.rate_windows[name] = window;
 }
 export function deviceFrom(state: AccountState | null, claims: AccessClaims, now: number): DeviceState {
+  assertAccountActive(state);
   const device = state?.devices[claims.device_id];
   if (!state || state.account_id !== claims.sub || !device || device.record.revoked_at !== null || device.record.revision !== claims.device_revision || claims.exp <= Math.floor(now / 1000)) {
     fail(401, "invalid_credential", "Device credential is expired or revoked");
@@ -49,7 +56,7 @@ export class ControllerService {
     const key = await digest(email);
     const hash = await digest(`${enrollmentId}\n${code}`);
     return this.registry.update<{ challenge_id: string; expires_at: string; send: boolean }>(key, state => {
-      const account = state ?? newAccount(email);
+      const account = enrollmentAccount(state, email);
       const existing = account.challenges[enrollmentId];
       if (existing && existing.expires_at > this.now() && existing.status !== "failed") {
         if (existing.status === "sending") fail(409, "mail_pending", "Code delivery is still in progress");
@@ -60,7 +67,7 @@ export class ControllerService {
       const expires = this.now() + OTP_TTL_SECONDS * 1000;
       account.challenges[enrollmentId] = { challenge_id, enrollment_id: enrollmentId, hash, attempts: 0, expires_at: expires, status: "sending" };
       return { state: account, result: { challenge_id, expires_at: new Date(expires).toISOString(), send: true } };
-    });
+    }, true);
   }
 
   async challengeSent(challengeId: string, enrollmentId: string, sent: boolean): Promise<void> {

@@ -1,4 +1,4 @@
-import { reserveLegacyMint } from "../controller/legacy-mesh";
+import { reserveLegacyMint, type LegacyMintReservation } from "../controller/legacy-mesh";
 import { ControllerError } from "../controller/registry";
 import type { Deps } from "../lib/deps";
 import { mintHeadscaleJoinKey } from "../lib/headscale";
@@ -37,13 +37,15 @@ export async function handleJoinKey(request: Request, deps: Deps): Promise<Respo
   }
 
   const email = verified.claims.sub;
-  let release: (() => Promise<void>) | null;
-  try { release = await reserveLegacyMint(deps, email); }
+  let release: LegacyMintReservation | null;
+  try { release = await reserveLegacyMint(deps, email, verified.claims.iat); }
   catch (error) {
     if (error instanceof ControllerError) return jsonResponse(error.status, { error: error.code });
     return jsonResponse(503, { error: "controller authority unavailable" });
   }
   try {
+    await release?.beginExternal();
+    if (release) deps = release.deps;
     if (deps.config.meshProvider === "headscale") {
       const minted = await mintHeadscaleJoinKey(deps, email);
       if (!minted.ok) {

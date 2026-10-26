@@ -1,7 +1,7 @@
 import { constantTimeEqual } from "../lib/otp";
 import { verifyJwt } from "../lib/jwt";
 import { AUTH_LEASE_SECONDS, HOST_LEASE_SECONDS, REFRESH_TTL_SECONDS, digest, randomSecret, seal, unseal, verifyAccess } from "./crypto";
-import { fail, splitCredential } from "./registry";
+import { fail, splitCredential, assertAccountActive } from "./registry";
 import { ControllerService, deviceFrom, newAccount } from "./service";
 import type { AccountState, AuthorizationLease, HostState, ControllerScope, DeviceCredentials, DeviceRecord } from "./types";
 import { DESKTOP_CONTROLLER_SCOPES } from "./types";
@@ -17,6 +17,7 @@ export interface LeaseRequest {
 }
 
 export function checkedHost(state: AccountState | null, id: string, hash: string): HostState {
+  assertAccountActive(state);
   const h = state?.hosts[id];
   if (!h || h.suspended || typeof h.credential_hash !== "string" || !constantTimeEqual(h.credential_hash, hash)) fail(401, "invalid_credential", "Invalid host credential");
   if (h.owner_node_id !== id || h.protocol_version !== 1 || !Number.isSafeInteger(h.revision) || !Number.isSafeInteger(h.catalog_high_water) || !(h.generation === null || typeof h.generation === "string") || !(h.lease === null || typeof h.lease === "object")) throw new Error("corrupt host registry");
@@ -35,6 +36,7 @@ export class HostService {
     const hostHash = await digest(credential);
     const requestHash = await digest(JSON.stringify({ owner_node_id: id, enrollment_id: enrollmentId, name }));
     return c.registry.update(key, async state => {
+      if (state?.legacy_revoked_before !== undefined && verified.claims.iat <= state.legacy_revoked_before) fail(401, "account_credential_revoked", "Account credential was revoked by deletion");
       const host = checkedHost(state, id, hostHash);
       if (host.registration_pending || !host.lease || host.lease.expires_at <= c.now()) fail(403, "host_unavailable", "Desktop enrollment requires a current host lease");
       const receipts = state!.desktop_enrollments ??= {};
@@ -71,6 +73,7 @@ export class HostService {
     const existingHash = existingCredential === null ? null : await digest(existingCredential);
     return c.registry.update(key, async state => {
       const account = state ?? newAccount(verified.claims.sub);
+      if (account.legacy_revoked_before !== undefined && verified.claims.iat <= account.legacy_revoked_before) fail(401, "account_credential_revoked", "Account credential was revoked by deletion");
       const previous = account.hosts[req.owner_node_id];
       if (previous && !previous.suspended) {
         if (existingHash === null || (previous.registration_pending && !constantTimeEqual(previous.credential_hash, existingHash))) {
