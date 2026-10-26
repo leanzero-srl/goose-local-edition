@@ -132,7 +132,7 @@ struct OwnerHTTPControllerService: OwnerControllerService {
               connection.endpoint.url.user == nil, connection.endpoint.url.password == nil,
               connection.endpoint.url.query == nil, connection.endpoint.url.fragment == nil else { throw ControllerError.invalid("The connection does not match the owner’s registered endpoint.") }
     }
-    private func request<T: Decodable, Body: Encodable>(_ method: String, path: String, query: [URLQueryItem] = [],
+    func request<T: Decodable, Body: Encodable>(_ method: String, path: String, query: [URLQueryItem] = [],
                                                        host: HostDescriptor, credential: String, body: Body?) async throws -> T {
         guard host.controllerAvailable else { throw ControllerError.unavailable("This Mac has no verified controller connection.") }
         let connection = try await connections.connection(for: host)

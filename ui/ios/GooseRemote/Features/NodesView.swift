@@ -15,6 +15,7 @@ struct NodesView: View {
                 Section { Button("Connect this device", action: connect).buttonStyle(StudioPrimaryButtonStyle()).controlSize(.large) }.listRowBackground(Studio.surface)
             } else {
                 Section { SyncSummary() }.listRowBackground(Studio.surface)
+                Section { NavigationLink { AddMacView() } label: { Label("Add a Mac", systemImage: "plus.circle") } }.listRowBackground(Studio.surface)
                 Section("Macs") {
                     if store.hosts.isEmpty {
                         Text(store.lastSync == nil ? "Sync Link to load registered Macs." : "No Macs have registered controller access for this account.")
@@ -65,9 +66,9 @@ struct NodeDetailView: View {
                 Button("Refresh resource sample") { Task { await store.loadResources(host) } }.disabled(!host.controllerAvailable)
             }.listRowBackground(Studio.surface)
             Section("Manage this Mac") {
-                NavigationLink { ManagementAvailabilityView(kind: .models, host: host) } label: { Label("Models & downloads", systemImage: "arrow.down.circle") }
-                NavigationLink { ManagementAvailabilityView(kind: .providers, host: host) } label: { Label("Providers", systemImage: "key.horizontal") }
-                NavigationLink { ManagementAvailabilityView(kind: .setup, host: host) } label: { Label("Node setup", systemImage: "desktopcomputer.and.arrow.down") }
+                NavigationLink { ManagementView(kind: .models, host: host) } label: { Label("Models & downloads", systemImage: "arrow.down.circle") }
+                NavigationLink { ManagementView(kind: .providers, host: host) } label: { Label("Providers", systemImage: "key.horizontal") }
+                NavigationLink { AddMacView() } label: { Label("Node setup", systemImage: "desktopcomputer.and.arrow.down") }
             }.listRowBackground(Studio.surface)
         }.navigationTitle(host.name).studioScreen()
     }
@@ -77,20 +78,4 @@ enum ManagementKind {
     case models, providers, setup
     var title: String { switch self { case .models: "Models & downloads"; case .providers: "Providers"; case .setup: "Node setup" } }
     var symbol: String { switch self { case .models: "arrow.down.circle"; case .providers: "key.horizontal"; case .setup: "desktopcomputer.and.arrow.down" } }
-    var detail: String {
-        switch self {
-        case .models: "Model downloads require an owner service that accepts a pinned model revision and reports real progress. This build has no connected download service. Manage models in Goose Swarm on the Mac."
-        case .providers: "Remote provider setup is not connected in this build. Configure providers in Goose Swarm on the Mac. Existing provider secrets are never displayed here."
-        case .setup: "Install or update Goose Swarm on the Mac, sign in to Link with the same account, and enable controller access. This phone or tablet will not enroll as a compute node."
-        }
-    }
-}
-struct ManagementAvailabilityView: View {
-    let kind: ManagementKind
-    let host: HostDescriptor
-    var body: some View {
-        ContentUnavailableView { Label(kind.title, systemImage: kind.symbol) } description: {
-            Text("\(host.name)\n\n\(kind.detail)")
-        }.navigationTitle(kind.title).navigationBarTitleDisplayMode(.inline).studioScreen()
-    }
 }

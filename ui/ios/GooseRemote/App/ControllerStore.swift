@@ -98,6 +98,20 @@ final class ControllerStore {
     var unfinishedCommand: PendingCommand? {
         pendingCommands.last { $0.command.work == selectedRef && $0.receipt?.state != .delivered && $0.receipt?.state != .rejected }
     }
+    func managementModel(for host: HostDescriptor) throws -> ManagementModel {
+        guard let service = owner as? any OwnerManagementService else { throw ControllerError.unsupported("This version cannot manage remote Macs.") }
+        return ManagementModel(service: service, storage: credentials, context: { [self] in
+            guard let currentHost = hosts.first(where: { $0.id == host.id }), currentHost.controllerAvailable else {
+                throw ControllerError.unavailable("Reconnect this Mac before managing it.")
+            }
+            let identity = try await validCredential()
+            let snapshot: OwnerCatalogSnapshot
+            if let saved = local?.data.catalogs[host.id.uuidString] { snapshot = saved }
+            else { snapshot = try await owner.catalog(host: currentHost, credential: identity.credentials.accessToken) }
+            guard envelope?.credentials.device.id == identity.credentials.device.id, snapshot.watermark.ownerNodeId == host.id else { throw ControllerError.malformedResponse }
+            return ManagementContext(host: currentHost, identity: identity, generation: snapshot.watermark.storeGeneration)
+        }, isCurrent: { [weak self] device in self?.envelope?.credentials.device.id == device })
+    }
     func ownerName(_ id: UUID) -> String { hosts.first { $0.id == id }?.name ?? "Unknown owner" }
     func draft(for work: WorkRef) -> String { _ = draftRevision; return local?.data.drafts[work.id] ?? "" }
     func saveDraft(_ text: String, for work: WorkRef) {
@@ -146,6 +160,7 @@ final class ControllerStore {
             let next = CredentialEnvelope(authority: saved.authority, credentials: received)
             // A newly verified device cannot inherit transcript caches from a removed Keychain.
             try local?.clear()
+            try credentials.remove(account: ManagementModel.outboxAccount)
             // A failed secure write leaves the enrollment receipt retryable with the same code/id.
             try credentials.write(next, account: "device")
             envelope = next
@@ -378,6 +393,7 @@ final class ControllerStore {
         try await mesh?.removeLocalIdentity()
         try credentials.remove(account: "device")
         try credentials.remove(account: "enrollment")
+        try credentials.remove(account: ManagementModel.outboxAccount)
         envelope = nil
         enrollment = nil
         code = ""
