@@ -47,6 +47,7 @@ mod model_parsers;
 #[cfg(unix)]
 pub mod placement;
 pub mod port_holder;
+pub mod prompt_lookup;
 mod subprocess;
 pub mod thinking;
 

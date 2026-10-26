@@ -24,6 +24,7 @@ use crate::machine::{
 };
 use crate::model_identity::{NodeModel, ServedNames};
 use crate::port_holder;
+use crate::prompt_lookup::{self, PromptLookupLane, PromptLookupProfile};
 use crate::{
     measure, port_has_listener, sidecar_marker, Ensured, MemoryReading, PortHolder,
     RestartLoadFailed, Sidecar, SidecarConfig, StartCancel, StartCancelled, StartupWatch, GIB,
@@ -447,6 +448,9 @@ pub struct ModelProfile {
     /// engine's bf16 cache. Refused at argv build when the model's KV cannot take it
     /// (`kv_cache::check_mode_applies`); the engine refuses architectures it cannot quantize.
     pub kv_cache: Option<KvCacheMode>,
+    /// N-gram / prompt-lookup decoding (`prompt_lookup`): env on the MTP lane, `--suffix-*` flags
+    /// on a pure-attention model without MTP, nothing on a hybrid without MTP. Default = auto.
+    pub prompt_lookup: PromptLookupProfile,
 }
 
 /// The explicit thinking choices; auto is the ABSENCE of a choice (`Option::None`), never a variant,
@@ -738,6 +742,42 @@ fn prefix_cache_flags(engine: &Result<EngineMemoryProfile, String>) -> Vec<Strin
     flags
 }
 
+/// Whether the engine is spawned with the model's MTP head (`--speculative-config`): the profile's
+/// `speculative` override over what the directory holds.
+fn serves_mtp(
+    profile: &ModelProfile,
+    facts: &ModelDirFacts,
+    model_id: &str,
+    model_path: &Path,
+) -> bool {
+    let speculative = profile
+        .speculative
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase());
+    match speculative.as_deref() {
+        Some("off") => false,
+        Some("mtp") => {
+            if !facts.has_mtp_sidecar {
+                tracing::warn!(
+                    model_id,
+                    dir = %model_path.display(),
+                    "profile asks for MTP but {MTP_SIDECAR_FILE} is missing; serving without speculative decoding"
+                );
+            }
+            facts.has_mtp_sidecar
+        }
+        None => facts.has_mtp_sidecar,
+        Some(other) => {
+            tracing::warn!(
+                model_id,
+                value = other,
+                "unknown profile.speculative value (expected \"mtp\" or \"off\"); treating as auto"
+            );
+            facts.has_mtp_sidecar
+        }
+    }
+}
+
 /// The engine argv for `model_id` under `settings`, read together with the model
 /// directory (`inspect_model_dir`). Fails only when the profile names an adapter directory
 /// that is not one, when checkpoint parser metadata cannot be read, or when the profile asks for
@@ -792,32 +832,7 @@ pub fn build_serve_command(
 
     crate::model_parsers::append_checkpoint_parser_flags(&model_path, &mut argv)?;
     let facts = inspect_model_dir(&model_path);
-    let speculative = profile
-        .speculative
-        .as_deref()
-        .map(|s| s.trim().to_ascii_lowercase());
-    let want_mtp = match speculative.as_deref() {
-        Some("off") => false,
-        Some("mtp") => {
-            if !facts.has_mtp_sidecar {
-                tracing::warn!(
-                    model_id,
-                    dir = %model_path.display(),
-                    "profile asks for MTP but {MTP_SIDECAR_FILE} is missing; serving without speculative decoding"
-                );
-            }
-            facts.has_mtp_sidecar
-        }
-        None => facts.has_mtp_sidecar,
-        Some(other) => {
-            tracing::warn!(
-                model_id,
-                value = other,
-                "unknown profile.speculative value (expected \"mtp\" or \"off\"); treating as auto"
-            );
-            facts.has_mtp_sidecar
-        }
-    };
+    let want_mtp = serves_mtp(profile, &facts, model_id, &model_path);
     if want_mtp {
         argv.push("--speculative-config".to_string());
         argv.push(mtp_speculative_config(&model_path));
@@ -836,7 +851,47 @@ pub fn build_serve_command(
         argv.push("--kv-cache-dtype".to_string());
         argv.push(mode.engine_dtype().to_string());
     }
+    if !profile.prompt_lookup.is_auto() {
+        let lane = prompt_lookup_lane_of(&model_path, want_mtp);
+        argv.extend(prompt_lookup::engine_flags(&profile.prompt_lookup, &lane));
+    }
     Ok(argv)
+}
+
+fn prompt_lookup_lane_of(model_path: &Path, serves_mtp: bool) -> PromptLookupLane {
+    if serves_mtp {
+        return PromptLookupLane::Mtp;
+    }
+    prompt_lookup::lane(false, &prompt_lookup::model_is_hybrid(model_path))
+}
+
+/// The lane `model_id` would take under `settings` — what the desktop shows beside the lever.
+pub fn prompt_lookup_lane(settings: &EngineSettings, model_id: &str) -> PromptLookupLane {
+    let model_path = expand_tilde(&settings.models_dir).join(model_id);
+    let default_profile = ModelProfile::default();
+    let profile = settings
+        .model_profiles
+        .get(model_id)
+        .unwrap_or(&default_profile);
+    let facts = inspect_model_dir(&model_path);
+    prompt_lookup_lane_of(
+        &model_path,
+        serves_mtp(profile, &facts, model_id, &model_path),
+    )
+}
+
+/// Engine process environment the profile adds on top of `sidecar_spawn_env`. The engine reads its
+/// MTP prompt-lookup policy only from the environment, so this is part of the engine's identity
+/// beside the argv: a change to it restarts the engine exactly like an argv change.
+pub fn build_serve_env(settings: &EngineSettings, model_id: &str) -> Vec<(String, String)> {
+    let Some(profile) = settings.model_profiles.get(model_id) else {
+        return Vec::new();
+    };
+    if profile.prompt_lookup.is_auto() {
+        return Vec::new();
+    }
+    let lane = prompt_lookup_lane(settings, model_id);
+    prompt_lookup::engine_env(&profile.prompt_lookup, &lane)
 }
 
 /// The sidecar name the single engine runs under — and so half of the marker its processes carry
@@ -1187,6 +1242,7 @@ enum ManagerState {
         model_id: String,
         sidecar: Box<Sidecar>,
         argv: Vec<String>,
+        env: Vec<(String, String)>,
     },
     Failed {
         model_id: String,
@@ -1955,6 +2011,7 @@ impl MlxEngineManager {
         let weights_bytes = model.size_bytes;
 
         let argv = build_serve_command(&settings, model_id, &self.nodes())?;
+        let serve_env = build_serve_env(&settings, model_id);
         let mut state = self.state.lock().await;
         if self.unmounts_seen() != unmounts {
             return Err(MountStopped {
@@ -1993,8 +2050,10 @@ impl MlxEngineManager {
                 model_id: previous_model,
                 sidecar,
                 argv: previous_argv,
+                env: previous_env,
             } => {
-                if previous_model == model_id && previous_argv == argv {
+                if previous_model == model_id && previous_argv == argv && previous_env == serve_env
+                {
                     Some(sidecar)
                 } else {
                     sidecar.shutdown().await;
@@ -2049,6 +2108,7 @@ impl MlxEngineManager {
                         expected_model_id,
                     );
                     config.env = sidecar_spawn_env();
+                    config.env.extend(serve_env.iter().cloned());
                     config.startup_watch = Some(watch);
                     config.shutdown_line = Some(shutdown_began);
                     config.start_cancel = Some(cancel);
@@ -2086,6 +2146,7 @@ impl MlxEngineManager {
                             model_id,
                             sidecar,
                             argv,
+                            env: serve_env,
                         };
                     } else {
                         drop(state);
@@ -2370,6 +2431,7 @@ impl MlxEngineManager {
                     model_id,
                     sidecar,
                     argv,
+                    env,
                 } => {
                     status.model_id = Some(model_id.clone());
                     // The state is the PROCESS's, asked of the OS on every poll — never the
@@ -2388,7 +2450,7 @@ impl MlxEngineManager {
                             status.base_url = Some(sidecar.base_url().to_string());
                             status.pid = sidecar.pid().await;
                             status.last_error = sidecar.shutting_down().await;
-                            Some((model_id.clone(), argv.clone()))
+                            Some((model_id.clone(), argv.clone(), env.clone()))
                         }
                         Err(e) => {
                             status.state = "failed".to_string();
@@ -2439,7 +2501,7 @@ impl MlxEngineManager {
                 }
             }
         }
-        if let Some((running_model, running_argv)) = running {
+        if let Some((running_model, running_argv, running_env)) = running {
             let desired_model = settings.model_id.as_deref().unwrap_or(&running_model);
             // The desired argv is rebuilt from the profile AND the model directory each poll,
             // so an MTP head that arrived, a vision checkpoint swapped in, or an adapter dir
@@ -2451,7 +2513,10 @@ impl MlxEngineManager {
                 desired_model,
                 &self.nodes(),
             ) {
-                Ok(desired) => desired != running_argv,
+                Ok(desired) => {
+                    desired != running_argv
+                        || build_serve_env(&settings, desired_model) != running_env
+                }
                 Err(e) => {
                     tracing::warn!(model = desired_model, error = %format!("{e:#}"), "desired serve argv cannot be built; reporting restart required");
                     true
@@ -2644,6 +2709,84 @@ mod tests {
     }
 
     use super::*;
+
+    fn prompt_lookup_dir(config: serde_json::Value, mtp: bool) -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("org/m");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.json"), config.to_string()).unwrap();
+        if mtp {
+            std::fs::write(dir.join(MTP_SIDECAR_FILE), b"x").unwrap();
+        }
+        root
+    }
+
+    fn prompt_lookup_settings(
+        root: &tempfile::TempDir,
+        lever: crate::prompt_lookup::PromptLookupProfile,
+        speculative: Option<&str>,
+    ) -> EngineSettings {
+        let mut settings = EngineSettings {
+            models_dir: root.path().to_string_lossy().into_owned(),
+            ..EngineSettings::default()
+        };
+        settings.model_profiles.insert(
+            "org/m".into(),
+            ModelProfile {
+                prompt_lookup: lever,
+                speculative: speculative.map(str::to_string),
+                ..ModelProfile::default()
+            },
+        );
+        settings
+    }
+
+    #[test]
+    fn prompt_lookup_rides_env_on_mtp_flags_on_pure_attention_and_nothing_on_a_hybrid() {
+        use crate::prompt_lookup::{
+            PromptLookupMode, PromptLookupProfile, ENV_ENABLE, ENV_MAX_TOKENS,
+        };
+        let on = PromptLookupProfile {
+            mode: Some(PromptLookupMode::On),
+            max_draft: Some(63),
+            ..Default::default()
+        };
+        let hybrid = serde_json::json!({"model_type": "qwen3_5"});
+        let dense = serde_json::json!({"model_type": "llama"});
+
+        let mtp = prompt_lookup_dir(hybrid.clone(), true);
+        let s = prompt_lookup_settings(&mtp, on.clone(), None);
+        assert_eq!(
+            build_serve_env(&s, "org/m"),
+            vec![
+                (ENV_ENABLE.to_string(), "1".to_string()),
+                (ENV_MAX_TOKENS.to_string(), "63".to_string())
+            ]
+        );
+        let argv = build_serve_command(&s, "org/m", &[]).unwrap();
+        assert!(argv.iter().any(|a| a == "--speculative-config"));
+        assert!(!argv.iter().any(|a| a.starts_with("--suffix")));
+
+        let hybrid_no_mtp = prompt_lookup_settings(&mtp, on.clone(), Some("off"));
+        assert!(build_serve_env(&hybrid_no_mtp, "org/m").is_empty());
+        assert!(matches!(
+            prompt_lookup_lane(&hybrid_no_mtp, "org/m"),
+            PromptLookupLane::Unavailable(_)
+        ));
+        let argv = build_serve_command(&hybrid_no_mtp, "org/m", &[]).unwrap();
+        assert!(!argv.iter().any(|a| a.starts_with("--suffix")));
+
+        let plain = prompt_lookup_dir(dense, false);
+        let s = prompt_lookup_settings(&plain, on, None);
+        assert!(build_serve_env(&s, "org/m").is_empty());
+        let argv = build_serve_command(&s, "org/m", &[]).unwrap();
+        assert!(argv
+            .windows(3)
+            .any(|w| w == ["--suffix-decoding", "--suffix-max-draft", "63"]));
+
+        let auto = prompt_lookup_settings(&mtp, PromptLookupProfile::default(), None);
+        assert!(build_serve_env(&auto, "org/m").is_empty());
+    }
 
     /// An M4 Max 128 GB with 96 GiB available — the Metal ceiling `iogpu` reports there
     /// (115,448,725,504 B, 2026-09-23). Pinned, so a lifecycle test reads the same memory on a
