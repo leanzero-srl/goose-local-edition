@@ -1,4 +1,5 @@
 import type { Config } from "./config";
+import type { DeviceRegistryStore } from "../controller/registry-store";
 
 /// What an atomic read-modify-write decides for the key: write a new value (with the
 /// usual TTL semantics), delete it, or leave it untouched.
@@ -20,6 +21,7 @@ export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface Deps {
   kv: KVStore;
+  deviceRegistry?: DeviceRegistryStore;
   fetchFn: FetchFn;
   now: () => number;
   randomOtp: () => string;
