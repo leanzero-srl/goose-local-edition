@@ -3,9 +3,10 @@ import Foundation
 enum PendingInputPayload: Codable, Equatable, Sendable {
     case permission(requestId: String, toolName: String, arguments: JSONValue)
     case form(schema: JSONValue)
+    case question(itemId: String, why: String, recommendedAnswer: String, originRunId: UUID?)
     case unsupported(kind: String)
 
-    private enum Keys: String, CodingKey { case kind, requestId, toolName, arguments, schema }
+    private enum Keys: String, CodingKey { case kind, requestId, toolName, arguments, schema, itemId, why, recommendedAnswer, originRunId }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: Keys.self)
         let kind = try values.decode(String.self, forKey: .kind)
@@ -17,6 +18,12 @@ enum PendingInputPayload: Codable, Equatable, Sendable {
             guard !requestId.isEmpty, !toolName.isEmpty, case .object = arguments else { throw ControllerError.malformedResponse }
             self = .permission(requestId: requestId, toolName: toolName, arguments: arguments)
         case "form": self = .form(schema: try values.decode(JSONValue.self, forKey: .schema))
+        case "question":
+            let itemId = try values.decode(String.self, forKey: .itemId)
+            guard !itemId.isEmpty else { throw ControllerError.malformedResponse }
+            self = .question(itemId: itemId, why: try values.decode(String.self, forKey: .why),
+                             recommendedAnswer: try values.decode(String.self, forKey: .recommendedAnswer),
+                             originRunId: try values.decodeIfPresent(UUID.self, forKey: .originRunId))
         default: self = .unsupported(kind: kind)
         }
     }
@@ -31,6 +38,12 @@ enum PendingInputPayload: Codable, Equatable, Sendable {
         case .form(let schema):
             try values.encode("form", forKey: .kind)
             try values.encode(schema, forKey: .schema)
+        case .question(let itemId, let why, let recommendedAnswer, let originRunId):
+            try values.encode("question", forKey: .kind)
+            try values.encode(itemId, forKey: .itemId)
+            try values.encode(why, forKey: .why)
+            try values.encode(recommendedAnswer, forKey: .recommendedAnswer)
+            try values.encodeIfPresent(originRunId, forKey: .originRunId)
         case .unsupported(let kind): try values.encode(kind, forKey: .kind)
         }
     }
@@ -40,7 +53,7 @@ extension PendingInput {
     func validateAnswer(option: InputOption, value: String?) throws {
         switch payload {
         case .permission(let requestId, let toolName, let arguments):
-            guard !requestId.isEmpty, !toolName.isEmpty, case .object = arguments,
+            guard runId != nil, !requestId.isEmpty, !toolName.isEmpty, case .object = arguments,
                   !option.acceptsValue, value == nil else { throw ControllerError.invalid("The permission request is incomplete or has an incompatible response.") }
         case .form(let schema):
             let form = try InputForm(schema: schema)
@@ -48,6 +61,11 @@ extension PendingInput {
                 guard let value else { throw ControllerError.invalid("Complete the form before submitting it.") }
                 try form.validate(JSONDecoder().decode(JSONValue.self, from: Data(value.utf8)))
             } else if value != nil { throw ControllerError.invalid("This choice does not accept a form value.") }
+        case .question(let itemId, _, _, _):
+            guard runId == nil, !itemId.isEmpty else { throw ControllerError.invalid("Refresh this question before answering.") }
+            if option.acceptsValue {
+                guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ControllerError.invalid("Write an answer first.") }
+            } else if value != nil { throw ControllerError.invalid("This choice does not accept extra text.") }
         case .unsupported: throw ControllerError.unsupported("This request type cannot be answered on this device. Open it on the owner Mac.")
         }
     }

@@ -4,6 +4,7 @@ struct PendingInputView: View {
     @Environment(ControllerStore.self) private var store
     let input: PendingInput
     let supported: Bool
+    @State private var answer = ""
     @State private var drafts: [String: String] = [:]
 
     private var busy: Bool { store.selectedError != nil || store.sending || store.unfinishedCommand != nil }
@@ -18,11 +19,30 @@ struct PendingInputView: View {
                 case .permission(let requestId, let toolName, let arguments):
                     permission(requestId: requestId, toolName: toolName, arguments: arguments)
                 case .form(let schema): form(schema)
+                case .question(_, let why, let recommendedAnswer, _): question(why: why, recommendedAnswer: recommendedAnswer)
                 case .unsupported: unavailable("This request type is not supported on this device. Open it on the owner Mac.")
                 }
             }
         }
-        .onChange(of: input) { drafts = [:] }
+        .onChange(of: input) { drafts = [:]; answer = "" }
+    }
+
+    @ViewBuilder private func question(why: String, recommendedAnswer: String) -> some View {
+        if !why.isEmpty { Text(why).font(.subheadline).textSelection(.enabled) }
+        if !recommendedAnswer.isEmpty {
+            Text("Suggested answer").font(.subheadline.weight(.semibold))
+            Text(recommendedAnswer).textSelection(.enabled)
+        }
+        if input.options.contains(where: \.acceptsValue) {
+            TextField("Your answer", text: $answer, axis: .vertical)
+                .textFieldStyle(.roundedBorder).disabled(busy)
+                .accessibilityIdentifier("question-answer")
+        }
+        ForEach(input.options) { choice in
+            Button(choice.label) {
+                Task { await store.answer(input: input, option: choice, value: choice.acceptsValue ? answer : nil) }
+            }.buttonStyle(.bordered).disabled(busy || (choice.acceptsValue && answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+        }
     }
 
     @ViewBuilder private func permission(requestId: String, toolName: String, arguments: JSONValue) -> some View {

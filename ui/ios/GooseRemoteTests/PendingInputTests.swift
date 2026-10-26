@@ -5,6 +5,30 @@ final class PendingInputTests: XCTestCase {
     func json(_ text: String) throws -> JSONValue { try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)) }
     let schema = #"{"type":"object","properties":{"environment":{"type":"string","enum":["staging","production"],"title":"Deployment target"}},"required":["environment"],"additionalProperties":false}"#
 
+    func testIdleQuestionUsesCurrentNilRunAndOriginalChoices() throws {
+        let inputId = UUID(), originRun = UUID()
+        let source = "{\"input_id\":\"\(inputId)\",\"run_id\":null,\"prompt\":\"Where should this run?\",\"options\":[{\"option_id\":\"choice_0\",\"label\":\"On the workhorse\",\"accepts_value\":false},{\"option_id\":\"answer\",\"label\":\"Send answer\",\"accepts_value\":true},{\"option_id\":\"dismiss\",\"label\":\"Dismiss question\",\"accepts_value\":false}],\"payload\":{\"kind\":\"question\",\"item_id\":\"ny_original\",\"why\":\"The session needs a target\",\"recommended_answer\":\"On the workhorse\",\"origin_run_id\":\"\(originRun)\"}}"
+        let input = try ControllerCodec.decoder().decode(PendingInput.self, from: Data(source.utf8))
+        XCTAssertNil(input.runId)
+        guard case .question(let itemId, let why, let recommended, let origin) = input.payload else { return XCTFail("Question payload lost") }
+        XCTAssertEqual(itemId, "ny_original"); XCTAssertEqual(origin, originRun)
+        XCTAssertEqual(why, "The session needs a target"); XCTAssertEqual(recommended, "On the workhorse")
+        var entry = CatalogEntry(work: .init(ownerNodeId: UUID(), kind: .chat, workId: UUID()), storeGeneration: UUID(), revision: 42,
+            title: "Session", workingDir: nil, state: .waitingInput, currentRunId: nil, capabilities: [.answerInput], parent: nil, related: [], updatedAt: Date(), lastEvent: nil, archived: false)
+        let selected = try WorkCommand.answer(entry: entry, input: input, option: input.options[0], value: nil)
+        XCTAssertNil(selected.expectedRunId); XCTAssertEqual(selected.payload.inputId, inputId)
+        XCTAssertEqual(selected.payload.optionId, "choice_0")
+        XCTAssertThrowsError(try WorkCommand.answer(entry: entry, input: input, option: input.options[1], value: "  "))
+        XCTAssertEqual(try WorkCommand.answer(entry: entry, input: input, option: input.options[1], value: "Use the laptop").payload.value, "Use the laptop")
+        XCTAssertNil(try WorkCommand.answer(entry: entry, input: input, option: input.options[2], value: nil).payload.value)
+        entry.currentRunId = UUID()
+        XCTAssertThrowsError(try WorkCommand.answer(entry: entry, input: input, option: input.options[0], value: nil))
+    }
+    func testIdlePermissionCannotBeSubmittedAsQuestion() {
+        let option = InputOption(optionId: "allow", label: "Allow", acceptsValue: false)
+        let input = PendingInput(inputId: UUID(), runId: nil, prompt: "Allow", options: [option], payload: .permission(requestId: "r", toolName: "shell", arguments: .object([:])))
+        XCTAssertThrowsError(try input.validateAnswer(option: option, value: nil))
+    }
     func testRequiredEnumShowsNamesChoicesAndEncodesJSONForOriginalCallback() throws {
         let form = try InputForm(schema: json(schema))
         XCTAssertEqual(form.fields[0].id, "environment")

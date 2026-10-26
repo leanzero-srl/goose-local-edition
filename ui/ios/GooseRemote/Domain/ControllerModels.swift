@@ -226,7 +226,7 @@ struct SelectedWork: Codable, Sendable {
 }
 struct PendingInput: Codable, Identifiable, Sendable, Equatable {
     let inputId: UUID
-    let runId: UUID
+    let runId: UUID?
     let prompt: String
     let options: [InputOption]
     let payload: PendingInputPayload
