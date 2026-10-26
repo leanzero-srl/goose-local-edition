@@ -1,0 +1,4 @@
+interface:
+  display_name: "iOS and iPadOS Apps"
+  short_description: "Build, submit, and support iPhone and iPad apps"
+  default_prompt: "Use $ios-ipados-apps to design, verify, release, or support this iPhone and iPad app."
