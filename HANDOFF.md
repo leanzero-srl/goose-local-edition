@@ -237,6 +237,26 @@ with BatchRotatingKVCache, batch_kv_dtype on SWA caches), the barrier, the weigh
      Vitest in DistributedEngineSection.test.tsx (+ expectDesigned for owner UI rules) and mlxDistributed.test.ts.
   4. `pnpm run i18n:extract` after new messages, then lint:check + test:run via $S; commit `desktop: ...`.
 
+## Session 4c (view), 2026-10-26: UI view DONE (347121d242 + i18n commit)
+- ui/desktop/src/components/leanzero-swarm/MlxLayerSplit.tsx renders inside PreflightReportView (above the
+  node cards, also while a run lives) when layerSplitView(report) != null: zone "Layer split", chip "19 / 29
+  layers", chip "reserve 5.0% of RAM" + source word (goose's default / mimo_v2's own reserve / set by you),
+  the margin sentence (safety margin = the reserve, spare ~0 GB by design), the reason verbatim, one row per
+  rank (L29–47 · 19 layers, weights / budget / spare in decimal GB, negative spare red).
+- Refusal: ToneBanner warn "Fits at 7.7%" + Button "Plan at 7.7%" (testid mlx-dist-plan-at) -> section's
+  onPlanAt: saved config -> mlxDistributedConfigUpdate(cleanConfig({...config, planReserveRatio})) then
+  preflight(null); open draft -> setDraft + preflight(cleanConfig(next)), nothing saved. No fitting ratio ->
+  ToneBanner err "No reserve fits", no button. The plan check's sentence stays verbatim in the failing list.
+- Advanced: PercentInput "Plan reserve (% of RAM)", placeholder "model default", own text state, empty = null;
+  cleanConfig deletes planReserveRatio when null.
+- Fixtures MIMO_CONFIG / MIMO_PREFLIGHT_OK / MIMO_PREFLIGHT_REFUSED (refusal sentence: asserted fragments +
+  ILLUSTRATIVE need/ceiling/spare figures). Tests: section 67 (7 new), helpers +3; full suite 5196 pass.
+- TRAP: desktop typechecks against ui/sdk/dist (gitignored): after regenerating sdk types run
+  `cd ui/sdk && pnpm run build:ts` or typecheck says the new DTO fields do not exist.
+- TRAP: lint:check runs i18n:check, which needs every new key in all 15 locale catalogs (real translations).
+- Open: splitConfigFor/withModel carry a user planReserveRatio over to another model (backend validates it);
+  live CDP check of the view not done (later agent).
+
 ## Session 4b (launch), 2026-10-26: steps 1-7 CODED, 4 old tests red (ctx-guard stop at ~175k)
 Landed (HEAD 29c1d2d24a; NOTE the DTO agent's commit swept my staged index in under ITS message: launch.rs,
 link_host.rs, preflight.rs, runner_update.rs, supervisor.rs; layer_split.rs edits went in 5662f78886):
