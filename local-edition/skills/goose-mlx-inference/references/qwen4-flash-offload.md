@@ -40,3 +40,19 @@ Traps:
   only runs inside MTP, so on goose it is inert for Flash-Next until in-shard MTP detection +
   a per-model depth exist (not done: has_mtp_sidecar feeds the UI, the prompt-lookup lane and
   the distributed paths).
+
+Tag check (2026-10-26): fork suites at the tag vs lz.14, same venv and commands
+(`pytest tests --ignore=tests/integrations --timeout 180`, 3 file shards per side): 27035 vs
+27027 tests, failures+errors 93 vs 93, identical set (pre-existing: real-model gemma4 tokenizer,
+git-dependent train-gates, etc.); +8 offload tests. `uvx --from "rapid-mlx[mtp] @ git+…@v0.14.3-lz.14-ple.1"
+rapid-mlx serve --help` lists the flag. A full serial run takes >60 min: node-run's default
+--timeout 3600 killed the first attempt at 90% (looked like a hang).
+
+MacBook final test: NOT RUN (2026-10-26 22:4x). The laptop had 87-91 GiB free on its internal
+disk; the model is 97.5 GiB, and the PLE gather must read a LOCAL copy (not the TB share). Needs
+>= ~110 GiB free (model + 10 GiB headroom) freed by the owner; nothing of his was deleted.
+
+goose build trap: a cargo run WITHOUT `--config 'profile.dev.package."*".strip=false'` (e.g. the
+flag placed after `--`) writes a stripped libsqlx_macros that macOS 27 refuses ("mis-aligned
+LINKEDIT"); later correct runs reuse it. Fix: `cargo clean -p sqlx-macros -p sqlx-macros-core`,
+then rerun with the flag BEFORE `--`.
