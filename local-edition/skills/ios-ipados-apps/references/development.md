@@ -13,6 +13,8 @@ xcrun simctl list devices available
 
 Inspect the actual project/workspace and shared schemes with `xcodebuild -list -json -project <project>` or `-workspace <workspace>`. Use the selected project's supported schemes, SDKs and destination IDs; do not paste a simulator UUID from another machine. An installed SDK, the App Store upload SDK minimum, and the deployment target are three different things.
 
+A simulator SDK is not a simulator runtime. If no usable devices exist, inspect `xcrun simctl list runtimes -j` and each runtime's `supportedDeviceTypes` before creating a device. A newer runtime can support only a newly introduced model; it may not cover iPad or older iPhones. Check free disk space before installation, use `xcodebuild -help` for the installed Xcode's `-downloadPlatform iOS`, `-buildVersion` and `-architectureVariant` options, and select a runtime that supports the requested device family. Create/boot the actual compatible types, then wait for `xcrun simctl bootstatus <udid> -b` and verify them. Do not infer a broken simulator or missing devices from sandbox XPC/CoreSimulator permission failures; repeat the narrowly scoped discovery with the required execution permission.
+
 Do not switch the user's global Xcode selection unnecessarily. For a specific build, `DEVELOPER_DIR` can select an installed Xcode. Report missing SDKs, provisioning, device trust, or account access precisely. Do not imply a simulator build proves signing or physical-device installation.
 
 ## App structure

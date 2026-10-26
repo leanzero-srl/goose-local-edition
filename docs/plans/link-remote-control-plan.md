@@ -2,7 +2,8 @@
 title: Goose sessions across devices and iOS remote control
 date: 2026-10-26
 status: architecture-and-implementation-plan
-implementation: not-started-by-user-choice
+implementation: product-not-started
+feasibility: simulator-spike-started-on-follow-up
 source_revision: e79a6f60eccecabc3a8dd8b3e4e2651568034572
 owner_decision: execution-stays-on-original-Mac
 ---
@@ -11,7 +12,7 @@ owner_decision: execution-stays-on-original-Mac
 
 The product should expose one view of the user's work across their Link machines. A session continues to execute on the Mac that owns it; any authorized desktop, iPhone or iPad can read it and send supported input to that same execution. A model-serving machine is a separate concept from the Mac owning the session. The mobile app is a controller and is never offered as compute capacity.
 
-This is the architecture and implementation plan requested on 26 October 2026. Goose and the mobile app have not been changed. The source audit used the current remote `e79a6f60ec`, independently verified against GitHub; the laptop checkout is five local documentation commits ahead and 216 commits behind. Implementation should begin from a clean current branch without overwriting that local work.
+This is the architecture and implementation plan requested on 26 October 2026. The follow-up authorized feasibility work using virtual devices; production Goose behavior and the mobile product remain unimplemented. The source audit used remote `e79a6f60ec`, independently verified against GitHub at the start; the laptop checkout was five local documentation commits ahead and 216 commits behind. The clean `codex/link-controller-plan` worktree preserves that unrelated local work.
 
 ## What exists today
 
@@ -121,11 +122,11 @@ Owner Mac asleep/offline means control unavailable. Quitting its runtime is dist
 
 ## iOS and iPadOS transport
 
-Use a universal native SwiftUI app with a thin Link client, local protected cache, and shared domain contracts. Proposed minimum is iOS/iPadOS 18, subject to the dependency/device spike; that is a product support choice, not Apple's upload floor. Keep the protocol versioned and generate or test Swift DTOs against the Rust schemas. Local code, models and shell execution stay on Macs.
+Use a universal native SwiftUI app with a thin Link client, local protected cache, and shared domain contracts. Proposed minimum is iOS/iPadOS 18.1: the pinned candidate framework declares 18.1, so the earlier 18.0 proposal is not supported by its unmodified build. This is a product/dependency support choice, not Apple's upload floor. Keep the protocol versioned and generate or test Swift DTOs against the Rust schemas. Local code, models and shell execution stay on Macs.
 
-The first transport candidate is Tailscale's embedded userspace [libtailscale/TailscaleKit](https://github.com/tailscale/libtailscale/tree/main/swift). Its current sources support iOS frameworks, a custom control URL and authenticated app-local networking. This fits Link's independent mesh; it avoids depending on the user's personal Tailscale installation or exposing the raw node API to the internet. It is a candidate supported by source, not proven Goose functionality. Pin an upstream commit and inspect its license/build/privacy/export footprint before adoption.
+The first transport candidate is Tailscale's embedded userspace [libtailscale/TailscaleKit](https://github.com/tailscale/libtailscale/tree/d1dc45d039edb7759ecbee6ba2aea0c4bca884b8/swift), pinned to `d1dc45d039edb7759ecbee6ba2aea0c4bca884b8`. It requires Go 1.27.1 and builds an Xcode framework rather than a Swift package. Its sources support iOS, a custom control URL and authenticated app-local networking. This fits Link's independent mesh; it avoids depending on the user's personal Tailscale installation or exposing the raw node API to the internet. It is a candidate supported by source and a simulator framework build, not proven Goose mesh functionality. Inspect its license/build/privacy/export footprint before adoption.
 
-The physical-device spike must prove the real OTP/Headscale enrollment, discovery, node GET, WebSocket auth, TLS/ATS behavior, a harmless remote command, reconnect, Wi-Fi/cellular changes, device lock, long suspension and revoked-controller refusal. The upstream adapter uses a loopback proxy, which iOS may reclaim during suspension; recreate the networking session after recovery as required. Confirm IPv6-only operation and whether any LAN permission/entitlement is actually required. Do not launch the desktop tailscaled subprocess on iOS or assume a permanent background socket.
+Start with simulator compile/runtime and isolated HTTPS/WebSocket transport proofs, then validate real OTP/Headscale enrollment, discovery, node GET, WebSocket auth, TLS/ATS behavior, a harmless remote command and revoked-controller refusal. A physical device must additionally prove Wi-Fi/cellular changes, device lock and long suspension. The upstream adapter caches a loopback proxy that iOS may reclaim: recreating URLSession alone retrieves that same stale proxy. The wrapper-level recovery candidate is explicit close/discard/recreate of the node with preserved state; measure it before adopting it. In this pin, `down()` incorrectly calls `tailscale_up`, so it cannot be used for teardown. Cancelling a Swift task alone also does not prove the detached `up()` has stopped. Confirm IPv6-only operation and whether any LAN permission/entitlement is actually required. Do not launch the desktop tailscaled subprocess on iOS or assume a permanent background socket.
 
 If the spike fails, document the failed requirement and compare an explicitly authenticated HTTPS/WSS relay with a Network Extension implementation. Neither exists today; neither may be silently substituted. A relay changes service availability and data handling; a system VPN adds entitlement, lifecycle and user-VPN interaction concerns. The owner should review the measured tradeoff before the chosen architecture changes.
 

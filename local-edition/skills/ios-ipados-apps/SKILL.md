@@ -52,3 +52,5 @@ Keep project-specific runbooks, bundle IDs, signing team references, test eviden
 This installation is laptop-owned. Canonical source: `~/.claude/skills/ios-ipados-apps/`; Codex discovers the `~/.agents/skills/ios-ipados-apps` link. The Goose repository's `local-edition/skills/ios-ipados-apps/` is a versioned snapshot, updated from the canonical source after edits.
 
 2026-10-26: Created from the Goose remote-controller architecture work. The general rules above apply beyond Goose; its session/Link design belongs in its project plan.
+
+2026-10-26: Simulator setup proved that an SDK can exist without a runtime, and a new runtime can support only one device model. Added compatible-runtime discovery and the distinction between sandbox permission errors and actual simulator failures.
