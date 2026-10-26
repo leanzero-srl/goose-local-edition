@@ -9,6 +9,7 @@ pub mod nostr_share;
 pub mod session_manager;
 pub(crate) mod session_naming;
 pub mod transcript_index;
+pub mod work_catalog;
 
 pub use diagnostics::{
     config_path, generate_diagnostics, get_system_info, latest_llm_log_path,

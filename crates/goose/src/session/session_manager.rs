@@ -24,7 +24,7 @@ use std::sync::{Arc, LazyLock};
 use tracing::{info, warn};
 use utoipa::ToSchema;
 
-pub const CURRENT_SCHEMA_VERSION: i32 = 15;
+pub const CURRENT_SCHEMA_VERSION: i32 = 16;
 pub const SESSIONS_FOLDER: &str = "sessions";
 pub const DB_NAME: &str = "sessions.db";
 const MILLISECOND_TIMESTAMP_THRESHOLD: i64 = 10_000_000_000;
@@ -400,6 +400,13 @@ impl SessionManager {
 
     pub fn storage(&self) -> &Arc<SessionStorage> {
         &self.storage
+    }
+
+    pub async fn work_catalog(&self) -> Result<super::work_catalog::WorkCatalog> {
+        Ok(super::work_catalog::WorkCatalog::new(
+            self.storage.pool().await?.clone(),
+            self.storage.session_dir.join(DB_NAME),
+        ))
     }
 
     pub async fn create_session(
@@ -876,6 +883,10 @@ impl sqlx::FromRow<'_, sqlx::sqlite::SqliteRow> for Session {
 }
 
 impl SessionStorage {
+    fn notify_catalog_commit(&self) {
+        super::work_catalog::notify_commit(&self.session_dir.join(DB_NAME));
+    }
+
     fn create_pool(path: &Path) -> Pool<Sqlite> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).expect("Failed to create session database directory");
@@ -885,8 +896,7 @@ impl SessionStorage {
             .filename(path)
             .create_if_missing(true)
             .foreign_keys(true)
-            .busy_timeout(std::time::Duration::from_secs(30))
-            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+            .busy_timeout(std::time::Duration::from_secs(30));
 
         SqlitePoolOptions::new().connect_lazy_with(options)
     }
@@ -905,12 +915,30 @@ impl SessionStorage {
     pub(crate) async fn pool(&self) -> Result<&Pool<Sqlite>> {
         self.initialized
             .get_or_try_init(|| async {
+                // WAL activation needs an exclusive lock before SQLite's migration lock exists;
+                // its lock upgrade can return SQLITE_BUSY without invoking the busy handler.
+                // Keep this file in place: unlinking it would let newcomers lock a different inode.
+                let lock_path = self.session_dir.join("sessions.db.init.lock");
+                let _startup_lock = tokio::task::spawn_blocking(move || -> Result<fs::File> {
+                    let file = fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .create(true)
+                        .truncate(false)
+                        .open(lock_path)?;
+                    file.lock()?;
+                    Ok(file)
+                })
+                .await??;
+                let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode = WAL")
+                    .fetch_one(&self.pool)
+                    .await?;
+                anyhow::ensure!(journal_mode == "wal", "Session database refused WAL mode: {journal_mode}");
                 let schema_exists = sqlx::query_scalar::<_, bool>(
                     r#"SELECT EXISTS (SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version')"#,
                 )
                 .fetch_one(&self.pool)
-                .await
-                .unwrap_or(false);
+                .await?;
 
                 if schema_exists {
                     Self::run_migrations(&self.pool).await?;
@@ -1056,6 +1084,7 @@ impl SessionStorage {
 
         crate::providers::inventory::create_tables(&mut tx).await?;
         crate::session::transcript_index::create_objects(&mut tx).await?;
+        crate::session::work_catalog::create_objects(&mut tx).await?;
 
         tx.commit().await?;
 
@@ -1476,6 +1505,9 @@ impl SessionStorage {
             15 => {
                 crate::session::transcript_index::create_objects(tx).await?;
             }
+            16 => {
+                crate::session::work_catalog::create_objects(tx).await?;
+            }
             _ => {
                 anyhow::bail!("Unknown migration version: {}", version);
             }
@@ -1524,6 +1556,7 @@ impl SessionStorage {
             .await?;
 
         tx.commit().await?;
+        self.notify_catalog_commit();
         #[cfg(feature = "telemetry")]
         crate::posthog::emit_session_started();
         Ok(session)
@@ -1707,6 +1740,7 @@ impl SessionStorage {
         }
 
         tx.commit().await?;
+        self.notify_catalog_commit();
         Ok(())
     }
 
@@ -1780,6 +1814,7 @@ impl SessionStorage {
             .await?;
 
         tx.commit().await?;
+        self.notify_catalog_commit();
         Ok(())
     }
 
@@ -1829,7 +1864,9 @@ impl SessionStorage {
         conversation: &Conversation,
     ) -> Result<()> {
         let pool = self.pool().await?;
-        Self::replace_conversation_inner(pool, session_id, conversation).await
+        Self::replace_conversation_inner(pool, session_id, conversation).await?;
+        self.notify_catalog_commit();
+        Ok(())
     }
 
     async fn list_sessions_matching(&self, query: SessionListQuery<'_>) -> Result<Vec<Session>> {
@@ -2065,6 +2102,7 @@ impl SessionStorage {
         .await?;
 
         tx.commit().await?;
+        self.notify_catalog_commit();
         Ok(out)
     }
 
@@ -2125,6 +2163,7 @@ impl SessionStorage {
             .await?;
 
         tx.commit().await?;
+        self.notify_catalog_commit();
         Ok(())
     }
 
@@ -2260,12 +2299,14 @@ impl SessionStorage {
 
     async fn truncate_conversation(&self, session_id: &str, timestamp: i64) -> Result<()> {
         let pool = self.pool().await?;
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
         sqlx::query("DELETE FROM messages WHERE session_id = ? AND created_timestamp >= ?")
             .bind(session_id)
             .bind(timestamp)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
-
+        tx.commit().await?;
+        self.notify_catalog_commit();
         Ok(())
     }
 
@@ -2298,6 +2339,7 @@ impl SessionStorage {
         }
 
         tx.commit().await?;
+        self.notify_catalog_commit();
         Ok(())
     }
 
@@ -2364,6 +2406,7 @@ impl SessionStorage {
         .await?;
 
         tx.commit().await?;
+        self.notify_catalog_commit();
 
         Ok(())
     }
@@ -2418,6 +2461,7 @@ impl SessionStorage {
                 .execute(&mut *tx)
                 .await?;
             tx.commit().await?;
+            self.notify_catalog_commit();
             return Ok(());
         }
 
