@@ -88,3 +88,7 @@ The screenshot `/tmp/goose-apple-conversion-submitted.png`, recorded at `2026-10
 Apple's organization-enrollment guidance also calls for legal entity status, authority to bind it, a domain-associated work email and a working organization website. LeanZero's public records supply the company/contact/website context; Apple verifies eligibility. [Apple organization requirements](https://developer.apple.com/help/account/membership/program-enrollment).
 
 Do not promise a conversion completion date or that team identifiers/certificates will remain unchanged: record Apple's actual response and instructions. Keep the first public release on hold until the owner-selected organization seller identity is confirmed. This acknowledgment proves request submission, not conversion completion.
+
+## Agreement verified after request
+
+The authenticated Apple Developer account, freshly reloaded on 26 October 2026, records Apple Developer Program License Agreement issued 14 October 2026, accepted 26 October 2026. The owner accepted it in the browser. The previous agreement warning is gone. This does not confirm organization conversion.
