@@ -162,7 +162,7 @@ private actor PendingInputOwner: OwnerControllerService {
     func selected(work: CatalogEntry, host: HostDescriptor, credential: String) async throws -> SelectedWork {
         try Task.checkCancellation()
         selections += 1
-        let inputs: [PendingInput] = selections == 1 ? [] : [.init(inputId: UUID(), runId: entry.currentRunId!, prompt: "Current owner input", options: [])]
+        let inputs: [PendingInput] = selections == 1 ? [] : [.init(inputId: UUID(), runId: entry.currentRunId!, prompt: "Current owner input", options: [], payload: .permission(requestId: "request", toolName: "developer__shell", arguments: .object(["command": .string("pwd")])))]
         if selections > 1 { complete.fulfill() }
         return .init(entry: entry, transcript: [], pendingInputs: inputs, nextPageToken: nil, historyRevision: 80, workCursor: "work-80", streamRevision: 80)
     }

@@ -187,7 +187,7 @@ enum TranscriptRenderer {
             }.joined(separator: "\n\n")
             guard !text.isEmpty else { return nil }
             let timestamp: Date?
-            if case .number(let created) = message["created"] { timestamp = Date(timeIntervalSince1970: created) } else { timestamp = nil }
+            if let created = message["created"]?.doubleValue { timestamp = Date(timeIntervalSince1970: created) } else { timestamp = nil }
             return TranscriptItem(id: value.messageId, revision: value.revision, role: role, text: text, timestamp: timestamp)
         }
     }

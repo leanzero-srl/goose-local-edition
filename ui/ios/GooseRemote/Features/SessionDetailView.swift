@@ -108,32 +108,3 @@ struct SessionDetailView: View {
         .onAppear { if !entry.canPerform(action), let supported = [WorkAction.send, .steer, .note].first(where: { entry.canPerform($0) }) { action = supported } }
     }
 }
-
-struct PendingInputView: View {
-    @Environment(ControllerStore.self) private var store
-    let input: PendingInput
-    let supported: Bool
-    @State private var option: InputOption?
-    @State private var value = ""
-    var body: some View {
-        StudioPanel {
-            Label("Needs your answer", systemImage: "person.crop.circle.badge.questionmark").font(.headline).foregroundStyle(Studio.warning)
-            Text(input.prompt).textSelection(.enabled)
-            if supported {
-                ForEach(input.options) { choice in
-                    Button(choice.label) {
-                        if choice.acceptsValue { option = choice }
-                        else { Task { await store.answer(input: input, option: choice, value: nil) } }
-                    }.buttonStyle(.bordered).disabled(store.selectedError != nil || store.sending || store.unfinishedCommand != nil)
-                }
-                if let option {
-                    TextField("Your answer", text: $value, axis: .vertical).textFieldStyle(.roundedBorder).accessibilityLabel(option.label)
-                    Button("Send answer") { Task { await store.answer(input: input, option: option, value: value.isEmpty ? nil : value) } }
-                        .buttonStyle(StudioPrimaryButtonStyle()).disabled(store.selectedError != nil || store.sending || store.unfinishedCommand != nil)
-                }
-            } else {
-                Text("This owner does not currently allow remote answers. Open the request on its Mac.").font(.subheadline).foregroundStyle(Studio.secondaryInk)
-            }
-        }
-    }
-}

@@ -13,6 +13,7 @@ final class EmbeddedMeshTransportTests: XCTestCase {
         let authKey: String
         let endpoint: URL
         let nonce: String
+        let resumeWithoutKey: Bool?
     }
     func testActualEmbeddedMeshPinnedHTTPWSSAndRecreatedNode() async throws {
         guard let url = Bundle(for: Self.self).url(forResource: "mesh-runtime", withExtension: "json", subdirectory: "Fixtures") else {
@@ -21,7 +22,7 @@ final class EmbeddedMeshTransportTests: XCTestCase {
         #if canImport(TailscaleKit)
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
         guard fixture.fixture, fixture.controlURL.host == "127.0.0.1", fixture.controlURL.scheme == "http",
-              fixture.authKey.hasPrefix("disposable-native-"), fixture.nonce.count == 64 else { throw ControllerError.invalid("Refusing a nonlocal mesh fixture.") }
+              fixture.resumeWithoutKey == true || fixture.authKey.hasPrefix("disposable-native-"), fixture.nonce.count == 64 else { throw ControllerError.invalid("Refusing a nonlocal mesh fixture.") }
         setenv("TS_NO_LOGS_NO_SUPPORT", "true", 1)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("native-mesh-test-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.complete])
@@ -41,9 +42,9 @@ final class EmbeddedMeshTransportTests: XCTestCase {
         }
         var firstKey: String?
         for iteration in 0..<2 {
-            // testcontrol requires its key on every registration, including a known node.
-            // Real Headscale resume without a fresh key is a separate provider integration gate.
-            let node = try makeNode(authKey: fixture.authKey)
+            // testcontrol requires a key on every registration. Real Headscale must
+            // restore the saved node on iteration 1 without the one-use enrollment key.
+            let node = try makeNode(authKey: iteration == 0 || fixture.resumeWithoutKey != true ? fixture.authKey : nil)
             do {
                 try await node.up()
                 let key = try EmbeddedMeshConnectionProvider.nodeKey(status: await node.statusJSON())

@@ -273,7 +273,7 @@ final class ControllerStore {
     }
 
     func answer(input: PendingInput, option: InputOption, value: String?) async {
-        guard selectedError == nil, let current = selectedWork, current.pendingInputs.contains(where: { $0.id == input.id && $0.runId == input.runId }) else {
+        guard selectedError == nil, let current = selectedWork, current.pendingInputs.contains(input) else {
             errorMessage = "This input is no longer current. Refresh the session."
             return
         }

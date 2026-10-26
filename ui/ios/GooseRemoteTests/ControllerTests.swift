@@ -96,7 +96,7 @@ final class ControllerTests: XCTestCase {
     }
     func testAnswerRequiresExactRunAndCurrentChoice() throws {
         let choice = InputOption(optionId: "allow", label: "Allow once", acceptsValue: false)
-        let input = PendingInput(inputId: UUID(), runId: run, prompt: "Allow?", options: [choice])
+        let input = PendingInput(inputId: UUID(), runId: run, prompt: "Allow?", options: [choice], payload: .permission(requestId: "request", toolName: "developer__shell", arguments: .object(["command": .string("pwd")])))
         let current = entry(state: .waitingInput, capabilities: [.answerInput])
         let command = try WorkCommand.answer(entry: current, input: input, option: choice, value: nil)
         XCTAssertEqual(command.expectedRunId, run)
@@ -281,7 +281,7 @@ final class OwnerWireTests: XCTestCase {
     func testPendingInputPreservesRunAndOptions() throws {
         let inputId = UUID(), runId = UUID()
         let data = Data("""
-        {"input_id":"\(inputId)","run_id":"\(runId)","prompt":"Allow this action?","options":[{"option_id":"allow","label":"Allow once","accepts_value":false}]}
+        {"input_id":"\(inputId)","run_id":"\(runId)","prompt":"Allow this action?","options":[{"option_id":"allow","label":"Allow once","accepts_value":false}],"payload":{"kind":"permission","request_id":"original-request","tool_name":"developer__shell","arguments":{"command":"pwd"}}}
         """.utf8)
         let input = try ControllerCodec.decoder().decode(PendingInput.self, from: data)
         XCTAssertEqual(input.id, inputId)

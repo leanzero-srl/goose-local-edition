@@ -174,6 +174,7 @@ struct WorkCommand: Codable, Sendable {
               value == nil || option.acceptsValue else {
             throw ControllerError.invalid("This input no longer matches the active run or permitted choices. Refresh the session.")
         }
+        try input.validateAnswer(option: option, value: value)
         return .init(commandId: id, work: entry.work, expectedStoreGeneration: entry.storeGeneration,
                      expectedRevision: entry.revision, expectedRunId: input.runId, action: .answerInput,
                      payload: .init(inputId: input.id, optionId: option.id, value: value))
@@ -223,14 +224,15 @@ struct SelectedWork: Codable, Sendable {
     var messageRenames: [String: String] = [:]
     var hasMoreHistory: Bool { nextPageToken != nil }
 }
-struct PendingInput: Codable, Identifiable, Sendable {
+struct PendingInput: Codable, Identifiable, Sendable, Equatable {
     let inputId: UUID
     let runId: UUID
     let prompt: String
     let options: [InputOption]
+    let payload: PendingInputPayload
     var id: UUID { inputId }
 }
-struct InputOption: Codable, Identifiable, Sendable {
+struct InputOption: Codable, Identifiable, Sendable, Equatable {
     let optionId: String
     let label: String
     let acceptsValue: Bool
@@ -305,11 +307,13 @@ struct ResourceSnapshot: Codable, Sendable {
 }
 
 enum JSONValue: Codable, Hashable, Sendable {
-    case string(String), number(Double), bool(Bool), object([String: JSONValue]), array([JSONValue]), null
+    case string(String), number(Double), integer(Int64), unsignedInteger(UInt64), bool(Bool), object([String: JSONValue]), array([JSONValue]), null
     init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
         if c.decodeNil() { self = .null }
         else if let v = try? c.decode(Bool.self) { self = .bool(v) }
+        else if let v = try? c.decode(Int64.self) { self = .integer(v) }
+        else if let v = try? c.decode(UInt64.self) { self = .unsignedInteger(v) }
         else if let v = try? c.decode(Double.self) { self = .number(v) }
         else if let v = try? c.decode(String.self) { self = .string(v) }
         else if let v = try? c.decode([JSONValue].self) { self = .array(v) }
@@ -320,11 +324,21 @@ enum JSONValue: Codable, Hashable, Sendable {
         switch self {
         case .string(let v): try c.encode(v)
         case .number(let v): try c.encode(v)
+        case .integer(let v): try c.encode(v)
+        case .unsignedInteger(let v): try c.encode(v)
         case .bool(let v): try c.encode(v)
         case .object(let v): try c.encode(v)
         case .array(let v): try c.encode(v)
         case .null: try c.encodeNil()
         }
+    }
+    var doubleValue: Double? {
+        switch self { case .number(let value): value; case .integer(let value): Double(value); case .unsignedInteger(let value): Double(value); default: nil }
+    }
+    func displayJSON(pretty: Bool = false) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = pretty ? [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes] : [.sortedKeys, .withoutEscapingSlashes]
+        return String(decoding: try encoder.encode(self), as: UTF8.self)
     }
 }
 
