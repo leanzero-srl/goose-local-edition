@@ -34,6 +34,20 @@ import type {
   ConfigReadResponse_unstable,
   ConfigRemoveRequest_unstable,
   ConfigUpsertRequest_unstable,
+  ControllerCatalogRequest_unstable,
+  ControllerCommandRequest_unstable,
+  ControllerHistoryRequest_unstable,
+  ControllerHostsRequest_unstable,
+  ControllerLogoutRequest_unstable,
+  ControllerOpenWorkRequest_unstable,
+  ControllerPendingCommandsRequest_unstable,
+  ControllerReceiptRequest_unstable,
+  ControllerRequestCodeRequest_unstable,
+  ControllerResponse_unstable,
+  ControllerStatusRequest_unstable,
+  ControllerSyncRequest_unstable,
+  ControllerVerifyRequest_unstable,
+  ControllerWorkChangesRequest_unstable,
   CreateRecipeRequest_unstable,
   CreateRecipeResponse_unstable,
   CreateScheduleRequest_unstable,
@@ -389,6 +403,7 @@ import {
   zConfigMoveAsideResponse_unstable,
   zConfigReadAllResponse_unstable,
   zConfigReadResponse_unstable,
+  zControllerResponse_unstable,
   zCreateRecipeResponse_unstable,
   zCreateScheduleResponse_unstable,
   zCreateSourceResponse_unstable,
@@ -541,6 +556,162 @@ import {
 
 export class GooseExtClient {
   constructor(private conn: ExtMethodProvider) {}
+
+  async controllerStatus_unstable(
+    params: ControllerStatusRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/status",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
+
+  async controllerRequestCode_unstable(
+    params: ControllerRequestCodeRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/requestCode",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
+
+  async controllerVerify_unstable(
+    params: ControllerVerifyRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/verify",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
+
+  async controllerLogout_unstable(
+    params: ControllerLogoutRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/logout",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
+
+  async controllerHosts_unstable(
+    params: ControllerHostsRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/hosts",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
+
+  async controllerCatalog_unstable(
+    params: ControllerCatalogRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/catalog",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
+
+  async controllerSync_unstable(
+    params: ControllerSyncRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/sync",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
+
+  async controllerOpenWork_unstable(
+    params: ControllerOpenWorkRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/openWork",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
+
+  async controllerHistory_unstable(
+    params: ControllerHistoryRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/history",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
+
+  async controllerWorkChanges_unstable(
+    params: ControllerWorkChangesRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/workChanges",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
+
+  async controllerCommand_unstable(
+    params: ControllerCommandRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/command",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
+
+  async controllerReceipt_unstable(
+    params: ControllerReceiptRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/receipt",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
+
+  async controllerPendingCommands_unstable(
+    params: ControllerPendingCommandsRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/pendingCommands",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
 
   async sessionExtensionsAdd_unstable(
     params: AddSessionExtensionRequest_unstable,

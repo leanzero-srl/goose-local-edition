@@ -2,6 +2,61 @@
 
 import { z } from 'zod';
 
+export const zControllerStatusRequest_unstable = z.record(z.never());
+
+/**
+ * Canonical domain bodies are validated against leanzero-link/controller_wire.rs.
+ * This envelope deliberately carries no account, host or device credentials.
+ */
+export const zControllerResponse_unstable = z.unknown();
+
+export const zControllerRequestCodeRequest_unstable = z.record(z.never());
+
+export const zControllerVerifyRequest_unstable = z.object({
+    code: z.string()
+});
+
+export const zControllerLogoutRequest_unstable = z.record(z.never());
+
+export const zControllerHostsRequest_unstable = z.record(z.never());
+
+export const zControllerCatalogRequest_unstable = z.record(z.never());
+
+export const zControllerSyncRequest_unstable = z.record(z.never());
+
+export const zControllerOpenWorkRequest_unstable = z.object({
+    work: z.unknown(),
+    store_generation: z.string()
+});
+
+export const zControllerHistoryRequest_unstable = z.object({
+    work: z.unknown(),
+    store_generation: z.string(),
+    page_token: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zControllerWorkChangesRequest_unstable = z.object({
+    work: z.unknown(),
+    store_generation: z.string(),
+    cursor: z.string()
+});
+
+export const zControllerCommandRequest_unstable = z.object({
+    command: z.unknown()
+});
+
+export const zControllerReceiptRequest_unstable = z.object({
+    owner_node_id: z.string(),
+    command_id: z.string()
+});
+
+export const zControllerPendingCommandsRequest_unstable = z.object({
+    work: z.unknown()
+});
+
 /**
  * An HTTP header to set when making requests to the MCP server.
  */
@@ -8530,6 +8585,19 @@ export const zExtRequest = z.object({
     method: z.string(),
     params: z.union([
         z.union([
+            zControllerStatusRequest_unstable,
+            zControllerRequestCodeRequest_unstable,
+            zControllerVerifyRequest_unstable,
+            zControllerLogoutRequest_unstable,
+            zControllerHostsRequest_unstable,
+            zControllerCatalogRequest_unstable,
+            zControllerSyncRequest_unstable,
+            zControllerOpenWorkRequest_unstable,
+            zControllerHistoryRequest_unstable,
+            zControllerWorkChangesRequest_unstable,
+            zControllerCommandRequest_unstable,
+            zControllerReceiptRequest_unstable,
+            zControllerPendingCommandsRequest_unstable,
             zAddSessionExtensionRequest_unstable,
             zRemoveSessionExtensionRequest_unstable,
             zGetToolsRequest_unstable,
@@ -8752,6 +8820,7 @@ export const zExtResponse = z.union([
         id: z.string(),
         result: z.union([
             z.union([
+                zControllerResponse_unstable,
                 zEmptyResponse,
                 zGetToolsResponse_unstable,
                 zSetToolPermissionsResponse_unstable,
