@@ -40,7 +40,9 @@ Do NOT load the skills goose-mlx-inference / goose-feature-dev / node-dispatch w
 
 ## OPEN
 - Live CDP check of a packaged build from this branch (saved profile -> engine env/argv) NOT done.
-- Engine owner: streaming space-drop before " [" / " &"; Flash-Next MTP (in-shard head detection + K 1-2).
+- Engine owner: streaming space-drop before " [" / " &".
+- DONE 2026-10-27 (83ef968895, 5516c12e24): Flash-Next served WITH MTP (in-shard head, K=2); live proof
+  on workmule 106.88 tok/s code_edit 8k, see references/qwen4-flash-offload.md. Packaged-app CDP check NOT done.
 - Merge ngram-decoding to main.
 
 ## Engine facts (verified in /Users/workhorse/Projects/Rapid-MLX-wt-offload @ v0.14.3-lz.14, READ-ONLY)

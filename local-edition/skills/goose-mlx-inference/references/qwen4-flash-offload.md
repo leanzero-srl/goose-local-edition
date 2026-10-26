@@ -35,11 +35,8 @@ Traps:
   "prefill" 8k in 0.25 s.
 - Never bench from an NFS/TB-mounted model dir: the gather reads the checkpoint per token.
   Copy to the Mac's internal disk.
-- goose serves Flash-Next WITHOUT MTP: its MTP head is inside the shards (no mtp.safetensors),
-  and the engine accepts num_speculative_tokens 1-2 for it while goose sends 3. Prompt lookup
-  only runs inside MTP, so on goose it is inert for Flash-Next until in-shard MTP detection +
-  a per-model depth exist (not done: has_mtp_sidecar feeds the UI, the prompt-lookup lane and
-  the distributed paths).
+- (FIXED 2026-10-27, see below) goose used to serve Flash-Next WITHOUT MTP: its head is inside
+  the shards (no mtp.safetensors) and the engine refuses goose's old depth 3 for qwen4_exp.
 
 Tag check (2026-10-26): fork suites at the tag vs lz.14, same venv and commands
 (`pytest tests --ignore=tests/integrations --timeout 180`, 3 file shards per side): 27035 vs
@@ -56,3 +53,22 @@ goose build trap: a cargo run WITHOUT `--config 'profile.dev.package."*".strip=f
 flag placed after `--`) writes a stripped libsqlx_macros that macOS 27 refuses ("mis-aligned
 LINKEDIT"); later correct runs reuse it. Fix: `cargo clean -p sqlx-macros -p sqlx-macros-core`,
 then rerun with the flag BEFORE `--`.
+
+## 2026-10-27 — goose serves Flash-Next WITH MTP (ple-offload 83ef968895, 5516c12e24)
+
+`inspect_model_dir` → `ModelDirFacts.mtp_head` (Sidecar = mtp.safetensors; InShard = `mtp.*` keys in
+model.safetensors.index.json or a single model.safetensors header, ONLY for `IN_SHARD_MTP_FAMILIES` =
+qwen4_exp — other families' injectors want a sidecar FILE) + `mtp_depth` (qwen4_exp → 2, the engine's
+`_resolve_mtp_depth_for_model` rule, 1|2 only; else 3, lowered by mtplx_runtime.json `mtp_depth_max`).
+One fact, every reader: serve argv, prompt-lookup lane, ACP hasMtpHead → Settings UI. InShard config has
+NO "model" key (engine/batched.py passes the checkpoint itself as the qwen4_exp sidecar; a "model":dir also
+works via `_mtp_weight_files`, the 10-26 bench used that). Flash argv now ends
+`--speculative-config {"method":"mtp","num_speculative_tokens":2} --text-only --qwen4-ple-offload`.
+Left alone on purpose: placement/model.rs keeps MTP out of resident/active bytes (not used per decoded
+token; the single-engine mount gate charges dir size, which already includes in-shard MTP the same as a
+sidecar file); distributed plan.rs excludes mtp.* (ranks never load MTP); remote single = the peer's own
+build_serve_command. Live, workmule, goose's exact uvx argv + RAPID_MLX_MTP_PROMPT_LOOKUP=1, prefix cache
+ON: ready 18 s, "spec decode MTP (active)", max_k=2; code_edit 8k decode 106.88 tok/s, PLD drafted 1918 /
+accepted 1893, active 73.1 GB peak 75.8, output sha = the 10-26 bench's. Evidence:
+/Volumes/AI-workhorse/runs/2026-10-27-flash-mtp-goose-argv/NOTES.md. Trap: heavy-run/node-run kill a job
+over 50% of RAM by default; this engine needs `--max-rss-pct 88` on a 128 GB Mac.
