@@ -27,12 +27,14 @@ export interface Challenge {
   request_hash?: string; receipt?: string; device_id?: string;
 }
 export interface HostState {
+  suspended?: boolean;
+  registration_pending?: boolean;
   owner_node_id: string; host_name: string; protocol_version: 1; revision: number;
   credential_hash: string; registration_id: string; registration_receipt: string;
   tls_spki_sha256: string | null;
   controller_port?: number | null;
   lease: { runtime_id: string; lease_id: string; expires_at: number; renewed_at?: number; store_generation: string;
-    catalog_revision: number; mesh_node_key: string } | null;
+    catalog_revision: number; mesh_node_key: string; capabilities?: ControllerScope[] } | null;
   generation: string | null; catalog_high_water: number;
 }
 export interface AccountState {

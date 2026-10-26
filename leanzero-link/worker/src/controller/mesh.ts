@@ -4,7 +4,7 @@ import { checkedHost } from "./hosts";
 import { fail, parseAccount, splitCredential } from "./registry";
 import { ControllerService, deviceFrom } from "./service";
 import { MeshProvider, usable, type ProviderNode } from "./mesh-provider";
-import { CONTROLLER_SCOPES, type AccessClaims, type AccountState, type MeshEnrollment, type MeshJoinCredential, type RegisteredPeers } from "./types";
+import { type AccessClaims, type AccountState, type MeshEnrollment, type MeshJoinCredential, type RegisteredPeers } from "./types";
 
 type Role = "host" | "controller";
 interface Actor { key: string; id: string; role: Role; hash?: string; claims?: AccessClaims }
@@ -164,6 +164,21 @@ export class MeshService {
     if (duration <= 0) fail(503, "admission_expiring", "Peer admission authority is expiring");
     return { protocol_version: 1, revision: row!.revision, lease_seconds: duration, peers };
   }
+  async hostContext(token: string): Promise<unknown> {
+    const actor = await this.actor(token, "host");
+    const before = this.check(actor, await this.c.registry.read(actor.key));
+    const snapshot = await this.provider.nodes(before.email);
+    const state = this.check(actor, await this.c.registry.read(actor.key));
+    const active = enrollments(state).filter(e => e.role === "host" && e.subject_id === actor.id && live(e, state, this.c.now()));
+    if (active.length > 1) fail(503, "enrollment_corrupt", "Multiple active host enrollments");
+    const e = active[0];
+    if (!e) return { login_server: this.provider.loginServer, enrollment: null };
+    const node = e.binding ? snapshot.nodes.find(n => n.id === e.binding!.node_id && usable(n, this.c.now())) : undefined;
+    if (node && !matches(e, node)) fail(409, "mesh_binding_changed", "Provider host identity changed");
+    // A disappeared confirmed node is an explicit re-enrollment state, not an outage.
+    if (e.status === "confirmed" && !node) return { login_server: this.provider.loginServer, enrollment: null };
+    return { login_server: this.provider.loginServer, enrollment: { enrollment_id: e.enrollment_id, status: e.status, mesh_node_key: node?.node_key ?? null } };
+  }
   async hosts(token: string): Promise<unknown> {
     const before = await this.c.authenticate(token, "catalog.read");
     const { nodes } = await this.provider.nodes(before.state.email);
@@ -175,7 +190,7 @@ export class MeshService {
       const leased = h.lease !== null && h.lease.expires_at > this.c.now();
       const compatible = n !== undefined && h.controller_port != null && h.tls_spki_sha256 !== null && h.lease?.mesh_node_key === n.node_key;
       const online = compatible && leased && n.online && n.ips.length > 0;
-      return { owner_node_id: h.owner_node_id, name: h.host_name, device_role: "host", protocol_version: h.protocol_version, availability: !compatible ? "update_required" : online ? "online" : "offline", registration_state: compatible ? "verified" : "awaiting_mesh_binding", last_seen_at: h.lease?.renewed_at !== undefined ? new Date(h.lease.renewed_at).toISOString() : null, endpoints: online ? n.ips.map(ip => ({ url: "https://" + (ip.includes(":") ? "[" + ip + "]" : ip) + ":" + h.controller_port, tls_spki_sha256: h.tls_spki_sha256 })) : [], capabilities: online ? [...CONTROLLER_SCOPES] : [] };
+      return { owner_node_id: h.owner_node_id, name: h.host_name, device_role: "host", protocol_version: h.protocol_version, availability: !compatible ? "update_required" : online ? "online" : "offline", registration_state: compatible ? "verified" : "awaiting_mesh_binding", last_seen_at: h.lease?.renewed_at !== undefined ? new Date(h.lease.renewed_at).toISOString() : null, endpoints: online ? n.ips.map(ip => ({ url: "https://" + (ip.includes(":") ? "[" + ip + "]" : ip) + ":" + h.controller_port, tls_spki_sha256: h.tls_spki_sha256 })) : [], capabilities: online ? [...(h.lease?.capabilities ?? [])] : [] };
     }) };
   }
   async cleanup(accountKey: string, deviceId: string): Promise<"complete" | "pending"> {

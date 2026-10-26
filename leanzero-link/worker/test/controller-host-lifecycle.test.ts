@@ -231,6 +231,9 @@ for (const backend of ["node-sqlite", "cloudflare-worker-durable-object"] as con
       const registered = await f.post("/hosts/register", f.registration, f.accountToken); expect(registered.status).toBe(200);
       const next = await registered.json() as { host_credential: string; host_revision: number };
       expect(next.host_credential).not.toBe(credential); expect(next.host_revision).toBeGreaterThan(f.reg.host_revision);
+      // A lost reactivation ACK must not strand an owner whose old generation is kept.
+      const retry = await f.post("/hosts/register", f.registration, f.accountToken);
+      expect(retry.status).toBe(200); expect(await retry.json()).toEqual(next);
       await error(await f.get("/hosts/bootstrap", credential), 401, "invalid_credential");
       expect(await (await f.get("/hosts/bootstrap", next.host_credential)).json()).toEqual({ account_id: releasedState.account_id, owner_node_id: f.owner_node_id });
       const reconnected = await f.enroll(next.host_credential, "c");
@@ -262,6 +265,16 @@ for (const backend of ["node-sqlite", "cloudflare-worker-durable-object"] as con
       host.node.online = false;
       const offline = await f.get("/hosts", f.phone.access_token);
       expect(await offline.json()).toMatchObject({ hosts: [{ availability: "offline", endpoints: [], capabilities: [] }] });
+    });
+
+    it("withdraws only the owning runtime and immediately permits a clean reconnect", async () => {
+      const f = await setup(backend); const host = await f.enroll();
+      await error(await f.post("/hosts/withdraw", { runtime_id: crypto.randomUUID() }, f.reg.host_credential), 409, "owner_identity_in_use");
+      expect(await (await f.post("/hosts/withdraw", { runtime_id: f.runtime_id }, f.reg.host_credential)).json()).toEqual({ withdrawn: true });
+      expect((await f.get("/hosts/bootstrap", f.reg.host_credential)).status).toBe(200);
+      const offline = await f.get("/hosts", f.phone.access_token);
+      expect(await offline.json()).toMatchObject({ hosts: [{ availability: "update_required", endpoints: [] }] });
+      expect((await f.post("/hosts/lease", { ...host.leaseRequest, runtime_id: crypto.randomUUID() }, f.reg.host_credential)).status).toBe(200);
     });
   });
 }

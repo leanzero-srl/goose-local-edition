@@ -11,7 +11,7 @@ import { AuthenticatedRefreshReplay, ControllerService } from "./service";
 import { HostService } from "./hosts";
 import { MeshService } from "./mesh";
 import { nodeKey } from "./mesh-provider";
-import type { Platform } from "./types";
+import { CONTROLLER_SCOPES, type ControllerScope, type Platform } from "./types";
 
 function bearer(request: Request): string {
   const match = /^Bearer ([^\s]+)$/.exec(request.headers.get("Authorization") ?? "");
@@ -98,6 +98,20 @@ export async function handleController(request: Request, deps: Deps): Promise<Re
       case "/hosts/peers": {
         requireMethod(request, "GET"); result = await mesh.peers(bearer(request)); break;
       }
+      case "/hosts/bootstrap": {
+        requireMethod(request, "GET"); result = await hosts.bootstrap(bearer(request)); break;
+      }
+      case "/hosts/release": {
+        requireMethod(request, "POST"); const f = await fields(request);
+        result = await hosts.release(bearer(request), uuid(f.runtime_id, "runtime_id")); break;
+      }
+      case "/hosts/withdraw": {
+        requireMethod(request, "POST"); const f = await fields(request);
+        result = await hosts.withdraw(bearer(request), uuid(f.runtime_id, "runtime_id")); break;
+      }
+      case "/hosts/mesh/context": {
+        requireMethod(request, "GET"); result = await mesh.hostContext(bearer(request)); break;
+      }
       case "/hosts/recover-generation": {
         requireMethod(request, "POST"); const f = await fields(request);
         result = await hosts.recover(bearer(request), string(f.token, "token"), {
@@ -120,12 +134,14 @@ export async function handleController(request: Request, deps: Deps): Promise<Re
         if (pin !== null && !ACCOUNT_KEY.test(pin)) fail(400, "invalid_request", "TLS SPKI pin must be SHA-256 hex");
         const port = f.controller_port === undefined || f.controller_port === null ? null : integer(f.controller_port, "controller_port");
         if (port !== null && (port < 1 || port > 65535)) fail(400, "invalid_request", "controller_port must be 1..65535");
-        result = await hosts.register(bearer(request), request.headers.get("X-Link-Host-Credential"), { owner_node_id: uuid(f.owner_node_id, "owner_node_id"), registration_id: uuid(f.registration_id, "registration_id"), host_name: name(f.host_name), protocol_version: 1, tls_spki_sha256: pin, controller_port: port }); break;
+        result = await hosts.register(bearer(request), request.headers.get("X-Link-Host-Credential"), { owner_node_id: uuid(f.owner_node_id, "owner_node_id"), registration_id: uuid(f.registration_id, "registration_id"), host_name: name(f.host_name), protocol_version: 1, tls_spki_sha256: pin, controller_port: port, ...(f.runtime_id === undefined ? {} : { runtime_id: uuid(f.runtime_id, "runtime_id") }) }); break;
       }
       case "/hosts/lease": {
         requireMethod(request, "POST"); const f = await fields(request);
+        const capabilities = f.capabilities ?? [];
+        if (!Array.isArray(capabilities) || capabilities.some(s => !CONTROLLER_SCOPES.includes(s)) || new Set(capabilities).size !== capabilities.length) fail(400, "invalid_request", "Invalid host capabilities");
         const verifiedHost = await mesh.requireHost(bearer(request), nodeKey(f.mesh_node_key));
-        result = await hosts.lease(bearer(request), { owner_node_id: uuid(f.owner_node_id, "owner_node_id"), runtime_id: uuid(f.runtime_id, "runtime_id"), store_generation: uuid(f.store_generation, "store_generation"), catalog_revision: integer(f.catalog_revision, "catalog_revision"), mesh_node_key: string(f.mesh_node_key, "mesh_node_key") }, verifiedHost.node.expires_at); break;
+        result = await hosts.lease(bearer(request), { owner_node_id: uuid(f.owner_node_id, "owner_node_id"), runtime_id: uuid(f.runtime_id, "runtime_id"), store_generation: uuid(f.store_generation, "store_generation"), catalog_revision: integer(f.catalog_revision, "catalog_revision"), mesh_node_key: string(f.mesh_node_key, "mesh_node_key"), capabilities: capabilities as ControllerScope[] }, verifiedHost.node.expires_at); break;
       }
       case "/introspect": {
         requireMethod(request, "POST"); const f = await fields(request);

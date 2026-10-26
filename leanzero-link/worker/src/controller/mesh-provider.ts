@@ -65,7 +65,9 @@ export class MeshProvider {
     this.configured();
     let response: Response;
     try {
-      response = await this.deps.fetchFn(this.deps.config.hsApiUrl + path, { method, redirect: "error", headers: { Authorization: "Bearer " + this.deps.config.hsApiKey, "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      // Workers supports manual/follow only. Reject 3xx below without forwarding secrets.
+      // https://developers.cloudflare.com/workers/runtime-apis/request/#properties
+      response = await this.deps.fetchFn(this.deps.config.hsApiUrl + path, { method, redirect: "manual", headers: { Authorization: "Bearer " + this.deps.config.hsApiKey, "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     } catch { fail(502, "provider_unavailable", "Mesh provider is unavailable"); }
     if (absentOk && response.status === 404) return {};
     if (!response.ok) fail(502, "provider_failed", "Mesh provider rejected the operation");
