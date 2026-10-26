@@ -1469,6 +1469,150 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} tokens of context. The node that answered this chat’s last turn did not report its context window."
   },
+  "controller.catalog.archived": {
+    "defaultMessage": "Include archived sessions"
+  },
+  "controller.catalog.count": {
+    "defaultMessage": "{count,plural,one{# session} other{# sessions}}"
+  },
+  "controller.catalog.detail": {
+    "defaultMessage": "Open history, answer requests and guide work on the Mac that owns it."
+  },
+  "controller.catalog.empty": {
+    "defaultMessage": "No compatible linked Macs are available."
+  },
+  "controller.catalog.loading": {
+    "defaultMessage": "Connecting to your linked Macs…"
+  },
+  "controller.catalog.noSessions": {
+    "defaultMessage": "No matching sessions on this Mac."
+  },
+  "controller.catalog.offline": {
+    "defaultMessage": "Offline"
+  },
+  "controller.catalog.online": {
+    "defaultMessage": "Online"
+  },
+  "controller.catalog.owner": {
+    "defaultMessage": "Owner: {name}"
+  },
+  "controller.catalog.search": {
+    "defaultMessage": "Search linked sessions"
+  },
+  "controller.catalog.signIn": {
+    "defaultMessage": "Sign in to LeanZero Link in Settings to see your Macs here."
+  },
+  "controller.catalog.stale": {
+    "defaultMessage": "Saved state — reconnecting"
+  },
+  "controller.catalog.sync": {
+    "defaultMessage": "Sync sessions"
+  },
+  "controller.catalog.title": {
+    "defaultMessage": "Sessions across your Macs"
+  },
+  "controller.catalog.updateRequired": {
+    "defaultMessage": "Goose update required"
+  },
+  "controller.input.answer": {
+    "defaultMessage": "Your answer"
+  },
+  "controller.input.choose": {
+    "defaultMessage": "Choose a value"
+  },
+  "controller.input.no": {
+    "defaultMessage": "No"
+  },
+  "controller.input.unsupported": {
+    "defaultMessage": "This request cannot be answered here. Open it on the owner Mac."
+  },
+  "controller.input.yes": {
+    "defaultMessage": "Yes"
+  },
+  "controller.receipt.accepted": {
+    "defaultMessage": "Accepted by the owner"
+  },
+  "controller.receipt.delivered": {
+    "defaultMessage": "Delivered"
+  },
+  "controller.receipt.dispatching": {
+    "defaultMessage": "The owner is delivering this command"
+  },
+  "controller.receipt.outcomeUnknown": {
+    "defaultMessage": "The owner cannot confirm the outcome. Check the session before trying another command."
+  },
+  "controller.receipt.rejected": {
+    "defaultMessage": "Rejected by the owner"
+  },
+  "controller.receipt.waiting": {
+    "defaultMessage": "Queued for the next turn"
+  },
+  "controller.work.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "controller.work.back": {
+    "defaultMessage": "All linked sessions"
+  },
+  "controller.work.check": {
+    "defaultMessage": "Check receipt"
+  },
+  "controller.work.content": {
+    "defaultMessage": "Message details"
+  },
+  "controller.work.deleted": {
+    "defaultMessage": "This work was deleted or is no longer shared by its owner."
+  },
+  "controller.work.load": {
+    "defaultMessage": "Loading from the owner Mac…"
+  },
+  "controller.work.message": {
+    "defaultMessage": "Message for this session on {name}"
+  },
+  "controller.work.noMessages": {
+    "defaultMessage": "No visible messages yet."
+  },
+  "controller.work.note": {
+    "defaultMessage": "Add note"
+  },
+  "controller.work.owner": {
+    "defaultMessage": "Runs on {name}"
+  },
+  "controller.work.pause": {
+    "defaultMessage": "Pause"
+  },
+  "controller.work.queue": {
+    "defaultMessage": "Queue next message"
+  },
+  "controller.work.reload": {
+    "defaultMessage": "Reload owner state"
+  },
+  "controller.work.resume": {
+    "defaultMessage": "Resume"
+  },
+  "controller.work.retry": {
+    "defaultMessage": "Retry same command"
+  },
+  "controller.work.send": {
+    "defaultMessage": "Send"
+  },
+  "controller.work.steer": {
+    "defaultMessage": "Steer current run"
+  },
+  "controller.work.stop": {
+    "defaultMessage": "Stop current run"
+  },
+  "controller.work.tick": {
+    "defaultMessage": "Run a tick"
+  },
+  "controller.work.unavailable": {
+    "defaultMessage": "The owner is unavailable. Saved content may be out of date; controls are disabled."
+  },
+  "controller.work.uncertain": {
+    "defaultMessage": "Acknowledgement not received. Check the receipt or retry this same command."
+  },
+  "controller.work.user": {
+    "defaultMessage": "You"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Conversation Limits"
   },
@@ -10558,6 +10702,12 @@
   },
   "sessions.saving": {
     "defaultMessage": "Saving..."
+  },
+  "sessions.scope.linked": {
+    "defaultMessage": "Linked Macs"
+  },
+  "sessions.scope.local": {
+    "defaultMessage": "This Mac"
   },
   "sessions.search.noResults": {
     "defaultMessage": "No matching sessions found"

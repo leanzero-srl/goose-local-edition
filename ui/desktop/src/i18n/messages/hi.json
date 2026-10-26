@@ -12148,5 +12148,155 @@
   },
   "myMacs.updatedAgo": {
     "defaultMessage": "{seconds} सेकंड पहले अपडेट किया गया"
+  },
+  "controller.catalog.archived": {
+    "defaultMessage": "संग्रहीत सत्र शामिल करें"
+  },
+  "controller.catalog.count": {
+    "defaultMessage": "{count} सत्र"
+  },
+  "controller.catalog.detail": {
+    "defaultMessage": "इतिहास खोलें, अनुरोधों का उत्तर दें और काम चलाने वाले Mac पर उसे निर्देशित करें।"
+  },
+  "controller.catalog.empty": {
+    "defaultMessage": "कोई संगत लिंक किया गया Mac उपलब्ध नहीं है।"
+  },
+  "controller.catalog.loading": {
+    "defaultMessage": "आपके लिंक किए गए Mac से जुड़ रहे हैं…"
+  },
+  "controller.catalog.noSessions": {
+    "defaultMessage": "इस Mac पर कोई मेल खाता सत्र नहीं है।"
+  },
+  "controller.catalog.offline": {
+    "defaultMessage": "ऑफ़लाइन"
+  },
+  "controller.catalog.online": {
+    "defaultMessage": "ऑनलाइन"
+  },
+  "controller.catalog.owner": {
+    "defaultMessage": "ज़िम्मेदार Mac: {name}"
+  },
+  "controller.catalog.search": {
+    "defaultMessage": "लिंक किए गए सत्र खोजें"
+  },
+  "controller.catalog.signIn": {
+    "defaultMessage": "अपने Mac यहाँ देखने के लिए सेटिंग्स में LeanZero Link में साइन इन करें।"
+  },
+  "controller.catalog.stale": {
+    "defaultMessage": "सहेजी गई स्थिति — फिर से जुड़ रहे हैं"
+  },
+  "controller.catalog.sync": {
+    "defaultMessage": "सत्र सिंक करें"
+  },
+  "controller.catalog.title": {
+    "defaultMessage": "आपके सभी Mac पर सत्र"
+  },
+  "controller.catalog.updateRequired": {
+    "defaultMessage": "Goose को अपडेट करना आवश्यक है"
+  },
+  "controller.input.answer": {
+    "defaultMessage": "आपका उत्तर"
+  },
+  "controller.input.choose": {
+    "defaultMessage": "कोई मान चुनें"
+  },
+  "controller.input.no": {
+    "defaultMessage": "नहीं"
+  },
+  "controller.input.unsupported": {
+    "defaultMessage": "इस अनुरोध का उत्तर यहाँ नहीं दिया जा सकता। इसे ज़िम्मेदार Mac पर खोलें।"
+  },
+  "controller.input.yes": {
+    "defaultMessage": "हाँ"
+  },
+  "controller.receipt.accepted": {
+    "defaultMessage": "ज़िम्मेदार Mac ने स्वीकार किया"
+  },
+  "controller.receipt.delivered": {
+    "defaultMessage": "पहुँचा दिया गया"
+  },
+  "controller.receipt.dispatching": {
+    "defaultMessage": "ज़िम्मेदार Mac यह कमांड पहुँचा रहा है"
+  },
+  "controller.receipt.outcomeUnknown": {
+    "defaultMessage": "ज़िम्मेदार Mac परिणाम की पुष्टि नहीं कर सकता। दूसरी कमांड आज़माने से पहले सत्र जाँचें।"
+  },
+  "controller.receipt.rejected": {
+    "defaultMessage": "ज़िम्मेदार Mac ने अस्वीकार किया"
+  },
+  "controller.receipt.waiting": {
+    "defaultMessage": "अगली बारी के लिए कतार में"
+  },
+  "controller.work.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "controller.work.back": {
+    "defaultMessage": "सभी लिंक किए गए सत्र"
+  },
+  "controller.work.check": {
+    "defaultMessage": "प्राप्ति की पुष्टि जाँचें"
+  },
+  "controller.work.content": {
+    "defaultMessage": "संदेश का विवरण"
+  },
+  "controller.work.deleted": {
+    "defaultMessage": "यह काम हटा दिया गया है या ज़िम्मेदार Mac अब इसे साझा नहीं करता।"
+  },
+  "controller.work.load": {
+    "defaultMessage": "ज़िम्मेदार Mac से लोड हो रहा है…"
+  },
+  "controller.work.message": {
+    "defaultMessage": "{name} पर इस सत्र के लिए संदेश"
+  },
+  "controller.work.noMessages": {
+    "defaultMessage": "अभी कोई दिखाई देने वाला संदेश नहीं है।"
+  },
+  "controller.work.note": {
+    "defaultMessage": "नोट जोड़ें"
+  },
+  "controller.work.owner": {
+    "defaultMessage": "{name} पर चल रहा है"
+  },
+  "controller.work.pause": {
+    "defaultMessage": "विराम दें"
+  },
+  "controller.work.queue": {
+    "defaultMessage": "अगला संदेश कतार में डालें"
+  },
+  "controller.work.reload": {
+    "defaultMessage": "ज़िम्मेदार Mac की स्थिति फिर लोड करें"
+  },
+  "controller.work.resume": {
+    "defaultMessage": "फिर शुरू करें"
+  },
+  "controller.work.retry": {
+    "defaultMessage": "वही कमांड दोबारा आज़माएँ"
+  },
+  "controller.work.send": {
+    "defaultMessage": "भेजें"
+  },
+  "controller.work.steer": {
+    "defaultMessage": "वर्तमान रन को निर्देश दें"
+  },
+  "controller.work.stop": {
+    "defaultMessage": "वर्तमान रन रोकें"
+  },
+  "controller.work.tick": {
+    "defaultMessage": "एक चक्र चलाएँ"
+  },
+  "controller.work.unavailable": {
+    "defaultMessage": "ज़िम्मेदार Mac उपलब्ध नहीं है। सहेजी गई सामग्री पुरानी हो सकती है; नियंत्रण बंद हैं।"
+  },
+  "controller.work.uncertain": {
+    "defaultMessage": "प्राप्ति की पुष्टि नहीं मिली। पुष्टि जाँचें या यही कमांड दोबारा आज़माएँ।"
+  },
+  "controller.work.user": {
+    "defaultMessage": "आप"
+  },
+  "sessions.scope.linked": {
+    "defaultMessage": "लिंक किए गए Mac"
+  },
+  "sessions.scope.local": {
+    "defaultMessage": "यह Mac"
   }
 }

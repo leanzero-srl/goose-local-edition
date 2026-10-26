@@ -504,9 +504,10 @@ SessionSkeleton.displayName = 'SessionSkeleton';
 
 interface SessionListViewProps {
   onSelectSession: (sessionId: string) => void;
+  navigation?: React.ReactNode;
 }
 
-const SessionListView: React.FC<SessionListViewProps> = React.memo(({ onSelectSession }) => {
+const SessionListView: React.FC<SessionListViewProps> = React.memo(({ onSelectSession, navigation }) => {
   const intl = useIntl();
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [isPrefetchingSessions, setIsPrefetchingSessions] = useState(false);
@@ -1035,6 +1036,7 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(({ onSelectSe
               <p className="text-sm text-text-secondary mb-4">
                 {intl.formatMessage(i18n.chatHistoryDesc, { shortcut: getSearchShortcutText() })}
               </p>
+              {navigation}
             </div>
           </div>
 

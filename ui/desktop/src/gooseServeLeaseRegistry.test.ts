@@ -33,6 +33,109 @@ function createGooseServeResult(
 }
 
 describe('GooseServeLeaseRegistry', () => {
+  it('Quit waits for a pending backend start and never hands it to a new window', async () => {
+    let finishStart!: () => void;
+    let finishStop!: (result: GooseServeStop) => void;
+    const started = new Promise<void>((resolve) => {
+      finishStart = resolve;
+    });
+    const cleanup = vi.fn(
+      () =>
+        new Promise<GooseServeStop>((resolve) => {
+          finishStop = resolve;
+        })
+    );
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const acquiring = store.acquireLocal(async () => {
+      await started;
+      return store.create(createGooseServeResult({ cleanup }), 's');
+    });
+    expect(store.hasBackendsToStop()).toBe(true);
+    let quitDone = false;
+    const quit = store.stopAllAndWait().then((result) => {
+      quitDone = true;
+      return result;
+    });
+    finishStart();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(quitDone).toBe(false);
+    finishStop('abandoned');
+    expect(await acquiring).toBeNull();
+    expect(await quit).toEqual({ abandoned: 1 });
+    const restart = vi.fn(async () => null);
+    expect(await store.acquireLocal(restart)).toBeNull();
+    expect(restart).not.toHaveBeenCalled();
+  });
+  it('keeps an idle Link host alive after its last window and reuses that backend', async () => {
+    const cleanup = vi.fn(async () => 'exited' as const);
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const lease = store.create(createGooseServeResult({ cleanup }), 's');
+    store.attachWindow(1, lease);
+    await store.setApplicationHolders(lease, ['link-host']);
+    await store.releaseWindow(1);
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(store.liveLeases()).toEqual([lease]);
+    const start = vi.fn(async () => null);
+    expect(await store.acquireLocal(start)).toBe(lease);
+    expect(start).not.toHaveBeenCalled();
+    await store.releaseUnattached(lease);
+    expect(cleanup).not.toHaveBeenCalled();
+    await store.setApplicationHolders(lease, []);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('replaces host and run holders atomically and Quit stops the held backend once', async () => {
+    const cleanup = vi.fn(async () => 'abandoned' as const);
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const lease = store.create(createGooseServeResult({ cleanup }), 's');
+    store.attachWindow(1, lease);
+    await store.setApplicationHolders(lease, ['link-host']);
+    await store.releaseWindow(1);
+    await store.setApplicationHolders(lease, ['run:one', 'run:two']);
+    await store.setApplicationHolders(lease, ['run:two']);
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(store.hasBackendsToStop()).toBe(true);
+    expect(await store.stopAllAndWait()).toEqual({ abandoned: 1 });
+    await store.setApplicationHolders(lease, ['link-host']);
+    expect(store.liveLocal()).toBeNull();
+    expect(lease.applicationHolders.size).toBe(0);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('cannot retain an external backend with local application duties', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const store = new GooseServeLeaseRegistry(createLogger());
+    const lease = store.createExternal('wss://example.test/acp', 's', cleanup);
+    store.attachWindow(1, lease);
+    await store.setApplicationHolders(lease, ['link-host']);
+    await store.releaseWindow(1);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])(
+    'releases a crashed owner application lease (viewer attached: %s)',
+    async (attached) => {
+      const cleanup = vi.fn(async () => 'exited' as const);
+      const store = new GooseServeLeaseRegistry(createLogger());
+      const result = createGooseServeResult({ cleanup });
+      const lease = store.create(result, 's');
+      store.attachWindow(1, lease);
+      await store.setApplicationHolders(lease, ['controller-runtime', 'link-host']);
+      if (!attached) await store.releaseWindow(1);
+      expect(cleanup).not.toHaveBeenCalled();
+
+      result.process.emit('exit', 1, null);
+      expect(lease.applicationHolders.size).toBe(0);
+      if (attached) expect(() => store.getAcpUrl(1)).toThrow(GOOSE_SERVE_EXITED_USER_MESSAGE);
+      const replacement = store.create(createGooseServeResult(), 'new-secret');
+      await store.releaseWindow(1);
+      expect(cleanup).toHaveBeenCalledTimes(1);
+      expect(lease.cleanedUp).toBe(true);
+      expect(store.liveLocal()).toBe(replacement);
+    }
+  );
+
   it('returns the ACP URL for an attached live lease', () => {
     const store = new GooseServeLeaseRegistry(createLogger());
     const lease = store.create(createGooseServeResult(), 'local-secret');

@@ -12148,5 +12148,155 @@
   },
   "myMacs.updatedAgo": {
     "defaultMessage": "dikemas kini {seconds} saat lalu"
+  },
+  "controller.catalog.archived": {
+    "defaultMessage": "Sertakan sesi yang diarkibkan"
+  },
+  "controller.catalog.count": {
+    "defaultMessage": "{count} sesi"
+  },
+  "controller.catalog.detail": {
+    "defaultMessage": "Buka sejarah, jawab permintaan dan arahkan kerja pada Mac yang menjalankannya."
+  },
+  "controller.catalog.empty": {
+    "defaultMessage": "Tiada Mac terpaut yang serasi tersedia."
+  },
+  "controller.catalog.loading": {
+    "defaultMessage": "Menyambung ke Mac terpaut anda…"
+  },
+  "controller.catalog.noSessions": {
+    "defaultMessage": "Tiada sesi yang sepadan pada Mac ini."
+  },
+  "controller.catalog.offline": {
+    "defaultMessage": "Luar talian"
+  },
+  "controller.catalog.online": {
+    "defaultMessage": "Dalam talian"
+  },
+  "controller.catalog.owner": {
+    "defaultMessage": "Mac pemilik: {name}"
+  },
+  "controller.catalog.search": {
+    "defaultMessage": "Cari sesi terpaut"
+  },
+  "controller.catalog.signIn": {
+    "defaultMessage": "Log masuk ke LeanZero Link dalam Tetapan untuk melihat Mac anda di sini."
+  },
+  "controller.catalog.stale": {
+    "defaultMessage": "Keadaan tersimpan — menyambung semula"
+  },
+  "controller.catalog.sync": {
+    "defaultMessage": "Segerakkan sesi"
+  },
+  "controller.catalog.title": {
+    "defaultMessage": "Sesi merentas Mac anda"
+  },
+  "controller.catalog.updateRequired": {
+    "defaultMessage": "Goose perlu dikemas kini"
+  },
+  "controller.input.answer": {
+    "defaultMessage": "Jawapan anda"
+  },
+  "controller.input.choose": {
+    "defaultMessage": "Pilih nilai"
+  },
+  "controller.input.no": {
+    "defaultMessage": "Tidak"
+  },
+  "controller.input.unsupported": {
+    "defaultMessage": "Permintaan ini tidak boleh dijawab di sini. Bukanya pada Mac pemilik."
+  },
+  "controller.input.yes": {
+    "defaultMessage": "Ya"
+  },
+  "controller.receipt.accepted": {
+    "defaultMessage": "Diterima oleh Mac pemilik"
+  },
+  "controller.receipt.delivered": {
+    "defaultMessage": "Disampaikan"
+  },
+  "controller.receipt.dispatching": {
+    "defaultMessage": "Mac pemilik sedang menyampaikan arahan ini"
+  },
+  "controller.receipt.outcomeUnknown": {
+    "defaultMessage": "Mac pemilik tidak dapat mengesahkan hasilnya. Semak sesi sebelum mencuba arahan lain."
+  },
+  "controller.receipt.rejected": {
+    "defaultMessage": "Ditolak oleh Mac pemilik"
+  },
+  "controller.receipt.waiting": {
+    "defaultMessage": "Dalam giliran untuk pusingan seterusnya"
+  },
+  "controller.work.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "controller.work.back": {
+    "defaultMessage": "Semua sesi terpaut"
+  },
+  "controller.work.check": {
+    "defaultMessage": "Semak pengesahan penerimaan"
+  },
+  "controller.work.content": {
+    "defaultMessage": "Butiran mesej"
+  },
+  "controller.work.deleted": {
+    "defaultMessage": "Kerja ini telah dipadamkan atau tidak lagi dikongsi oleh Mac pemilik."
+  },
+  "controller.work.load": {
+    "defaultMessage": "Memuatkan daripada Mac pemilik…"
+  },
+  "controller.work.message": {
+    "defaultMessage": "Mesej untuk sesi ini pada {name}"
+  },
+  "controller.work.noMessages": {
+    "defaultMessage": "Belum ada mesej yang kelihatan."
+  },
+  "controller.work.note": {
+    "defaultMessage": "Tambah nota"
+  },
+  "controller.work.owner": {
+    "defaultMessage": "Berjalan pada {name}"
+  },
+  "controller.work.pause": {
+    "defaultMessage": "Jeda"
+  },
+  "controller.work.queue": {
+    "defaultMessage": "Bariskan mesej seterusnya"
+  },
+  "controller.work.reload": {
+    "defaultMessage": "Muat semula keadaan Mac pemilik"
+  },
+  "controller.work.resume": {
+    "defaultMessage": "Sambung semula"
+  },
+  "controller.work.retry": {
+    "defaultMessage": "Cuba semula arahan yang sama"
+  },
+  "controller.work.send": {
+    "defaultMessage": "Hantar"
+  },
+  "controller.work.steer": {
+    "defaultMessage": "Arahkan pelaksanaan semasa"
+  },
+  "controller.work.stop": {
+    "defaultMessage": "Hentikan pelaksanaan semasa"
+  },
+  "controller.work.tick": {
+    "defaultMessage": "Jalankan satu kitaran"
+  },
+  "controller.work.unavailable": {
+    "defaultMessage": "Mac pemilik tidak tersedia. Kandungan tersimpan mungkin sudah lapuk; kawalan dilumpuhkan."
+  },
+  "controller.work.uncertain": {
+    "defaultMessage": "Pengesahan belum diterima. Semak pengesahan penerimaan atau cuba semula arahan yang sama."
+  },
+  "controller.work.user": {
+    "defaultMessage": "Anda"
+  },
+  "sessions.scope.linked": {
+    "defaultMessage": "Mac terpaut"
+  },
+  "sessions.scope.local": {
+    "defaultMessage": "Mac ini"
   }
 }

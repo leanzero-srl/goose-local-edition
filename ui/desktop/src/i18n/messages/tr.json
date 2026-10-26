@@ -12148,5 +12148,155 @@
   },
   "myMacs.updatedAgo": {
     "defaultMessage": "{seconds} sn önce güncellendi"
+  },
+  "controller.catalog.archived": {
+    "defaultMessage": "Arşivlenmiş oturumları dahil et"
+  },
+  "controller.catalog.count": {
+    "defaultMessage": "{count} oturum"
+  },
+  "controller.catalog.detail": {
+    "defaultMessage": "Geçmişi açın, isteklere yanıt verin ve işi yürüten Mac'teki çalışmayı yönlendirin."
+  },
+  "controller.catalog.empty": {
+    "defaultMessage": "Uyumlu ve kullanılabilir bağlı Mac yok."
+  },
+  "controller.catalog.loading": {
+    "defaultMessage": "Bağlı Mac'lerinize bağlanılıyor…"
+  },
+  "controller.catalog.noSessions": {
+    "defaultMessage": "Bu Mac'te eşleşen oturum yok."
+  },
+  "controller.catalog.offline": {
+    "defaultMessage": "Çevrimdışı"
+  },
+  "controller.catalog.online": {
+    "defaultMessage": "Çevrimiçi"
+  },
+  "controller.catalog.owner": {
+    "defaultMessage": "Sorumlu Mac: {name}"
+  },
+  "controller.catalog.search": {
+    "defaultMessage": "Bağlı oturumlarda ara"
+  },
+  "controller.catalog.signIn": {
+    "defaultMessage": "Mac'lerinizi burada görmek için Ayarlar'da LeanZero Link'e giriş yapın."
+  },
+  "controller.catalog.stale": {
+    "defaultMessage": "Kaydedilmiş durum — yeniden bağlanılıyor"
+  },
+  "controller.catalog.sync": {
+    "defaultMessage": "Oturumları eşitle"
+  },
+  "controller.catalog.title": {
+    "defaultMessage": "Mac'lerinizdeki oturumlar"
+  },
+  "controller.catalog.updateRequired": {
+    "defaultMessage": "Goose güncellemesi gerekli"
+  },
+  "controller.input.answer": {
+    "defaultMessage": "Yanıtınız"
+  },
+  "controller.input.choose": {
+    "defaultMessage": "Bir değer seçin"
+  },
+  "controller.input.no": {
+    "defaultMessage": "Hayır"
+  },
+  "controller.input.unsupported": {
+    "defaultMessage": "Bu isteğe burada yanıt verilemez. Sorumlu Mac'te açın."
+  },
+  "controller.input.yes": {
+    "defaultMessage": "Evet"
+  },
+  "controller.receipt.accepted": {
+    "defaultMessage": "Sorumlu Mac tarafından kabul edildi"
+  },
+  "controller.receipt.delivered": {
+    "defaultMessage": "İletildi"
+  },
+  "controller.receipt.dispatching": {
+    "defaultMessage": "Sorumlu Mac bu komutu iletiyor"
+  },
+  "controller.receipt.outcomeUnknown": {
+    "defaultMessage": "Sorumlu Mac sonucu doğrulayamıyor. Başka bir komut denemeden önce oturumu kontrol edin."
+  },
+  "controller.receipt.rejected": {
+    "defaultMessage": "Sorumlu Mac tarafından reddedildi"
+  },
+  "controller.receipt.waiting": {
+    "defaultMessage": "Sonraki tur için sıraya alındı"
+  },
+  "controller.work.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "controller.work.back": {
+    "defaultMessage": "Tüm bağlı oturumlar"
+  },
+  "controller.work.check": {
+    "defaultMessage": "Alındı onayını kontrol et"
+  },
+  "controller.work.content": {
+    "defaultMessage": "Mesaj ayrıntıları"
+  },
+  "controller.work.deleted": {
+    "defaultMessage": "Bu çalışma silindi veya sorumlu Mac artık paylaşmıyor."
+  },
+  "controller.work.load": {
+    "defaultMessage": "Sorumlu Mac'ten yükleniyor…"
+  },
+  "controller.work.message": {
+    "defaultMessage": "{name} üzerindeki bu oturuma mesaj"
+  },
+  "controller.work.noMessages": {
+    "defaultMessage": "Henüz görünür mesaj yok."
+  },
+  "controller.work.note": {
+    "defaultMessage": "Not ekle"
+  },
+  "controller.work.owner": {
+    "defaultMessage": "{name} üzerinde çalışıyor"
+  },
+  "controller.work.pause": {
+    "defaultMessage": "Duraklat"
+  },
+  "controller.work.queue": {
+    "defaultMessage": "Sonraki mesajı sıraya al"
+  },
+  "controller.work.reload": {
+    "defaultMessage": "Sorumlu Mac'in durumunu yeniden yükle"
+  },
+  "controller.work.resume": {
+    "defaultMessage": "Sürdür"
+  },
+  "controller.work.retry": {
+    "defaultMessage": "Aynı komutu yeniden dene"
+  },
+  "controller.work.send": {
+    "defaultMessage": "Gönder"
+  },
+  "controller.work.steer": {
+    "defaultMessage": "Geçerli çalışmayı yönlendir"
+  },
+  "controller.work.stop": {
+    "defaultMessage": "Geçerli çalışmayı durdur"
+  },
+  "controller.work.tick": {
+    "defaultMessage": "Bir döngü çalıştır"
+  },
+  "controller.work.unavailable": {
+    "defaultMessage": "Sorumlu Mac kullanılamıyor. Kaydedilmiş içerik güncel olmayabilir; kontroller devre dışı."
+  },
+  "controller.work.uncertain": {
+    "defaultMessage": "Alındı onayı gelmedi. Onayı kontrol edin veya aynı komutu yeniden deneyin."
+  },
+  "controller.work.user": {
+    "defaultMessage": "Siz"
+  },
+  "sessions.scope.linked": {
+    "defaultMessage": "Bağlı Mac'ler"
+  },
+  "sessions.scope.local": {
+    "defaultMessage": "Bu Mac"
   }
 }

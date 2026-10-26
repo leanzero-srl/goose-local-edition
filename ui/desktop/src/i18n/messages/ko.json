@@ -12148,5 +12148,155 @@
   },
   "myMacs.updatedAgo": {
     "defaultMessage": "{seconds}초 전 업데이트됨"
+  },
+  "controller.catalog.archived": {
+    "defaultMessage": "보관된 세션 포함"
+  },
+  "controller.catalog.count": {
+    "defaultMessage": "세션 {count}개"
+  },
+  "controller.catalog.detail": {
+    "defaultMessage": "실행을 담당하는 Mac의 기록을 열고 요청에 응답하며 작업을 지시하세요."
+  },
+  "controller.catalog.empty": {
+    "defaultMessage": "사용 가능한 호환 연결 Mac이 없습니다."
+  },
+  "controller.catalog.loading": {
+    "defaultMessage": "연결된 Mac에 접속 중…"
+  },
+  "controller.catalog.noSessions": {
+    "defaultMessage": "이 Mac에 일치하는 세션이 없습니다."
+  },
+  "controller.catalog.offline": {
+    "defaultMessage": "오프라인"
+  },
+  "controller.catalog.online": {
+    "defaultMessage": "온라인"
+  },
+  "controller.catalog.owner": {
+    "defaultMessage": "담당 Mac: {name}"
+  },
+  "controller.catalog.search": {
+    "defaultMessage": "연결된 세션 검색"
+  },
+  "controller.catalog.signIn": {
+    "defaultMessage": "설정에서 LeanZero Link에 로그인하면 여기에 Mac이 표시됩니다."
+  },
+  "controller.catalog.stale": {
+    "defaultMessage": "저장된 상태 — 다시 연결 중"
+  },
+  "controller.catalog.sync": {
+    "defaultMessage": "세션 동기화"
+  },
+  "controller.catalog.title": {
+    "defaultMessage": "여러 Mac의 세션"
+  },
+  "controller.catalog.updateRequired": {
+    "defaultMessage": "Goose 업데이트 필요"
+  },
+  "controller.input.answer": {
+    "defaultMessage": "답변"
+  },
+  "controller.input.choose": {
+    "defaultMessage": "값 선택"
+  },
+  "controller.input.no": {
+    "defaultMessage": "아니요"
+  },
+  "controller.input.unsupported": {
+    "defaultMessage": "여기에서는 이 요청에 응답할 수 없습니다. 담당 Mac에서 여세요."
+  },
+  "controller.input.yes": {
+    "defaultMessage": "예"
+  },
+  "controller.receipt.accepted": {
+    "defaultMessage": "담당 Mac이 수락함"
+  },
+  "controller.receipt.delivered": {
+    "defaultMessage": "전달됨"
+  },
+  "controller.receipt.dispatching": {
+    "defaultMessage": "담당 Mac이 이 명령을 전달하고 있습니다"
+  },
+  "controller.receipt.outcomeUnknown": {
+    "defaultMessage": "담당 Mac이 결과를 확인할 수 없습니다. 다른 명령을 시도하기 전에 세션을 확인하세요."
+  },
+  "controller.receipt.rejected": {
+    "defaultMessage": "담당 Mac이 거부함"
+  },
+  "controller.receipt.waiting": {
+    "defaultMessage": "다음 차례를 기다리는 중"
+  },
+  "controller.work.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "controller.work.back": {
+    "defaultMessage": "연결된 모든 세션"
+  },
+  "controller.work.check": {
+    "defaultMessage": "수신 확인 조회"
+  },
+  "controller.work.content": {
+    "defaultMessage": "메시지 세부 정보"
+  },
+  "controller.work.deleted": {
+    "defaultMessage": "이 작업이 삭제되었거나 담당 Mac이 더 이상 공유하지 않습니다."
+  },
+  "controller.work.load": {
+    "defaultMessage": "담당 Mac에서 불러오는 중…"
+  },
+  "controller.work.message": {
+    "defaultMessage": "{name}의 이 세션에 보낼 메시지"
+  },
+  "controller.work.noMessages": {
+    "defaultMessage": "아직 표시할 메시지가 없습니다."
+  },
+  "controller.work.note": {
+    "defaultMessage": "메모 추가"
+  },
+  "controller.work.owner": {
+    "defaultMessage": "{name}에서 실행 중"
+  },
+  "controller.work.pause": {
+    "defaultMessage": "일시 중지"
+  },
+  "controller.work.queue": {
+    "defaultMessage": "다음 메시지 대기열에 추가"
+  },
+  "controller.work.reload": {
+    "defaultMessage": "담당 Mac 상태 다시 불러오기"
+  },
+  "controller.work.resume": {
+    "defaultMessage": "재개"
+  },
+  "controller.work.retry": {
+    "defaultMessage": "동일한 명령 다시 시도"
+  },
+  "controller.work.send": {
+    "defaultMessage": "보내기"
+  },
+  "controller.work.steer": {
+    "defaultMessage": "현재 실행에 지시"
+  },
+  "controller.work.stop": {
+    "defaultMessage": "현재 실행 중지"
+  },
+  "controller.work.tick": {
+    "defaultMessage": "한 주기 실행"
+  },
+  "controller.work.unavailable": {
+    "defaultMessage": "담당 Mac을 사용할 수 없습니다. 저장된 내용이 오래되었을 수 있어 제어가 비활성화되었습니다."
+  },
+  "controller.work.uncertain": {
+    "defaultMessage": "수신 확인을 받지 못했습니다. 수신 상태를 조회하거나 동일한 명령을 다시 시도하세요."
+  },
+  "controller.work.user": {
+    "defaultMessage": "나"
+  },
+  "sessions.scope.linked": {
+    "defaultMessage": "연결된 Mac"
+  },
+  "sessions.scope.local": {
+    "defaultMessage": "이 Mac"
   }
 }

@@ -14,6 +14,8 @@ export interface GooseServeLease {
   windowIds: Set<number>;
   /** Windows handed this lease by `acquireLocal` that have not attached (or given it back) yet. */
   pendingWindows: number;
+  /** Application-owned duties survive their last viewer (Link hosting and owner runs). */
+  applicationHolders: Set<string>;
   cleanedUp: boolean;
   exited: boolean;
   exitCode: number | null;
@@ -32,6 +34,7 @@ export class GooseServeLeaseRegistry {
   // its own. A new one is started only once this one is stopping or has exited.
   private local: GooseServeLease | null = null;
   private localStart: Promise<GooseServeLease | null> | null = null;
+  private quitting = false;
 
   constructor(private readonly logger: Logger) {}
 
@@ -44,6 +47,7 @@ export class GooseServeLeaseRegistry {
       cleanup: result.cleanup,
       windowIds: new Set<number>(),
       pendingWindows: 0,
+      applicationHolders: new Set<string>(),
       cleanedUp: false,
       exited: false,
       exitCode: null,
@@ -61,6 +65,7 @@ export class GooseServeLeaseRegistry {
     }) => {
       const firstExit = !lease.exited;
       lease.exited = true;
+      lease.applicationHolders.clear();
       if (code !== undefined) {
         lease.exitCode = code;
       }
@@ -75,6 +80,7 @@ export class GooseServeLeaseRegistry {
           windowIds: [...lease.windowIds],
         });
       }
+      if (firstExit && !this.isHeld(lease)) void this.cleanupLease(lease);
     };
 
     this.local = lease;
@@ -104,6 +110,7 @@ export class GooseServeLeaseRegistry {
       cleanup,
       windowIds: new Set<number>(),
       pendingWindows: 0,
+      applicationHolders: new Set<string>(),
       cleanedUp: false,
       exited: false,
       exitCode: null,
@@ -129,6 +136,7 @@ export class GooseServeLeaseRegistry {
   async acquireLocal(
     start: () => Promise<GooseServeLease | null>
   ): Promise<GooseServeLease | null> {
+    if (this.quitting) return null;
     const lease =
       this.liveLocal() ??
       (await (this.localStart ??= (async () => {
@@ -144,6 +152,10 @@ export class GooseServeLeaseRegistry {
           this.localStart = null;
         }
       })()));
+    if (lease && this.quitting) {
+      await this.cleanupLease(lease);
+      return null;
+    }
     if (lease) lease.pendingWindows += 1;
     return lease;
   }
@@ -151,7 +163,20 @@ export class GooseServeLeaseRegistry {
   /** A lease `acquireLocal` handed out whose window was never made: stop it only if nobody holds it. */
   async releaseUnattached(lease: GooseServeLease): Promise<void> {
     if (lease.pendingWindows > 0) lease.pendingWindows -= 1;
-    if (lease.windowIds.size === 0 && lease.pendingWindows === 0) await this.cleanupLease(lease);
+    if (!this.isHeld(lease)) await this.cleanupLease(lease);
+  }
+
+  /** Replace one authoritative application's duty set without an intermediate zero-holder gap. */
+  async setApplicationHolders(lease: GooseServeLease, holders: Iterable<string>): Promise<void> {
+    if (lease.kind !== 'local' || lease.cleanedUp || lease.exited) return;
+    lease.applicationHolders = new Set(holders);
+    if (!this.isHeld(lease)) await this.cleanupLease(lease);
+  }
+
+  private isHeld(lease: GooseServeLease): boolean {
+    return (
+      lease.windowIds.size > 0 || lease.pendingWindows > 0 || lease.applicationHolders.size > 0
+    );
   }
 
   get(windowId: number): GooseServeLease | null {
@@ -198,7 +223,7 @@ export class GooseServeLeaseRegistry {
     // A window `acquireLocal` handed this lease to and that has not attached yet holds it too (the
     // same rule `releaseUnattached` keeps): the last ATTACHED window closing must not stop the goosed
     // a window being made is about to use.
-    if (lease.windowIds.size > 0 || lease.pendingWindows > 0) return;
+    if (this.isHeld(lease)) return;
     this.logger.info(
       `Window ${windowId} was the last one using goose serve (pid ${lease.pid ?? '?'}); stopping it`
     );
@@ -215,6 +240,7 @@ export class GooseServeLeaseRegistry {
       this.leasesByWindowId.delete(windowId);
     }
     lease.windowIds.clear();
+    lease.applicationHolders.clear();
 
     const stop: Promise<GooseServeStop> = lease.cleanup().then(
       (ended) => ended ?? 'exited',
@@ -233,7 +259,7 @@ export class GooseServeLeaseRegistry {
 
   /** A backend is still attached to a window, or one is still stopping. */
   hasBackendsToStop(): boolean {
-    return this.uniqueLeases().length > 0 || this.stopping.size > 0;
+    return this.localStart !== null || this.uniqueLeases().length > 0 || this.stopping.size > 0;
   }
 
   /**
@@ -242,7 +268,11 @@ export class GooseServeLeaseRegistry {
    * what happened instead of claiming every backend exited.
    */
   async stopAllAndWait(): Promise<{ abandoned: number }> {
-    const underWay = Promise.all([...this.stopping]);
+    this.quitting = true;
+    const stops = new Set(this.stopping);
+    if (this.localStart) await this.localStart;
+    for (const stop of this.stopping) stops.add(stop);
+    const underWay = Promise.all([...stops]);
     const [attached, earlier] = await Promise.all([this.cleanupAll(), underWay]);
     return { abandoned: [...attached, ...earlier].filter((e) => e === 'abandoned').length };
   }

@@ -12148,5 +12148,155 @@
   },
   "myMacs.updatedAgo": {
     "defaultMessage": "aggiornato {seconds} s fa"
+  },
+  "controller.catalog.archived": {
+    "defaultMessage": "Includi sessioni archiviate"
+  },
+  "controller.catalog.count": {
+    "defaultMessage": "{count, plural, one {# sessione} other {# sessioni}}"
+  },
+  "controller.catalog.detail": {
+    "defaultMessage": "Apri la cronologia, rispondi alle richieste e guida il lavoro sul Mac che lo esegue."
+  },
+  "controller.catalog.empty": {
+    "defaultMessage": "Nessun Mac collegato compatibile disponibile."
+  },
+  "controller.catalog.loading": {
+    "defaultMessage": "Connessione ai tuoi Mac collegati…"
+  },
+  "controller.catalog.noSessions": {
+    "defaultMessage": "Nessuna sessione corrispondente su questo Mac."
+  },
+  "controller.catalog.offline": {
+    "defaultMessage": "Offline"
+  },
+  "controller.catalog.online": {
+    "defaultMessage": "Online"
+  },
+  "controller.catalog.owner": {
+    "defaultMessage": "Mac responsabile: {name}"
+  },
+  "controller.catalog.search": {
+    "defaultMessage": "Cerca sessioni collegate"
+  },
+  "controller.catalog.signIn": {
+    "defaultMessage": "Accedi a LeanZero Link nelle impostazioni per vedere qui i tuoi Mac."
+  },
+  "controller.catalog.stale": {
+    "defaultMessage": "Stato salvato — riconnessione"
+  },
+  "controller.catalog.sync": {
+    "defaultMessage": "Sincronizza sessioni"
+  },
+  "controller.catalog.title": {
+    "defaultMessage": "Sessioni sui tuoi Mac"
+  },
+  "controller.catalog.updateRequired": {
+    "defaultMessage": "Aggiornamento di Goose necessario"
+  },
+  "controller.input.answer": {
+    "defaultMessage": "La tua risposta"
+  },
+  "controller.input.choose": {
+    "defaultMessage": "Scegli un valore"
+  },
+  "controller.input.no": {
+    "defaultMessage": "No"
+  },
+  "controller.input.unsupported": {
+    "defaultMessage": "Non puoi rispondere a questa richiesta qui. Aprila sul Mac responsabile."
+  },
+  "controller.input.yes": {
+    "defaultMessage": "Sì"
+  },
+  "controller.receipt.accepted": {
+    "defaultMessage": "Accettato dal Mac responsabile"
+  },
+  "controller.receipt.delivered": {
+    "defaultMessage": "Consegnato"
+  },
+  "controller.receipt.dispatching": {
+    "defaultMessage": "Il Mac responsabile sta consegnando questo comando"
+  },
+  "controller.receipt.outcomeUnknown": {
+    "defaultMessage": "Il Mac responsabile non può confermare l’esito. Controlla la sessione prima di tentare un altro comando."
+  },
+  "controller.receipt.rejected": {
+    "defaultMessage": "Rifiutato dal Mac responsabile"
+  },
+  "controller.receipt.waiting": {
+    "defaultMessage": "In coda per il prossimo turno"
+  },
+  "controller.work.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "controller.work.back": {
+    "defaultMessage": "Tutte le sessioni collegate"
+  },
+  "controller.work.check": {
+    "defaultMessage": "Controlla conferma"
+  },
+  "controller.work.content": {
+    "defaultMessage": "Dettagli del messaggio"
+  },
+  "controller.work.deleted": {
+    "defaultMessage": "Questo lavoro è stato eliminato o non è più condiviso dal Mac responsabile."
+  },
+  "controller.work.load": {
+    "defaultMessage": "Caricamento dal Mac responsabile…"
+  },
+  "controller.work.message": {
+    "defaultMessage": "Messaggio per questa sessione su {name}"
+  },
+  "controller.work.noMessages": {
+    "defaultMessage": "Nessun messaggio visibile per ora."
+  },
+  "controller.work.note": {
+    "defaultMessage": "Aggiungi nota"
+  },
+  "controller.work.owner": {
+    "defaultMessage": "In esecuzione su {name}"
+  },
+  "controller.work.pause": {
+    "defaultMessage": "Pausa"
+  },
+  "controller.work.queue": {
+    "defaultMessage": "Accoda il prossimo messaggio"
+  },
+  "controller.work.reload": {
+    "defaultMessage": "Ricarica stato del Mac responsabile"
+  },
+  "controller.work.resume": {
+    "defaultMessage": "Riprendi"
+  },
+  "controller.work.retry": {
+    "defaultMessage": "Riprova lo stesso comando"
+  },
+  "controller.work.send": {
+    "defaultMessage": "Invia"
+  },
+  "controller.work.steer": {
+    "defaultMessage": "Guida l’esecuzione corrente"
+  },
+  "controller.work.stop": {
+    "defaultMessage": "Ferma l’esecuzione corrente"
+  },
+  "controller.work.tick": {
+    "defaultMessage": "Esegui un ciclo"
+  },
+  "controller.work.unavailable": {
+    "defaultMessage": "Il Mac responsabile non è disponibile. I contenuti salvati potrebbero essere obsoleti; i controlli sono disabilitati."
+  },
+  "controller.work.uncertain": {
+    "defaultMessage": "Conferma non ricevuta. Controllala o riprova questo stesso comando."
+  },
+  "controller.work.user": {
+    "defaultMessage": "Tu"
+  },
+  "sessions.scope.linked": {
+    "defaultMessage": "Mac collegati"
+  },
+  "sessions.scope.local": {
+    "defaultMessage": "Questo Mac"
   }
 }

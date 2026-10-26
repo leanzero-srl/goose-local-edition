@@ -12148,5 +12148,155 @@
   },
   "myMacs.updatedAgo": {
     "defaultMessage": "{seconds}秒前に更新"
+  },
+  "controller.catalog.archived": {
+    "defaultMessage": "アーカイブ済みセッションを含める"
+  },
+  "controller.catalog.count": {
+    "defaultMessage": "{count} 件のセッション"
+  },
+  "controller.catalog.detail": {
+    "defaultMessage": "履歴の閲覧、リクエストへの回答、実行元のMacでの作業指示を行えます。"
+  },
+  "controller.catalog.empty": {
+    "defaultMessage": "対応するリンク済みMacは利用できません。"
+  },
+  "controller.catalog.loading": {
+    "defaultMessage": "リンク済みMacに接続中…"
+  },
+  "controller.catalog.noSessions": {
+    "defaultMessage": "このMacに一致するセッションはありません。"
+  },
+  "controller.catalog.offline": {
+    "defaultMessage": "オフライン"
+  },
+  "controller.catalog.online": {
+    "defaultMessage": "オンライン"
+  },
+  "controller.catalog.owner": {
+    "defaultMessage": "実行元：{name}"
+  },
+  "controller.catalog.search": {
+    "defaultMessage": "リンク済みセッションを検索"
+  },
+  "controller.catalog.signIn": {
+    "defaultMessage": "設定でLeanZero Linkにサインインすると、ここにMacが表示されます。"
+  },
+  "controller.catalog.stale": {
+    "defaultMessage": "保存済みの状態 — 再接続中"
+  },
+  "controller.catalog.sync": {
+    "defaultMessage": "セッションを同期"
+  },
+  "controller.catalog.title": {
+    "defaultMessage": "各Macのセッション"
+  },
+  "controller.catalog.updateRequired": {
+    "defaultMessage": "Gooseの更新が必要です"
+  },
+  "controller.input.answer": {
+    "defaultMessage": "回答"
+  },
+  "controller.input.choose": {
+    "defaultMessage": "値を選択"
+  },
+  "controller.input.no": {
+    "defaultMessage": "いいえ"
+  },
+  "controller.input.unsupported": {
+    "defaultMessage": "このリクエストにはここで回答できません。実行元のMacで開いてください。"
+  },
+  "controller.input.yes": {
+    "defaultMessage": "はい"
+  },
+  "controller.receipt.accepted": {
+    "defaultMessage": "実行元が受け付けました"
+  },
+  "controller.receipt.delivered": {
+    "defaultMessage": "配信済み"
+  },
+  "controller.receipt.dispatching": {
+    "defaultMessage": "実行元がこのコマンドを配信しています"
+  },
+  "controller.receipt.outcomeUnknown": {
+    "defaultMessage": "実行元は結果を確認できません。別のコマンドを試す前にセッションを確認してください。"
+  },
+  "controller.receipt.rejected": {
+    "defaultMessage": "実行元が拒否しました"
+  },
+  "controller.receipt.waiting": {
+    "defaultMessage": "次のターンを待機中"
+  },
+  "controller.work.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "controller.work.back": {
+    "defaultMessage": "すべてのリンク済みセッション"
+  },
+  "controller.work.check": {
+    "defaultMessage": "受領状況を確認"
+  },
+  "controller.work.content": {
+    "defaultMessage": "メッセージの詳細"
+  },
+  "controller.work.deleted": {
+    "defaultMessage": "この作業は削除されたか、実行元による共有が終了しました。"
+  },
+  "controller.work.load": {
+    "defaultMessage": "実行元のMacから読み込み中…"
+  },
+  "controller.work.message": {
+    "defaultMessage": "{name}のこのセッションへのメッセージ"
+  },
+  "controller.work.noMessages": {
+    "defaultMessage": "表示できるメッセージはまだありません。"
+  },
+  "controller.work.note": {
+    "defaultMessage": "メモを追加"
+  },
+  "controller.work.owner": {
+    "defaultMessage": "{name}で実行中"
+  },
+  "controller.work.pause": {
+    "defaultMessage": "一時停止"
+  },
+  "controller.work.queue": {
+    "defaultMessage": "次のメッセージをキューに追加"
+  },
+  "controller.work.reload": {
+    "defaultMessage": "実行元の状態を再読み込み"
+  },
+  "controller.work.resume": {
+    "defaultMessage": "再開"
+  },
+  "controller.work.retry": {
+    "defaultMessage": "同じコマンドを再試行"
+  },
+  "controller.work.send": {
+    "defaultMessage": "送信"
+  },
+  "controller.work.steer": {
+    "defaultMessage": "現在の実行に指示"
+  },
+  "controller.work.stop": {
+    "defaultMessage": "現在の実行を停止"
+  },
+  "controller.work.tick": {
+    "defaultMessage": "1サイクル実行"
+  },
+  "controller.work.unavailable": {
+    "defaultMessage": "実行元を利用できません。保存済み内容は古い可能性があるため、操作は無効です。"
+  },
+  "controller.work.uncertain": {
+    "defaultMessage": "受領確認が届いていません。受領状況を確認するか、同じコマンドを再試行してください。"
+  },
+  "controller.work.user": {
+    "defaultMessage": "あなた"
+  },
+  "sessions.scope.linked": {
+    "defaultMessage": "リンク済みMac"
+  },
+  "sessions.scope.local": {
+    "defaultMessage": "このMac"
   }
 }

@@ -170,6 +170,7 @@ import { startGooseServe, findGooseBinaryPath, GOOSED_SIGKILL_AFTER_MS } from '.
 import { reapOrphanedGoosed } from './utils/orphanGoosedReap';
 import { LOCAL_NETWORK_SETTINGS_URL, touchLocalNetwork } from './localNetwork';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
+import { DesktopBackendLifetime, parseDesktopLifetime } from './desktopBackendLifetime';
 import { QuitHold } from './quitHold';
 import { broadcastToWindows, canReach, reportFatalError, sendToWindow } from './windowReach';
 import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url';
@@ -1267,6 +1268,11 @@ const windowMap = new Map<number, BrowserWindow>();
 const appWindows = new Map<string, BrowserWindow>();
 
 const gooseServeLeases = new GooseServeLeaseRegistry(log);
+const backendLifetimes = new Map<GooseServeLease, DesktopBackendLifetime>();
+const windowHasDetachedOwner = (win: BrowserWindow): boolean => {
+  const lease = gooseServeLeases.get(win.id);
+  return Boolean(lease && backendLifetimes.get(lease)?.canDetach());
+};
 
 // Once per launch (every goosed this app starts is its child, so a later start finds nothing new).
 // A failed scan is logged and the launch goes on: the new goosed then meets the old one's mesh
@@ -1355,14 +1361,39 @@ const startLocalGooseServe = async (): Promise<GooseServeLease | null> => {
   }
 
   const cleanupGooseServe = gooseServeResult.cleanup;
+  let lifetime: DesktopBackendLifetime | undefined;
   gooseServeResult.cleanup = async () => {
+    lifetime?.stop();
     try {
       return await cleanupGooseServe();
     } finally {
       localCertificateTrust.release();
     }
   };
-  return gooseServeLeases.create(gooseServeResult, GENERATED_SECRET);
+  const lease = gooseServeLeases.create(gooseServeResult, GENERATED_SECRET);
+  lifetime = new DesktopBackendLifetime(
+    lease,
+    gooseServeLeases,
+    async () => {
+      const base = serveHttpBase(lease.acpUrl);
+      if (!base) throw new Error('The owned backend has no HTTP address.');
+      const response = await net.fetch(`${base}/desktop/lifetime`, {
+        headers: { 'X-Secret-Key': lease.secretKey },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (response.status === 404) return 'legacy';
+      if (!response.ok) throw new Error(`The backend lifetime read failed (${response.status}).`);
+      return parseDesktopLifetime(await response.json());
+    },
+    log
+  );
+  backendLifetimes.set(lease, lifetime);
+  gooseServeResult.process.once('exit', () => {
+    lifetime?.stop();
+    backendLifetimes.delete(lease);
+  });
+  lifetime.start();
+  return lease;
 };
 
 // Track pending initial messages per window
@@ -1818,6 +1849,8 @@ const createChat = async (
 
   windowMap.set(windowId, mainWindow);
 
+  // Detached owner backends keep their application lease on ordinary Close. Explicit Quit and
+  // legacy backends still use the guard described below; the benchmark child remains main-owned.
   // THE MOUSE CLOSE. The traffic-light button, File > Close by click, and the app quitting through
   // this window all arrive here; Cmd+W does not (the accelerator guard refuses it before close() is
   // ever called). While this window's renderer holds a live swarm run, `closed` would release the
@@ -6565,8 +6598,8 @@ const windowLiveRuns = (win: BrowserWindow): CloseRunPayload['runs'] => {
   return runs;
 };
 
-// The prompts each renderer has in flight on its OWN ACP connection, keyed by webContents id and
-// dropped with the renderer (closeGuard.ts, Q-490). A close ends that connection and the answer.
+// Prompts observed by each renderer. Legacy backends still bind them to the connection; upgraded
+// backends retain owner tasks independently, as confirmed by /desktop/lifetime.
 const turnsInFlightByContents = new Map<number, TurnInFlight[]>();
 const windowTurnsInFlight = (win: BrowserWindow): TurnInFlight[] =>
   turnsInFlightByContents.get(win.webContents.id) ?? [];
@@ -6583,9 +6616,8 @@ ipcMain.on(TURNS_IN_FLIGHT_CHANNEL, (event, turns: unknown) => {
   publishRunningElsewhere();
 });
 
-// A chat's turn runs whichever window shows it (Q-500, utils/runningElsewhere.ts): each window's
-// goosed read lists only its own connection's turns, so every window is handed the others' rows —
-// with the window that holds each prompt, the only one that can stop or stream it.
+// Legacy backends need the observing window relay. A detached owner is shared by every window on
+// that same backend; its rows use the process-wide cancel path even after the original viewer closes.
 const lastRunningElsewhere = new Map<number, string>();
 function publishRunningElsewhere(reporter: number | null = null): void {
   const running = new Map<number, NonNullable<GlanceSessions['runningRows']>>();
@@ -6595,7 +6627,22 @@ function publishRunningElsewhere(reporter: number | null = null): void {
     const contents = win.webContents;
     if (contents.isDestroyed()) continue;
     live.add(contents.id);
-    const key = JSON.stringify(runningElsewhereFor(contents.id, running, turnsInFlightByContents));
+    const lease = gooseServeLeases.get(win.id);
+    const sameBackend = new Map(
+      [...running].filter(([id]) => {
+        const source = webContents.fromId(id);
+        const sourceWindow = source && BrowserWindow.fromWebContents(source);
+        return sourceWindow && gooseServeLeases.get(sourceWindow.id) === lease;
+      })
+    );
+    const key = JSON.stringify(
+      runningElsewhereFor(
+        contents.id,
+        sameBackend,
+        turnsInFlightByContents,
+        windowHasDetachedOwner(win)
+      )
+    );
     if (contents.id !== reporter && lastRunningElsewhere.get(contents.id) === key) continue;
     lastRunningElsewhere.set(contents.id, key);
     contents.send(RUNNING_ELSEWHERE_CHANNEL, JSON.parse(key));
@@ -6642,6 +6689,7 @@ const closeVerdictOf = (win: BrowserWindow, confirmed: boolean): CloseVerdict =>
   const rendererCanAnswer = !contents.isDestroyed() && !contents.isCrashed();
   return decideClose({
     confirmed,
+    ownerSurvivesClose: !quitHold.isQuitting() && windowHasDetachedOwner(win),
     windowHoldsLiveRun: rendererCanAnswer && windowHoldsLiveRun(win),
     windowHoldsLiveTurn: rendererCanAnswer && windowTurnsInFlight(win).length > 0,
     rendererCanAnswer,
@@ -7581,8 +7629,13 @@ const refuseShortcutDuringRun = (
     benchmarkRunning,
     triggeredByAccelerator,
     onBenchmarkView: focused !== null && isBenchmarkViewUrl(focused.webContents.getURL()),
-    sessionRunLive: anySessionRunLive(),
-    windowHoldsLiveRun: windowHoldsLiveRun(focused),
+    sessionRunLive:
+      anySessionRunLive() ||
+      [...backendLifetimes.values()].some(
+        (lifetime) => (lifetime.snapshot()?.active_run_ids.length ?? 0) > 0
+      ),
+    windowHoldsLiveRun:
+      windowHoldsLiveRun(focused) && !(focused && windowHasDetachedOwner(focused)),
   });
   if (refused) {
     const reason = shortcutRefusalReason(benchmarkRunning);
@@ -8608,6 +8661,10 @@ app.on('window-all-closed', () => {
   // An app dialog's window can be the last one (a startup failure before any chat window): its
   // ANSWER decides — every Quit branch calls app.quit() itself, and a Retry must survive the close.
   if (isAppDialogInFlight()) return;
+  if (
+    !quitHold.isQuitting() &&
+    gooseServeLeases.liveLeases().some((lease) => lease.applicationHolders.size > 0)
+  ) return;
   // Only quit if we're not on macOS or don't have a tray icon
   if (process.platform !== 'darwin' || !tray) {
     app.quit();

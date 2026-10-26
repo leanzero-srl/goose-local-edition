@@ -12148,5 +12148,155 @@
   },
   "myMacs.updatedAgo": {
     "defaultMessage": "{seconds} 秒前更新"
+  },
+  "controller.catalog.archived": {
+    "defaultMessage": "包含已归档的会话"
+  },
+  "controller.catalog.count": {
+    "defaultMessage": "{count} 个会话"
+  },
+  "controller.catalog.detail": {
+    "defaultMessage": "查看历史记录、回答请求，并指导负责执行的 Mac 上的工作。"
+  },
+  "controller.catalog.empty": {
+    "defaultMessage": "没有可用的兼容已关联 Mac。"
+  },
+  "controller.catalog.loading": {
+    "defaultMessage": "正在连接已关联的 Mac…"
+  },
+  "controller.catalog.noSessions": {
+    "defaultMessage": "此 Mac 上没有匹配的会话。"
+  },
+  "controller.catalog.offline": {
+    "defaultMessage": "离线"
+  },
+  "controller.catalog.online": {
+    "defaultMessage": "在线"
+  },
+  "controller.catalog.owner": {
+    "defaultMessage": "负责执行：{name}"
+  },
+  "controller.catalog.search": {
+    "defaultMessage": "搜索已关联的会话"
+  },
+  "controller.catalog.signIn": {
+    "defaultMessage": "在设置中登录 LeanZero Link，即可在此查看你的 Mac。"
+  },
+  "controller.catalog.stale": {
+    "defaultMessage": "已保存的状态 — 正在重新连接"
+  },
+  "controller.catalog.sync": {
+    "defaultMessage": "同步会话"
+  },
+  "controller.catalog.title": {
+    "defaultMessage": "各台 Mac 上的会话"
+  },
+  "controller.catalog.updateRequired": {
+    "defaultMessage": "需要更新 Goose"
+  },
+  "controller.input.answer": {
+    "defaultMessage": "你的回答"
+  },
+  "controller.input.choose": {
+    "defaultMessage": "选择一个值"
+  },
+  "controller.input.no": {
+    "defaultMessage": "否"
+  },
+  "controller.input.unsupported": {
+    "defaultMessage": "无法在此回答此请求。请在负责执行的 Mac 上打开它。"
+  },
+  "controller.input.yes": {
+    "defaultMessage": "是"
+  },
+  "controller.receipt.accepted": {
+    "defaultMessage": "负责执行的 Mac 已接受"
+  },
+  "controller.receipt.delivered": {
+    "defaultMessage": "已送达"
+  },
+  "controller.receipt.dispatching": {
+    "defaultMessage": "负责执行的 Mac 正在传递此命令"
+  },
+  "controller.receipt.outcomeUnknown": {
+    "defaultMessage": "负责执行的 Mac 无法确认结果。尝试其他命令前，请先检查会话。"
+  },
+  "controller.receipt.rejected": {
+    "defaultMessage": "负责执行的 Mac 已拒绝"
+  },
+  "controller.receipt.waiting": {
+    "defaultMessage": "已排队等待下一轮"
+  },
+  "controller.work.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "controller.work.back": {
+    "defaultMessage": "所有已关联的会话"
+  },
+  "controller.work.check": {
+    "defaultMessage": "检查回执"
+  },
+  "controller.work.content": {
+    "defaultMessage": "消息详情"
+  },
+  "controller.work.deleted": {
+    "defaultMessage": "此工作已被删除，或负责执行的 Mac 已停止共享。"
+  },
+  "controller.work.load": {
+    "defaultMessage": "正在从负责执行的 Mac 加载…"
+  },
+  "controller.work.message": {
+    "defaultMessage": "发送到 {name} 上此会话的消息"
+  },
+  "controller.work.noMessages": {
+    "defaultMessage": "尚无可见消息。"
+  },
+  "controller.work.note": {
+    "defaultMessage": "添加备注"
+  },
+  "controller.work.owner": {
+    "defaultMessage": "在 {name} 上运行"
+  },
+  "controller.work.pause": {
+    "defaultMessage": "暂停"
+  },
+  "controller.work.queue": {
+    "defaultMessage": "将下一条消息加入队列"
+  },
+  "controller.work.reload": {
+    "defaultMessage": "重新加载负责执行的 Mac 的状态"
+  },
+  "controller.work.resume": {
+    "defaultMessage": "继续"
+  },
+  "controller.work.retry": {
+    "defaultMessage": "重试同一命令"
+  },
+  "controller.work.send": {
+    "defaultMessage": "发送"
+  },
+  "controller.work.steer": {
+    "defaultMessage": "指导当前运行"
+  },
+  "controller.work.stop": {
+    "defaultMessage": "停止当前运行"
+  },
+  "controller.work.tick": {
+    "defaultMessage": "执行一个周期"
+  },
+  "controller.work.unavailable": {
+    "defaultMessage": "负责执行的 Mac 不可用。已保存的内容可能已过时，控制功能已禁用。"
+  },
+  "controller.work.uncertain": {
+    "defaultMessage": "未收到确认。请检查回执或重试同一命令。"
+  },
+  "controller.work.user": {
+    "defaultMessage": "你"
+  },
+  "sessions.scope.linked": {
+    "defaultMessage": "已关联的 Mac"
+  },
+  "sessions.scope.local": {
+    "defaultMessage": "此 Mac"
   }
 }

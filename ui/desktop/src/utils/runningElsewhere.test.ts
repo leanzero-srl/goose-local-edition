@@ -23,8 +23,16 @@ const row = (sessionId: string, startedAt: string, sessionName = sessionId): Run
   workingDir: '/w',
   startedAt,
 });
-const COFFEE = row('20260929_15', '2026-09-29T12:30:14+00:00', 'Coffee Roasters Double-Charge Incident');
-const JIRA = row('20260928_19', '2026-09-29T12:31:02+00:00', 'Jira DC to Cloud migration assessment');
+const COFFEE = row(
+  '20260929_15',
+  '2026-09-29T12:30:14+00:00',
+  'Coffee Roasters Double-Charge Incident'
+);
+const JIRA = row(
+  '20260928_19',
+  '2026-09-29T12:31:02+00:00',
+  'Jira DC to Cloud migration assessment'
+);
 const turn = (sessionId: string): TurnInFlight => ({ sessionId, sessionName: null });
 
 describe('runningElsewhereFor (Q-500)', () => {
@@ -46,6 +54,14 @@ describe('runningElsewhereFor (Q-500)', () => {
       { ...JIRA, window: null },
     ]);
     expect(isRunningElsewhereList(elsewhere)).toBe(true);
+  });
+
+  it('a verified detached backend routes every shared turn through its owner, not a viewer', () => {
+    expect(runningElsewhereFor(SECOND, running, turns, true)).toEqual([
+      { ...COFFEE, window: null },
+      { ...JIRA, window: null },
+    ]);
+    expect(runningElsewhereFor(SECOND, running, turns, false)[0].window).toBe(MAIN);
   });
 
   it('the main window is never handed its own rows, nor a hold on its own turn', () => {
@@ -82,8 +98,10 @@ describe('the glance counts a turn once however many windows list it (Q-500)', (
 
   it('a report without rows (an older renderer) still adds its count', () => {
     expect(
-      mergeGlanceSessions([{ running: 1, needsYou: [] }, { running: 1, needsYou: [], runningRows: [JIRA] }])
-        .running
+      mergeGlanceSessions([
+        { running: 1, needsYou: [] },
+        { running: 1, needsYou: [], runningRows: [JIRA] },
+      ]).running
     ).toBe(2);
   });
 

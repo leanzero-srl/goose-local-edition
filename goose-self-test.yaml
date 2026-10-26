@@ -20,7 +20,7 @@ parameters:
     input_type: string
     requirement: optional
     default: "all"
-    description: "Which test phases to run: all, basic, extensions, mcp_setup, provider_connections, benchmark_series, openai_compat, delegation, advanced"
+    description: "Which test phases to run: all, basic, extensions, mcp_setup, provider_connections, benchmark_series, link_controller, openai_compat, delegation, advanced"
 
   - key: test_depth
     input_type: string
@@ -497,6 +497,20 @@ prompt: |
   Record real UI, raw child identities and the publication receipts in
   {{ workspace_dir }}/benchmark_series.md. Mark paid native verification pending when the
   test uses fixtures. Do not replace the installed carrier during an active campaign.
+  {% endif %}
+
+  {% if test_phases == "link_controller" %}
+  ## Linked sessions and owner lifetime
+  In the integrated desktop app, use the existing Link login and Sessions > Linked Macs.
+  Open a disposable session on another registered Mac. Confirm its owner, history order and
+  live text, then send, queue, steer and stop while recording the original owner/run identity.
+  Answer a typed permission or form request from two viewers: only one answer may take effect.
+  Reopen after a lost acknowledgement and check the saved command receipt without resending it;
+  a manual retry must retain the same command ID, and an unknown outcome must stay visible.
+  Close the last owner window during a test turn, reopen it, and verify the same backend/run
+  continued. Explicit Quit must stop the owned backend, including a Quit during startup.
+  Record actual UI, owner/run IDs and receipts in {{ workspace_dir }}/link_controller.md.
+  Missing integrated builds or a second registered Mac are unverified, never a fixture-based pass.
   {% endif %}
 
   ## 🎯 META-TESTING NOTES

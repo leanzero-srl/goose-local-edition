@@ -12148,5 +12148,155 @@
   },
   "myMacs.updatedAgo": {
     "defaultMessage": "cập nhật {seconds} giây trước"
+  },
+  "controller.catalog.archived": {
+    "defaultMessage": "Bao gồm phiên đã lưu trữ"
+  },
+  "controller.catalog.count": {
+    "defaultMessage": "{count} phiên"
+  },
+  "controller.catalog.detail": {
+    "defaultMessage": "Mở lịch sử, trả lời yêu cầu và hướng dẫn công việc trên máy Mac đang thực hiện."
+  },
+  "controller.catalog.empty": {
+    "defaultMessage": "Không có máy Mac đã liên kết tương thích nào khả dụng."
+  },
+  "controller.catalog.loading": {
+    "defaultMessage": "Đang kết nối với các máy Mac đã liên kết…"
+  },
+  "controller.catalog.noSessions": {
+    "defaultMessage": "Không có phiên phù hợp trên máy Mac này."
+  },
+  "controller.catalog.offline": {
+    "defaultMessage": "Ngoại tuyến"
+  },
+  "controller.catalog.online": {
+    "defaultMessage": "Trực tuyến"
+  },
+  "controller.catalog.owner": {
+    "defaultMessage": "Máy Mac phụ trách: {name}"
+  },
+  "controller.catalog.search": {
+    "defaultMessage": "Tìm phiên đã liên kết"
+  },
+  "controller.catalog.signIn": {
+    "defaultMessage": "Đăng nhập LeanZero Link trong Cài đặt để xem các máy Mac của bạn tại đây."
+  },
+  "controller.catalog.stale": {
+    "defaultMessage": "Trạng thái đã lưu — đang kết nối lại"
+  },
+  "controller.catalog.sync": {
+    "defaultMessage": "Đồng bộ phiên"
+  },
+  "controller.catalog.title": {
+    "defaultMessage": "Phiên trên các máy Mac của bạn"
+  },
+  "controller.catalog.updateRequired": {
+    "defaultMessage": "Cần cập nhật Goose"
+  },
+  "controller.input.answer": {
+    "defaultMessage": "Câu trả lời của bạn"
+  },
+  "controller.input.choose": {
+    "defaultMessage": "Chọn một giá trị"
+  },
+  "controller.input.no": {
+    "defaultMessage": "Không"
+  },
+  "controller.input.unsupported": {
+    "defaultMessage": "Không thể trả lời yêu cầu này tại đây. Hãy mở trên máy Mac phụ trách."
+  },
+  "controller.input.yes": {
+    "defaultMessage": "Có"
+  },
+  "controller.receipt.accepted": {
+    "defaultMessage": "Máy Mac phụ trách đã chấp nhận"
+  },
+  "controller.receipt.delivered": {
+    "defaultMessage": "Đã chuyển"
+  },
+  "controller.receipt.dispatching": {
+    "defaultMessage": "Máy Mac phụ trách đang chuyển lệnh này"
+  },
+  "controller.receipt.outcomeUnknown": {
+    "defaultMessage": "Máy Mac phụ trách không thể xác nhận kết quả. Hãy kiểm tra phiên trước khi thử lệnh khác."
+  },
+  "controller.receipt.rejected": {
+    "defaultMessage": "Máy Mac phụ trách đã từ chối"
+  },
+  "controller.receipt.waiting": {
+    "defaultMessage": "Đã xếp hàng cho lượt tiếp theo"
+  },
+  "controller.work.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "controller.work.back": {
+    "defaultMessage": "Tất cả phiên đã liên kết"
+  },
+  "controller.work.check": {
+    "defaultMessage": "Kiểm tra xác nhận"
+  },
+  "controller.work.content": {
+    "defaultMessage": "Chi tiết tin nhắn"
+  },
+  "controller.work.deleted": {
+    "defaultMessage": "Công việc này đã bị xóa hoặc máy Mac phụ trách không còn chia sẻ nữa."
+  },
+  "controller.work.load": {
+    "defaultMessage": "Đang tải từ máy Mac phụ trách…"
+  },
+  "controller.work.message": {
+    "defaultMessage": "Tin nhắn cho phiên này trên {name}"
+  },
+  "controller.work.noMessages": {
+    "defaultMessage": "Chưa có tin nhắn hiển thị."
+  },
+  "controller.work.note": {
+    "defaultMessage": "Thêm ghi chú"
+  },
+  "controller.work.owner": {
+    "defaultMessage": "Chạy trên {name}"
+  },
+  "controller.work.pause": {
+    "defaultMessage": "Tạm dừng"
+  },
+  "controller.work.queue": {
+    "defaultMessage": "Xếp hàng tin nhắn tiếp theo"
+  },
+  "controller.work.reload": {
+    "defaultMessage": "Tải lại trạng thái máy Mac phụ trách"
+  },
+  "controller.work.resume": {
+    "defaultMessage": "Tiếp tục"
+  },
+  "controller.work.retry": {
+    "defaultMessage": "Thử lại cùng lệnh"
+  },
+  "controller.work.send": {
+    "defaultMessage": "Gửi"
+  },
+  "controller.work.steer": {
+    "defaultMessage": "Hướng dẫn lần chạy hiện tại"
+  },
+  "controller.work.stop": {
+    "defaultMessage": "Dừng lần chạy hiện tại"
+  },
+  "controller.work.tick": {
+    "defaultMessage": "Chạy một chu kỳ"
+  },
+  "controller.work.unavailable": {
+    "defaultMessage": "Máy Mac phụ trách không khả dụng. Nội dung đã lưu có thể đã cũ; các điều khiển bị vô hiệu hóa."
+  },
+  "controller.work.uncertain": {
+    "defaultMessage": "Chưa nhận được xác nhận. Hãy kiểm tra xác nhận hoặc thử lại chính lệnh này."
+  },
+  "controller.work.user": {
+    "defaultMessage": "Bạn"
+  },
+  "sessions.scope.linked": {
+    "defaultMessage": "Mac đã liên kết"
+  },
+  "sessions.scope.local": {
+    "defaultMessage": "Mac này"
   }
 }

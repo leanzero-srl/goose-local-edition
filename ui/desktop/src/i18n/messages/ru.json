@@ -12148,5 +12148,155 @@
   },
   "myMacs.updatedAgo": {
     "defaultMessage": "обновлено {seconds} с назад"
+  },
+  "controller.catalog.archived": {
+    "defaultMessage": "Включить архивные сеансы"
+  },
+  "controller.catalog.count": {
+    "defaultMessage": "{count, plural, one {# сеанс} few {# сеанса} many {# сеансов} other {# сеанса}}"
+  },
+  "controller.catalog.detail": {
+    "defaultMessage": "Открывайте историю, отвечайте на запросы и управляйте работой на Mac, который её выполняет."
+  },
+  "controller.catalog.empty": {
+    "defaultMessage": "Нет доступных совместимых связанных Mac."
+  },
+  "controller.catalog.loading": {
+    "defaultMessage": "Подключение к вашим связанным Mac…"
+  },
+  "controller.catalog.noSessions": {
+    "defaultMessage": "На этом Mac нет подходящих сеансов."
+  },
+  "controller.catalog.offline": {
+    "defaultMessage": "Не в сети"
+  },
+  "controller.catalog.online": {
+    "defaultMessage": "В сети"
+  },
+  "controller.catalog.owner": {
+    "defaultMessage": "Ответственный Mac: {name}"
+  },
+  "controller.catalog.search": {
+    "defaultMessage": "Поиск связанных сеансов"
+  },
+  "controller.catalog.signIn": {
+    "defaultMessage": "Войдите в LeanZero Link в настройках, чтобы увидеть здесь свои Mac."
+  },
+  "controller.catalog.stale": {
+    "defaultMessage": "Сохранённое состояние — переподключение"
+  },
+  "controller.catalog.sync": {
+    "defaultMessage": "Синхронизировать сеансы"
+  },
+  "controller.catalog.title": {
+    "defaultMessage": "Сеансы на ваших Mac"
+  },
+  "controller.catalog.updateRequired": {
+    "defaultMessage": "Требуется обновление Goose"
+  },
+  "controller.input.answer": {
+    "defaultMessage": "Ваш ответ"
+  },
+  "controller.input.choose": {
+    "defaultMessage": "Выберите значение"
+  },
+  "controller.input.no": {
+    "defaultMessage": "Нет"
+  },
+  "controller.input.unsupported": {
+    "defaultMessage": "Здесь нельзя ответить на этот запрос. Откройте его на ответственном Mac."
+  },
+  "controller.input.yes": {
+    "defaultMessage": "Да"
+  },
+  "controller.receipt.accepted": {
+    "defaultMessage": "Принято ответственным Mac"
+  },
+  "controller.receipt.delivered": {
+    "defaultMessage": "Доставлено"
+  },
+  "controller.receipt.dispatching": {
+    "defaultMessage": "Ответственный Mac передаёт эту команду"
+  },
+  "controller.receipt.outcomeUnknown": {
+    "defaultMessage": "Ответственный Mac не может подтвердить результат. Проверьте сеанс перед отправкой другой команды."
+  },
+  "controller.receipt.rejected": {
+    "defaultMessage": "Отклонено ответственным Mac"
+  },
+  "controller.receipt.waiting": {
+    "defaultMessage": "В очереди на следующий ход"
+  },
+  "controller.work.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "controller.work.back": {
+    "defaultMessage": "Все связанные сеансы"
+  },
+  "controller.work.check": {
+    "defaultMessage": "Проверить подтверждение"
+  },
+  "controller.work.content": {
+    "defaultMessage": "Подробности сообщения"
+  },
+  "controller.work.deleted": {
+    "defaultMessage": "Эта работа удалена или ответственный Mac больше не предоставляет к ней доступ."
+  },
+  "controller.work.load": {
+    "defaultMessage": "Загрузка с ответственного Mac…"
+  },
+  "controller.work.message": {
+    "defaultMessage": "Сообщение для этого сеанса на {name}"
+  },
+  "controller.work.noMessages": {
+    "defaultMessage": "Видимых сообщений пока нет."
+  },
+  "controller.work.note": {
+    "defaultMessage": "Добавить заметку"
+  },
+  "controller.work.owner": {
+    "defaultMessage": "Выполняется на {name}"
+  },
+  "controller.work.pause": {
+    "defaultMessage": "Приостановить"
+  },
+  "controller.work.queue": {
+    "defaultMessage": "Поставить следующее сообщение в очередь"
+  },
+  "controller.work.reload": {
+    "defaultMessage": "Обновить состояние ответственного Mac"
+  },
+  "controller.work.resume": {
+    "defaultMessage": "Возобновить"
+  },
+  "controller.work.retry": {
+    "defaultMessage": "Повторить ту же команду"
+  },
+  "controller.work.send": {
+    "defaultMessage": "Отправить"
+  },
+  "controller.work.steer": {
+    "defaultMessage": "Направить текущий запуск"
+  },
+  "controller.work.stop": {
+    "defaultMessage": "Остановить текущий запуск"
+  },
+  "controller.work.tick": {
+    "defaultMessage": "Выполнить один цикл"
+  },
+  "controller.work.unavailable": {
+    "defaultMessage": "Ответственный Mac недоступен. Сохранённые данные могут быть устаревшими; управление отключено."
+  },
+  "controller.work.uncertain": {
+    "defaultMessage": "Подтверждение не получено. Проверьте его или повторите ту же команду."
+  },
+  "controller.work.user": {
+    "defaultMessage": "Вы"
+  },
+  "sessions.scope.linked": {
+    "defaultMessage": "Связанные Mac"
+  },
+  "sessions.scope.local": {
+    "defaultMessage": "Этот Mac"
   }
 }

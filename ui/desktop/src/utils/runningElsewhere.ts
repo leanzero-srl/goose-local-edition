@@ -57,7 +57,8 @@ export function turnHolderOf(
 export function runningElsewhereFor(
   self: number,
   running: ReadonlyMap<number, readonly RunningSessionDto[]>,
-  turns: ReadonlyMap<number, readonly TurnInFlight[]>
+  turns: ReadonlyMap<number, readonly TurnInFlight[]>,
+  detachedOwner = false
 ): RunningElsewhere[] {
   const rows = new Map<string, RunningSessionDto>();
   for (const [window, list] of running) {
@@ -69,7 +70,10 @@ export function runningElsewhereFor(
   }
   return [...rows.values()]
     .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
-    .map((row) => ({ ...row, window: turnHolderOf(row.sessionId, turns, self) }));
+    .map((row) => ({
+      ...row,
+      window: detachedOwner ? null : turnHolderOf(row.sessionId, turns, self),
+    }));
 }
 
 /**

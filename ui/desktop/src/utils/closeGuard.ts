@@ -1,3 +1,6 @@
+// Upgraded backends advertise detached_runs and retain an application lease. Their ordinary Close
+// detaches the viewer; explicit Quit passes ownerSurvivesClose:false and keeps the confirmation.
+// The historical connection-owned failure below still describes legacy backends only.
 // Closing a window with the MOUSE during a live session-driven swarm run kills the run: the
 // traffic-light button (or File > Close by click) closes the window, `closed` releases the window's
 // goose serve lease, and the lease's cleanup signals goosed's process group — `goose swarm run` is
@@ -62,6 +65,8 @@ export function isTurnsInFlight(value: unknown): value is TurnInFlight[] {
 export type CloseVerdict = 'pass' | 'ask';
 
 export type CloseGuardInput = {
+  /** Authoritative backend capability plus its application lease; false during explicit Quit. */
+  ownerSurvivesClose?: boolean;
   /** The pass-through flag for this window, already CONSUMED by the caller (ConfirmedCloses.take). */
   confirmed: boolean;
   /** THE SAME PREDICATE the accelerator guard feeds for `close` (ShortcutGuardInput.windowHoldsLiveRun). */
@@ -82,11 +87,13 @@ export type CloseGuardInput = {
  */
 export function decideClose({
   confirmed,
+  ownerSurvivesClose = false,
   windowHoldsLiveRun,
   windowHoldsLiveTurn,
   rendererCanAnswer,
 }: CloseGuardInput): CloseVerdict {
   if (confirmed) return 'pass';
+  if (ownerSurvivesClose) return 'pass';
   if (!windowHoldsLiveRun && !windowHoldsLiveTurn) return 'pass';
   if (!rendererCanAnswer) return 'pass';
   return 'ask';

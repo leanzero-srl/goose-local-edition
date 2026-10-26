@@ -12148,5 +12148,155 @@
   },
   "myMacs.updatedAgo": {
     "defaultMessage": "{seconds} 秒前更新"
+  },
+  "controller.catalog.archived": {
+    "defaultMessage": "包含已封存的工作階段"
+  },
+  "controller.catalog.count": {
+    "defaultMessage": "{count} 個工作階段"
+  },
+  "controller.catalog.detail": {
+    "defaultMessage": "查看歷程記錄、回應請求，並指導負責執行的 Mac 上的工作。"
+  },
+  "controller.catalog.empty": {
+    "defaultMessage": "沒有可用的相容已連結 Mac。"
+  },
+  "controller.catalog.loading": {
+    "defaultMessage": "正在連線至已連結的 Mac…"
+  },
+  "controller.catalog.noSessions": {
+    "defaultMessage": "此 Mac 上沒有相符的工作階段。"
+  },
+  "controller.catalog.offline": {
+    "defaultMessage": "離線"
+  },
+  "controller.catalog.online": {
+    "defaultMessage": "線上"
+  },
+  "controller.catalog.owner": {
+    "defaultMessage": "負責執行：{name}"
+  },
+  "controller.catalog.search": {
+    "defaultMessage": "搜尋已連結的工作階段"
+  },
+  "controller.catalog.signIn": {
+    "defaultMessage": "在設定中登入 LeanZero Link，即可在此查看你的 Mac。"
+  },
+  "controller.catalog.stale": {
+    "defaultMessage": "已儲存的狀態 — 正在重新連線"
+  },
+  "controller.catalog.sync": {
+    "defaultMessage": "同步工作階段"
+  },
+  "controller.catalog.title": {
+    "defaultMessage": "各台 Mac 上的工作階段"
+  },
+  "controller.catalog.updateRequired": {
+    "defaultMessage": "需要更新 Goose"
+  },
+  "controller.input.answer": {
+    "defaultMessage": "你的回答"
+  },
+  "controller.input.choose": {
+    "defaultMessage": "選擇一個值"
+  },
+  "controller.input.no": {
+    "defaultMessage": "否"
+  },
+  "controller.input.unsupported": {
+    "defaultMessage": "無法在此回應這個請求。請在負責執行的 Mac 上開啟。"
+  },
+  "controller.input.yes": {
+    "defaultMessage": "是"
+  },
+  "controller.receipt.accepted": {
+    "defaultMessage": "負責執行的 Mac 已接受"
+  },
+  "controller.receipt.delivered": {
+    "defaultMessage": "已送達"
+  },
+  "controller.receipt.dispatching": {
+    "defaultMessage": "負責執行的 Mac 正在傳遞這個指令"
+  },
+  "controller.receipt.outcomeUnknown": {
+    "defaultMessage": "負責執行的 Mac 無法確認結果。嘗試其他指令前，請先檢查工作階段。"
+  },
+  "controller.receipt.rejected": {
+    "defaultMessage": "負責執行的 Mac 已拒絕"
+  },
+  "controller.receipt.waiting": {
+    "defaultMessage": "已排入佇列等待下一輪"
+  },
+  "controller.work.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "controller.work.back": {
+    "defaultMessage": "所有已連結的工作階段"
+  },
+  "controller.work.check": {
+    "defaultMessage": "檢查回執"
+  },
+  "controller.work.content": {
+    "defaultMessage": "訊息詳細資訊"
+  },
+  "controller.work.deleted": {
+    "defaultMessage": "這項工作已遭刪除，或負責執行的 Mac 已停止共用。"
+  },
+  "controller.work.load": {
+    "defaultMessage": "正在從負責執行的 Mac 載入…"
+  },
+  "controller.work.message": {
+    "defaultMessage": "傳送至 {name} 上此工作階段的訊息"
+  },
+  "controller.work.noMessages": {
+    "defaultMessage": "尚無可見訊息。"
+  },
+  "controller.work.note": {
+    "defaultMessage": "新增備註"
+  },
+  "controller.work.owner": {
+    "defaultMessage": "在 {name} 上執行"
+  },
+  "controller.work.pause": {
+    "defaultMessage": "暫停"
+  },
+  "controller.work.queue": {
+    "defaultMessage": "將下一則訊息加入佇列"
+  },
+  "controller.work.reload": {
+    "defaultMessage": "重新載入負責執行的 Mac 的狀態"
+  },
+  "controller.work.resume": {
+    "defaultMessage": "繼續"
+  },
+  "controller.work.retry": {
+    "defaultMessage": "重試相同指令"
+  },
+  "controller.work.send": {
+    "defaultMessage": "傳送"
+  },
+  "controller.work.steer": {
+    "defaultMessage": "指導目前的執行"
+  },
+  "controller.work.stop": {
+    "defaultMessage": "停止目前的執行"
+  },
+  "controller.work.tick": {
+    "defaultMessage": "執行一個週期"
+  },
+  "controller.work.unavailable": {
+    "defaultMessage": "負責執行的 Mac 無法使用。已儲存的內容可能已過時，控制功能已停用。"
+  },
+  "controller.work.uncertain": {
+    "defaultMessage": "未收到確認。請檢查回執或重試相同指令。"
+  },
+  "controller.work.user": {
+    "defaultMessage": "你"
+  },
+  "sessions.scope.linked": {
+    "defaultMessage": "已連結的 Mac"
+  },
+  "sessions.scope.local": {
+    "defaultMessage": "此 Mac"
   }
 }
