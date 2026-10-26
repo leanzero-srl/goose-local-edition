@@ -287,13 +287,21 @@ impl MeshConfig {
     /// "node authorization key; if it begins with "file:", then it's a path to a file
     /// containing the authkey" — and [`MeshEngine::join`] owns that file's lifetime.
     pub fn up_argv(&self, auth_key_file: &Path, hostname: &str) -> Vec<String> {
+        let mut argv = self.up_settings_argv(hostname);
+        argv.push(format!("--auth-key=file:{}", auth_key_file.display()));
+        argv.push("--reset".to_string());
+        argv
+    }
+
+    // Every `up` with flags must repeat the complete non-default settings, including
+    // the worker's control server. Share them between enrollment and key-free resume.
+    // https://tailscale.com/docs/reference/tailscale-cli/up
+    fn up_settings_argv(&self, hostname: &str) -> Vec<String> {
         let mut argv = self.cli_prefix();
         argv.push("up".to_string());
-        argv.push(format!("--auth-key=file:{}", auth_key_file.display()));
         argv.push(format!("--hostname={hostname}"));
         argv.push("--accept-routes=false".to_string());
         argv.push(format!("--login-server={}", self.login_server));
-        argv.push("--reset".to_string());
         argv.push(format!("--timeout={}s", self.join_timeout.as_secs()));
         if let Some(tag) = &self.tag {
             argv.push(format!("--advertise-tags={tag}"));
@@ -771,12 +779,9 @@ impl MeshEngine {
 
     /// Resume the already provider-bound identity without consuming or rotating a key.
     pub async fn resume(&self) -> Result<(), MeshError> {
-        let mut argv = self.config.cli_prefix();
-        argv.push("up".into());
-        argv.push(format!("--timeout={}s", self.config.join_timeout.as_secs()));
         let output = run_cli(
             "tailscale up",
-            argv,
+            self.config.up_settings_argv(&self.config.hostname),
             self.config.join_timeout + JOIN_WAIT_GRACE,
         )
         .await?;

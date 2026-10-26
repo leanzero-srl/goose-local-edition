@@ -98,6 +98,7 @@ if not sock:
     sys.exit(2)
 base = os.path.dirname(sock)
 marker = os.path.join(base, "joined")
+preferences = os.path.join(base, "preferences.json")
 if not os.path.exists(sock):
     print("failed to connect to local tailscaled; is it running?", file=sys.stderr)
     sys.exit(1)
@@ -107,6 +108,19 @@ if "up" in args:
     if flag("--auth-key") is None:
         if not os.path.exists(marker):
             sys.exit(4)
+        # Even --timeout opts into the complete-settings check.
+        # https://tailscale.com/docs/reference/tailscale-cli/up
+        with open(preferences) as f:
+            saved = json.load(f)
+        if any(a.startswith("--") and not a.startswith("--socket=") for a in args):
+            if any(flag(name) != value for name, value in saved.items()):
+                print("changing settings via 'tailscale up' requires mentioning all non-default flags", file=sys.stderr)
+                sys.exit(3)
+        # updatePrefs checks controlURLChanged even for bare up when already Running.
+        # https://github.com/tailscale/tailscale/blob/v1.98.5/cmd/tailscale/cli/up.go
+        if (flag("--login-server") or "https://controlplane.tailscale.com") != saved["--login-server"]:
+            print("can't change --login-server without --force-reauth", file=sys.stderr)
+            sys.exit(3)
         sys.exit(0)
     if "--accept-routes=false" not in args or "--reset" not in args:
         print("fake tailscale: missing pinned settings in %r" % (args,), file=sys.stderr)
@@ -146,6 +160,8 @@ if "up" in args:
         time.sleep(600)
     with open(marker, "w") as f:
         f.write("joined")
+    with open(preferences, "w") as f:
+        json.dump({name: flag(name) for name in ("--hostname", "--login-server", "--advertise-tags") if flag(name) is not None}, f)
     sys.exit(0)
 if "logout" in args:
     if os.path.exists(marker):
@@ -386,7 +402,8 @@ async fn starts_reports_needs_login_and_shuts_down_without_orphans() {
 #[tokio::test]
 async fn host_reauthentication_consumes_key_explicitly_and_resume_preserves_it() {
     let root = tempfile::tempdir().unwrap();
-    let config = fake_config(root.path());
+    let mut config = fake_config(root.path());
+    config.hostname = "fixture-host".into();
     let argv_path = config.state_dir.join("last-up-args.json");
     let engine = MeshEngine::start(config).await.unwrap();
     engine
@@ -407,6 +424,62 @@ async fn host_reauthentication_consumes_key_explicitly_and_resume_preserves_it()
     assert!(!args
         .iter()
         .any(|a| a.starts_with("--auth-key=") || a == "--force-reauth"));
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn resume_after_restart_keeps_nondefault_control_server_hostname_and_tags() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = fake_config(root.path());
+    config.login_server = "https://headscale.fixture.invalid".into();
+    config.hostname = "fixture-host-custom".into();
+    config.tag = Some("tag:fixture-host".into());
+    let preferences = config.state_dir.join("preferences.json");
+    let argv_path = config.state_dir.join("last-up-args.json");
+
+    let engine = MeshEngine::start(config.clone()).await.unwrap();
+    engine
+        .reauthenticate("tskey-auth-good", &config.hostname)
+        .await
+        .unwrap();
+    let saved_preferences = std::fs::read(&preferences).unwrap();
+    let joined_status = engine.status().await.unwrap();
+    engine.shutdown().await;
+
+    let engine = MeshEngine::start(config.clone()).await.unwrap();
+    let old_resume = tokio::process::Command::new(&config.tailscale_cli_path)
+        .arg(format!("--socket={}", config.socket_path.display()))
+        .arg("up")
+        .arg(format!("--timeout={}s", config.join_timeout.as_secs()))
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        !old_resume.status.success(),
+        "the old resume must be rejected"
+    );
+    assert!(String::from_utf8_lossy(&old_resume.stderr).contains("all non-default flags"));
+
+    let bare_resume = tokio::process::Command::new(&config.tailscale_cli_path)
+        .arg(format!("--socket={}", config.socket_path.display()))
+        .arg("up")
+        .kill_on_drop(true)
+        .output()
+        .await
+        .unwrap();
+    assert!(!bare_resume.status.success());
+    assert!(String::from_utf8_lossy(&bare_resume.stderr)
+        .contains("can't change --login-server without --force-reauth"));
+
+    engine.resume().await.unwrap();
+    assert_eq!(std::fs::read(&preferences).unwrap(), saved_preferences);
+    assert_eq!(engine.status().await.unwrap(), joined_status);
+    assert!(leftover_key_files(&config.state_dir).is_empty());
+    let args: Vec<String> = serde_json::from_slice(&std::fs::read(&argv_path).unwrap()).unwrap();
+    assert!(!args
+        .iter()
+        .any(|a| a.starts_with("--auth-key=") || a == "--force-reauth" || a == "--reset"));
     engine.shutdown().await;
 }
 
