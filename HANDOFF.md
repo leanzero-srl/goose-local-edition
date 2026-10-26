@@ -100,62 +100,44 @@ cd ui && pnpm install --frozen-lockfile; cd desktop && pnpm run lint:check && pn
 The qwen3_5 / qwen4_exp distributed tests must pass unchanged. The ratchet `cargo test -p goose-swarm --test development_gates`
 counts numeric const literals: every new const needs `// ratio:` or `// measured:` on its line.
 
-## Session 2 (2026-10-26): DONE in commit "distributed: one runner table" (NOT yet compiled)
-- config.rs: `Runner::MlxLmPipeline` ("mlxLmPipeline"), `pub const RUNNERS` table (qwen3_5/qwen4_exp/mimo_v2),
-  methods `wired_summary`, `placement_kind`, `layout_words`, `uses_pipeline_env`, `runs_rank_wrapper`;
-  re-exported `RUNNERS` from distributed/mod.rs. Test `no_other_file_maps_a_model_type_to_a_runner` (walks
-  goose-sidecar/src + goose/src, non-test part of each file, flags `"<type>" =>` and `model_type == "`).
-- Folded copies: mlx_distributed.rs split_way + load record, mlx_placement.rs x2, mlx_speed.rs, planner.rs
-  (wired + label), discover.rs prose + pipeline-env check. Imports added (verify `PlacementKind` is in scope in
-  mlx_distributed.rs split_way: it is imported only inside a fn at :591 -> add a top-level `use` or full path).
-- NEXT: `cargo check -p goose-sidecar -p goose` (heavy-run) and add the MlxLmPipeline arm in every exhaustive
-  match the compiler names (preflight 1409, supervisor 2250, provision for_runner -> Self::pipeline(), link_host 190
-  (phase Warming->Ready also for MlxLmPipeline: use `runs_rank_wrapper()`), supervisor 1393 server_load
-  (`runs_rank_wrapper()`), supervisor 2314 peers_follow_rank0 (decide: mlx_lm pipeline = same loop as tensor ->
-  false? tensor peers do not follow rank0; check what the flag does), preflight 452/963 pipeline checks
-  (`uses_pipeline_env()` for the env probe; the qwen4 PIPELINE_MODULE --help probe stays qwen4-only), runner_update 143.
+## Session 3 (2026-10-26): DONE, commit fccf87936b (pushed), COMPILES
+- A: `cargo check -p goose-sidecar -p goose` rc 0. Arms added: preflight (plan_mlx_pipeline), provision
+  (MlxLmPipeline -> Self::pipeline()), supervisor launch_specs = LOUD bail "mlx_lm pipeline launch is not wired
+  yet" (open item 1), PlacementKind path fixes in goose crate.
+- B: new crates/goose-sidecar/src/distributed/layer_split.rs: LayerSplitFacts (config.json hybrid_layer_pattern
+  0=full + safetensors headers), stage_need (no RUNTIME_OVERHEAD_RATIO: measured 68.7/100.7 GB footprints vs
+  68.28/100.31 weights), plan_layer_split(facts, nodes, reserve, warn_floor, context) -> LayerSplit {layers,
+  plans: Vec<RankPlan>, context, chunk, reserve_ratio, reason}. fitting_reserve searches 0.1% steps.
+  fit.rs: budget_bytes_with_reserve. DistributedConfig + MlxDistributedConfigDto: plan_reserve_ratio
+  (validated >= the WARN ratio IN FORCE and < AVAILABLE_MARGIN_RATIO), config.plan_reserve_ratio().
+  PreflightReport new fields: layer_split, split_reason, plan_reserve_ratio (+ pipeline_starts = layer_start
+  per rank, context_limit, plans per node with layer_start/end, weights, budget, with_overhead).
+- Test numbers (7 tests green): default 9.3% -> refusal "budget 67.11 GB / 98.22 GB", "a split fits at reserve
+  7.7% (19/29 layers ...)", "set plan_reserve_ratio between 0.05 and 0.077". Reserve 0.05 -> 19 rank0 [29,48)
+  68,279,546,752 B / 29 rank1 [0,29) 100,312,603,648 B, derived context 60,672, chunk 256. Requested 32k -> same
+  split, shared prefill figures (kv/token = 5x2560 max). Halved available -> "no split fits even with no reserve".
+- D (run): cargo test -p goose-sidecar 495+ pass; clippy -p goose-sidecar -p goose --all-targets -D warnings rc 0;
+  development_gates 11 pass. qwen tests unchanged.
 
-## Measured facts (session 2)
-- Byte table from the checkpoint headers (all 45 files, `model.layers.N.` grouping): layer 0 = 308,625,408;
-  full-attention layers 5,11,17,23,29,35,41,47 = 3,519,366,144 each; the 39 SWA layers = 3,524,936,832 each;
-  shared (every stage) = embed_tokens 664,010,752 + lm_head 624,951,296+19,529,728+19,529,728 + norm 8,192
-  = 1,328,029,696. Layer 0 is ALSO full attention (hybrid_layer_pattern[0] = 0): 9 full layers, 39 SWA.
-  Script: scratchpad hdr.py (python3 -I hdr.py <dir>). Store as test fixture JSON.
-- KEY FINDING: under goose's ONE fit rule (budget = available - RAM x 0.093, min GPU ceiling) the measured figures
-  give budgets 67.11e9 (workhorse, 96 GiB) / 98.22e9 (mule, 128 GiB) = 165.3e9 total < 168.6e9 total weights
-  (165.9e9 layers + 2 x 1.328e9 shared). NO split fits under goose's rule; the manual 19/29 run lived inside the
-  margin (8.4 / 10.7 GB from raw available). Max-min spare picks: raw budgets 76.7/111 + overhead 1.10 -> 19/29
-  (min spare ~0.66 GB before KV/workspace); goose budgets no overhead -> 19/29 (both negative, refused);
-  goose budgets + 1.10 -> 20/28 (refused). Plan: test A = measured figures through NodeFigures::new -> refusal
-  naming both nodes with numbers; test B = budgets 76.7e9/111e9 set directly -> 19 rank0 / 29 rank1. Do NOT
-  loosen AVAILABLE_MARGIN_RATIO (measured kernel-WARN rule shared by every runner). Report to Mihai.
-- Planner shape: per stage need = with_overhead(weights + state + prompt_cache) + workspace;
-  state = roundup256(C) x full_layers_in_stage x 2560 + swa_layers_in_stage x 128 x 8 x 320 x 2 (655,360 B);
-  prompt_cache = PROMPT_CACHE_CONTEXTS x state; workspace = chunk x C x (64 heads x act 2 B + 1 mask) when the
-  stage has a full layer. Select split at min chunk 256 (KV_CACHE_STEP) maximising min(budget - need), rank0 =
-  last layers; derived context = largest C that split fits; chunk = min over ranks of headroom/(C x pair),
-  cap TENSOR_PREFILL_STEP, floor to 256. Emit RankPlan per rank (layer_start/end, prefill Some(TensorPrefill)
-  with pair_bytes = 129, kv_bytes_per_token = MAX over ranks, sequence_state = MAX), report.pipeline_starts.
-- mlx_lm 0.31.3 sharded_load calls `model.model.pipeline(group)` TWICE (lazy file selection, then after
-  load_model): the prelude's patched pipeline must be deterministic per fresh model (it is).
-- PIPELINE_FORK_COMMIT question RESOLVED: a18e14fd4 = lz-pipeline-qwen4.12 (2026-09-27), an ANCESTOR of the pin
-  8c0007054 (lz-pipeline-qwen4.14). The live env ~/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12 is simply
-  stale (filed as Q-234 on 09-28, fixed a60f985f9: an env at another pin fails the update by name). Keep 8c000705.
-- Fork mimo sha: NOT landed. Rapid-MLX branch lz/pipeline-mimo-v2 is still AT 8c0007054 (worktree in the
-  coordinator's scratchpad wt-pipe), lz/mimo-v2-vendor at 03fa3b38f. ~/jaccl-smoke/HANDOFF.md has no
-  "Rapid-MLX mimo_v2 vendoring" heading yet. Plan: keep the ONE constant PIPELINE_FORK_COMMIT, add the doc line
-  "bumped when the fork's mimo_v2 commit lands (lz/pipeline-mimo-v2, on top of this commit)"; preflight for
-  MlxLmPipeline probes `import rapid_mlx.mlx_lm_models, mlx_lm.models.mimo_v2` in pipeline_python and FAILs by name.
-- Launch: remote_script is launch.rs:734 (add `ulimit -n 65536 2>/dev/null || ulimit -n 10240;`); RankProgram
-  MlxLmServer tag currently "mlxLmServerNamedConversation" (launch.rs:194) -> new rename e.g.
-  "mlxLmServerPipelineSplit", old one becomes an alias; interpreter() at :682; rank_specs at :491 (add split);
-  TENSOR_PROGRAM at :54 (add rank_pipeline_split.py before rank_wrapper.py); rank_wrapper.py sys.argv at :2371
-  (append "--pipeline" when spec["pipeline_split"]).
+## OPEN (in order)
+1. C: expose layer_split / split_reason / plan_reserve_ratio in the goose ACP preflight DTO the UI reads
+   (grep -n "pipeline_starts" crates/goose/src/acp/server/*.rs crates/goose-sdk-types/src/custom_requests.rs;
+   per node the plan already carries layer_start/end, weights, budget; spare = budget - with_overhead).
+   Then regenerate: grep -n "acp" justfile (likely `just generate-acp-types`, needs `cd ui && pnpm install
+   --frozen-lockfile` first), commit ui/sdk/src/generated.
+2. Rank wrapper pipeline launch (HANDOFF facts 3-5 + Launch notes above): pipeline_split in RankProgram,
+   rank_pipeline_split.py prelude, `--pipeline`, ulimit in remote_script, interpreter = pipeline_python;
+   replace the supervisor bail. TensorLaunch::for_ranks refuses differing prompt-cache bounds: pipeline ranks
+   differ (per-rank state) -> needs a pipeline-aware path.
+3. Placement store/planner and UI split display (next agents).
+
+## Exact commands (macOS 27 workhorse!)
+S=<scratchpad>/mimo.sh = cd worktree; source bin/activate-hermit; export CARGO_TARGET_DIR=~/Projects/goose/target; "$@"
+~/Projects/machine-sync/bin/heavy-run --timeout 3000 -- $S cargo check --config 'profile.dev.package."*".strip=false' -p goose-sidecar -p goose
+Same for test / clippy (`cargo clippy --config '...' -p ... --all-targets -- -D warnings`).
 
 ## Traps
-- The ctx-guard hook warns at 160k. This agent's system context was large and it reached 161k after reading only. Read
-  with narrow sed ranges. launch.rs is 10k+ lines and supervisor.rs 5k, never read them whole.
-- Never touch the engine on :8090 or other sessions' jobs; never pkill by pattern.
-- The PIPELINE_FORK_COMMIT bump waits on the parallel vendoring agent's sha (it lands on top of 8c000705).
-- Session 2 hit the ctx-guard at 162k BEFORE compiling: the system context alone is ~60k. Next agent: no planning
-  reads, go straight to `cargo check` and the compiler list.
+- macOS 27: without `--config 'profile.dev.package."*".strip=false'` sqlx_macros dylib fails "mis-aligned LINKEDIT".
+  Own target dir in the worktree is not needed: share ~/Projects/goose/target.
+- ctx-guard: this agent reached 180k by the end of B. Keep reads to grep -n + sed ranges.
+- Never touch ~/Projects/goose sources, the engine on :8090, or pkill by pattern.
