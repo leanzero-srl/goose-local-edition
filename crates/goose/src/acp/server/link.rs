@@ -976,8 +976,8 @@ impl MeshRegistry {
             .started
             .lock()
             .unwrap()
-            .iter()
-            .filter_map(Weak::upgrade)
+            .drain(..)
+            .filter_map(|weak| weak.upgrade())
             .collect();
         if live.is_empty() {
             return "no mesh daemon running under this goosed".to_string();
@@ -1032,8 +1032,25 @@ pub(super) async fn announce_leaving_to_peers() -> String {
     }
 }
 
+/// Withdraw the current runtime's host lease and stop its connection, keeping the
+/// credentials and saved intent that the next launch uses to reconnect.
+pub(super) async fn shutdown_link_connection() -> String {
+    match existing_link_manager() {
+        Some(manager) => match manager.shutdown().await {
+            Ok(()) => {
+                "connection stopped; credentials, enrollment and connection intent kept".into()
+            }
+            Err(error) => {
+                error!(%error, "leanzero-link connection shutdown incomplete");
+                error.to_string()
+            }
+        },
+        None => "no connection: LeanZero Link never started in this goosed".into(),
+    }
+}
+
 /// `goose serve`'s exit path, last step: stop the mesh daemons ([`MeshRegistry::shutdown_live`])
-/// once nothing left in the teardown needs a peer.
+/// still alive after the manager's connection teardown, once nothing needs a peer.
 pub(super) async fn stop_started_mesh_daemons() -> String {
     STARTED_MESHES.shutdown_live().await
 }
@@ -3535,6 +3552,10 @@ mod tests {
         drop(dropped);
 
         let outcome = registry.shutdown_live().await;
+        assert_eq!(
+            registry.shutdown_live().await,
+            "no mesh daemon running under this goosed"
+        );
 
         let started = fake.started.lock().unwrap();
         let (live_shutdowns, live_logouts) = &started[0];

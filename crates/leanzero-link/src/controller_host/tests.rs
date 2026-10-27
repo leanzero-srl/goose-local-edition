@@ -14,6 +14,235 @@ use std::sync::{
 };
 use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
 
+mod quit_lifecycle {
+    use super::*;
+    use crate::{
+        control::ControlConfig,
+        identity::IdentityStore,
+        intent::IntentStore,
+        manager::{AuthState, LinkManager, LinkManagerConfig, ReconnectState},
+        mesh::MeshConfig,
+    };
+
+    struct ObservedMesh {
+        inner: Arc<FakeMesh>,
+        authority: Arc<AuthorityFixture>,
+        lease_at_stop: Mutex<Vec<Option<Uuid>>>,
+    }
+
+    #[tokio::test]
+    async fn quit_withdraws_even_when_the_host_task_has_failed() {
+        let (_dir, server, authority, factory, mesh) = fixture().await;
+        let host = PreparedHost::prepare(
+            factory.clone(),
+            WorkerClient::new(server.uri()).unwrap(),
+            "account-fixture",
+            "owner@example.test",
+            "fixture-host",
+        )
+        .await
+        .unwrap();
+        host.enroll(
+            mesh.as_ref(),
+            host.mesh_context().await.unwrap(),
+            "fixture-host",
+        )
+        .await
+        .unwrap();
+        let handle = host
+            .activate(mesh, registry(), "100.64.0.1".into(), resources())
+            .await
+            .unwrap();
+        assert!(authority.runtime.lock().unwrap().is_some());
+        handle.task.as_ref().unwrap().abort();
+        let error = handle.shutdown(false).await.unwrap_err().to_string();
+        assert!(error.contains("cancelled"), "{error}");
+        assert!(authority.runtime.lock().unwrap().is_none());
+        assert!(!authority.revoked.load(Ordering::SeqCst));
+        assert!(factory.directory.join("host-credential.json").exists());
+    }
+
+    #[async_trait]
+    impl Mesh for ObservedMesh {
+        async fn join(&self, key: &str, name: &str) -> Result<(), MeshError> {
+            self.inner.join(key, name).await
+        }
+        async fn reauthenticate(&self, key: &str, name: &str) -> Result<(), MeshError> {
+            self.inner.reauthenticate(key, name).await
+        }
+        async fn resume(&self) -> Result<(), MeshError> {
+            self.inner.resume().await
+        }
+        async fn status(&self) -> Result<MeshStatus, MeshError> {
+            self.inner.status().await
+        }
+        async fn peer_proxy(&self) -> Result<MeshProxy, MeshError> {
+            self.inner.peer_proxy().await
+        }
+        async fn logout(&self) -> Result<(), MeshError> {
+            panic!("quit must preserve mesh enrollment")
+        }
+        async fn shutdown(&self) {
+            self.lease_at_stop
+                .lock()
+                .unwrap()
+                .push(*self.authority.runtime.lock().unwrap());
+        }
+    }
+
+    struct ObservedFactory(Arc<ObservedMesh>);
+    #[async_trait]
+    impl crate::manager::MeshFactory for ObservedFactory {
+        async fn start(&self, _: MeshConfig) -> Result<Arc<dyn Mesh>, MeshError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn manager(
+        root: &std::path::Path,
+        server: &MockServer,
+        factory: Arc<Factory>,
+        mesh: Arc<ObservedMesh>,
+    ) -> LinkManager {
+        let mut config = MeshConfig::new(
+            "fixture-daemon".into(),
+            "fixture-cli".into(),
+            "fixture-host".into(),
+        )
+        .unwrap();
+        config.state_dir = root.join("mesh");
+        config.socket_path = config.state_dir.join("fixture.sock");
+        let mut control = ControlConfig::new(String::new(), None);
+        control.port = 0;
+        control.jobs.root = root.join("jobs");
+        control.jobs.heavy_lock = root.join("heavy.lock");
+        LinkManager::with_mesh_factory(
+            LinkManagerConfig {
+                worker_base_url: server.uri(),
+                identity_path: root.join("identity.json"),
+                mesh: config,
+                control,
+            },
+            Arc::new(Source),
+            Arc::new(ObservedFactory(mesh)),
+        )
+        .unwrap()
+        .with_controller_host(factory)
+    }
+
+    #[tokio::test]
+    async fn quit_withdraws_before_mesh_stop_and_immediate_relaunch_keeps_login_and_enrollment() {
+        let (dir, server, authority, factory, inner) = fixture().await;
+        let mesh = Arc::new(ObservedMesh {
+            inner,
+            authority: authority.clone(),
+            lease_at_stop: Mutex::new(Vec::new()),
+        });
+        let first = manager(dir.path(), &server, factory.clone(), mesh.clone());
+        first.verify("owner@example.test", "123456").await.unwrap();
+        first.connect().await.unwrap();
+        let runtime = authority.runtime.lock().unwrap().expect("active lease");
+        let enrollment = *authority.enrollment.lock().unwrap();
+        let identity = dir.path().join("identity.json");
+        let files = [
+            identity.clone(),
+            secret_path(&identity),
+            IntentStore::beside(&identity).path().to_path_buf(),
+            factory.directory.join("host-credential.json"),
+        ];
+        let before: Vec<_> = files.iter().map(|p| std::fs::read(p).unwrap()).collect();
+        let intent = first.status().await.intent;
+        first.shutdown().await.unwrap();
+        first.shutdown().await.unwrap();
+        assert_eq!(*mesh.lease_at_stop.lock().unwrap(), vec![None]);
+        assert!(matches!(
+            first.status().await.auth,
+            AuthState::LoggedIn { .. }
+        ));
+        assert_eq!(first.status().await.intent, intent);
+        assert_eq!(
+            files
+                .iter()
+                .map(|p| std::fs::read(p).unwrap())
+                .collect::<Vec<_>>(),
+            before
+        );
+        assert_eq!(*authority.enrollment.lock().unwrap(), enrollment);
+        assert!(!authority.revoked.load(Ordering::SeqCst));
+        drop(first);
+
+        let second = manager(dir.path(), &server, factory, mesh.clone());
+        assert!(matches!(
+            second.auto_reconnect(Ok(()), ToString::to_string).await,
+            ReconnectState::Reconnected { .. }
+        ));
+        assert_ne!(*authority.runtime.lock().unwrap(), Some(runtime));
+        assert_eq!(mesh.inner.reauth.load(Ordering::SeqCst), 1);
+        assert_eq!(mesh.inner.resume.load(Ordering::SeqCst), 1);
+        second.shutdown().await.unwrap();
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| r.url.path() == "/v1/auth/verify")
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| r.url.path() == "/v1/controller/hosts/withdraw")
+                .count(),
+            2
+        );
+        assert!(requests
+            .iter()
+            .all(|r| r.url.path() != "/v1/controller/hosts/release"));
+    }
+
+    #[tokio::test]
+    async fn quit_reports_failed_withdrawal_and_still_stops_mesh_without_revoking_credentials() {
+        let (dir, server, authority, factory, inner) = fixture().await;
+        let mesh = Arc::new(ObservedMesh {
+            inner,
+            authority: authority.clone(),
+            lease_at_stop: Mutex::new(Vec::new()),
+        });
+        let link = manager(dir.path(), &server, factory.clone(), mesh.clone());
+        link.verify("owner@example.test", "123456").await.unwrap();
+        link.connect().await.unwrap();
+        let runtime = authority.runtime.lock().unwrap().expect("active lease");
+        let intent = link.status().await.intent;
+        Mock::given(path("/v1/controller/hosts/withdraw"))
+            .respond_with(ResponseTemplate::new(503).set_body_json(json!({
+                "error":{"code":"withdraw_unavailable","message":"withdraw unavailable","retryable":true}
+            })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        let error = link.shutdown().await.unwrap_err().to_string();
+        assert!(error.contains("withdraw_unavailable"), "{error}");
+        assert_eq!(*mesh.lease_at_stop.lock().unwrap(), vec![Some(runtime)]);
+        let state = link.status().await;
+        assert_eq!(state.last_error.as_deref(), Some(error.as_str()));
+        assert_eq!(state.intent, intent);
+        assert!(matches!(state.auth, AuthState::LoggedIn { .. }));
+        link.shutdown().await.unwrap();
+        assert_eq!(mesh.lease_at_stop.lock().unwrap().len(), 1);
+        assert_eq!(link.status().await.last_error, state.last_error);
+        assert!(factory.directory.join("host-credential.json").exists());
+        assert!(!authority.revoked.load(Ordering::SeqCst));
+        assert!(IdentityStore::new(dir.path().join("identity.json"))
+            .load()
+            .unwrap()
+            .is_some());
+        let requests = server.received_requests().await.unwrap();
+        assert!(requests
+            .iter()
+            .all(|r| r.url.path() != "/v1/controller/hosts/release"));
+    }
+}
+
 struct Backend {
     host: HostDescriptor,
     generation: Uuid,

@@ -724,26 +724,42 @@ impl ControllerHostHandle {
         self.error.read().expect("host error poisoned").clone()
     }
     pub(crate) async fn shutdown(mut self, logout: bool) -> Result<(), LinkError> {
+        let mut errors = Vec::new();
         *self.gate.write().expect("controller gate poisoned") = None;
         self.registry.peer_authority_unavailable();
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
         if let Some(task) = self.task.take() {
-            task.await
-                .map_err(|error| LinkError::ControllerHost(error.to_string()))?
-                .shutdown()
-                .await?;
+            match task.await {
+                Ok(tls) => {
+                    if let Err(error) = tls.shutdown().await {
+                        errors.push(error.to_string());
+                    }
+                }
+                Err(error) => errors.push(error.to_string()),
+            }
         }
-        if logout {
+        let withdrawal = if logout {
             self.worker
                 .release_controller_host(&self.credential, self.runtime_id)
-                .await?;
-            remove_private(&self.directory.join("host-credential.json"))?;
+                .await
         } else {
             self.worker
                 .withdraw_controller_host(&self.credential, self.runtime_id)
-                .await?;
+                .await
+        };
+        match withdrawal {
+            Ok(()) if logout => {
+                if let Err(error) = remove_private(&self.directory.join("host-credential.json")) {
+                    errors.push(error.to_string());
+                }
+            }
+            Ok(()) => {}
+            Err(error) => errors.push(error.to_string()),
+        }
+        if !errors.is_empty() {
+            return Err(LinkError::ControllerHost(errors.join("; ")));
         }
         Ok(())
     }

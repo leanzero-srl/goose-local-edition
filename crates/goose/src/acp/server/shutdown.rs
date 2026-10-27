@@ -97,6 +97,18 @@ impl SupervisedResource for LinkPeers {
 
 struct LinkMeshes;
 
+struct LinkConnection;
+
+#[async_trait]
+impl SupervisedResource for LinkConnection {
+    fn name(&self) -> &'static str {
+        "leanzero-link connection"
+    }
+    async fn teardown(&self) -> String {
+        super::link::shutdown_link_connection().await
+    }
+}
+
 #[async_trait]
 impl SupervisedResource for LinkMeshes {
     fn name(&self) -> &'static str {
@@ -133,7 +145,8 @@ impl SupervisedResource for MlxDistributedEngine {
 
 /// The production sequence: every stdio extension child, the going-away notice to the peers,
 /// the engine sidecar, the distributed engine's ranks (at most one of the two engines runs; the
-/// other reports it has nothing), and the mesh daemon last — it carries the rank-1 stop.
+/// other reports it has nothing), then the Link connection (withdraws the runtime lease
+/// before stopping its mesh) and any remaining mesh daemons — they carry the rank-1 stop.
 pub async fn teardown_supervised() -> Vec<TeardownReport> {
     teardown_in_order(&production_sequence()).await
 }
@@ -145,6 +158,7 @@ fn production_sequence() -> Vec<Arc<dyn SupervisedResource>> {
         Arc::new(LinkPeers),
         Arc::new(MlxEngine),
         Arc::new(MlxDistributedEngine),
+        Arc::new(LinkConnection),
         Arc::new(LinkMeshes),
     ]
 }
@@ -224,6 +238,7 @@ mod tests {
                 "leanzero-link peers",
                 "mlx engine",
                 "mlx distributed engine",
+                "leanzero-link connection",
                 "leanzero-link mesh",
             ]
         );
@@ -248,9 +263,14 @@ mod tests {
             reports[3].outcome
         );
         assert!(
-            reports[4].outcome.contains("no mesh daemon"),
+            reports[4].outcome.contains("no connection"),
             "{}",
             reports[4].outcome
+        );
+        assert!(
+            reports[5].outcome.contains("no mesh daemon"),
+            "{}",
+            reports[5].outcome
         );
     }
 
@@ -273,6 +293,10 @@ mod tests {
         assert_eq!(mesh, names.len() - 1, "{names:?}");
         assert!(at("leanzero-link peers") < mesh, "{names:?}");
         assert!(at("mlx distributed engine") < mesh, "{names:?}");
+        let connection = at("leanzero-link connection");
+        assert!(at("mlx distributed engine") < connection, "{names:?}");
+        assert!(at("mlx engine") < connection, "{names:?}");
+        assert!(connection < mesh, "{names:?}");
         // Peers hear the node is leaving before its engines go (a peer served by this Mac's
         // engine gets the notice, not a dead socket).
         assert!(at("leanzero-link peers") < at("mlx engine"), "{names:?}");

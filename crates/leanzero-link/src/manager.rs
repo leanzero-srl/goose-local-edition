@@ -253,6 +253,8 @@ pub enum LinkError {
     ControllerAuthorization(#[from] crate::controller_auth::AuthorizationError),
     #[error("controller host: {0}")]
     ControllerHost(String),
+    #[error("Link teardown incomplete: {0}")]
+    Teardown(String),
     #[error(transparent)]
     Worker(#[from] WorkerError),
     #[error(transparent)]
@@ -1902,12 +1904,7 @@ impl LinkManager {
 
         let mut inner = self.core.inner.lock().await;
         inner.auth = AuthState::LoggedOut;
-        let mesh_note = mesh_logout_error.map(|err| {
-            format!(
-                "logged out, but `tailscale logout` failed and the daemon was stopped per-pid \
-                 instead (the node key may linger on the control plane until it expires): {err}"
-            )
-        });
+        let mesh_note = mesh_logout_error.map(|err| format!("logged out, but {err}"));
         inner.last_error = match (mesh_note, intent_note) {
             (Some(mesh), Some(intent)) => Some(format!("{mesh}; {intent}")),
             (mesh, intent) => mesh.or(intent),
@@ -1950,6 +1947,32 @@ impl LinkManager {
         };
         if let Some(active) = active {
             teardown_active(active, false).await;
+        }
+        Ok(())
+    }
+
+    /// Stop this process's connection while preserving login, enrollment and the user's
+    /// saved connection intent. Quit must withdraw the runtime lease before stopping the
+    /// mesh so an immediate relaunch can claim the same host without waiting for expiry.
+    pub async fn shutdown(&self) -> Result<(), LinkError> {
+        let active = {
+            let mut inner = self.core.inner.lock().await;
+            if let AuthState::Connected { email, .. } | AuthState::Connecting { email } =
+                &inner.auth
+            {
+                inner.auth = AuthState::LoggedIn {
+                    email: email.clone(),
+                };
+            }
+            inner.reconnect = ReconnectState::Idle;
+            inner.restart = None;
+            inner.active.take()
+        };
+        if let Some(active) = active {
+            if let Some(error) = teardown_active(active, false).await {
+                self.core.inner.lock().await.last_error = Some(error.to_string());
+                return Err(error);
+            }
         }
         Ok(())
     }
@@ -2799,9 +2822,10 @@ fn node_count(registry: &PeerRegistry) -> u32 {
 /// serve tasks + the peer fabric), then the mesh — `tailscale logout` when asked
 /// (expires the node key on the control plane; the real engine stops the daemon on
 /// success), always followed by the per-pid `shutdown` when logout was skipped or
-/// failed. Never a process group. Returns the mesh-logout failure, if any, so the
+/// failed. Never a process group. Returns every teardown failure, if any, so the
 /// caller can surface it instead of erasing it.
-async fn teardown_active(mut active: Active, mesh_logout: bool) -> Option<MeshError> {
+async fn teardown_active(mut active: Active, mesh_logout: bool) -> Option<LinkError> {
+    let mut errors = Vec::new();
     if let Some(task) = active.poll_task.take() {
         task.abort();
     }
@@ -2811,20 +2835,22 @@ async fn teardown_active(mut active: Active, mesh_logout: bool) -> Option<MeshEr
     if let Some(host) = active.controller_host.take() {
         if let Err(error) = host.shutdown(mesh_logout).await {
             tracing::error!(%error, "controller host shutdown incomplete");
+            errors.push(format!("controller host: {error}"));
         }
     }
     if mesh_logout {
         match active.mesh.logout().await {
-            Ok(()) => return None,
+            Ok(()) => {}
             Err(err) => {
                 tracing::warn!(error = %err, "mesh logout failed; forcing per-pid shutdown");
                 active.mesh.shutdown().await;
-                return Some(err);
+                errors.push(format!("mesh logout failed; daemon stopped per-pid: {err}"));
             }
         }
+    } else {
+        active.mesh.shutdown().await;
     }
-    active.mesh.shutdown().await;
-    None
+    (!errors.is_empty()).then(|| LinkError::Teardown(errors.join("; ")))
 }
 
 /// Why a live connection's supervised tailscaled is being given up on.
