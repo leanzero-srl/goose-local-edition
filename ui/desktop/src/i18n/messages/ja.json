@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "エンジンのライブカードの小型版：何を読み書きしているか、速度、どのチャットに応答しているか。クリックでエンジンを開きます。"
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "デスクトップに浮かべる"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "goose がバックグラウンドのとき"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "goose を最小化したとき、またはバックグラウンドのときにフローティングのアクティビティピルを表示"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "チェックするまでオフです。ほかのアプリの上に小さなピルを表示し、ドラッグした隅に置きます。goose を開くのは ⤢ ボタンだけです。ドラッグは移動するだけで、✕ を押すと新しいジョブ、実行、分割が始まるまで隠れます。"
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "表示するタイミング"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "goose を最小化したときにピルを表示"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "エンジンが動いているときは常に"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "オフ"
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "ほかのアプリの上に表示される小さなウィンドウで、ドラッグした隅に置かれます。フォーカスを奪うことはなく、ここから何かを開いたときだけ goose を前面に出します。閉じるボタンを押すと、新しいジョブ、実行、または分割が始まるまで非表示になります。"
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "閉じました — 新しい処理が始まるまで非表示です。"

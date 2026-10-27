@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "Kad langsung Enjin, versi kecil: apa yang dibaca atau ditulis, berapa pantas, dan sembang mana yang dilayan. Klik untuk membuka Enjin."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Terapung di desktop"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Semasa goose di latar belakang"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Tunjukkan pil aktiviti terapung apabila goose diminimumkan atau di latar belakang"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Mati melainkan anda menandakannya. Pil kecil di atas aplikasi lain, di sudut tempat anda menyeretnya. Hanya butang ⤢ membuka goose; menyeret hanya mengalihkannya, dan ✕ menyembunyikannya sehingga kerja, larian atau pecahan baharu bermula."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Bila ia terapung"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Apungkan pil apabila goose diminimumkan"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Setiap kali enjin bekerja"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Mati"
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "Tetingkap kecil di atas apl lain anda, di sudut yang anda seret. Ia tidak pernah mengambil fokus dan hanya membawa goose ke hadapan apabila anda membuka sesuatu daripadanya. Butang tutupnya menyembunyikannya sehingga kerja, larian atau pembahagian baharu bermula."
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "Anda menutupnya — disembunyikan sehingga sesuatu yang baharu bermula."

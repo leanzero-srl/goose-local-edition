@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "Thẻ trực tiếp của Động cơ, bản nhỏ: đang đọc hay viết gì, nhanh thế nào và phục vụ cuộc trò chuyện nào. Nhấp để mở Động cơ."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Nổi trên màn hình"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Khi goose ở nền"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Hiện viên hoạt động nổi khi goose được thu nhỏ hoặc chạy nền"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Tắt cho đến khi bạn đánh dấu. Một viên nhỏ nổi trên các ứng dụng khác, ở góc bạn kéo nó tới. Chỉ nút ⤢ mở goose; kéo chỉ di chuyển nó, và ✕ ẩn nó cho đến khi một công việc, lượt chạy hoặc phân tách mới bắt đầu."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Khi nào hiện"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Hiện viên nổi khi goose được thu nhỏ"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Bất cứ khi nào động cơ làm việc"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Tắt"
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "Một cửa sổ nhỏ nằm trên các ứng dụng khác, ở góc bạn kéo nó tới. Nó không bao giờ chiếm tiêu điểm và chỉ đưa goose lên trước khi bạn mở thứ gì đó từ nó. Nút đóng sẽ ẩn nó cho đến khi một công việc, lượt chạy hoặc phân chia mới bắt đầu."
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "Bạn đã đóng nó — ẩn cho đến khi có việc mới bắt đầu."

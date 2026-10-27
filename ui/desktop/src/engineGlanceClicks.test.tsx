@@ -139,7 +139,8 @@ function floating(push: GlancePush) {
     savePrefs: () => undefined,
     now: () => 0,
     later: () => undefined,
-    revertRaise: () => undefined,
+    appActivation: () => ({ active: false, since: Number.NEGATIVE_INFINITY }),
+    hideApp: () => undefined,
     openEngine: () => raised.push('engine'),
     openSession: (sessionId) => raised.push(`session:${sessionId}`),
     tellDismissed: () => false,
@@ -180,7 +181,8 @@ const CARD_IDS = [
   'engine-glance-needs-you',
   'engine-glance-hint-dismiss',
 ];
-const PILL_IDS = ['engine-glance-expand', 'engine-glance-close'];
+// The pill (owner, 2026-10-27: "✎ Writing 25.0 tok/s ⤢ ✕"): ⤢ opens goose, ▴ shows the card, ✕ closes.
+const PILL_IDS = ['engine-glance-open', 'engine-glance-expand', 'engine-glance-close'];
 
 describe('Q-426: which clicks on the floating window bring goose forward', () => {
   it('the card: every control it renders has a row — nothing unaccounted for', () => {
@@ -206,9 +208,40 @@ describe('Q-426: which clicks on the floating window bring goose forward', () =>
     it(`pill · ${id}: raises ${EXPECTED[id]}`, () => {
       const { raised } = floating(everything({ desktopCollapsed: true, desktopHintSeen: true }));
       fireEvent.click(screen.getByTestId(id));
-      expect(raised).toEqual([]);
+      expect(raised).toEqual(EXPECTED[id] === 'none' ? [] : [EXPECTED[id]]);
     });
   }
+
+  it('pill · a drag that starts ON ⤢ and travels is not a click: nothing opens', () => {
+    const { raised } = floating(everything({ desktopCollapsed: true, desktopHintSeen: true }));
+    const open = screen.getByTestId('engine-glance-open');
+    fireEvent.pointerDown(open, { button: 0, pointerId: 1, screenX: 100, screenY: 100 });
+    fireEvent.click(open, { screenX: 160, screenY: 130 });
+    expect(raised).toEqual([]);
+  });
+
+  it('negative control: the same press released where it started opens goose', () => {
+    const { raised } = floating(everything({ desktopCollapsed: true, desktopHintSeen: true }));
+    const open = screen.getByTestId('engine-glance-open');
+    fireEvent.pointerDown(open, { button: 0, pointerId: 1, screenX: 100, screenY: 100 });
+    fireEvent.click(open, { screenX: 101, screenY: 100 });
+    expect(raised).toEqual(['engine']);
+  });
+
+  it('pill · dragged by its body across the screen: moved, nothing opened, still up', () => {
+    const { raised, actions, state } = floating(
+      everything({ desktopCollapsed: true, desktopHintSeen: true })
+    );
+    const body = screen.getByTestId('engine-glance-body');
+    fireEvent.pointerDown(body, { button: 0, pointerId: 1, screenX: 1400, screenY: 880 });
+    fireEvent.pointerMove(body, { pointerId: 1, screenX: 1200, screenY: 700 });
+    fireEvent.pointerMove(body, { pointerId: 1, screenX: 300, screenY: 100 });
+    fireEvent.pointerUp(body, { button: 0, pointerId: 1, screenX: 300, screenY: 100 });
+    fireEvent.click(body);
+    expect(actions).toEqual(['press', 'drag-start', 'drag-move', 'drag-move', 'drag-end']);
+    expect(raised).toEqual([]);
+    expect(state.visible).toBe(true);
+  });
 
   for (const collapsed of [false, true]) {
     it(`${collapsed ? 'pill' : 'card'} · its body: a press and a click open nothing`, () => {

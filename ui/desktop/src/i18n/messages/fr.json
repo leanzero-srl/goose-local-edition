@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "La carte en direct du moteur, en petit : ce qu’il lit ou écrit, à quelle vitesse et quel chat il sert. Cliquez pour ouvrir le moteur."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Flottant sur le bureau"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Quand goose est en arrière-plan"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Afficher une pastille d’activité flottante quand goose est réduit ou en arrière-plan"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Désactivé tant que vous ne cochez pas. Une petite pastille au-dessus de vos autres apps, dans le coin où vous la faites glisser. Seul son bouton ⤢ ouvre goose ; la faire glisser la déplace seulement, et son ✕ la masque jusqu’au début d’une nouvelle tâche, exécution ou répartition."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Quand elle flotte"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Afficher une pastille flottante quand goose est réduit"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Dès que le moteur travaille"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Désactivé"
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "Une petite fenêtre au-dessus de vos autres apps, dans le coin où vous la déposez. Elle ne prend jamais le focus et n’amène goose au premier plan que si vous y ouvrez quelque chose. Son bouton de fermeture la masque jusqu’au démarrage d’une nouvelle tâche, exécution ou répartition."
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "Vous l’avez fermée — masquée jusqu’au démarrage de quelque chose de nouveau."

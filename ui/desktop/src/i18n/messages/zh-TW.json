@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "引擎即時卡片的小尺寸版：正在讀或寫什麼、速度多快、服務哪個聊天。點擊即可開啟引擎。"
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "懸浮在桌面上"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "當 goose 在背景時"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "goose 最小化或在背景時顯示浮動活動膠囊"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "勾選前保持關閉。一個小膠囊浮在其他 App 之上，位於你拖到的角落。只有它的 ⤢ 按鈕會開啟 goose；拖曳只會移動它，✕ 會將其隱藏，直到新的工作、執行或分割開始。"
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "何時浮動"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "goose 最小化時顯示浮動膠囊"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "只要引擎在工作"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "關閉"
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "一個浮在其他 App 上方的小視窗，位於你拖放到的角落。它從不搶走焦點，只有在你從中開啟內容時才會把 goose 帶到前景。按下關閉按鈕後，它會隱藏，直到新的工作、執行或分割開始。"
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "你已關閉它——在有新工作開始前保持隱藏。"

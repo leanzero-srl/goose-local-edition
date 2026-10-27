@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "Живая карточка движка в малом размере: что он читает или пишет, как быстро и какой чат обслуживает. Нажмите, чтобы открыть движок."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Поверх рабочего стола"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Когда goose в фоне"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Показывать плавающую плашку активности, когда goose свёрнут или в фоне"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Выключено, пока вы не отметите. Небольшая плашка поверх других приложений, в углу, куда вы её перетащите. goose открывает только её кнопка ⤢; перетаскивание лишь двигает её, а ✕ скрывает её до начала новой задачи, запуска или разделения."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Когда показывать"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Показывать плашку, когда goose свёрнут"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Всегда, когда движок работает"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Выкл."
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "Небольшое окно поверх других приложений, в углу, куда вы его перетащите. Оно никогда не забирает фокус и выводит goose вперёд, только когда вы что-то из него открываете. Кнопка закрытия скрывает его до запуска новой задачи, прогона или разделения."
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "Вы закрыли его — скрыто до запуска чего-то нового."

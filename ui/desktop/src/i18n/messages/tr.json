@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "Motorun canlı kartının küçük hali: neyi okuyor ya da yazıyor, ne hızda ve hangi sohbete hizmet ediyor. Motoru açmak için tıklayın."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Masaüstünde yüzen"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "goose arka plandayken"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "goose simge durumuna küçültüldüğünde veya arka plandayken yüzen bir etkinlik hapı göster"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "İşaretleyene kadar kapalı. Diğer uygulamalarınızın üzerinde, sürüklediğiniz köşede küçük bir hap. goose'u yalnızca ⤢ düğmesi açar; sürüklemek onu yalnızca taşır, ✕ ise yeni bir iş, çalıştırma veya bölme başlayana kadar gizler."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Ne zaman yüzer"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "goose küçültüldüğünde hap göster"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Motor her çalıştığında"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Kapalı"
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "Diğer uygulamalarınızın üzerinde, sürüklediğiniz köşede duran küçük bir pencere. Asla odağı almaz ve goose'u yalnızca ondan bir şey açtığınızda öne getirir. Kapat düğmesi onu yeni bir iş, çalıştırma veya bölme başlayana kadar gizler."
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "Kapattınız — yeni bir şey başlayana kadar gizli."

@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "엔진 라이브 카드의 작은 버전: 무엇을 읽거나 쓰는지, 얼마나 빠른지, 어떤 채팅에 응답하는지. 클릭하면 엔진이 열립니다."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "데스크톱에 띄우기"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "goose가 백그라운드일 때"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "goose가 최소화되었거나 백그라운드에 있을 때 떠 있는 활동 알약 표시"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "체크하기 전까지는 꺼져 있습니다. 다른 앱 위에 작은 알약이 끌어다 놓은 모서리에 표시됩니다. goose는 ⤢ 버튼으로만 열립니다. 끌면 위치만 바뀌고, ✕는 새 작업, 실행 또는 분할이 시작될 때까지 숨깁니다."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "표시 시점"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "goose가 최소화되면 알약 띄우기"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "엔진이 일할 때마다"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "끔"
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "다른 앱 위에 떠 있는 작은 창으로, 끌어다 놓은 모서리에 있습니다. 포커스를 가져가지 않으며 여기서 무언가를 열 때만 goose를 앞으로 가져옵니다. 닫기 버튼을 누르면 새 작업, 실행 또는 분할이 시작될 때까지 숨겨집니다."
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "닫았습니다 — 새 작업이 시작될 때까지 숨겨집니다."

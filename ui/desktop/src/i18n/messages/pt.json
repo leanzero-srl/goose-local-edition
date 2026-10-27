@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "O cartão ao vivo do motor, em pequeno: o que lê ou escreve, a que velocidade e que chat atende. Clique para abrir o motor."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Flutuando na área de trabalho"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Enquanto o goose está em segundo plano"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Mostrar uma pílula flutuante de atividade quando o goose estiver minimizado ou em segundo plano"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Desligado até você marcar. Uma pequena pílula sobre seus outros apps, no canto para onde você a arrastar. Só o botão ⤢ abre o goose; arrastar apenas a move, e o ✕ a oculta até começar um novo trabalho, execução ou divisão."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Quando flutua"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Mostrar uma pílula flutuante quando o goose estiver minimizado"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Sempre que o motor trabalha"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Desligado"
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "Uma janela pequena sobre seus outros apps, no canto para onde você a arrastar. Ela nunca toma o foco e só traz o goose para a frente quando você abre algo nela. O botão de fechar a oculta até um novo trabalho, execução ou divisão começar."
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "Você a fechou — oculta até algo novo começar."

@@ -2,13 +2,22 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   EngineGlanceDesktop,
   GLANCE_MARGIN,
-  RAISE_PAIR_MS,
+  PRESS_HOLD_MS,
+  PRESS_PAIR_MS,
   isGlancePipAction,
   trayOffersGlanceBack,
   type GlanceDisplay,
   type GlanceWindowPort,
 } from './engineGlanceDesktop';
-import { ENGINE_GLANCE_CHANNEL, type GlancePrefs, type GlancePush } from './utils/engineGlance';
+import {
+  DEFAULT_GLANCE_PREFS,
+  ENGINE_GLANCE_CHANNEL,
+  desktopFloatOn,
+  glancePrefsOf,
+  withDesktopOptIn,
+  type GlancePrefs,
+  type GlancePush,
+} from './utils/engineGlance';
 import type { GooseWindowFacts, Rect } from './utils/engineGlanceRules';
 import { glancePush, runningSnapshot } from './utils/engineGlance.fixtures';
 import { GENERATING_STATUS, IDLE_STATUS } from './components/leanzero-swarm/mlxLiveStatus.fixtures';
@@ -88,7 +97,9 @@ function setup(opts: { inFront?: boolean; displays?: GlanceDisplay[] } = {}) {
   // A clock the test moves, and the timers main would run on it.
   const clock = { now: 1_000_000 };
   const timers: { at: number; fn: () => void }[] = [];
-  const reverted: string[] = [];
+  // goose as the active app (main: did-become-active / did-resign-active), and the Hide it asks.
+  const activation = { active: false, since: Number.NEGATIVE_INFINITY };
+  const hideApp = vi.fn();
   const advance = (ms: number) => {
     clock.now += ms;
     for (const t of timers.splice(0).sort((a, b) => a.at - b.at)) {
@@ -120,12 +131,14 @@ function setup(opts: { inFront?: boolean; displays?: GlanceDisplay[] } = {}) {
     dismissedChanged,
     now: () => clock.now,
     later: (fn, ms) => timers.push({ at: clock.now + ms, fn }),
-    revertRaise: (id, kind) => reverted.push(`${id}:${kind}`),
+    appActivation: () => ({ ...activation }),
+    hideApp,
   });
   return {
     clock,
     advance,
-    reverted,
+    activation,
+    hideApp,
     desktop,
     state,
     facts,
@@ -605,6 +618,12 @@ describe('isGlancePipAction — what the window may ask', () => {
   });
 });
 
+const turn = (id: string, startedAt: string) => ({
+  running: 1,
+  needsYou: [],
+  runningKeys: [`${id}@${startedAt}`],
+});
+
 /** Shown in the bottom-right of MAIN (setup's 300×180), with the pointer resting on it. */
 function upWithPointerOnIt(opts: Parameters<typeof setup>[0] = {}, push: GlancePush = writing) {
   const t = setup(opts);
@@ -615,97 +634,206 @@ function upWithPointerOnIt(opts: Parameters<typeof setup>[0] = {}, push: GlanceP
   return t;
 }
 
-describe('EngineGlanceDesktop — owner 2026-10-27: a REAL click on X or minimize never opens goose', () => {
-  // A real click activates goose (Electron's "panel" is not an NSPanel), AppKit makes goose's window
-  // key and brings it forward, and main hears that focus BEFORE the release reaches the X.
-  it('the press raises goose: the raise is put back, the window stays up, and the X then closes it', () => {
+/** A real press: main hears goose become active (the click activated it) as the press arrives. */
+function realPress(t: ReturnType<typeof setup>) {
+  t.activation.active = true;
+  t.activation.since = t.clock.now;
+  t.desktop.handle({ type: 'press' });
+}
+
+const EVERY_NON_OPENING_ACTION = [
+  { type: 'press' },
+  { type: 'drag-start', screenX: 10, screenY: 10 },
+  { type: 'drag-move', screenX: 60, screenY: 40 },
+  { type: 'drag-end' },
+  { type: 'collapse', collapsed: true },
+  { type: 'collapse', collapsed: false },
+  { type: 'size', width: 320, height: 40 },
+  { type: 'close' },
+] as const;
+
+describe('EngineGlanceDesktop — owner 2026-10-27: OPT-IN ("only if I choose a tick in the main UI")', () => {
+  it('not ticked (the default): live, goose in the background, and still no window is even made', () => {
+    const t = setup();
+    t.desktop.update(withPrefs(writing, { desktopOptIn: false }));
+    t.desktop.handle({ type: 'size', width: 300, height: 40 });
+    expect(t.state.calls).toEqual([]);
+    expect(t.coverage.measure).not.toHaveBeenCalled();
+  });
+
+  it('negative control: ticked, the same moment shows it', () => {
+    const t = setup();
+    t.desktop.update(withPrefs(writing, { desktopOptIn: true }));
+    t.desktop.handle({ type: 'size', width: 300, height: 40 });
+    expect(t.state.visible).toBe(true);
+  });
+
+  it('a store from a build that floated by default ("away", no tick) reads as NOT ticked', () => {
+    const old = glancePrefsOf({
+      inApp: true,
+      desktop: 'away',
+      desktopCollapsed: true,
+      desktopPlace: null,
+      desktopHintSeen: true,
+    });
+    expect(old.desktopOptIn).toBe(false);
+    expect(desktopFloatOn(old)).toBe(false);
+    expect(old.desktopCollapsed).toBe(true);
+    expect(DEFAULT_GLANCE_PREFS.desktopOptIn).toBe(false);
+  });
+
+  it('ticking turns it on (an old "off" becomes "while in the background"); unticking turns it off', () => {
+    const on = withDesktopOptIn({ ...DEFAULT_GLANCE_PREFS, desktop: 'off' }, true);
+    expect(on.desktop).toBe('away');
+    expect(desktopFloatOn(on)).toBe(true);
+    expect(desktopFloatOn(withDesktopOptIn({ ...on, desktop: 'busy' }, true))).toBe(true);
+    expect(desktopFloatOn(withDesktopOptIn(on, false))).toBe(false);
+  });
+
+  it('unticked while up: hidden and destroyed; the menu bar offers nothing back', () => {
     const t = upWithPointerOnIt();
-    t.desktop.handle({ type: 'press' });
+    t.desktop.update(withPrefs(writing, { desktopOptIn: false }));
+    expect(t.state.exists).toBe(false);
+    expect(trayOffersGlanceBack(true, { ...DEFAULT_GLANCE_PREFS, desktopOptIn: false })).toBe(false);
+    expect(trayOffersGlanceBack(true, { ...DEFAULT_GLANCE_PREFS, desktopOptIn: true })).toBe(true);
+  });
+});
+
+describe('EngineGlanceDesktop — owner 2026-10-27: X goes away, a drag is not a click, only ⤢ opens', () => {
+  it('X: a press then the X closes it every time — through goose coming forward in between', () => {
+    const t = upWithPointerOnIt();
+    realPress(t);
+    // Even if goose's window came forward at the press, the window stays under the pointer.
     t.facts.inFront = true;
-    t.desktop.gooseRaised(1, 'focus');
     t.desktop.refresh();
-    expect(t.reverted).toEqual(['1:focus']);
     expect(t.state.visible).toBe(true);
     t.facts.inFront = false;
     t.desktop.handle({ type: 'close' });
     expect(t.state.exists).toBe(false);
     expect(t.openEngine).not.toHaveBeenCalled();
-    // Goose is behind other apps again: the blur that follows never brings it back.
-    t.advance(5_000);
+    expect(t.openSession).not.toHaveBeenCalled();
+    t.advance(60_000);
     t.desktop.refresh();
     t.desktop.update(writing);
     expect(t.state.exists).toBe(false);
   });
 
-  it('the raise lands before the press reaches main: paired all the same, never hidden in between', () => {
+  it('negative control: with no press, goose coming forward hides it at once', () => {
     const t = upWithPointerOnIt();
     t.facts.inFront = true;
-    t.desktop.gooseRaised(1, 'focus');
     t.desktop.refresh();
-    expect(t.state.visible).toBe(true);
-    t.advance(120);
-    t.desktop.handle({ type: 'press' });
-    expect(t.reverted).toEqual(['1:focus']);
-    t.facts.inFront = false;
-    t.desktop.handle({ type: 'collapse', collapsed: true });
-    expect(t.state.visible).toBe(true);
-    expect(t.saved[t.saved.length - 1]?.desktopCollapsed).toBe(true);
-  });
-
-  it('a minimized goose window the press restored is minimized again', () => {
-    const t = upWithPointerOnIt();
-    t.desktop.handle({ type: 'press' });
-    t.desktop.gooseRaised(3, 'restore');
-    expect(t.reverted).toEqual(['3:restore']);
-  });
-
-  it('Cmd-Tab to goose with the pointer resting on the card (no press): not put back, and it hides', () => {
-    const t = upWithPointerOnIt();
-    t.facts.inFront = true;
-    t.desktop.gooseRaised(1, 'focus');
-    t.desktop.refresh();
-    t.advance(RAISE_PAIR_MS + 5);
-    expect(t.reverted).toEqual([]);
     expect(t.state.visible).toBe(false);
   });
 
-  it('the Open control raises goose on purpose: never put back', () => {
+  it('the hold lapses: after PRESS_HOLD_MS a goose window in view decides again', () => {
     const t = upWithPointerOnIt();
-    t.desktop.handle({ type: 'press' });
-    t.desktop.handle({ type: 'open-engine' });
+    realPress(t);
     t.facts.inFront = true;
-    t.desktop.gooseRaised(1, 'focus');
-    expect(t.reverted).toEqual([]);
-    expect(t.openEngine).toHaveBeenCalledOnce();
+    t.advance(PRESS_HOLD_MS + 5);
+    expect(t.state.visible).toBe(false);
   });
 
-  it("goose came forward with the pointer elsewhere: not the click's doing", () => {
+  it('X whose press activated goose, no goose window in view: goose is hidden again (front handed back)', () => {
     const t = upWithPointerOnIt();
-    t.desktop.handle({ type: 'press' });
-    t.state.cursor = { x: 10, y: 400 };
-    t.desktop.gooseRaised(1, 'focus');
-    expect(t.reverted).toEqual([]);
+    realPress(t);
+    t.advance(90);
+    t.desktop.handle({ type: 'close' });
+    expect(t.hideApp).toHaveBeenCalledOnce();
   });
 
-  it('a goose window already in view before the click ("whenever the engine works") stays where it is', () => {
-    const t = setup({ inFront: false });
+  it('negative control: goose was already the active app before the press — not hidden', () => {
+    const t = upWithPointerOnIt();
+    t.activation.active = true;
+    t.activation.since = t.clock.now - 60_000;
+    t.desktop.handle({ type: 'press' });
+    t.desktop.handle({ type: 'close' });
+    expect(t.state.exists).toBe(false);
+    expect(t.hideApp).not.toHaveBeenCalled();
+  });
+
+  it('negative control: a goose window was in view at the press ("whenever the engine works") — not hidden', () => {
+    const t = setup();
     t.facts.windows = [
       { id: 5, onScreen: true, focused: false, bounds: GOOSE_BOUNDS, visibleShare: null },
     ];
     t.desktop.update(withPrefs(writing, { desktop: 'busy' }));
     t.desktop.handle({ type: 'size', width: 300, height: 180 });
-    t.state.cursor = { x: t.state.bounds.x + 5, y: t.state.bounds.y + 5 };
+    expect(t.state.visible).toBe(true);
+    realPress(t);
+    t.desktop.handle({ type: 'close' });
+    expect(t.hideApp).not.toHaveBeenCalled();
+  });
+
+  it('activation that lands just AFTER the press reaches main is paired all the same', () => {
+    const t = upWithPointerOnIt();
     t.desktop.handle({ type: 'press' });
-    t.desktop.gooseRaised(5, 'focus');
-    expect(t.reverted).toEqual([]);
+    t.advance(PRESS_PAIR_MS - 100);
+    t.activation.active = true;
+    t.activation.since = t.clock.now;
+    t.desktop.handle({ type: 'close' });
+    expect(t.hideApp).toHaveBeenCalledOnce();
+  });
+
+  it('a drag is not a click: press, move, release — moved and snapped, nothing opened, closed or hidden', () => {
+    const t = upWithPointerOnIt();
+    const before = { ...t.state.bounds };
+    realPress(t);
+    t.desktop.handle({ type: 'drag-start', screenX: 1400, screenY: 880 });
+    t.desktop.handle({ type: 'drag-move', screenX: 300, screenY: 100 });
+    t.facts.inFront = true; // whatever goose does mid-drag, the window stays with the pointer
+    t.desktop.refresh();
+    t.desktop.handle({ type: 'drag-end' });
+    expect(t.state.visible).toBe(true);
+    expect(t.state.bounds.x).toBeLessThan(before.x);
+    expect(t.saved[t.saved.length - 1]?.desktopPlace?.corner).toBe('top-left');
+    expect(t.openEngine).not.toHaveBeenCalled();
+    expect(t.openSession).not.toHaveBeenCalled();
+    expect(t.hideApp).not.toHaveBeenCalled();
+    expect(t.desktop.isDismissed()).toBe(false);
+  });
+
+  it('only ⤢ opens goose: every other action the window can send opens nothing', () => {
+    const t = upWithPointerOnIt();
+    for (const action of EVERY_NON_OPENING_ACTION) t.desktop.handle(action);
+    expect(t.openEngine).not.toHaveBeenCalled();
+    expect(t.openSession).not.toHaveBeenCalled();
+  });
+
+  it('negative control: ⤢ (open-engine / open-session) opens goose', () => {
+    const t = upWithPointerOnIt();
+    t.desktop.handle({ type: 'press' });
+    t.desktop.handle({ type: 'open-engine' });
+    t.desktop.handle({ type: 'open-session', sessionId: 's1' });
+    expect(t.openEngine).toHaveBeenCalledOnce();
+    expect(t.openSession).toHaveBeenCalledWith('s1');
+    expect(t.hideApp).not.toHaveBeenCalled();
+  });
+
+  it("main's evidence line: a goose window focused right after a press that opened nothing is flagged", () => {
+    const t = upWithPointerOnIt();
+    expect(t.desktop.raisedByPress()).toBe(false);
+    t.desktop.handle({ type: 'press' });
+    expect(t.desktop.raisedByPress()).toBe(true);
+    t.desktop.handle({ type: 'open-engine' });
+    expect(t.desktop.raisedByPress()).toBe(false);
+    t.advance(PRESS_PAIR_MS + 1);
+    t.desktop.handle({ type: 'press' });
+    t.advance(PRESS_PAIR_MS + 1);
+    expect(t.desktop.raisedByPress()).toBe(false);
+  });
+
+  it('closed, then a NEW process starts: back only if still ticked', () => {
+    const t = upWithPointerOnIt();
+    t.desktop.handle({ type: 'close' });
+    t.desktop.update(
+      withPrefs(glancePush(runningSnapshot(GENERATING_STATUS), {}, turn('b', '2')), {
+        desktopOptIn: false,
+      })
+    );
+    expect(t.state.visible).toBe(false);
   });
 });
 
-const turn = (id: string, startedAt: string) => ({
-  running: 1,
-  needsYou: [],
-  runningKeys: [`${id}@${startedAt}`],
-});
 
 describe('EngineGlanceDesktop — owner 2026-10-27: a close holds until a NEW process starts', () => {
   it("closed during a turn: blur, focus-out and the same turn's busy spells never bring it back", () => {

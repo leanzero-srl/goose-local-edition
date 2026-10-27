@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "Die Live-Karte der Engine im Kleinen: was sie liest oder schreibt, wie schnell und welchen Chat sie bedient. Ein Klick öffnet die Engine."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Schwebend auf dem Schreibtisch"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Während goose im Hintergrund ist"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Eine schwebende Aktivitätspille zeigen, wenn goose minimiert oder im Hintergrund ist"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Aus, bis du es ankreuzt. Eine kleine Pille über deinen anderen Apps, in einer Ecke, in die du sie ziehst. Nur ihre Schaltfläche ⤢ öffnet goose; Ziehen verschiebt sie nur, und ihr ✕ blendet sie aus, bis ein neuer Job, Lauf oder Split startet."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Wann sie schwebt"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Pille schweben lassen, wenn goose minimiert ist"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Immer wenn die Engine arbeitet"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Aus"
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "Ein kleines Fenster über deinen anderen Apps, in einer Ecke, in die du es ziehst. Es nimmt nie den Fokus und holt goose nur nach vorne, wenn du etwas daraus öffnest. Sein Schließen-Knopf blendet es aus, bis ein neuer Job, Lauf oder Split startet."
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "Du hast es geschlossen – ausgeblendet, bis etwas Neues startet."

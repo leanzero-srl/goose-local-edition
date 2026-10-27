@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "La tarjeta en vivo del motor, en pequeño: qué lee o escribe, a qué velocidad y qué chat atiende. Haz clic para abrir el motor."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Flotando en el escritorio"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Mientras goose está en segundo plano"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Mostrar una píldora flotante de actividad cuando goose esté minimizado o en segundo plano"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Desactivado hasta que lo marques. Una pequeña píldora sobre tus otras apps, en la esquina a la que la arrastres. Solo su botón ⤢ abre goose; arrastrarla solo la mueve, y su ✕ la oculta hasta que empiece un nuevo trabajo, ejecución o división."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Cuándo flota"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Mostrar una píldora flotante cuando goose esté minimizado"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Siempre que el motor trabaja"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Apagado"
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "Una ventana pequeña sobre tus otras apps, en la esquina a la que la arrastres. Nunca toma el foco y solo trae goose al frente cuando abres algo desde ella. Su botón de cerrar la oculta hasta que empiece un nuevo trabajo, ejecución o división."
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "La cerraste: oculta hasta que empiece algo nuevo."

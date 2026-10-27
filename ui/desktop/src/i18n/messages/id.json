@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "Kartu langsung Mesin, versi kecil: apa yang dibaca atau ditulis, seberapa cepat, dan chat mana yang dilayani. Klik untuk membuka Mesin."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Melayang di desktop"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Saat goose di latar belakang"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Tampilkan pil aktivitas mengambang saat goose diminimalkan atau di latar belakang"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Mati kecuali Anda mencentangnya. Pil kecil di atas aplikasi lain, di sudut tempat Anda menyeretnya. Hanya tombol ⤢ yang membuka goose; menyeret hanya memindahkannya, dan ✕ menyembunyikannya sampai tugas, run, atau split baru dimulai."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Kapan mengambang"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Tampilkan pil mengambang saat goose diminimalkan"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Setiap kali mesin bekerja"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Mati"
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "Jendela kecil di atas aplikasi lain, di sudut tempat Anda menyeretnya. Jendela ini tidak pernah mengambil fokus dan hanya membawa goose ke depan saat Anda membuka sesuatu darinya. Tombol tutupnya menyembunyikannya sampai pekerjaan, proses, atau pembagian baru dimulai."
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "Anda menutupnya — disembunyikan sampai ada yang baru dimulai."

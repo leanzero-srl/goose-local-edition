@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "La scheda live del motore, in piccolo: cosa legge o scrive, quanto veloce e quale chat serve. Fai clic per aprire il motore."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Mobile sulla scrivania"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Mentre goose è in background"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Mostra una pillola di attività fluttuante quando goose è ridotto a icona o in background"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Disattivato finché non lo spunti. Una piccola pillola sopra le altre app, nell’angolo in cui la trascini. Solo il suo pulsante ⤢ apre goose; trascinarla la sposta soltanto, e la sua ✕ la nasconde finché non parte un nuovo lavoro, esecuzione o suddivisione."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Quando fluttua"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Mostra una pillola fluttuante quando goose è ridotto a icona"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Ogni volta che il motore lavora"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Spento"
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "Una piccola finestra sopra le altre app, nell’angolo in cui la trascini. Non prende mai il focus e porta goose in primo piano solo quando apri qualcosa da lì. Il pulsante di chiusura la nasconde finché non parte un nuovo lavoro, esecuzione o suddivisione."
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "L’hai chiusa: nascosta finché non parte qualcosa di nuovo."

@@ -2294,20 +2294,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "इंजन का लाइव कार्ड, छोटे रूप में: यह क्या पढ़ या लिख रहा है, कितनी तेज़ी से, और किस चैट को सेवा दे रहा है। इंजन खोलने के लिए क्लिक करें।"
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "डेस्कटॉप पर तैरता हुआ"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "जब goose पृष्ठभूमि में हो"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "goose के छोटा (मिनिमाइज़) या बैकग्राउंड में होने पर एक तैरती गतिविधि पिल दिखाएँ"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "जब तक आप इसे टिक न करें, बंद। आपके दूसरे ऐप्स के ऊपर एक छोटी पिल, उस कोने में जहाँ आप उसे खींचें। केवल उसका ⤢ बटन goose खोलता है; खींचने से वह बस खिसकती है, और उसका ✕ उसे तब तक छिपाता है जब तक कोई नया जॉब, रन या स्प्लिट शुरू न हो।"
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "यह कब तैरे"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "goose मिनिमाइज़ होने पर पिल तैराएँ"
+  },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "जब भी इंजन काम करे"
-  },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "बंद"
-  },
-  "engineGlanceSettings.desktopDescProcess": {
-    "defaultMessage": "आपके दूसरे ऐप्स के ऊपर एक छोटी विंडो, उस कोने में जहाँ आप उसे खींचें। यह कभी फ़ोकस नहीं लेती और goose को तभी आगे लाती है जब आप इससे कुछ खोलते हैं। इसका बंद बटन इसे तब तक छिपाता है जब तक कोई नया काम, रन या स्प्लिट शुरू न हो।"
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "आपने इसे बंद किया — कुछ नया शुरू होने तक छिपी है।"
