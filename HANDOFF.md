@@ -564,3 +564,52 @@ layers 30-47 (18), workmule Mac Studio M5 Max 128 GB (Mac17,14) layers 0-29 (30)
    `pgrep -fl "[r]un_build.py --entrant"` (bracket the pattern: an unbracketed pgrep inside a waiter matches itself);
    (f) at scoring: stop the split (mimo10/stop.sh), drop holds; (g) publish ONLY on the owner's word; (h) app.sh
    down, restore config, single-guard --check on both Macs; touch ngram-go only when the owner says.
+
+## Session 12 vision (2026-10-27 21:30-23:00 EET; stopped at ctx-guard 350k)
+GOAL: local MiMo sees images like the cloud (Gauntlet parity). Owner widened to omni (image/video/audio), then
+PIVOTED to a ready omni MLX build ("find a really GOOD version"); old mlx-community RL mxfp4-q8 folder was DELETED by the
+coordinator (SSD 615 GB free). Old dev profile backed up: scratchpad mimo10/config.yaml.before-s12-vision; /tmp/gmimo
+config now names EigenLabs/MiMo-V2.6-Flash-MOPD-MLX-4bit-mtp (both nodes' model_dir).
+CHECKPOINT: cloud baseline (Gauntlet 0.7909, 10-02) was OpenRouter pinned to provider "xiaomi" (sb72-openrouter-queue
+"pin": "xiaomi"); Xiaomi's blog: MOPD served on their API since 2026-09-25 06:00 UTC+8 under the same name -> cloud = MOPD.
+PICK: EigenLabs/MiMo-V2.6-Flash-MOPD-MLX-4bit-mtp (170.97 GB; text tensors byte-for-byte the same sizes/recipe as the old
+build: experts upstream MXFP4 repacked, attention/dense/embed/lm_head 8-bit affine g64; + vision_tower 1.457 GB bf16,
+audio 0.277 GB, MTP 1.976 GB bf16; mlx-vlm key layout; no open "broken" discussions). Rejected: vogel61 oQ4e (same
+recipe, encoders in side files, MTP 8-bit, 0 likes), nativ RL-4bit (RL), TensorFold RL-4bit-MTP (most popular, 11 likes,
+but TEXT-ONLY and 4-bit attention), inferencerlabs Q9 (needs modified MLX, text-only), REAP builds (pruned).
+DOWNLOAD: waiter pid in /Volumes/AI-workhorse/scratch/mimo-mopd-dl/waiter.pid waits until the voice jobs (rr-voice,
+run-gates, voice_split, owner_gates) are gone 10 min, then node-run (heavy slot, guard 175 GB) runs dl.sh: hf download at
+the pinned revision -> /Volumes/AI-workhorse/models/goose/EigenLabs/MiMo-V2.6-Flash-MOPD-MLX-4bit-mtp, then SHA-256 of
+every file vs SHA256SUMS.json ("verified N bad 0" + DONE). Logs: waiter.log; node-jobs list. CHECK IT FIRST TOMORROW.
+The mule reads it over NFS at /Users/workmule/.goose/models/EigenLabs/... (same mount as before).
+BUDGET (layer_split test an_omni_checkpoint_charges_..., prints max context under 8 GB headroom): run
+`cargo test -p goose-sidecar an_omni_checkpoint -- --nocapture` (node-run on a free Mac) and record the three numbers.
+Hand estimate from the 10-27 memory model (~53 KB/token across both ranks, discrete 3.5 GB layers): text ~277k; vision
+bf16 on rank 0 ~250-265k; vision+audio+MTP ~205-225k (< 256k) -> audio + MTP are NOT loaded (sanitize drops them;
+planner charges them nowhere). If vision-bf16 lands < 256k: GOOSE_MIMO_VISION_BITS=8 halves it (0.73 GB; parity not yet
+measured at 8-bit).
+CODE (all committed): fork Rapid-MLX lz/pipeline-mimo-omni 1e5d581d1 tag lz-pipeline-qwen4.16 (pushed):
+rapid_mlx/mlx_lm_models/mimo_v2_media.py (ViT from mlx-vlm 0.7.10 + band attention in query blocks; Xiaomi preprocessing
+from config.json processor_config; markers; MediaStore; MediaFrontend; expand) + mimo_v2.py (prefix strip in
+ModelArgs.from_dict quantization + sanitize; substitute before layer 0 on the LAST pipeline rank) + tests/mimo_media/.
+goose mimo-distributed 1a2b0b8267 (pushed): rank_media.py, capabilities "vision","video", layer_split omni roles, pin.
+PARITY (torch CPU HF reference vs ours, tests/mimo_media/vision_parity.py prep/ref/cmp; ref python
+/Volumes/AI-workhorse/venvs/voice-qa/bin/python): float32 cosine >= 0.99998 every layer (4 images, up to 1,900
+patches); bf16 final 0.990-0.9999 vs torch-bf16 0.993-0.9999; patches == HF Qwen2VLImageProcessor exactly. 15 unit tests
+green (pytest at scratchpad pydeps; MIMO_TOKENIZER_DIR=/Volumes/AI-workhorse/scratch/mimo-vision-parity).
+LOW-CONFIDENCE ITEMS: (1) normalisation: upstream preprocessor_config + vLLM = ImageNet (our default); SGLang PR #40888
++ mlx-vlm/EigenLabs = CLIP. A/B LIVE: solid red/green/blue squares + "what colour", GOOSE_MIMO_IMAGE_NORM=clip vs
+imagenet. (2) rank_media.py wiring has NOT run (no tiny-model e2e yet): first live load will show RANK_MEDIA lines;
+traps to watch: apply_chat_template may return a dict/BatchEncoding (expand only fires on list), settle()/_tokenize call
+order, manifest pickled to the mule each request (features shipped once per image; peer LRU 512 MB). (3) video: ffmpeg
+path on rank 0 only, timestamps per SGLang, capped at GOOSE_MIMO_VIDEO_MAX_TOKENS=16384 (Xiaomi allows ~131k) - untested.
+AUDIO: NOT wired (prepare refuses audio parts loudly). Plan: mel 24 kHz/128 mels/hop 240 (config processor_config),
+mlx_audio has codec/models/mimo_audio_tokenizer (env has it) -> 20-codebook codes, group 4 -> audio_encoder (6-layer
+local transformer + 2-layer projection, mlx-vlm mimo_v2/audio.py) -> 6.25 tokens/s; needs audio_encoder + tokenizer
+encoder on rank 0 (~0.28 + 0.65 GB) only when asked. MTP: weights present, not wired (oMLX reports 67-96% acceptance).
+NEXT (in order): 1 verify download; 2 cargo test -p goose-sidecar (layer_split + launch tests) on a free Mac; 3 pipeline
+env on BOTH Macs to the new pin (goose provisions by PIPELINE_FORK; check pip shows rapid_mlx @1e5d581d1); 4 load the
+split (mimo10/go.sh) when node-probe shows no voice jobs; 5 live tests: text sanity, /v1/models capabilities, rendered
+table screenshot with a known cell, colour A/B, then a Gauntlet sb-7.2 run (Session 11 OPEN 1-6 still apply).
+CLEANUP: /Volumes/AI-workhorse/scratch/mimo-vision-parity (1.7 GB encoder copy for parity) - delete by exact path once
+the full build is verified (parity can rerun with --weights pointing at the build's model-00036-of-00037.safetensors).
