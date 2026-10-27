@@ -3398,19 +3398,6 @@ assert cut == [system, prompt[30:]] and kinds == ["system", "assistant"], "an en
 for outside in (0, 100, 120):
     assert cut_at_boundary([prompt], ["assistant"], outside) == ([prompt], ["assistant"]), outside
 
-# A request with no transient tail (goose's openai provider) whose generation prompt holds no
-# think token (MiMo-V2.6 thinking on: system, then one "user" segment to the prompt's end): cut
-# where its conversation plus a probe answer stops agreeing, less the replay margin; mlx_lm's own
-# think tail (a thinking-off prompt) and a prompt that agrees nowhere are left alone.
-future = prompt[:95] + [-1] * 10
-assert last_message_boundary(prompt, ["system", "user"], future) == 95 - BOUNDARY_REPLAY_TOKENS
-assert last_message_boundary(prompt, ["system", "user", "assistant"], future) == 0, "upstream's tail"
-assert last_message_boundary(prompt, ["user"], [-1] * 100) == 0
-assert last_message_boundary(prompt, ["user"], prompt + [7]) == 100 - BOUNDARY_REPLAY_TOKENS
-assert last_message_boundary(prompt[:5], ["user"], prompt[:5] + [7]) == 0, "nothing worth keeping"
-assert last_message_boundary(prompt, [], future) == 0
-cut, kinds = cut_at_boundary([system, prompt[30:]], ["system", "user"], 87)
-assert cut == [system, prompt[30:87], prompt[87:]] and kinds == ["system", "user", "user"], (cut, kinds)
 
 # Q-294: the conversation prefix is the key a cut named, matched by its tokens, held by identity.
 from collections import deque
@@ -4910,11 +4897,13 @@ os._exit(0)
     /// are mostly sliding-window `RotatingKVCache` (window 8, the shape of MiMo's 39 window-128
     /// layers beside its full-attention ones), MiMo's own chat template, thinking ON (its prompt
     /// ends on a bare `<|im_start|>assistant\n`, no think token), and goose's `openai` provider's
-    /// shape: an append-only agent chat with tools and NO transient tail. Each step reads the
-    /// previous request's whole conversation (`last_message_boundary`) and the usage counter says
-    /// exactly that; the state restored past the window gives the cold read's next logits. The
-    /// NEGATIVE CONTROL (the cut off, the shape before b47a3ef8f) reads only what mlx_lm's own
-    /// segments kept: the 2026-10-27 live split's `cached_tokens` 3 of 15,597.
+    /// shape: an append-only agent chat with tools and NO transient tail (every benchmark entrant).
+    /// A ring past its window cannot be trimmed, so reuse must come from an entry that is a strict
+    /// prefix: each step reads the previous request's whole prompt but its last token, the usage
+    /// counter equals what the cache really restores (asked of the LRU itself before the request),
+    /// and the rings restored far past their window give the cold read's next logits. Answers the
+    /// 2026-10-27 question "cached_tokens 3 of 15,597": that was a one-shot prompt, cold by
+    /// construction (3 = mlx_lm's system segment); reuse needs a conversation that extends one.
     #[test]
     fn a_thinking_mimo_chat_without_a_tail_reads_its_conversation_through_real_mlx_lm() {
         let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
@@ -5036,6 +5025,9 @@ def chat(system, steps):
     seen, sent = [], []
     for k in range(steps + 1):
         sent.append(json.loads(json.dumps(messages)))
+        prompt = render(messages)
+        _, rest = cache.fetch_nearest_cache(provider.model_key, prompt)
+        restorable.append(len(prompt) - len(rest))
         reply = call({"model": served, "messages": messages, "tools": TOOLS, "max_tokens": 3,
                       "temperature": 0.0, "chat_template_kwargs": THINKING})
         seen.append([reply["usage"]["prompt_tokens"], reply["usage"]["prompt_tokens_details"]["cached_tokens"]])
@@ -5046,9 +5038,8 @@ def chat(system, steps):
     return seen, sent
 
 goose = "You are goose, a general-purpose agent. " * 12
+restorable = []
 cut, cut_sent = chat("A. " + goose, 3)
-probe = {"role": "assistant", "content": BOUNDARY_PROBE}
-bounds = [stable_boundary(render(m), render([*m, probe], False)) for m in cut_sent]
 prompts = [len(render(m)) for m in cut_sent]
 first = render(cut_sent[0])
 tail_free = provider.tokenizer.decode(first[-12:]).endswith("<|im_start|>assistant\n") \
@@ -5060,10 +5051,8 @@ rings = [layer for layer in restored if isinstance(layer, RotatingKVCache)]
 warm = provider.model(mx.array([rest]), cache=restored)[0, -1]
 cold = provider.model(mx.array([last]), cache=make_prompt_cache(provider.model))[0, -1]
 
-transient_tail_boundary = False
-control, _ = chat("B. " + goose, 3)
 print("GOOSE_TEST " + json.dumps({
-    "cut": cut, "control": control, "bounds": bounds, "prompts": prompts, "tail_free": bool(tail_free),
+    "cut": cut, "restorable": restorable, "prompts": prompts, "tail_free": bool(tail_free),
     "restored": len(last) - len(rest), "ring_offsets": [int(r.offset) for r in rings],
     "warm_equals_cold": bool(mx.allclose(warm, cold, atol=1e-4).item())
         and int(mx.argmax(warm).item()) == int(mx.argmax(cold).item()),
@@ -5083,29 +5072,26 @@ os._exit(0)
         let pairs = |key: &str| -> Vec<(u64, u64)> {
             serde_json::from_value(seen[key].clone()).unwrap_or_else(|e| panic!("{key}: {e}"))
         };
-        let bounds: Vec<u64> = serde_json::from_value(seen["bounds"].clone()).unwrap();
         let prompts: Vec<u64> = serde_json::from_value(seen["prompts"].clone()).unwrap();
-        let (cut, control) = (pairs("cut"), pairs("control"));
+        let restorable: Vec<u64> = serde_json::from_value(seen["restorable"].clone()).unwrap();
+        let cut = pairs("cut");
         assert_eq!(seen["tail_free"], true, "MiMo thinking on ends on a bare assistant turn: {seen}");
         assert_eq!(
             cut.iter().map(|(prompt, _)| *prompt).collect::<Vec<_>>(),
             prompts,
             "the rank served the prompt the messages render to"
         );
+        assert_eq!(
+            cut.iter().map(|(_, cached)| *cached).collect::<Vec<_>>(),
+            restorable,
+            "cached_tokens is what the prompt cache really restores: {seen}"
+        );
+        assert!(cut[0].1 < 8, "the question arrives cold: {cut:?}");
         for step in 1..cut.len() {
             assert_eq!(
                 cut[step].1,
-                bounds[step - 1],
-                "step {step} reads the previous request's conversation, and says so: {cut:?} vs \
-                 boundaries {bounds:?}"
-            );
-            assert!(
-                prompts[step] - cut[step].1 < prompts[step] / 3,
-                "step {step} re-reads only the new tool step: {cut:?}"
-            );
-            assert!(
-                control[step].1 * 4 < bounds[step - 1],
-                "NEGATIVE CONTROL (no cut): step {step} reads almost nothing: {control:?}"
+                prompts[step - 1] - 1,
+                "step {step} reads the previous request's whole prompt but its last token: {cut:?}"
             );
         }
         let offsets: Vec<u64> = serde_json::from_value(seen["ring_offsets"].clone()).unwrap();
@@ -5115,8 +5101,8 @@ os._exit(0)
         );
         assert_eq!(
             seen["restored"].as_u64(),
-            Some(bounds[bounds.len() - 1]),
-            "the newest entry is the last request's boundary: {seen}"
+            Some(prompts[prompts.len() - 1] - 1),
+            "the newest entry is the last request's prompt but its last token: {seen}"
         );
         assert_eq!(
             seen["warm_equals_cold"], true,
