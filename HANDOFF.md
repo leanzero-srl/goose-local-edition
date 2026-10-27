@@ -454,3 +454,14 @@ and commit in ONE command (`git add <paths> && git commit`), never leave things 
   350k short 1.94 GB (planner refusals on the card, 12:00). Without the headroom rule they would plan.
 - WAITING TRAPS: a CI runner on the workhorse (actions-runner-*), fam-lane TTS node jobs, our builds: wait them out
   before a load (the 10:24 and 12:10 loads were stopped for swap). go.sh's "NO RANKS" = the plan refused.
+- RESULTS (bench mimo10/bench.py direct to :8191, swarm.rs prompts, key in prompts.json.key; peaks MLX, GB of 83.5/115.4):
+  64k (18/30, 67,072): TTFT 218 s, prefill 293 tok/s, decode 28.0, peaks 74.8/114.8 (BEFORE the x2 fix: mule 0.6 GB
+  under), answer 2/3. 128k (19/29, 131,072): 512 s, 250, 22.3, 72.9/105.9, 2/3. 250k (253,184): 1,594 s, 157, 15.8,
+  74.3/107.6 (mule 7.85 under), 0.5/3 (garbled self-corrections). 275k (277,504, max under the 8 GB rule): 1,826 s,
+  151, 15.0, 74.9/108.4 (mule 7.05 under: the model still under-counts ~1 GB on rank 1 at 275k), 1.5/3.
+  300k / 350k: refused by the planner under gpu_headroom_gb 8 (mule short 0.65 / 1.94 GB); not run.
+- OPEN: (1) the ~1 GB rank-1 under-count at 275k (find the term; until then keep headroom 9 for >250k); (2) answer
+  quality past 128k degrades (garbled lines at 250k) — check the bf16 SDPA fallback numerics at long width; (3) the
+  load fix (rank 0 last + folder cache drop) measured clean ONCE (12:36); confirm on the next loads.
+- End state: ranks stopped on both Macs, holds killed, dev config restored (no context/headroom), installed app back
+  (goose-single-guard --check OK).
