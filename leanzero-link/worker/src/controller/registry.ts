@@ -59,6 +59,10 @@ export function parseAccount(value: string): AccountState {
           const b = object(e.binding);
           if (!/^[1-9][0-9]*$/.test(string(b.node_id, "node_id")) || !/^nodekey:[0-9a-f]{64}$/.test(string(b.node_key, "node_key")) || b.user_id !== e.user_id || b.key_id !== e.key_id) throw new Error();
         }
+        if (e.activated_binding !== undefined) {
+          const b = object(e.activated_binding);
+          if (e.role !== "host" || !/^[1-9][0-9]*$/.test(string(b.node_id, "node_id")) || !/^nodekey:[0-9a-f]{64}$/.test(string(b.node_key, "node_key")) || !/^[1-9][0-9]*$/.test(string(b.user_id, "user_id")) || !/^[1-9][0-9]*$/.test(string(b.key_id, "key_id"))) throw new Error();
+        }
         if (e.status === "confirmed" && e.binding === null) throw new Error();
         if (["issued", "confirmed"].includes(e.status as string) && (e.key_id === null || e.receipt === null)) throw new Error();
       }

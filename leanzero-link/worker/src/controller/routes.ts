@@ -172,7 +172,7 @@ export async function handleController(request: Request, deps: Deps): Promise<Re
         const capabilities = f.capabilities ?? [];
         if (!Array.isArray(capabilities) || capabilities.some(s => !CONTROLLER_SCOPES.includes(s)) || new Set(capabilities).size !== capabilities.length) fail(400, "invalid_request", "Invalid host capabilities");
         const verifiedHost = await mesh.requireHost(bearer(request), nodeKey(f.mesh_node_key));
-        result = await hosts.lease(bearer(request), { owner_node_id: uuid(f.owner_node_id, "owner_node_id"), runtime_id: uuid(f.runtime_id, "runtime_id"), store_generation: uuid(f.store_generation, "store_generation"), catalog_revision: integer(f.catalog_revision, "catalog_revision"), mesh_node_key: string(f.mesh_node_key, "mesh_node_key"), capabilities: capabilities as ControllerScope[] }, verifiedHost.node.expires_at); break;
+        result = await hosts.lease(bearer(request), { owner_node_id: uuid(f.owner_node_id, "owner_node_id"), runtime_id: uuid(f.runtime_id, "runtime_id"), store_generation: uuid(f.store_generation, "store_generation"), catalog_revision: integer(f.catalog_revision, "catalog_revision"), mesh_node_key: string(f.mesh_node_key, "mesh_node_key"), capabilities: capabilities as ControllerScope[] }, verifiedHost.node.expires_at, { enrollment_id: verifiedHost.enrollment_id, binding: { node_id: verifiedHost.node.id, node_key: verifiedHost.node.node_key, user_id: verifiedHost.node.user_id, key_id: verifiedHost.node.key_id! } }); break;
       }
       case "/introspect": {
         requireMethod(request, "POST"); const f = await fields(request);

@@ -9,6 +9,8 @@ import { DurableDeviceRegistry } from "../src/controller/durable-registry";
 import type { DeviceRegistryStore } from "../src/controller/registry-store";
 import { ControllerService } from "../src/controller/service";
 import { Registry } from "../src/controller/registry";
+import { HostService } from "../src/controller/hosts";
+import { MeshService } from "../src/controller/mesh";
 import { digest } from "../src/controller/crypto";
 import { reserveLegacyMint } from "../src/controller/legacy-mesh";
 import { signJwt } from "../src/lib/jwt";
@@ -47,7 +49,7 @@ async function setup(store: DeviceRegistryStore) {
   const register = await post("/hosts/register", { owner_node_id, registration_id, host_name: "Workhorse", protocol_version: 1, tls_spki_sha256: "a".repeat(64), controller_port: 41227 }, accountToken);
   expect(register.status).toBe(200);
   const reg = await register.json() as { host_credential: string; host_revision: number };
-  const bindHost = async () => {
+  const bindHost = async (activate = true) => {
     const enrollment_id = crypto.randomUUID();
     const issued = await post("/hosts/mesh/join-key", { enrollment_id }, reg.host_credential);
     expect(await issued.clone().json()).not.toHaveProperty("error");
@@ -56,6 +58,7 @@ async function setup(store: DeviceRegistryStore) {
     const confirmed = await post("/hosts/mesh/confirm", { enrollment_id, mesh_node_key: node.nodeKey }, reg.host_credential);
     expect(confirmed.status).toBe(200);
     const leaseRequest = { owner_node_id, runtime_id, store_generation, catalog_revision: 100, mesh_node_key: node.nodeKey };
+    if (!activate) return { node, enrollment_id, key, leaseRequest, lease: null };
     const leased = await post("/hosts/lease", leaseRequest, reg.host_credential);
     expect(leased.status).toBe(200);
     return { node, enrollment_id, key, leaseRequest, lease: await leased.json() as { lease_id: string } };
@@ -65,6 +68,188 @@ async function setup(store: DeviceRegistryStore) {
 for (const backend of ["sqlite", "durable"] as const) {
   describe("mesh authority " + backend, () => {
     const store = () => backend === "sqlite" ? sqlite : durable;
+    it("admits an offline activated host without granting endpoints or expired command/peer authority", async () => {
+      const f = await setup(store()); const host = await f.bindHost(); const phone = await f.device();
+      const key = await digest(f.email);
+      const receipt = (await f.service.registry.read(key))!.mesh_enrollments![host.enrollment_id]!.activated_binding;
+      expect(receipt).toEqual({ node_id: host.node.id, node_key: host.node.nodeKey, user_id: f.user.id, key_id: host.node.preAuthKey!.id });
+      host.node.online = false; f.h.clock.advanceSeconds(61);
+      const issued = await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token);
+      expect(issued.status).toBe(200);
+      expect(await (await f.get("/hosts", phone.access_token)).json()).toMatchObject({ hosts: [{ availability: "offline", endpoints: [], capabilities: [] }] });
+      expect((await f.get("/hosts/peers", f.reg.host_credential)).status).toBe(403);
+      const denied = await f.post("/introspect", { token: phone.access_token, owner_node_id: f.owner_node_id, runtime_id: f.runtime_id, host_lease_id: host.lease!.lease_id, required_scope: "work.send" }, f.reg.host_credential);
+      expect(denied.status).toBe(403); expect(await denied.json()).toMatchObject({ error: { code: "host_lease_expired" } });
+      expect((await f.service.registry.read(key))!.mesh_enrollments![host.enrollment_id]!.activated_binding).toEqual(receipt);
+    });
+    it("reports a withdrawn activated host as verified offline without endpoints or command authority", async () => {
+      const f = await setup(store()); const host = await f.bindHost(); const phone = await f.device();
+      expect(await (await f.post("/hosts/withdraw", { runtime_id: f.runtime_id }, f.reg.host_credential)).json()).toEqual({ withdrawn: true });
+      // Provider still says online: clearing the lease alone must remove authority.
+      expect(host.node.online).toBe(true);
+      expect(await (await f.get("/hosts", phone.access_token)).json()).toMatchObject({ hosts: [{ availability: "offline", registration_state: "verified", endpoints: [], capabilities: [] }] });
+      expect((await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token)).status).toBe(200);
+      expect((await f.get("/hosts/peers", f.reg.host_credential)).status).toBe(403);
+      expect((await f.post("/introspect", { token: phone.access_token, owner_node_id: f.owner_node_id, runtime_id: f.runtime_id, host_lease_id: host.lease!.lease_id, required_scope: "work.send" }, f.reg.host_credential)).status).toBe(403);
+      expect((await f.post("/hosts/lease", { ...host.leaseRequest, capabilities: ["work.send"] }, f.reg.host_credential)).status).toBe(200);
+      const result = await (await f.get("/hosts", phone.access_token)).json() as { hosts: { availability: string; endpoints: unknown[]; capabilities: string[] }[] };
+      expect(result.hosts[0]).toMatchObject({ availability: "online", capabilities: ["work.send"] });
+      expect(result.hosts[0]!.endpoints).toHaveLength(2);
+    });
+    it("does not infer activation from confirmation, an old current lease, generation, or an omitted service proof", async () => {
+      const f = await setup(store()); const host = await f.bindHost(false); const phone = await f.device();
+      host.node.online = false;
+      const key = await digest(f.email); const attempt = () => f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token);
+      const mints = provider.keys.length;
+      expect((await attempt()).status).toBe(409);
+      await new HostService(f.service).lease(f.reg.host_credential, host.leaseRequest);
+      const state = (await f.service.registry.read(key))!;
+      expect(state.hosts[f.owner_node_id]!.lease!.expires_at).toBeGreaterThan(f.h.clock.now());
+      expect(state.hosts[f.owner_node_id]!.generation).toBe(f.store_generation);
+      expect(state.mesh_enrollments![host.enrollment_id]!.activated_binding).toBeUndefined();
+      expect((await attempt()).status).toBe(409); expect(provider.keys).toHaveLength(mints);
+      expect((await f.post("/hosts/lease", host.leaseRequest, f.reg.host_credential)).status).toBe(200);
+      expect((await attempt()).status).toBe(200);
+    });
+    it.each(["node_id", "node_key", "user_id", "key_id"] as const)("rejects a changed activated binding %s without minting", async field => {
+      const f = await setup(store()); const host = await f.bindHost(); const phone = await f.device();
+      host.node.online = false; f.h.clock.advanceSeconds(61);
+      const key = await digest(f.email); const saved = (await f.service.registry.read(key))!;
+      await f.service.registry.update(key, state => {
+        state!.mesh_enrollments![host.enrollment_id]!.activated_binding![field] = field === "node_key" ? "nodekey:" + "f".repeat(64) : "999999";
+        return { state: state!, result: undefined };
+      });
+      const mints = provider.keys.length;
+      expect((await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token)).status).toBe(409);
+      expect(provider.keys).toHaveLength(mints);
+      await f.service.registry.update(key, () => ({ state: saved, result: undefined }));
+      expect((await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token)).status).toBe(200);
+    });
+    it.each(["unknown", "unactivated", "old_row", "suspended", "pending", "revoked", "missing_pin", "missing_port"])("refuses offline %s host with zero key mints", async fault => {
+      const f = await setup(store()); const host = await f.bindHost(fault !== "unactivated"); const phone = await f.device();
+      host.node.online = false;
+      const key = await digest(f.email);
+      await f.service.registry.update(key, state => {
+        const e = state!.mesh_enrollments![host.enrollment_id]!; const h = state!.hosts[f.owner_node_id]!;
+        if (fault === "unknown") delete state!.mesh_enrollments![host.enrollment_id];
+        if (fault === "old_row") delete e.activated_binding;
+        if (fault === "suspended") h.suspended = true;
+        if (fault === "pending") h.registration_pending = true;
+        if (fault === "revoked") e.status = "revoked";
+        if (fault === "missing_pin") h.tls_spki_sha256 = null;
+        if (fault === "missing_port") h.controller_port = null;
+        return { state: state!, result: undefined };
+      });
+      const mints = provider.keys.length;
+      const result = await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token);
+      expect(result.status).toBe(409); expect(await result.json()).toMatchObject({ error: { code: "update_required" } });
+      expect(provider.keys).toHaveLength(mints);
+    });
+    it.each([null, {}, { node_id: "1", node_key: "bad", user_id: "1", key_id: "1" }, { node_id: "1", node_key: "nodekey:" + "a".repeat(64), user_id: 1, key_id: "1" }])("fails closed on a corrupt activation receipt %#", async receipt => {
+      const f = await setup(store()); const host = await f.bindHost(); const phone = await f.device();
+      const key = await digest(f.email); const row = (await store().read(key))!; const value = JSON.parse(row.value);
+      value.mesh_enrollments[host.enrollment_id].activated_binding = receipt;
+      expect(await store().compareAndSwap(key, row.revision, JSON.stringify(value))).toBe(true);
+      const mints = provider.keys.length;
+      expect((await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token)).status).toBe(503);
+      expect(provider.keys).toHaveLength(mints);
+    });
+    it("requires a fresh successful lease after same-key re-enrollment even while the old lease is current", async () => {
+      const f = await setup(store()); const old = await f.bindHost(); const phone = await f.device();
+      provider.nodes = provider.nodes.filter(n => n !== old.node);
+      const next = await f.bindHost(false); next.node.online = false;
+      expect(next.node.nodeKey).toBe(old.node.nodeKey);
+      expect(next.node.id).not.toBe(old.node.id); expect(next.node.preAuthKey!.id).not.toBe(old.node.preAuthKey!.id);
+      const state = (await f.service.registry.read(await digest(f.email)))!;
+      expect(state.mesh_enrollments![old.enrollment_id]!.status).toBe("revoked");
+      expect(state.mesh_enrollments![next.enrollment_id]!.activated_binding).toBeUndefined();
+      expect(state.hosts[f.owner_node_id]!.lease!.expires_at).toBeGreaterThan(f.h.clock.now());
+      const mints = provider.keys.length;
+      expect((await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token)).status).toBe(409);
+      expect(provider.keys).toHaveLength(mints);
+      expect((await f.post("/hosts/lease", next.leaseRequest, f.reg.host_credential)).status).toBe(200);
+      expect((await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token)).status).toBe(200);
+    });
+    it.each(["suspend", "revoke", "replace", "role", "subject", "node_id", "node_key", "user_id", "key_id"])("does not activate a stale provider proof after concurrent %s at CAS", async change => {
+      const base = store(); let intercept: (() => Promise<void>) | undefined;
+      const raced: DeviceRegistryStore = {
+        read: key => base.read(key),
+        compareAndSwap: async (key, revision, value) => {
+          if (intercept) { const run = intercept; intercept = undefined; await run(); }
+          return base.compareAndSwap(key, revision, value);
+        },
+      };
+      const f = await setup(raced); const host = await f.bindHost(false); const key = await digest(f.email);
+      const replacementId = crypto.randomUUID();
+      intercept = () => new Registry(base).update(key, state => {
+        const e = state!.mesh_enrollments![host.enrollment_id]!;
+        if (change === "suspend") state!.hosts[f.owner_node_id]!.suspended = true;
+        else if (change === "revoke") e.status = "revoked";
+        else if (change === "replace") {
+          e.status = "revoked";
+          state!.mesh_enrollments![replacementId] = { ...e, enrollment_id: replacementId, status: "confirmed", binding: { ...e.binding!, node_id: "999999" } };
+        } else if (change === "role") e.role = "controller";
+        else if (change === "subject") e.subject_id = crypto.randomUUID();
+        else {
+          const field = change as "node_id" | "node_key" | "user_id" | "key_id";
+          e.binding![field] = field === "node_key" ? "nodekey:" + "f".repeat(64) : "999999";
+          if (field === "user_id" || field === "key_id") e[field] = "999999";
+        }
+        return { state: state!, result: undefined };
+      });
+      const result = await f.post("/hosts/lease", host.leaseRequest, f.reg.host_credential);
+      expect(result.status).toBe(change === "suspend" ? 401 : 403);
+      const state = (await new Registry(base).read(key))!;
+      expect(Object.values(state.mesh_enrollments!).every(e => e.activated_binding === undefined)).toBe(true);
+      expect(state.hosts[f.owner_node_id]!.lease).toBeNull();
+    });
+    it("rejects activation proofs from another account or a controller enrollment", async () => {
+      const f = await setup(store()); const host = await f.bindHost(false);
+      const other = await setup(store()); await other.bindHost();
+      const proof = await new MeshService(other.service, other.h.deps).requireHost(other.reg.host_credential);
+      const hosts = new HostService(f.service);
+      await expect(hosts.lease(f.reg.host_credential, host.leaseRequest, null, { enrollment_id: proof.enrollment_id, binding: { node_id: proof.node.id, node_key: proof.node.node_key, user_id: proof.node.user_id, key_id: proof.node.key_id! } })).rejects.toMatchObject({ code: "host_mesh_unverified" });
+      const phone = await other.device(); const enrollment_id = crypto.randomUUID();
+      const issued = await other.post("/mesh/join-key", { enrollment_id }, phone.access_token);
+      expect(issued.status).toBe(200); const joinKey = await issued.json() as MeshJoinCredential;
+      const node = provider.join(joinKey.auth_key, "b");
+      expect((await other.post("/mesh/confirm", { enrollment_id, mesh_node_key: node.nodeKey }, phone.access_token)).status).toBe(200);
+      const state = (await other.service.registry.read(await digest(other.email)))!;
+      await expect(new HostService(other.service).lease(other.reg.host_credential, { ...host.leaseRequest, owner_node_id: other.owner_node_id, runtime_id: other.runtime_id, store_generation: other.store_generation, mesh_node_key: node.nodeKey }, null, { enrollment_id, binding: state.mesh_enrollments![enrollment_id]!.binding! })).rejects.toMatchObject({ code: "host_mesh_unverified" });
+      const peers = await (await other.get("/hosts/peers", other.reg.host_credential)).json() as { peers: { mesh_node_key: string; role: string; owner_node_id: string | null }[] };
+      expect(peers.peers.find(p => p.mesh_node_key === node.nodeKey)).toEqual({ mesh_node_key: node.nodeKey, role: "controller", owner_node_id: null });
+      expect(peers.peers.filter(p => p.role === "host").map(p => p.mesh_node_key)).not.toContain(node.nodeKey);
+      expect((await f.service.registry.read(await digest(f.email)))!.mesh_enrollments![host.enrollment_id]!.activated_binding).toBeUndefined();
+    });
+    it.each(["before_transaction", "during_cas"])("refuses provider expiry %s as a usable activation lease", async boundary => {
+      const base = store(); let atRead: (() => void) | undefined; let atCas: (() => void) | undefined;
+      const delayed: DeviceRegistryStore = {
+        read: key => { if (atRead) { const run = atRead; atRead = undefined; run(); } return base.read(key); },
+        compareAndSwap: (key, revision, value) => { if (atCas) { const run = atCas; atCas = undefined; run(); } return base.compareAndSwap(key, revision, value); },
+      };
+      const f = await setup(delayed); const host = await f.bindHost(false); const phone = await f.device();
+      host.node.expiry = new Date(f.h.clock.now() + 1000).toISOString();
+      const proof = await new MeshService(f.service, f.h.deps).requireHost(f.reg.host_credential);
+      if (boundary === "before_transaction") atRead = () => f.h.clock.advanceSeconds(2);
+      else atCas = () => f.h.clock.advanceSeconds(2);
+      await expect(new HostService(f.service).lease(f.reg.host_credential, host.leaseRequest, proof.node.expires_at, { enrollment_id: proof.enrollment_id, binding: { node_id: proof.node.id, node_key: proof.node.node_key, user_id: proof.node.user_id, key_id: proof.node.key_id! } })).rejects.toMatchObject({ code: boundary === "before_transaction" ? "host_mesh_unverified" : "host_lease_expired" });
+      const state = (await f.service.registry.read(await digest(f.email)))!;
+      if (boundary === "before_transaction") {
+        expect(state.mesh_enrollments![host.enrollment_id]!.activated_binding).toBeUndefined();
+        expect(state.hosts[f.owner_node_id]!.lease).toBeNull();
+      } else expect(state.hosts[f.owner_node_id]!.lease!.expires_at).toBeLessThan(f.h.clock.now());
+      expect(await (await f.get("/hosts", phone.access_token)).json()).toMatchObject({ hosts: [{ endpoints: [], capabilities: [] }] });
+      expect((await f.get("/hosts/peers", f.reg.host_credential)).status).toBe(403);
+      expect((await f.post("/hosts/lease", host.leaseRequest, f.reg.host_credential)).status).toBe(403);
+    });
+    it.each(["expired", "tagged"])("keeps activated but provider-%s hosts unusable", async fault => {
+      const f = await setup(store()); const host = await f.bindHost(); const phone = await f.device();
+      if (fault === "expired") host.node.expiry = new Date(f.h.clock.now() - 1).toISOString();
+      else host.node.tags = ["tag:host"];
+      expect((await f.post("/hosts/lease", host.leaseRequest, f.reg.host_credential)).status).toBe(403);
+      expect((await f.get("/hosts/peers", f.reg.host_credential)).status).toBe(403);
+      expect(await (await f.get("/hosts", phone.access_token)).json()).toMatchObject({ hosts: [{ endpoints: [], capabilities: [] }] });
+    });
     it("binds actual provider key/account/role, derives IPv4+IPv6 endpoints and updates IP moves", async () => {
       const f = await setup(store()); const host = await f.bindHost(); const phone = await f.device();
       const enrollment_id = crypto.randomUUID();
@@ -258,7 +443,7 @@ for (const backend of ["sqlite", "durable"] as const) {
       host.node.expiry = new Date(f.h.clock.now() + 5_000).toISOString();
       const peers = await (await f.get("/hosts/peers", f.reg.host_credential)).json() as { lease_seconds: number };
       expect(peers.lease_seconds).toBe(5);
-      const auth = await (await f.post("/introspect", { token: phone.access_token, owner_node_id: f.owner_node_id, runtime_id: f.runtime_id, host_lease_id: host.lease.lease_id, required_scope: "history.read" }, f.reg.host_credential)).json() as { lease_seconds: number };
+      const auth = await (await f.post("/introspect", { token: phone.access_token, owner_node_id: f.owner_node_id, runtime_id: f.runtime_id, host_lease_id: host.lease!.lease_id, required_scope: "history.read" }, f.reg.host_credential)).json() as { lease_seconds: number };
       expect(auth.lease_seconds).toBe(5);
       f.h.clock.advanceSeconds(6);
       expect((await f.get("/hosts/peers", f.reg.host_credential)).status).toBe(403);
@@ -297,7 +482,7 @@ for (const backend of ["sqlite", "durable"] as const) {
       expect(await (await f.post("/hosts/recover-generation", req, f.reg.host_credential)).json()).toEqual(receipt);
       expect((await f.post("/hosts/lease", host.leaseRequest, f.reg.host_credential)).status).toBe(409);
       expect((await f.post("/hosts/lease", { ...host.leaseRequest, store_generation: req.new_generation, catalog_revision: 0 }, f.reg.host_credential)).status).toBe(200);
-      expect((await f.post("/introspect", { token: phone.access_token, owner_node_id: f.owner_node_id, runtime_id: f.runtime_id, host_lease_id: host.lease.lease_id, required_scope: "history.read" }, f.reg.host_credential)).status).toBe(403);
+      expect((await f.post("/introspect", { token: phone.access_token, owner_node_id: f.owner_node_id, runtime_id: f.runtime_id, host_lease_id: host.lease!.lease_id, required_scope: "history.read" }, f.reg.host_credential)).status).toBe(403);
     });
   });
 }

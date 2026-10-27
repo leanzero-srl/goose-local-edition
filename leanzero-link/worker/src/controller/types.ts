@@ -74,6 +74,7 @@ export interface MeshEnrollment {
   created_at: number; expires_at: number; user_id: string;
   key_id: string | null; receipt: string | null; binding: MeshBinding | null;
   cleanup_pending: boolean;
+  activated_binding?: MeshBinding;
 }
 export interface MeshJoinCredential {
   enrollment_id: string; auth_key: string; login_server: string; expiry_seconds: number;
