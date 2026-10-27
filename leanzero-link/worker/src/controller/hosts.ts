@@ -1,4 +1,6 @@
 import { constantTimeEqual } from "../lib/otp";
+import type { KVStore } from "../lib/deps";
+import { nodeSecretKey } from "../lib/nodeSecret";
 import { verifyJwt } from "../lib/jwt";
 import { AUTH_LEASE_SECONDS, HOST_LEASE_SECONDS, REFRESH_TTL_SECONDS, digest, randomSecret, seal, unseal, verifyAccess } from "./crypto";
 import { fail, splitCredential, assertAccountActive } from "./registry";
@@ -56,6 +58,30 @@ export class HostService {
       receipts[enrollmentId] = { owner_node_id: id, request_hash: requestHash, device_id: record.device_id, receipt: await seal(c.secret, `${key}.desktop.${enrollmentId}`, credentials) };
       return { state: state!, result: credentials };
     });
+  }
+
+  async recoverNodeSecret(accountToken: string, credential: string, kv: KVStore): Promise<{ account_id: string; owner_node_id: string; email: string; node_secret: string }> {
+    const c = this.controller;
+    const verified = await verifyJwt(c.secret, accountToken, Math.floor(c.now() / 1000));
+    if (!verified.ok) fail(401, "invalid_credential", "A current host account credential is required");
+    const { key, id } = splitCredential(credential, "h1");
+    if (key !== await digest(verified.claims.sub)) fail(403, "wrong_account", "Host and account credentials do not match");
+    const hash = await digest(credential);
+    // Read inside the CAS operation: a deletion/suspension racing the KV read
+    // invalidates this snapshot, so the retry must recheck authority before returning.
+    const result = await c.registry.update(key, async state => {
+      if (verified.claims.exp <= Math.floor(c.now() / 1000)) fail(401, "invalid_credential", "Account credential expired");
+      if (state?.legacy_revoked_before !== undefined && verified.claims.iat <= state.legacy_revoked_before) fail(401, "account_credential_revoked", "Account credential was revoked by deletion");
+      checkedHost(state, id, hash);
+      if (state!.email !== verified.claims.sub) fail(403, "wrong_account", "Account registry does not match credential");
+      const secret = await kv.get(nodeSecretKey(state!.email));
+      if (verified.claims.exp <= Math.floor(c.now() / 1000)) fail(401, "invalid_credential", "Account credential expired");
+      if (secret === null) fail(409, "node_secret_missing", "Existing account secret is unavailable; sign in again");
+      if (!/^[0-9a-f]{64}$/.test(secret)) fail(409, "node_secret_corrupt", "Existing account secret is invalid");
+      return { state: state!, result: { account_id: state!.account_id, owner_node_id: id, email: state!.email, node_secret: secret } };
+    });
+    if (verified.claims.exp <= Math.floor(c.now() / 1000)) fail(401, "invalid_credential", "Account credential expired");
+    return result;
   }
 
   async bootstrap(credential: string): Promise<{ account_id: string; owner_node_id: string }> {

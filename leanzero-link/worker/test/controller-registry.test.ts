@@ -55,6 +55,100 @@ async function enroll(h: TestHarness, account = email()): Promise<DeviceCredenti
 for (const backend of ["node-sqlite", "cloudflare-durable-object"] as const) {
   describe(backend, () => {
     const store = (): DeviceRegistryStore => backend === "node-sqlite" ? node : durable;
+    async function recoveryFixture() {
+      const h = harness(store()); const account = email();
+      const service = new ControllerService(new Registry(store()), h.deps.config.jwtSecret!, h.clock.now);
+      const iat = Math.floor(h.clock.now() / 1000);
+      const claims = { sub: account, iat, exp: iat + 3600, ver: 1 };
+      const token = await signJwt(service.secret, claims);
+      const reg = await new HostService(service).register(token, null, { owner_node_id: crypto.randomUUID(), registration_id: crypto.randomUUID(), host_name: "Saved login", protocol_version: 1, tls_spki_sha256: "a".repeat(64), controller_port: 1305 });
+      const key = await digest(account); const secretKey = `nodesecret:${account}`;
+      const recover = (accountToken = token, host = reg.host_credential, body = {}) => handleRequest(postJson("/v1/controller/hosts/recover-node-secret", body, { Authorization: `Bearer ${accountToken}`, "X-Link-Host-Credential": host }), h.deps);
+      return { h, account, service, claims, token, reg, key, secretKey, recover };
+    }
+    it("recovers only the existing account secret with both credentials and no provider calls", async () => {
+      const f = await recoveryFixture(); const secret = "a".repeat(64);
+      await f.h.kv.put(f.secretKey, secret);
+      const before = await f.service.registry.read(f.key);
+      const recovered = await f.recover(); expect(recovered.status).toBe(200);
+      expect(recovered.headers.get("Cache-Control")).toBe("no-store");
+      expect(await recovered.json()).toEqual({ account_id: before!.account_id, owner_node_id: f.reg.host_credential.split(".")[2], email: f.account, node_secret: secret });
+      expect(await f.service.registry.read(f.key)).toEqual(before);
+      expect(await f.h.kv.get(f.secretKey)).toBe(secret);
+      expect((await f.recover()).status).toBe(200);
+      expect(f.h.calls).toEqual([]); expect(f.h.logs).toEqual([]);
+    });
+    it("rejects expired, revoked, controller, other-account, forged and suspended recovery authority", async () => {
+      const f = await recoveryFixture(); const other = await recoveryFixture();
+      await f.h.kv.put(f.secretKey, "a".repeat(64));
+      const phone = await enroll(f.h, f.account);
+      const claims = (await verifyAccess(f.service.secret, phone.access_token, Math.floor(f.h.clock.now() / 1000)))!;
+      const desktop = await signAccess(f.service.secret, { ...claims, jti: crypto.randomUUID() });
+      const expired = await signJwt(f.service.secret, { ...f.claims, exp: f.claims.iat });
+      const forged = f.reg.host_credential.slice(0, -43) + "x".repeat(43);
+      for (const [token, host, code] of [
+        [expired, f.reg.host_credential, "invalid_credential"],
+        [phone.access_token, f.reg.host_credential, "invalid_credential"],
+        [desktop, f.reg.host_credential, "invalid_credential"],
+        [other.token, f.reg.host_credential, "wrong_account"],
+        [f.token, other.reg.host_credential, "wrong_account"],
+        [f.token, forged, "invalid_credential"],
+        [f.token, phone.access_token, "invalid_credential"],
+      ]) {
+        const res = await f.recover(token!, host!); expect(res.status).toBe(code === "wrong_account" ? 403 : 401);
+        expect(await res.json()).toMatchObject({ error: { code } });
+      }
+      expect((await f.recover(f.token, f.reg.host_credential, { email: other.account })).status).toBe(400);
+      await f.service.registry.update(f.key, state => { state!.legacy_revoked_before = f.claims.iat; return { state: state!, result: undefined }; });
+      expect(await (await f.recover()).json()).toMatchObject({ error: { code: "account_credential_revoked" } });
+      await f.service.registry.update(f.key, state => { delete state!.legacy_revoked_before; state!.hosts[f.reg.host_credential.split(".")[2]!]!.suspended = true; return { state: state!, result: undefined }; });
+      expect(await (await f.recover()).json()).toMatchObject({ error: { code: "invalid_credential" } });
+      expect(await f.h.kv.get(f.secretKey)).toBe("a".repeat(64));
+      expect(f.h.calls.every(c => c.url.endsWith("/emails"))).toBe(true);
+    });
+    it("never creates or rotates absent/corrupt secrets and rechecks a racing revocation", async () => {
+      const f = await recoveryFixture();
+      for (const raw of [null, "corrupt", "A".repeat(64)]) {
+        if (raw === null) await f.h.kv.delete(f.secretKey); else await f.h.kv.put(f.secretKey, raw);
+        const response = await f.recover(); expect(response.status).toBe(409);
+        expect(await response.json()).toMatchObject({ error: { code: raw === null ? "node_secret_missing" : "node_secret_corrupt" } });
+        expect(await f.h.kv.get(f.secretKey)).toBe(raw);
+      }
+      await f.h.kv.put(f.secretKey, "a".repeat(64));
+      const get = f.h.kv.get.bind(f.h.kv); let raced = false;
+      f.h.kv.get = async key => {
+        const value = await get(key);
+        if (key === f.secretKey && !raced) {
+          raced = true;
+          await f.service.registry.update(f.key, state => { state!.legacy_revoked_before = f.claims.iat; return { state: state!, result: undefined }; });
+        }
+        return value;
+      };
+      const response = await f.recover(); expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: { code: "account_credential_revoked" } });
+      expect(raced).toBe(true); expect(f.h.calls).toEqual([]); expect(f.h.logs).toEqual([]);
+    });
+    it("refuses expiry while waiting for the existing secret", async () => {
+      const f = await recoveryFixture(); await f.h.kv.put(f.secretKey, "a".repeat(64));
+      const get = f.h.kv.get.bind(f.h.kv);
+      f.h.kv.get = async key => { const value = await get(key); f.h.clock.advanceSeconds(3601); return value; };
+      const response = await f.recover(); expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: { code: "invalid_credential" } });
+      expect(await get(f.secretKey)).toBe("a".repeat(64)); expect(f.h.calls).toEqual([]);
+    });
+    it("refuses expiry while the registry CAS commits", async () => {
+      const f = await recoveryFixture(); await f.h.kv.put(f.secretKey, "a".repeat(64));
+      const original = f.h.deps.deviceRegistry!;
+      f.h.deps.deviceRegistry = {
+        read: key => original.read(key),
+        compareAndSwap: async (key, revision, value) => {
+          const committed = await original.compareAndSwap(key, revision, value);
+          f.h.clock.advanceSeconds(3601); return committed;
+        },
+      };
+      const response = await f.recover(); expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ error: { code: "invalid_credential" } });
+    });
     it("serializes concurrent CAS writes on the real adapter", async () => {
       const key = await digest(crypto.randomUUID());
       await Promise.all(Array.from({ length: 30 }, async () => {
