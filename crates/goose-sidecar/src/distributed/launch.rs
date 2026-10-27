@@ -1376,6 +1376,7 @@ pub(crate) mod tests {
     use crate::distributed::provision::EnvSpec;
 
     const QWEN38: &str = include_str!("../../tests/fixtures/chat_templates/qwen3.8.jinja");
+    const MIMO26: &str = include_str!("../../tests/fixtures/chat_templates/mimo_v2.6.jinja");
 
     /// One launch's own load lock: a test's stand-in ranks never take this Mac's, nor each other's.
     pub(crate) fn launch_load_lock() -> String {
@@ -4902,6 +4903,224 @@ os._exit(0)
             0,
             "NEGATIVE CONTROL: the transcript request (E2E #3p: 0 of 97,590) reads nothing: {}",
             seen["compaction"]
+        );
+    }
+
+    /// MiMo-V2.6 through the REAL mlx_lm 0.31.3 on the CPU: a tiny random gemma3_text whose layers
+    /// are mostly sliding-window `RotatingKVCache` (window 8, the shape of MiMo's 39 window-128
+    /// layers beside its full-attention ones), MiMo's own chat template, thinking ON (its prompt
+    /// ends on a bare `<|im_start|>assistant\n`, no think token), and goose's `openai` provider's
+    /// shape: an append-only agent chat with tools and NO transient tail. Each step reads the
+    /// previous request's whole conversation (`last_message_boundary`) and the usage counter says
+    /// exactly that; the state restored past the window gives the cold read's next logits. The
+    /// NEGATIVE CONTROL (the cut off, the shape before b47a3ef8f) reads only what mlx_lm's own
+    /// segments kept: the 2026-10-27 live split's `cached_tokens` 3 of 15,597.
+    #[test]
+    fn a_thinking_mimo_chat_without_a_tail_reads_its_conversation_through_real_mlx_lm() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let config = two_mac_config();
+        let tensor = TensorLaunch {
+            planned_bytes: 27_456_216_576,
+            prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_entries: 110,
+            mlx_cache_limit_bytes: 2_745_621_658,
+            prefill: e2e_prefill(),
+        };
+        let mut spec = rank_specs(
+            &config,
+            &ServedNames::only("node-alias"),
+            &[tensor, tensor],
+            141_568,
+            2.0,
+        )
+        .remove(0);
+        if let RankProgram::MlxLmServer { doorbell, .. } = &mut spec.program {
+            *doorbell = false;
+        }
+        spec.load_lock = Some(launch_load_lock());
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("import faulthandler  # noqa")
+            .expect("the wrapper's body starts after the group check");
+        let end = wrapper
+            .find("server.main()")
+            .expect("the wrapper ends in mlx_lm's main");
+        let checks = r#"
+import argparse
+import http.server
+import tempfile
+import urllib.error
+import urllib.request
+
+sys.excepthook = lambda *failure: (traceback.print_exception(*failure), sys.stderr.flush(), os._exit(1))
+mx.set_default_device(mx.cpu)
+mx.metal.is_available = lambda: False
+for name in ("MLX_RANK", "MLX_IBV_DEVICES", "MLX_JACCL_COORDINATOR", "MLX_HOSTFILE"):
+    os.environ.pop(name, None)
+
+from mlx_lm.models import gemma3_text
+from mlx_lm.models.cache import RotatingKVCache, make_prompt_cache
+from mlx_lm.utils import save_config, save_model
+from tokenizers import Tokenizer, decoders, models, pre_tokenizers
+from transformers import PreTrainedTokenizerFast
+
+alphabet = sorted(pre_tokenizers.ByteLevel.alphabet())
+core = Tokenizer(models.BPE(vocab={c: i for i, c in enumerate(alphabet)}, merges=[]))
+core.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=False)
+core.decoder = decoders.ByteLevel()
+hf = PreTrainedTokenizerFast(tokenizer_object=core, eos_token="<|im_end|>")
+hf.add_special_tokens({"additional_special_tokens": ["<|im_start|>", "<think>", "</think>"]})
+hf.chat_template = MIMO26
+
+model_dir = tempfile.mkdtemp()
+mx.random.seed(1027)
+WINDOW = 8
+config = {"model_type": "gemma3_text", "hidden_size": 64, "intermediate_size": 128,
+          "num_hidden_layers": 4, "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 32,
+          "query_pre_attn_scalar": 32, "vocab_size": len(hf), "sliding_window": WINDOW,
+          "sliding_window_pattern": 4}
+tiny = gemma3_text.Model(gemma3_text.ModelArgs.from_dict(config))
+mx.eval(tiny.parameters())
+save_model(model_dir, tiny)
+save_config(config, os.path.join(model_dir, "config.json"))
+hf.save_pretrained(model_dir)
+
+class Parsed(Exception):
+    pass
+
+real_parse_args = argparse.ArgumentParser.parse_args
+
+def parse_and_stop(self, args=None, namespace=None):
+    raise Parsed(real_parse_args(self, args, namespace))
+
+argparse.ArgumentParser.parse_args = parse_and_stop
+try:
+    server.main()
+    raise SystemExit("mlx_lm's main() never parsed its argv")
+except Parsed as parsed:
+    cli = parsed.args[0]
+argparse.ArgumentParser.parse_args = real_parse_args
+cli.model = model_dir
+
+provider = server.ModelProvider(cli)
+provider._model_map[served] = model_dir
+cache = server.LRUPromptCache(cli.prompt_cache_size)
+responses = server.ResponseGenerator(provider, cache)
+httpd = http.server.ThreadingHTTPServer(
+    ("127.0.0.1", 0),
+    lambda *args, **kwargs: server.APIHandler(responses, *args, system_fingerprint="test", **kwargs),
+)
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+def call(body):
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/v1/chat/completions"
+    with urllib.request.urlopen(urllib.request.Request(url, data=json.dumps(body).encode()), timeout=600) as reply:
+        return json.loads(reply.read())
+
+TOOLS = [{"type": "function", "function": {"name": "shell", "description": "Run a shell command",
+          "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}}]
+THINKING = {"enable_thinking": True}
+
+def render(messages, generation=True):
+    messages = json.loads(json.dumps(messages))
+    server.process_message_content(messages)
+    return provider.tokenizer.apply_chat_template(messages, tools=TOOLS,
+        add_generation_prompt=generation, tokenize=True, **THINKING)
+
+def chat(system, steps):
+    """goose's append-only agent chat: request k = the question plus k tool steps, no tail."""
+    messages = [{"role": "system", "content": system},
+                {"role": "user", "content": "Write the users script and run it."}]
+    seen, sent = [], []
+    for k in range(steps + 1):
+        sent.append(json.loads(json.dumps(messages)))
+        reply = call({"model": served, "messages": messages, "tools": TOOLS, "max_tokens": 3,
+                      "temperature": 0.0, "chat_template_kwargs": THINKING})
+        seen.append([reply["usage"]["prompt_tokens"], reply["usage"]["prompt_tokens_details"]["cached_tokens"]])
+        messages.append({"role": "assistant", "content": "", "reasoning_content": f"Step {k} next.",
+                         "tool_calls": [{"id": f"call-{k}", "type": "function", "function": {
+                             "name": "shell", "arguments": json.dumps({"command": f"node step{k}.js"})}}]})
+        messages.append({"role": "tool", "tool_call_id": f"call-{k}", "content": f"step {k} ok\n" * 20})
+    return seen, sent
+
+goose = "You are goose, a general-purpose agent. " * 12
+cut, cut_sent = chat("A. " + goose, 3)
+probe = {"role": "assistant", "content": BOUNDARY_PROBE}
+bounds = [stable_boundary(render(m), render([*m, probe], False)) for m in cut_sent]
+prompts = [len(render(m)) for m in cut_sent]
+first = render(cut_sent[0])
+tail_free = provider.tokenizer.decode(first[-12:]).endswith("<|im_start|>assistant\n") \
+    and provider.tokenizer.rfind_think_start(first, start=len(first) - 11) < 0
+
+last = render(cut_sent[-1])
+restored, rest = cache.fetch_nearest_cache(provider.model_key, last)
+rings = [layer for layer in restored if isinstance(layer, RotatingKVCache)]
+warm = provider.model(mx.array([rest]), cache=restored)[0, -1]
+cold = provider.model(mx.array([last]), cache=make_prompt_cache(provider.model))[0, -1]
+
+transient_tail_boundary = False
+control, _ = chat("B. " + goose, 3)
+print("GOOSE_TEST " + json.dumps({
+    "cut": cut, "control": control, "bounds": bounds, "prompts": prompts, "tail_free": bool(tail_free),
+    "restored": len(last) - len(rest), "ring_offsets": [int(r.offset) for r in rings],
+    "warm_equals_cold": bool(mx.allclose(warm, cold, atol=1e-4).item())
+        and int(mx.argmax(warm).item()) == int(mx.argmax(cold).item()),
+}), flush=True)
+os._exit(0)
+"#;
+        let program = format!(
+            "{}\
+             class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
+             group = _Group()\n{}QWEN38 = {qwen}\nMIMO26 = {mimo}\n{checks}",
+            tensor_modules(),
+            &wrapper[start..end],
+            qwen = serde_json::to_string(QWEN38).unwrap(),
+            mimo = serde_json::to_string(MIMO26).unwrap(),
+        );
+        let seen = run_against_real_packages(&python, &program, &spec);
+        let pairs = |key: &str| -> Vec<(u64, u64)> {
+            serde_json::from_value(seen[key].clone()).unwrap_or_else(|e| panic!("{key}: {e}"))
+        };
+        let bounds: Vec<u64> = serde_json::from_value(seen["bounds"].clone()).unwrap();
+        let prompts: Vec<u64> = serde_json::from_value(seen["prompts"].clone()).unwrap();
+        let (cut, control) = (pairs("cut"), pairs("control"));
+        assert_eq!(seen["tail_free"], true, "MiMo thinking on ends on a bare assistant turn: {seen}");
+        assert_eq!(
+            cut.iter().map(|(prompt, _)| *prompt).collect::<Vec<_>>(),
+            prompts,
+            "the rank served the prompt the messages render to"
+        );
+        for step in 1..cut.len() {
+            assert_eq!(
+                cut[step].1,
+                bounds[step - 1],
+                "step {step} reads the previous request's conversation, and says so: {cut:?} vs \
+                 boundaries {bounds:?}"
+            );
+            assert!(
+                prompts[step] - cut[step].1 < prompts[step] / 3,
+                "step {step} re-reads only the new tool step: {cut:?}"
+            );
+            assert!(
+                control[step].1 * 4 < bounds[step - 1],
+                "NEGATIVE CONTROL (no cut): step {step} reads almost nothing: {control:?}"
+            );
+        }
+        let offsets: Vec<u64> = serde_json::from_value(seen["ring_offsets"].clone()).unwrap();
+        assert!(
+            !offsets.is_empty() && offsets.iter().all(|o| *o > 8 * 20),
+            "the restored sliding-window rings sit far past their 8-token window: {seen}"
+        );
+        assert_eq!(
+            seen["restored"].as_u64(),
+            Some(bounds[bounds.len() - 1]),
+            "the newest entry is the last request's boundary: {seen}"
+        );
+        assert_eq!(
+            seen["warm_equals_cold"], true,
+            "a hit restored past the window answers as a cold read: {seen}"
         );
     }
 
