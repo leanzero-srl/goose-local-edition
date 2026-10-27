@@ -7,7 +7,7 @@
 //! peer through `ssh -tt`, whose pty makes the remote rank die with its session (measured
 //! 2026-09-24: killing the local ssh client took the remote pid within 1 s).
 //!
-//! The program is embedded here and passed base64 on the command line, so a node needs nothing
+//! The program is embedded here and passed zlib-compressed base64 on the command line, so a node needs nothing
 //! installed beyond its interpreter: `rank_env.py` (the backend env, `emit`, the memory reporter —
 //! every rank), `rank_formation.py` (a JACCL group's formation handshake, Q-136), `rank_live.py` (rank 0's live request table, Rapid-MLX's `/v1/status` shape),
 //! `rank_thinking.py` (a chat request's thinking switch, resolved as the single engine resolves it),
@@ -81,7 +81,12 @@ const PIPELINE_PROGRAM: &str = concat!(
     include_str!("rank_thinking.py"),
     include_str!("pipeline_rank.py")
 );
-const BOOT: &str = "import base64,sys;exec(base64.b64decode(sys.argv[1]))";
+/// The program rides zlib-compressed: a peer's rank command is ONE ssh exec request, and OpenSSH
+/// drops a request past its 256 KiB packet ("Connection reset by peer", ssh exit 255 — measured
+/// 2026-10-27 against the mule: a 262,000-byte command ran, 300,000 reset). The tensor program
+/// grew to 264,416 bytes, 352,555 as base64, and every rank 1 died in startup; compressed it is
+/// 80,944 bytes (107,925 as base64).
+const BOOT: &str = "import base64,sys,zlib;exec(zlib.decompress(base64.b64decode(sys.argv[1])))";
 const TAIL_LINES: usize = 200;
 
 /// What a rank runs, with the fields only that program reads (flattened into the spec JSON).
@@ -954,7 +959,7 @@ pub fn python_args(spec: &RankSpec) -> Result<Vec<String>> {
     let mut args = vec![
         "-c".to_string(),
         BOOT.to_string(),
-        b64.encode(spec.program_source()),
+        encode_program(spec.program_source()),
         b64.encode(serde_json::to_vec(spec)?),
         RANK_MARKER.to_string(),
     ];
@@ -962,6 +967,29 @@ pub fn python_args(spec: &RankSpec) -> Result<Vec<String>> {
         args.push(format!("{OWNER_ARG_PREFIX}{owner}"));
     }
     Ok(args)
+}
+
+/// A program as BOOT reads it: zlib, then base64.
+fn encode_program(source: &str) -> String {
+    use std::io::Write as _;
+    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+    z.write_all(source.as_bytes())
+        .and_then(|()| z.finish())
+        .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
+        .expect("compressing into memory cannot fail")
+}
+
+#[cfg(test)]
+fn decode_program(arg: &str) -> String {
+    use std::io::Read as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(arg)
+        .unwrap();
+    let mut out = String::new();
+    flate2::read::ZlibDecoder::new(&bytes[..])
+        .read_to_string(&mut out)
+        .unwrap();
+    out
 }
 
 /// The open-file limit a peer's rank shell raises itself to before the interpreter starts: an ssh
@@ -1532,6 +1560,20 @@ pub(crate) mod tests {
         assert_eq!(back.owner, None);
     }
 
+    #[test]
+    fn a_peer_rank_command_fits_one_ssh_exec_request() {
+        // OpenSSH reset a 300,000-byte exec request and ran a 262,000-byte one (the mule,
+        // 2026-10-27); half of that leaves the spec and the next programs room.
+        for program in [TENSOR_PROGRAM, PIPELINE_PROGRAM] {
+            let sent = encode_program(program).len();
+            assert!(
+                sent < 131_072,
+                "a rank program rides {sent} bytes on the ssh command line"
+            );
+            assert_eq!(decode_program(&encode_program(program)), program);
+        }
+    }
+
     #[tokio::test]
     async fn the_boot_line_runs_the_wrapper_it_is_given() {
         // The boot one-liner, fed a stand-in wrapper, sees the spec as argv[2] and the marker as
@@ -1542,7 +1584,7 @@ pub(crate) mod tests {
             .args([
                 "-c",
                 BOOT,
-                &b64.encode(stand_in),
+                &encode_program(stand_in),
                 &b64.encode(r#"{"rank":1}"#),
                 RANK_MARKER,
             ])
@@ -1656,8 +1698,7 @@ pub(crate) mod tests {
         }
         assert_eq!(specs[1].coordinator.as_deref(), Some("192.168.0.1:32323"));
         let args = python_args(&specs[1]).unwrap();
-        let b64 = base64::engine::general_purpose::STANDARD;
-        let program = String::from_utf8(b64.decode(&args[2]).unwrap()).unwrap();
+        let program = decode_program(&args[2]);
         assert_eq!(
             program,
             concat!(
@@ -10444,8 +10485,7 @@ print("ok")
             2.0,
         );
         let args = python_args(&specs[1]).unwrap();
-        let b64 = base64::engine::general_purpose::STANDARD;
-        let program = String::from_utf8(b64.decode(&args[2]).unwrap()).unwrap();
+        let program = decode_program(&args[2]);
         assert_eq!(
             program,
             concat!(
@@ -10473,8 +10513,12 @@ print("ok")
                 include_str!("rank_wrapper.py")
             )
         );
-        let spec: serde_json::Value =
-            serde_json::from_slice(&b64.decode(&args[3]).unwrap()).unwrap();
+        let spec: serde_json::Value = serde_json::from_slice(
+            &base64::engine::general_purpose::STANDARD
+                .decode(&args[3])
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(spec["context_window"], 262_144);
     }
 

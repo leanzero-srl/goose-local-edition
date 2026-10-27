@@ -20,6 +20,7 @@ sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 minijinja = { version = "2.20", default-features = false, features = ["unstable_machinery", "macros", "loop_controls", "multi_template"] }
 base64.workspace = true
 futures.workspace = true
+flate2 = "1.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
