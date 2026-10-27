@@ -37,7 +37,10 @@ fn main() -> Result<()> {
         .name("goose-cli-main".to_string())
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {
+            // Workers get the main thread's 8 MiB: custom ACP requests run as their own tasks
+            // on the workers, and the debug build's dispatch future overflowed the 2 MiB default.
             let runtime = tokio::runtime::Builder::new_multi_thread()
+                .thread_stack_size(8 * 1024 * 1024)
                 .enable_all()
                 .build()
                 .expect("Failed to build Tokio runtime");

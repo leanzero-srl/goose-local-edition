@@ -2352,7 +2352,7 @@ function ModelsSection({
             label: (
               <>
                 {intl.formatMessage(MODELS_I18N.onYourMacs)}
-                <span className={cx('text-lz-meta', TNUM)}>{rowCount}</span>
+                {rowCount != null && <span className={cx('text-lz-meta', TNUM)}>{rowCount}</span>}
               </>
             ),
           },
@@ -3112,7 +3112,7 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
               label: (
                 <>
                   {intl.formatMessage(VIEW_I18N.tabModels)}
-                  <span className={cx('text-lz-meta', TNUM)}>{modelCount}</span>
+                  {modelCount != null && <span className={cx('text-lz-meta', TNUM)}>{modelCount}</span>}
                 </>
               ),
             },

@@ -443,11 +443,17 @@ export function matrixRows(
   return [...ids].sort((a, b) => a.localeCompare(b));
 }
 
-/** What the Models tab counts: exactly the rows the table shows. */
+/**
+ * What the Models tab counts: exactly the rows the table shows — or `null` while no Mac's models
+ * folder has been read yet. A list still on its way is not an empty one: the badge and the setup
+ * strip read "0" for as long as the first models list was queued (measured 30+ s on Gabee, 2026-10-27).
+ */
 export function matrixRowCount(
   ctx: Pick<MacsValue, 'macs' | 'factsOf' | 'downloads' | 'copies'>
-): number {
-  return matrixRows(ctx).length;
+): number | null {
+  const rows = matrixRows(ctx);
+  const anyRead = ctx.macs.some((mac) => ctx.factsOf(mac.key).models !== null);
+  return rows.length === 0 && !anyRead ? null : rows.length;
 }
 
 export function ModelMatrix({

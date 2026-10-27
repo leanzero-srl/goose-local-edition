@@ -315,6 +315,17 @@ async function call<T>(method: string, params: Record<string, unknown>): Promise
  * Every Link state this window reads goes to MAIN too (main owns no ACP client), so the menu-bar
  * tray says whether the mesh is up — and says it loudly when a launch reconnect failed.
  */
+/**
+ * Window event fired after a Connect or Disconnect returns, from whichever screen made it (the Link
+ * tab, the tray). `reportToMain` already carries the Link line; the tray's per-Mac lines are read by
+ * `useLinkTrayReporter`, which otherwise would not look again for up to 30 s.
+ */
+export const LINK_CHANGED_EVENT = 'leanzero-link-changed';
+
+function announceLinkChanged(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(LINK_CHANGED_EVENT));
+}
+
 function reportToMain(state: LinkState): LinkState {
   const report = (
     window as unknown as {
@@ -347,7 +358,9 @@ export async function leanzeroLinkVerify(email: string, code: string): Promise<V
  * `connected`, so every later launch reconnects on its own.
  */
 export async function leanzeroLinkConnect(): Promise<LinkState> {
-  return reportToMain(await call<LinkState>('_goose/unstable/leanzeroLink/connect', {}));
+  const state = reportToMain(await call<LinkState>('_goose/unstable/leanzeroLink/connect', {}));
+  announceLinkChanged();
+  return state;
 }
 
 export async function leanzeroLinkStatus(): Promise<LinkState> {
@@ -359,7 +372,9 @@ export async function leanzeroLinkStatus(): Promise<LinkState> {
  * (`loggedIn`). Connect is the way back.
  */
 export async function leanzeroLinkDisconnect(): Promise<LinkState> {
-  return reportToMain(await call<LinkState>('_goose/unstable/leanzeroLink/disconnect', {}));
+  const state = reportToMain(await call<LinkState>('_goose/unstable/leanzeroLink/disconnect', {}));
+  announceLinkChanged();
+  return state;
 }
 
 /** Tear down + clear identity. `wipe` also removes the mesh state dir (slower re-login). */

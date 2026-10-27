@@ -378,17 +378,26 @@ impl HandleDispatchFrom<Client> for GooseAcpHandler {
                 .await
                 .otherwise({
                     let agent = agent.clone();
-                    let cx = cx.clone();
                     |message: Dispatch| async move {
                         match message {
                             Dispatch::Request(req, responder) => {
-                                cx.spawn(async move {
-                                    match agent.dispatch_custom_request(&req.method, req.params).await {
-                                        Ok(json) => responder.respond(json)?,
-                                        Err(e) => responder.respond_with_error(e)?,
+                                // Each custom request is its OWN tokio task. `cx.spawn` runs every
+                                // task of the connection inside one future (agent-client-protocol's
+                                // task actor polls them all from a single FuturesUnordered), so one
+                                // handler doing synchronous work — a walk of the models folder over
+                                // NFS, a config re-parse — held every other request of the desktop
+                                // behind it: measured 2026-10-27 on Gabee, a 0.7 s Hugging Face
+                                // browse answered after 42 s and Link status polls after 30 s.
+                                tokio::spawn(async move {
+                                    let method = req.method.clone();
+                                    let sent = match Box::pin(agent.dispatch_custom_request(&req.method, req.params)).await {
+                                        Ok(json) => responder.respond(json),
+                                        Err(e) => responder.respond_with_error(e),
+                                    };
+                                    if let Err(e) = sent {
+                                        debug!(%method, error = ?e, "custom request reply not delivered (connection closed?)");
                                     }
-                                    Ok(())
-                                })?;
+                                });
                                 Ok(())
                             }
                             Dispatch::Response(result, router) => {

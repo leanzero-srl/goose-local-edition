@@ -6125,6 +6125,9 @@
   "mlxSetup.step2Next": {
     "defaultMessage": "Get a model"
   },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Reading your Macs…"
+  },
   "mlxSetup.step3": {
     "defaultMessage": "Run it"
   },
