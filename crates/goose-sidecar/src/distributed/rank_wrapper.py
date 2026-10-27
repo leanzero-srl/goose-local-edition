@@ -1608,8 +1608,10 @@ def _tokenize(self, tokenizer, request, args):
     its transient tail (rank_boundary.py), and one ending at the chat's stable head (Q-347).
     `settle` counts with the upstream one."""
     tail = getattr(request, "transient_tail", None)
-    if not tail or request.request_type != "chat" or not tokenizer.has_chat_template:
+    if request.request_type != "chat" or not tokenizer.has_chat_template:
         return original_tokenize(self, tokenizer, request, args)
+    if not tail:
+        return tokenize_ending_at_the_last_message(self, tokenizer, request, args)
     # Upstream rewrites the messages in place (content lists joined, tool-call arguments parsed);
     # the stable conversation is rendered from the same rewrite of an untouched copy.
     messages = copy.deepcopy(request.messages)
@@ -1643,6 +1645,45 @@ def _tokenize(self, tokenizer, request, args):
         head,
         getattr(request, "conversation", None),
     )
+    segments, segment_types = cut_at_boundary(segments, segment_types, boundary)
+    segments, segment_types = cut_at_head(segments, segment_types, head)
+    return prompt, segments, segment_types, initial_state
+
+
+def tokenize_ending_at_the_last_message(self, tokenizer, request, args):
+    """A chat request that names no transient tail (goose's `openai` provider: every benchmark
+    entrant at a local engine) whose generation prompt holds no think token: a segment ends at its
+    last message, cut as a tail request's stable boundary is (the whole conversation is stable).
+    mlx_lm 0.31.3 snapshots a request only at segment ends and at the end of its answer; it ends a
+    segment before the generation prompt only when that prompt holds `<think>` (server.py, "a tail
+    segment that contains thinking tokens"). MiMo-V2.6 thinking on ends its prompt on a bare
+    `<|im_start|>assistant\n` and writes `<think>` itself, so nothing was kept but the 3-token
+    system segment and the prompt+answer entry, which the next request extends only when its
+    re-rendered answer is token-identical to the generated one (reasoning, tool-call XML). A
+    sliding-window layer's RotatingKVCache cannot be trimmed back past its window, so every other
+    turn re-read the whole conversation. A snapshot at a segment end is restored as is: the
+    window ring holds exactly the last tokens before that point, so a hit is the cold answer."""
+    messages = copy.deepcopy(request.messages) if transient_tail_boundary else None
+    tokenized = original_tokenize(self, tokenizer, request, args)
+    prompt, segments, segment_types, initial_state = tokenized
+    if messages is None or not segment_types or segment_types[-1] == "assistant":
+        return tokenized  # the cheap half of `last_message_boundary`, before any render
+    server.process_message_content(messages)
+    template_args = self.model_provider.cli_args.chat_template_args
+    if args.chat_template_kwargs:
+        template_args = {**template_args, **args.chat_template_kwargs}
+    future = tokenizer.apply_chat_template(
+        [*messages, {"role": "assistant", "content": BOUNDARY_PROBE}],
+        tools=request.tools,
+        tokenize=True,
+        add_generation_prompt=False,
+        **template_args,
+    )
+    boundary = last_message_boundary(prompt, segment_types, future)
+    if not boundary:
+        return tokenized
+    head = cut_stable_head(tokenizer, messages, request.tools, template_args, prompt)
+    record_cuts(prompt, boundary, head, getattr(request, "conversation", None))
     segments, segment_types = cut_at_boundary(segments, segment_types, boundary)
     segments, segment_types = cut_at_head(segments, segment_types, head)
     return prompt, segments, segment_types, initial_state
@@ -2068,7 +2109,7 @@ def validate_model_parameters(self):
         tokenizer = provider.tokenizer
         try:
             self.chat_template_kwargs = resolved_template_kwargs(
-                self.body, template_reasons(tokenizer.chat_template)
+                self.body, template_reasons(tokenizer.chat_template), TOOL_TURNS_THINK
             )
         except ThinkingRefused as refusal:
             raise Refused(400, str(refusal), "unsupported_parameter")

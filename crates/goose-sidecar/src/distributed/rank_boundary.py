@@ -81,6 +81,18 @@ def stable_boundary(prompt, future):
     return max(0, common_prefix(prompt, future) - BOUNDARY_REPLAY_TOKENS)
 
 
+def last_message_boundary(prompt, segment_types, future):
+    """Where a request that names no transient tail is cut: its whole conversation is stable, so
+    the boundary is `stable_boundary(prompt, future)` (`future` = its messages plus a probe answer,
+    rendered without a generation prompt) — but only when mlx_lm found no tail segment of its own
+    (the last segment is not "assistant": the generation prompt holds no think token, MiMo-V2.6
+    thinking on). 0 = no cut."""
+    if not segment_types or segment_types[-1] == "assistant":
+        return 0
+    boundary = stable_boundary(prompt, future)
+    return boundary if 0 < boundary < len(prompt) else 0
+
+
 def cut_at_boundary(segments, segment_types, boundary):
     """mlx_lm's segments with a segment ending at `boundary` (typed "user", as mlx_lm types a
     conversation prefix), and everything after it one segment of the last one's type: past the

@@ -2405,6 +2405,15 @@ assert resolved_template_kwargs({"messages": [], "tools": tools, "tool_choice": 
     "tool_choice none: prose on tool definitions keeps the template's default"
 assert resolved_template_kwargs({"messages": [], "tools": tools, "reasoning_effort": "none"}, True) \
     == {"enable_thinking": False}
+# MiMo (rank_pipeline_split.py sets TOOL_TURNS_THINK): an agent turn keeps the template's default
+# (thinking on), a pin or effort "none" still decides, and a tool-less helper call stays off.
+assert TOOL_TURNS_THINK is False, "only the runner of a model that thinks on tool turns sets it"
+assert resolved_template_kwargs(agent, True, True) == {}, "auto + tools on MiMo: the template's own on"
+assert resolved_template_kwargs({**agent, "chat_template_kwargs": {"enable_thinking": False}}, True, True) \
+    == {"enable_thinking": False}, "goose's thinking-off helper pin wins"
+assert resolved_template_kwargs({**agent, "reasoning_effort": "none"}, True, True) == {"enable_thinking": False}
+assert resolved_template_kwargs({"messages": []}, True, True) == {"enable_thinking": False}, \
+    "a tool-less helper call (title, label) stays off"
 for asked in ({"reasoning_effort": "high"}, {"reasoning_max_tokens": 512}, {"reasoning": {"effort": "low"}}):
     try:
         resolved_template_kwargs({"messages": [], **asked}, True)
@@ -3387,6 +3396,20 @@ cut, kinds = cut_at_boundary([system, context, think], ["system", "user", "assis
 assert cut == [system, prompt[30:]] and kinds == ["system", "assistant"], "an end already there stays"
 for outside in (0, 100, 120):
     assert cut_at_boundary([prompt], ["assistant"], outside) == ([prompt], ["assistant"]), outside
+
+# A request with no transient tail (goose's openai provider) whose generation prompt holds no
+# think token (MiMo-V2.6 thinking on: system, then one "user" segment to the prompt's end): cut
+# where its conversation plus a probe answer stops agreeing, less the replay margin; mlx_lm's own
+# think tail (a thinking-off prompt) and a prompt that agrees nowhere are left alone.
+future = prompt[:95] + [-1] * 10
+assert last_message_boundary(prompt, ["system", "user"], future) == 95 - BOUNDARY_REPLAY_TOKENS
+assert last_message_boundary(prompt, ["system", "user", "assistant"], future) == 0, "upstream's tail"
+assert last_message_boundary(prompt, ["user"], [-1] * 100) == 0
+assert last_message_boundary(prompt, ["user"], prompt + [7]) == 100 - BOUNDARY_REPLAY_TOKENS
+assert last_message_boundary(prompt[:5], ["user"], prompt[:5] + [7]) == 0, "nothing worth keeping"
+assert last_message_boundary(prompt, [], future) == 0
+cut, kinds = cut_at_boundary([system, prompt[30:]], ["system", "user"], 87)
+assert cut == [system, prompt[30:87], prompt[87:]] and kinds == ["system", "user", "user"], (cut, kinds)
 
 # Q-294: the conversation prefix is the key a cut named, matched by its tokens, held by identity.
 from collections import deque

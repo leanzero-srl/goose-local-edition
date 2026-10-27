@@ -17,6 +17,9 @@
 #   (2026-10-27), GOOSE_RANK_PIPELINE_WARM says how long each GPU took to answer.
 # - the tool parser for a template that writes `<tool_call><function=` (MiMo): qwen3_coder, where
 #   the model's tokenizer_config.json names json_tools.
+# - MiMo's agent turns think (rank_thinking.py `TOOL_TURNS_THINK`): the card's default, Xiaomi's API
+#   and the cloud baseline all think on tool-bearing requests; the single engine's
+#   thinking-off-on-tools rule made a local run a different, non-thinking model.
 # - one rank-invariant prompt-cache byte count (`pipeline_cache_weights`): every rank runs its own
 #   prompt cache over the same requests and must evict alike (a rank that reuses a different
 #   prefix runs a different number of prefill steps, and the hidden states it sends no longer
@@ -94,6 +97,8 @@ if spec.get("pipeline_split") is not None:
         return tokenizer
 
     pipeline_utils.load_tokenizer = load_tokenizer_reading_template
+
+    TOOL_TURNS_THINK = True
 
     original_pipeline = pipeline_class.pipeline
     pipeline_applied = []
@@ -191,5 +196,10 @@ if spec.get("pipeline_split") is not None:
         weigh(getattr(pipeline_cache, name), swa_weight)
     emit(
         "RANK_PIPELINE_SPLIT",
-        {"rank": spec["rank"], "split": pipeline_split, "cache_weights": weights},
+        {
+            "rank": spec["rank"],
+            "split": pipeline_split,
+            "cache_weights": weights,
+            "tool_turns_think": TOOL_TURNS_THINK,
+        },
     )

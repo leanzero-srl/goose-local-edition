@@ -32,6 +32,15 @@ TOOL_XML_MARKERS = (
 )
 THINK_MARKERS = ("enable_thinking", "<think>", "</think>")
 
+# A model whose agent turns think by design: its tool-bearing requests keep the template's own
+# default (thinking on) instead of the single engine's thinking-off-on-tools rule. Set by the rank
+# program of a runner that serves only such a model (rank_pipeline_split.py: mimo_v2). MiMo-V2.6's
+# card turns thinking on by default, Xiaomi's API runs it on, and the cloud baseline goose's
+# Gauntlet compares with thought on every call (OpenRouter, 2026-10-02: 265,193 reasoning tokens of
+# 400k out); off, a local MiMo run answers a different question than the cloud one. A request
+# that pins `enable_thinking` (goose's helper calls, a profile switch) still decides.
+TOOL_TURNS_THINK = False
+
 
 class ThinkingRefused(ValueError):
     """The request asks for a reasoning control this engine cannot honour."""
@@ -75,10 +84,11 @@ def refused_reasoning_controls(body):
     return refused
 
 
-def resolved_thinking(body, reasons):
+def resolved_thinking(body, reasons, tool_turns_think=False):
     """The single engine's answer for one chat request (routes/chat.py: effort "none", the tools
     gate, the casual gate, then `_resolve_enable_thinking`): True/False, or None = the template's
-    own default. `reasons` = `template_reasons` of the served template."""
+    own default. `reasons` = `template_reasons` of the served template; `tool_turns_think` =
+    `TOOL_TURNS_THINK` (a tool-bearing request keeps the template's default)."""
     refused = refused_reasoning_controls(body)
     if refused:
         raise ThinkingRefused(
@@ -92,16 +102,16 @@ def resolved_thinking(body, reasons):
     if body.get("reasoning_effort") == "none":
         return False
     if body.get("tools"):
-        return None if body.get("tool_choice") == "none" else False
+        return None if tool_turns_think or body.get("tool_choice") == "none" else False
     return False if reasons else None
 
 
-def resolved_template_kwargs(body, reasons):
+def resolved_template_kwargs(body, reasons, tool_turns_think=False):
     """The chat_template_kwargs the template renders this request with: the client's own, with
     `enable_thinking` as the resolved boolean (absent only when the template's default stands)."""
     kwargs = body.get("chat_template_kwargs")
     kwargs = dict(kwargs) if isinstance(kwargs, dict) else {}
-    thinking = resolved_thinking(body, reasons)
+    thinking = resolved_thinking(body, reasons, tool_turns_think)
     if thinking is None:
         kwargs.pop("enable_thinking", None)
     else:
