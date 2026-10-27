@@ -392,3 +392,43 @@ and commit in ONE command (`git add <paths> && git commit`), never leave things 
 - Still to do: Start, 3 prompts (coding/reasoning/Jira) load time + tok/s vs 277 s / ~40 tok/s; then 16k/32k/64k
   prompts (TTFT, prefill, decode, peak mem both Macs); split-view screenshot to
   /Volumes/AI-workhorse/media/goose/mimo-2026-10-26/ (ai-disk-guard first); Stop; no ranks left; skill notes.
+
+## Session 9 (2026-10-27 02:10-08:20 EET): MiMo split LIVE through goose; 5 fixes; long-context ext OPEN
+- Head 95784b84b5. Fixes (all measured live): 987d408419 rank program zlib (rank-1 ssh cmd was 354,529 B > OpenSSH
+  256 KiB exec packet: "Connection reset by peer", exit 255); 0a79cc72a5 timed local GPU warm-up + 2nd CPU barrier
+  before the seed (rank0 GPU took 6.9-16.4 s to answer after load, rank1's GPU-stream seed all_sum hit "[METAL] GPU
+  Timeout Error"; 88ecb28d6d CPU-stream seed was REFUTED); 95784b84b5 MiMo tool parser -> qwen3_coder after tokenizer
+  load (tokenizer_config.json says json_tools; f75971e5de _infer patch REFUTED). Launch tests 75/75.
+- Launch: installed app quit by osascript; dev app = cd ui/desktop && GOOSE_PATH_ROOT=/tmp/gmimo/root
+  GOOSE_USER_DATA_DIR=/tmp/gmimo/userdata GOOSE_DISABLE_KEYRING=1 nohup "out/Goose Swarm-darwin-arm64/Goose Swarm.app/
+  Contents/MacOS/Goose Swarm" --remote-debugging-port=9461 &; nav #/leanzero-swarm?tab=mlx&mlx=engine; click
+  [data-testid=placement-run-split]; Stop = [data-testid=placement-stop-split] then dialog "Stop the split".
+  CDP driver scratchpad mimo9/cdp2.mjs (picks the main window; Run opens a 2nd "engine-glance" window).
+- TRAP NFS: mule weights are an rclone NFS mount of the workhorse SSD (soft,intr, 192.168.0.2:12049). A cold rank-1
+  load fails ~1/2 with "nfs server 192.168.0.2:/: not responding" + "[load_safetensors] Failed to open file
+  ...00003...". Workaround before every Run: scratchpad mimo9/nfswarm.sh (mx.load all 36 shards on the mule, ~11 s).
+  Root cause NOT found (rclone/mount infra, not goose).
+- TRAP memory: plan sizes context to spare ~0 GB; workhorse swap grew 0.6 -> 3.2 GB during load; at 03:08 goose's
+  watchdog closed admission and at 04:10 stopped the split ("available 4.5 GiB of 96.0") when other apps grew.
+- Numbers (split 18/30 or 19/29, JACCL, context 257,536): click->first answer 266 s (load 154-285 s; manual 277 s).
+  Direct to :8191: short prompts prefill ~135 tok/s, decode 34.8-35.3 tok/s (manual ~40). 16k: TTFT 53.4 s, prefill
+  292, decode 31.2. 32k: 109.7 s, 288, 31.0. 64k: 562.4 s, 112 (slows from ~270 to ~80 tok/s after ~19k), 27.5.
+  Peaks (cumulative, incl. prompt cache): rank0 71.3/72.6/75.0 GB of 83.5 limit, rank1 104.0/105.4/108.1 of 115.4;
+  swap flat during the long runs (wh 1.76-1.94 GB, wm 0.76). Through goose (omlx, ~19.8k-token system prompt):
+  first call 72 s, cached 14-18 s; coding now writes both files via tools and pytest 4 passed (was 4 empty responses).
+- Quality: coding correct (independently re-run); reasoning correct (10:56:40, 155.6 km; one garbled self-check line);
+  Jira JQL correct, but "single quotes not allowed in membersOf" is false. 16k: 3 signatures real; 32k: 10 points,
+  quotes ~verbatim except "`judge_skipped` reached 84" (not in doc) and the "oldest open item" (doc slice has none);
+  64k: all 7 consts listed, integrate-verify line found but quoted with a wrong line prefix.
+- OPEN (owner, 2026-10-27): 128k, ~250k, 300k, 350k. Planner (layer_split.rs stage_need) at context 360k refuses:
+  rank0 87.57/83.49 GB, rank1 121.46/115.45 — dominated by the prefill score workspace chunk x width x (heads*act+1)
+  (256-token chunk at 360k ~23.7 GB; no fused SDPA for head_dim 192), KV is only 2560 B/token/full layer. 128k and
+  ~250k fit the derived 257,536 context as-is: restart (clears prompt cache), nfswarm, Run, scratchpad mimo9/hc.sh
+  (memwatch.sh writes ABORT at +2 GB swap; owner rule: >=8 GB headroom under each wired limit, abort at warn).
+  300k/350k need a chunk below KV_CACHE_STEP (256) in layer_split.rs (chunk 64 cuts the workspace 4x) + a test.
+  Prompts: mkprompts.py (MiMo tokenizer) — swarm.rs is 1.8 MB (~440k tokens), enough for 350k.
+- UI findings: engine hero says "Stopped / no model mounted" while the split serves; split card estimates disagree
+  (38k/49k/78k "fits only at" vs preflight 181,504 vs Ready 257,536); "goose's measured runs could not be read: the
+  split reports runner mlxLmPipeline, which goose's plan does not key".
+- End state: no ranks on either Mac; dev app quit; installed app restored (pid 51399, CDP 9897). Config restored
+  (scratchpad mimo9/config.before-context.yaml). Screenshot /Volumes/AI-workhorse/media/goose/mimo-2026-10-26/.
