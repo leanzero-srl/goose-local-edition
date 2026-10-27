@@ -37,7 +37,7 @@ The archive and exact hashes were handed to the host-upgrade lane for its author
 
 ## Incremental Rust-only candidate preparation
 
-The next candidate can reuse this immutable archive when its UI sources are unchanged. The preparation below is written and guard-tested; signing the new CLI remains pending its separate build/test gate. Do not use the old archive as a writable staging tree or change a running/installed app.
+The next candidate can reuse this immutable archive when its UI sources are unchanged. This path was executed for the separately gated Rust source `7a0e558f5`; the concrete result is recorded below. Do not use the old archive as a writable staging tree or change a running/installed app.
 
 `stage-incremental-cli.cjs` checks the exact baseline archive hash, caller-supplied gated CLI hash, and zero UI diff between the baseline source and the supplied new source commit. It extracts a fresh direct child of `/tmp`, records every file's bytes, mode, extended attributes and link target, and signs only the replacement CLI followed by the outer app envelope. This uses local `codesign`'s documented explicit-path signing and preserved metadata; `--deep` is used only for verification. Both the new CLI and the unchanged Electron main executable pass the narrow code-equivalence check. Every other fingerprint must stay identical, including nested signatures. Only the CLI, main executable's signature and outer `_CodeSignature/CodeResources` may change.
 
@@ -60,4 +60,18 @@ NODE_PATH="$REPOSITORY/ui/node_modules" node \
   /tmp/goose-controller-incremental-NEW_SOURCE/receipt.json
 ```
 
-Preparation checks: source `7a0e558f5e5df93f196cba32a9b6c3215cd3d3ab` has zero UI changes from the original candidate. The real baseline fingerprint reads 18,476 entries (15,986 files, 41 symlinks), including extended attributes. Identical fixtures pass; changed bytes, an escaping link, altered nested signature attributes and corruption of the actual nested Electron helper are rejected. An actual incremental signing/notarization run remains a separate measurement.
+Preparation checks: source `7a0e558f5e5df93f196cba32a9b6c3215cd3d3ab` has zero UI changes from the original candidate. The real baseline fingerprint reads 18,476 entries (15,986 files, 41 symlinks), including extended attributes. Identical fixtures pass; changed bytes, an escaping link, altered nested signature attributes and corruption of the actual nested Electron helper are rejected. The executed incremental signing/notarization result follows.
+
+## Executed corrected candidate: 7a0e558f5
+
+The coordinator supplied the new CLI after gate `111523-e13b` exited zero: 25 core/query-plan tests, 349 Link tests, Goose/Link all-target Clippy and CLI build. The transferred input hash was checked before use. No desktop source or UI build changed.
+
+Fresh private staging and leaf-plus-envelope signing completed in 34.88 seconds. Exactly three entries changed: the CLI, Electron main executable signature, and outer `_CodeSignature/CodeResources`. All other bytes, modes, links and extended attributes remained equal across 18,476 entries. CLI and Electron executable equivalence passed. Apple accepted submission `039d5302-2aad-41b5-aa98-3a960f72e121`; notarization changed only the ticket `Contents/CodeResources`. Strict/deep signature, staple and Gatekeeper checks passed. Independent review re-ran these checks, recomputed the full live fingerprint and final archive hash, and passed the candidate.
+
+- New archive: `/tmp/goose-controller-incremental-7a0e558f5/Goose-Swarm-controller-notarized.zip`.
+- Archive SHA-256: `737dc6c118121b7c166c0d5ab23290209e96b7d2092c7e9c9411b2df6f96e2d9`.
+- Gated input CLI SHA-256: `76647602954114325c92bfdb65c9aa6af6aa6558a9ecda9d97ebcbacf0a8d1f2`.
+- Signed CLI SHA-256: `1ae01e13d58f08a2f9aa7ca53e17eca4fb298a8d2cf8c6fb9efaa84a916d5471`.
+- [Corrected candidate receipt](receipt-7a0e558f5.json) and [independent review](review-7a0e558f5.md).
+
+The prior `520c…` archive was preserved unchanged. The original-laptop upgrade lane received the new path/hash and began its own guarded verification. Installation and real profile behavior are separate rollout results; the packaging receipt's installed/launched flags describe this lane's actions at artifact completion.

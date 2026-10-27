@@ -1,0 +1,56 @@
+{
+  "baselineArchiveSha256": "520c8596fc790e8e4431e378aacef412458d905a19c7701209829a87ec9e94e0",
+  "desktopSourceSha": "b018f72f51f0746c4219f6f08015da6951fdbd42",
+  "cliSourceSha": "7a0e558f5e5df93f196cba32a9b6c3215cd3d3ab",
+  "inputCliSha256": "76647602954114325c92bfdb65c9aa6af6aa6558a9ecda9d97ebcbacf0a8d1f2",
+  "signedCliSha256": "1ae01e13d58f08a2f9aa7ca53e17eca4fb298a8d2cf8c6fb9efaa84a916d5471",
+  "cliEquivalence": {
+    "original": {
+      "vmSize": 166510592,
+      "fieldOffset": 1952,
+      "fileOffset": 298303488,
+      "fileSize": 162906516
+    },
+    "signed": {
+      "vmSize": 163840000,
+      "fieldOffset": 1952,
+      "fileOffset": 298303488,
+      "fileSize": 162906516
+    },
+    "equivalentSha256": "7bb6013d5cfcc9b6b92edf3c51bc5cf7dbbfa43a997eced8a6b9501eb0513339",
+    "byteLength": 461210004
+  },
+  "mainEquivalence": {
+    "original": {
+      "vmSize": 32768,
+      "fieldOffset": 600,
+      "fileOffset": 32768,
+      "fileSize": 772
+    },
+    "signed": {
+      "vmSize": 32768,
+      "fieldOffset": 600,
+      "fileOffset": 32768,
+      "fileSize": 772
+    },
+    "equivalentSha256": "f80839e46cf391f5891577a3fb269db6396cdd87b8a082d57f16b32173157ce4",
+    "byteLength": 33540
+  },
+  "changed": [
+    "Contents/MacOS/Goose Swarm",
+    "Contents/Resources/bin/goose",
+    "Contents/_CodeSignature/CodeResources"
+  ],
+  "app": "/tmp/goose-controller-incremental-7a0e558f5/Goose Swarm.app",
+  "notarized": true,
+  "installed": false,
+  "launched": false,
+  "notarizedAt": "2026-10-27T09:38:08.176Z",
+  "notarizationChanged": [
+    "Contents/CodeResources"
+  ],
+  "archive": "/private/tmp/goose-controller-incremental-7a0e558f5/Goose-Swarm-controller-notarized.zip",
+  "archiveSha256": "737dc6c118121b7c166c0d5ab23290209e96b7d2092c7e9c9411b2df6f96e2d9",
+  "notarySubmissionId": "039d5302-2aad-41b5-aa98-3a960f72e121",
+  "scope": "Packaging completion snapshot; original-profile rollout is tracked separately"
+}
