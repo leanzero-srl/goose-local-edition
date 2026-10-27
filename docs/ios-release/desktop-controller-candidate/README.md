@@ -34,3 +34,30 @@ Automatic approval review refused the combined signing/notarization command befo
 - [Machine-readable signing receipt](receipt.json) and [equivalence validator](cli-signature-equivalence.cjs).
 
 The archive and exact hashes were handed to the host-upgrade lane for its authorized idle-host install and real normal-launch checks. This receipt does not claim original-profile, phone-to-owner, or four-Mac integration success.
+
+## Incremental Rust-only candidate preparation
+
+The next candidate can reuse this immutable archive when its UI sources are unchanged. The preparation below is written and guard-tested; signing the new CLI remains pending its separate build/test gate. Do not use the old archive as a writable staging tree or change a running/installed app.
+
+`stage-incremental-cli.cjs` checks the exact baseline archive hash, caller-supplied gated CLI hash, and zero UI diff between the baseline source and the supplied new source commit. It extracts a fresh direct child of `/tmp`, records every file's bytes, mode, extended attributes and link target, and signs only the replacement CLI followed by the outer app envelope. This uses local `codesign`'s documented explicit-path signing and preserved metadata; `--deep` is used only for verification. Both the new CLI and the unchanged Electron main executable pass the narrow code-equivalence check. Every other fingerprint must stay identical, including nested signatures. Only the CLI, main executable's signature and outer `_CodeSignature/CodeResources` may change.
+
+After reviewing the signed receipt, `notarize-incremental-cli.cjs` checks that all bytes and attributes still match that receipt, submits the approved private candidate to Apple, validates signature/staple/Gatekeeper acceptance, permits only the notarization ticket's `Contents/CodeResources` change, and writes a new metadata-preserving archive and checksum inside that new staging directory. It does not overwrite the original archive, install or launch an app, or publish a release.
+
+The caller must first prove the new executable comes from the named committed source and passed its required build/tests; these scripts verify supplied provenance, not a Rust build themselves. The command shape is:
+
+```sh
+node docs/ios-release/desktop-controller-candidate/stage-incremental-cli.cjs \
+  "$REPOSITORY" /tmp/Goose-Swarm-controller-notarized.zip \
+  "$GATED_CLI" "$GATED_CLI_SHA256" "$GATED_SOURCE_SHA" \
+  /tmp/goose-controller-incremental-NEW_SOURCE
+
+# Existing local signing credentials only; run after reviewing the signed receipt.
+set -a
+. "$HOME/.leanzero/apple/notary.env"
+set +a
+NODE_PATH="$REPOSITORY/ui/node_modules" node \
+  docs/ios-release/desktop-controller-candidate/notarize-incremental-cli.cjs \
+  /tmp/goose-controller-incremental-NEW_SOURCE/receipt.json
+```
+
+Preparation checks: source `7a0e558f5e5df93f196cba32a9b6c3215cd3d3ab` has zero UI changes from the original candidate. The real baseline fingerprint reads 18,476 entries (15,986 files, 41 symlinks), including extended attributes. Identical fixtures pass; changed bytes, an escaping link, altered nested signature attributes and corruption of the actual nested Electron helper are rejected. An actual incremental signing/notarization run remains a separate measurement.
