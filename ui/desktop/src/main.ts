@@ -52,6 +52,7 @@ import {
 import { spawnBenchmarkWithPower } from './benchPower';
 import { attachBenchMarker, benchMarkerLabel } from './benchMarker';
 import { registerKeepAwake } from './keepAwake';
+import { registerGooseProtocolClient } from './protocolRegistration';
 import { registerSystemResumed } from './systemResumed';
 import { publicScoreDetails } from './benchPublicScore';
 import { benchmarkModelIdProblem } from './benchModelIdentity';
@@ -712,28 +713,7 @@ if (process.env.GOOSE_USE_KEYCHAIN !== '1') {
   app.commandLine.appendSwitch('password-store', 'basic'); // Linux parity; a no-op on macOS.
 }
 
-// In development mode, force registration as the default protocol client
-// In production, register normally
-if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-  // Development mode - force registration
-  console.log('[Main] Development mode: Forcing protocol registration for goose://');
-  app.setAsDefaultProtocolClient('goose');
-
-  if (process.platform === 'darwin') {
-    try {
-      // Reset the default handler to ensure dev version takes precedence
-      spawn('open', ['-a', process.execPath, '--args', '--reset-protocol-handler', 'goose'], {
-        detached: true,
-        stdio: 'ignore',
-      });
-    } catch {
-      console.warn('[Main] Could not reset protocol handler');
-    }
-  }
-} else {
-  // Production mode - normal registration
-  app.setAsDefaultProtocolClient('goose');
-}
+registerGooseProtocolClient(Boolean(MAIN_WINDOW_VITE_DEV_SERVER_URL));
 
 // Apply single instance lock on Windows and Linux where it's needed for deep links
 // macOS uses the 'open-url' event instead
