@@ -129,6 +129,13 @@ export interface MlxEngineStatus {
   chipError?: string | null;
   lastError?: string;
   /**
+   * While `state` is "stopped": what left it stopped — `owner` · `linkedMac` · `notStarted` ·
+   * `outside` (a SIGTERM/SIGINT no goose path sent: a stop, not a failure). Absent otherwise.
+   */
+  stoppedBy?: string | null;
+  /** When `stoppedBy` is `outside`: which engine process ended and how, in one neutral sentence. */
+  stoppedOutside?: string | null;
+  /**
    * While mounting: the sidecar's measure of the start — `phase` makingRoom | starting | loading |
    * warming, the engine process's resident bytes against the model's bytes on disk.
    */

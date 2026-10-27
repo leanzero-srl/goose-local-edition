@@ -2,7 +2,14 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Gauge } from 'lucide-react';
 import { EngineGlanceCard, StageIcon, glanceHeadline } from './EngineGlanceCard';
-import { setGlancePrefs, useEngineGlance } from './glanceStore';
+import {
+  dismissGlanceFailure,
+  glanceFailureKey,
+  setGlancePrefs,
+  useDismissedGlanceFailure,
+  useEngineGlance,
+  withoutDismissedFailure,
+} from './glanceStore';
 import { dockRestorable, dockShown } from '../../utils/engineGlanceRules';
 import { nodeHref } from '../../utils/navigationUtils';
 import { defineMessages, useIntl } from '../../i18n';
@@ -56,7 +63,10 @@ function useOpeners() {
 /** The docked card, or — hidden by the person — the one row that brings it back. */
 export function EngineGlanceDockSlot() {
   const intl = useIntl();
-  const push = useEngineGlance();
+  const live = useEngineGlance();
+  const dismissed = useDismissedGlanceFailure();
+  // A failure the person dismissed stays off the card until its words change (glanceStore).
+  const push = live && withoutDismissedFailure(live, dismissed);
   useListedNamesVersion();
   const [expanded, setExpanded] = useState(false);
   const { openEngine, openSession, openNode } = useOpeners();
@@ -78,6 +88,10 @@ export function EngineGlanceDockSlot() {
         onToggleExpanded={() => setExpanded((v) => !v)}
         onCollapsedChange={() => undefined}
         onHide={() => void setGlancePrefs({ ...push.prefs, inApp: false })}
+        onDismissFailure={() => {
+          const key = glanceFailureKey(push.engine);
+          if (key != null) dismissGlanceFailure(key);
+        }}
         forming={forming}
         chatName={listedTitleOf}
       />

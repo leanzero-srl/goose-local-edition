@@ -147,6 +147,7 @@ import { usePlacementPlans } from './usePlacementPlans';
 export { formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
 
 const i18n = defineMessages({
+  statusRetry: { id: 'mlxEngineView.statusRetry', defaultMessage: 'Read again' },
   engineValue: {
     id: 'mlxEngineView.engineValue',
     defaultMessage:
@@ -415,6 +416,7 @@ export function draftsEqual(a: NumericDrafts, b: NumericDrafts): boolean {
  */
 function StateBadge(props: {
   state: MlxEngineState;
+  stoppedBy: string | null;
   live: MlxLiveRead | null;
   distributed: MlxDistributedStatus | null;
   remote: MlxRemoteSingleStatus | null;
@@ -800,6 +802,8 @@ function gateTone(verdict: string): Tone | undefined {
 interface EngineSectionProps {
   status: MlxEngineStatus | null;
   statusError: string | null;
+  /** Read this Mac's engine status now (the unreachable banner's button; the ticks read too). */
+  onRetryStatus: () => void;
   settings: MlxEngineSettings | null;
   models: MlxLocalModel[];
   mountModelId: string | null;
@@ -860,6 +864,7 @@ function EngineSection(props: EngineSectionProps) {
   const {
     status,
     statusError,
+    onRetryStatus,
     settings,
     models,
     mountModelId,
@@ -1033,7 +1038,19 @@ function EngineSection(props: EngineSectionProps) {
   return (
     <div className="flex flex-col gap-4 pb-8">
       <MlxRestoreBanner refusedModelId={gateRefusalOf(status)?.modelId ?? null} />
-      {statusError && <ToneBanner tone="err" label="Engine unreachable" text={statusError} />}
+      {statusError && (
+        <ToneBanner
+          tone="err"
+          label="Engine unreachable"
+          text={statusError}
+          testId="mlx-status-error"
+          action={
+            <Button size="sm" variant="secondary" icon={<RefreshCw />} onClick={onRetryStatus}>
+              {intl.formatMessage(i18n.statusRetry)}
+            </Button>
+          }
+        />
+      )}
       {status && <MlxMountRefusalBanner status={status} />}
       {banners.gateBlock && (
         <ToneBanner
@@ -1094,6 +1111,7 @@ function EngineSection(props: EngineSectionProps) {
       >
         <MlxStateTile
           state={state}
+          stoppedBy={status?.stoppedBy ?? null}
           unreachable={statusError != null && status == null}
           live={live}
           history={tpsHistory}
@@ -3108,6 +3126,7 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
           <span className="pb-2">
             <StateBadge
               state={status.state}
+              stoppedBy={status.stoppedBy ?? null}
               live={live}
               distributed={distributed.status}
               remote={remote}
@@ -3134,6 +3153,7 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
         <EngineSection
           status={status}
           statusError={statusError}
+          onRetryStatus={() => void refreshStatus()}
           settings={settings}
           models={models}
           mountModelId={mountModelId}

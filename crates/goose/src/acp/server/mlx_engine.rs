@@ -217,13 +217,15 @@ pub(super) enum EngineStopper {
 
 static ENGINE_STOPPED_BY: StdMutex<Option<EngineStopper>> = StdMutex::new(None);
 
-/// `stoppedBy` for a stopped engine: who unmounted it, or `notStarted` when nobody did since this
-/// goose started. `None` for every other state.
-fn stopped_by_wire(state: &str, stopper: Option<EngineStopper>) -> Option<String> {
+/// `stoppedBy` for a stopped engine: who unmounted it; `outside` when no goose path did and
+/// something outside goose stopped the process (`outside`: the engine's own reading); else
+/// `notStarted` when nobody did since this goose started. `None` for every other state.
+fn stopped_by_wire(state: &str, stopper: Option<EngineStopper>, outside: bool) -> Option<String> {
     (state == "stopped").then(|| {
         match stopper {
             Some(EngineStopper::Owner) => "owner",
             Some(EngineStopper::LinkedMac) => "linkedMac",
+            None if outside => "outside",
             None => "notStarted",
         }
         .to_string()
@@ -561,6 +563,7 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         load: status.load.map(load_to_dto),
         hosting: None,
         stopped_by: None,
+        stopped_outside: status.stopped_outside,
         serving_intent: None,
         serving_intent_error: None,
         machine_load: status.machine_load.map(machine_load_to_dto),
@@ -662,15 +665,21 @@ async fn core_status(
         Err(e) => status.chip_error = Some(e),
     }
     if let Some(model_id) = &req.fit_model_id {
-        match manager.mount_fit(model_id).await {
+        let id = model_id.clone();
+        let fit = bounded_fit(MOUNT_FIT_LIMIT, &MOUNT_FIT_BUSY, async move {
+            manager.mount_fit(&id).await.map_err(|e| format!("{e:#}"))
+        })
+        .await;
+        match fit {
             Ok(fit) => status.mount_fit = Some(fit_to_dto(model_id, &fit)),
-            Err(e) => status.mount_fit_error = Some(format!("{e:#}")),
+            Err(e) => status.mount_fit_error = Some(e),
         }
     }
     status.hosting = super::mlx_distributed::hosting_dto();
     status.stopped_by = stopped_by_wire(
         &status.state,
         *ENGINE_STOPPED_BY.lock().unwrap_or_else(|e| e.into_inner()),
+        status.stopped_outside.is_some(),
     );
     match mlx_serving_intent::read() {
         IntentRecord::Absent => {}
@@ -680,6 +689,60 @@ async fn core_status(
         }
     }
     Ok(MlxEngineStatusResponse { status })
+}
+
+/// How long a status read waits for the picked model's fit. The fit lists the models folder, and a
+/// models folder on a network mount (the workmule's `~/.goose/models` is NFS over Thunderbolt) can
+/// stall a read for minutes: the status must answer without it rather than hang with it (the
+/// owner's Engine panel sat on "Checking" for hours, 3.0.132).
+const MOUNT_FIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// One fit read at a time: a stalled one is not joined by another on every status tick.
+static MOUNT_FIT_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Clears the busy flag when the fit read ENDS, however it ends (an answer, an error, a panic) —
+/// never when the status stopped waiting for it.
+struct FitBusy(&'static std::sync::atomic::AtomicBool);
+
+impl Drop for FitBusy {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// `fit`, run off the runtime's worker threads (its folder read is synchronous and may block), and
+/// given up on after `limit`: the error says why the fit is missing. While an earlier read is
+/// still running, no second one starts.
+async fn bounded_fit<F>(
+    limit: std::time::Duration,
+    busy: &'static std::sync::atomic::AtomicBool,
+    fit: F,
+) -> Result<FitVerdict, String>
+where
+    F: std::future::Future<Output = Result<FitVerdict, String>> + Send + 'static,
+{
+    if busy.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err(
+            "an earlier read of the models folder for this fit has still not finished (a \
+             network-mounted models folder can stall); the fit is left out until it does"
+                .to_string(),
+        );
+    }
+    let guard = FitBusy(busy);
+    let runtime = tokio::runtime::Handle::current();
+    let read = tokio::task::spawn_blocking(move || {
+        let _guard = guard;
+        runtime.block_on(fit)
+    });
+    match tokio::time::timeout(limit, read).await {
+        Ok(Ok(fit)) => fit,
+        Ok(Err(e)) => Err(format!("the fit check ended without an answer: {e}")),
+        Err(_) => Err(format!(
+            "reading the models folder for this fit did not finish in {} s (a network-mounted \
+             models folder can stall); the fit is left out of this status",
+            limit.as_secs()
+        )),
+    }
 }
 
 static LOCAL_CHIP: std::sync::OnceLock<MlxChipDto> = std::sync::OnceLock::new();
@@ -1774,20 +1837,94 @@ mod tests {
     #[test]
     fn a_stopped_engine_says_who_stopped_it_or_that_nobody_did_since_this_goose_started() {
         assert_eq!(
-            stopped_by_wire("stopped", None).as_deref(),
+            stopped_by_wire("stopped", None, false).as_deref(),
             Some("notStarted")
         );
         assert_eq!(
-            stopped_by_wire("stopped", Some(EngineStopper::Owner)).as_deref(),
+            stopped_by_wire("stopped", Some(EngineStopper::Owner), false).as_deref(),
             Some("owner")
         );
         assert_eq!(
-            stopped_by_wire("stopped", Some(EngineStopper::LinkedMac)).as_deref(),
+            stopped_by_wire("stopped", Some(EngineStopper::LinkedMac), false).as_deref(),
             Some("linkedMac")
         );
         for state in ["mounting", "running", "failed"] {
-            assert_eq!(stopped_by_wire(state, Some(EngineStopper::Owner)), None);
+            assert_eq!(
+                stopped_by_wire(state, Some(EngineStopper::Owner), false),
+                None
+            );
+            assert_eq!(stopped_by_wire(state, None, true), None);
         }
+    }
+
+    #[test]
+    fn an_engine_stopped_from_outside_goose_says_outside_never_not_started() {
+        // `notStarted` is what a Link peer re-mounts over; a `kill -TERM` from another process
+        // must never read as it.
+        assert_eq!(
+            stopped_by_wire("stopped", None, true).as_deref(),
+            Some("outside")
+        );
+        // A goose Unmount is named for what it was, whatever the process's exit said.
+        assert_eq!(
+            stopped_by_wire("stopped", Some(EngineStopper::Owner), true).as_deref(),
+            Some("owner")
+        );
+    }
+
+    fn quick_fit() -> FitVerdict {
+        use goose_sidecar::fit::{judge, Need, NodeMemoryFacts, GIB};
+        judge(
+            Need::single_engine(GIB, Ok(0), 0),
+            NodeMemoryFacts {
+                available_bytes: 40 * GIB,
+                total_bytes: 128 * GIB,
+                ceiling_bytes: 100 * GIB,
+                other_engines_bytes: 0,
+                freed_by_switch_bytes: 0,
+            },
+        )
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_fit_read_that_stalls_is_given_up_on_and_no_second_one_joins_it() {
+        static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        let (release, held) = tokio::sync::oneshot::channel::<()>();
+        // An outer limit, so a bound that stops working fails this test instead of hanging it.
+        let stalled = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            bounded_fit(std::time::Duration::from_millis(200), &BUSY, async move {
+                let _ = held.await;
+                Err("released".to_string())
+            }),
+        )
+        .await
+        .expect("a stalled fit read must be given up on, never waited for");
+        let words = stalled.unwrap_err();
+        assert!(words.contains("did not finish in"), "{words}");
+
+        // The stalled read still runs: the next status does not start another one.
+        let joined = bounded_fit(std::time::Duration::from_millis(200), &BUSY, async {
+            Ok(quick_fit())
+        })
+        .await;
+        assert!(joined.unwrap_err().contains("earlier read"));
+
+        // Once the stalled read ends, the busy flag clears and a fit is read again.
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while BUSY.load(std::sync::atomic::Ordering::SeqCst) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the busy flag never cleared"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let read = bounded_fit(std::time::Duration::from_secs(2), &BUSY, async {
+            Ok(quick_fit())
+        })
+        .await;
+        assert!(read.is_ok(), "{read:?}");
     }
 
     #[test]

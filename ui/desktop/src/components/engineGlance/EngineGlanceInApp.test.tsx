@@ -8,7 +8,11 @@ import { glanceSessionsOf, resetEngineGlanceForTests } from './glanceStore';
 import { CHAT_ROW, glancePush, runningSnapshot } from '../../utils/engineGlance.fixtures';
 import { attributeServing } from '../../utils/mlxServing';
 import { INITIAL_SNAPSHOT } from '../../utils/mlxEngineMonitor';
-import type { GlancePrefs, GlancePush } from '../../utils/engineGlance';
+import {
+  ENGINE_GLANCE_CHANNEL,
+  type GlancePrefs,
+  type GlancePush,
+} from '../../utils/engineGlance';
 import { GENERATING_STATUS, IDLE_STATUS } from '../leanzero-swarm/mlxLiveStatus.fixtures';
 import { resetFormingForTests, usePublishForming } from '../forming/formingStore';
 
@@ -184,5 +188,70 @@ describe('glanceSessionsOf — the session-state store as the glance reports it'
       needsYou: [{ sessionId: 'b', sessionName: 'Deploy', question: 'Staging or prod?' }],
       runningRows: [auth],
     });
+  });
+});
+
+describe('EngineGlanceDockSlot — 3.0.132: a failed card can be dismissed, and clears itself', () => {
+  type Listener = (event: unknown, ...args: unknown[]) => void;
+  const electron = window.electron as unknown as Record<string, unknown>;
+  let channels: Map<string, Set<Listener>>;
+  const saved: Record<string, unknown> = {};
+
+  const MODEL = 'mlx-community/Qwen3.6-35B-A3B-8bit';
+  const failed = (words: string) =>
+    glancePush({ ...INITIAL_SNAPSHOT, mode: 'failed', modelId: MODEL, failedError: words });
+  const EXIT_9 =
+    'the engine process (pid 25606) exited: signal: 9 (SIGKILL) — no goose path stopped it';
+  const EXIT_1 = 'the engine process (pid 31000) exited: exit status: 1 — no goose path stopped it';
+
+  function fromMain(push: GlancePush) {
+    act(() => {
+      for (const fn of channels.get(ENGINE_GLANCE_CHANNEL) ?? []) fn({}, push);
+    });
+  }
+
+  afterEach(() => {
+    Object.assign(electron, saved);
+  });
+
+  function renderLive(push: GlancePush) {
+    channels = new Map();
+    for (const key of ['on', 'off', 'engineGlanceRead']) saved[key] = electron[key];
+    Object.assign(electron, {
+      on: (channel: string, fn: Listener) => {
+        if (!channels.has(channel)) channels.set(channel, new Set());
+        channels.get(channel)!.add(fn);
+      },
+      off: (channel: string, fn: Listener) => channels.get(channel)?.delete(fn),
+      engineGlanceRead: undefined,
+    });
+    renderDock(push);
+  }
+
+  const card = () => screen.queryByTestId('engine-glance');
+
+  it('the X dismisses the failure (not the card); the same failure stays gone, a new one shows', () => {
+    renderLive(failed(EXIT_9));
+    expect(card()?.dataset.stage).toBe('failed');
+    // The eye keeps its meaning — hide the whole card — beside the dismiss.
+    expect(screen.getByTestId('engine-glance-hide')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('engine-glance-dismiss'));
+    expect(card()).toBeNull();
+    expect(prefsSet).not.toHaveBeenCalled();
+
+    // The monitor pushes the SAME failure again on its next read: it stays dismissed.
+    fromMain(failed(EXIT_9));
+    expect(card()).toBeNull();
+
+    // A different failure is news: the card is back with it.
+    fromMain(failed(EXIT_1));
+    expect(card()?.dataset.stage).toBe('failed');
+    expect(card()?.textContent).toContain('exit status: 1');
+  });
+
+  it('the X is drawn only on a failed card', () => {
+    renderDock(writing);
+    expect(screen.queryByTestId('engine-glance-dismiss')).toBeNull();
   });
 });

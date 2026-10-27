@@ -389,6 +389,9 @@
   "benchmarkSection.askAbout": {
     "defaultMessage": "開始一個關於此次執行的 AI 工作階段"
   },
+  "benchmarkSection.build": {
+    "defaultMessage": "建置 {index}"
+  },
   "benchmarkSection.cannotDeleteNoId": {
     "defaultMessage": "此工作階段還沒有執行 id —— 它會在啟動後不久出現"
   },
@@ -430,6 +433,9 @@
   },
   "benchmarkSection.title": {
     "defaultMessage": "Benchmark"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 次建置"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "擴充功能已更新"
@@ -1286,6 +1292,9 @@
   "confirmCloseRun.body": {
     "defaultMessage": "關閉此視窗會停止本次執行:視窗的後端將被釋放,其下的 swarm 引擎會收到結束訊號。"
   },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "繼續回答"
+  },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "繼續執行"
   },
@@ -1295,17 +1304,17 @@
   "confirmCloseRun.stopAndClose": {
     "defaultMessage": "停止執行並關閉"
   },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "停止回答並關閉"
+  },
   "confirmCloseRun.stopping": {
     "defaultMessage": "正在停止執行…"
   },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "正在停止回答…"
+  },
   "confirmCloseRun.title": {
     "defaultMessage": "此視窗中有一個 swarm 執行正在進行"
-  },
-  "confirmCloseRun.warning": {
-    "defaultMessage": "警告"
-  },
-  "confirmCloseRun.turnTitle": {
-    "defaultMessage": "此視窗中的一個對話仍在回答"
   },
   "confirmCloseRun.turnBody": {
     "defaultMessage": "關閉此視窗會停止回答:該對話是從此視窗傳送的,它的回覆會停在目前位置。"
@@ -1313,14 +1322,11 @@
   "confirmCloseRun.turnLine": {
     "defaultMessage": "對話:{name}"
   },
-  "confirmCloseRun.keepAnswering": {
-    "defaultMessage": "繼續回答"
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "此視窗中的一個對話仍在回答"
   },
-  "confirmCloseRun.stopAnswerAndClose": {
-    "defaultMessage": "停止回答並關閉"
-  },
-  "confirmCloseRun.stoppingAnswer": {
-    "defaultMessage": "正在停止回答…"
+  "confirmCloseRun.warning": {
+    "defaultMessage": "警告"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "否"
@@ -2126,11 +2132,23 @@
   "engineGlance.collapse": {
     "defaultMessage": "縮成膠囊"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "忽略此故障 — 僅在引擎再次失敗時才會重新出現"
+  },
   "engineGlance.dismissed.untilNew": {
     "defaultMessage": "浮動視窗已隱藏，直到有新工作開始"
   },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "可在 設定 › 應用程式 中重新顯示，也可以在那裡將它關閉。"
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "可透過選單列中的 goose 圖示或 設定 › 應用程式 重新顯示，也可以在設定中將它關閉。"
+  },
   "engineGlance.expand": {
     "defaultMessage": "顯示完整卡片"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "goose 最小化時顯示浮動膠囊"
   },
   "engineGlance.forming": {
     "defaultMessage": "正在寫的內容 · {count, plural, other {# 個工具呼叫}}"
@@ -2297,20 +2315,17 @@
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "當 goose 在背景時"
   },
-  "engineGlanceSettings.desktopOptIn": {
-    "defaultMessage": "goose 最小化或在背景時顯示浮動活動膠囊"
+  "engineGlanceSettings.desktop.busy": {
+    "defaultMessage": "只要引擎在工作"
   },
   "engineGlanceSettings.desktopDescOptIn": {
     "defaultMessage": "勾選前保持關閉。一個小膠囊浮在其他 App 之上，位於你拖到的角落。只有它的 ⤢ 按鈕會開啟 goose；拖曳只會移動它，✕ 會將其隱藏，直到新的工作、執行或分割開始。"
   },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "goose 最小化或在背景時顯示浮動活動膠囊"
+  },
   "engineGlanceSettings.desktopWhen": {
     "defaultMessage": "何時浮動"
-  },
-  "engineGlance.floatTick": {
-    "defaultMessage": "goose 最小化時顯示浮動膠囊"
-  },
-  "engineGlanceSettings.desktop.busy": {
-    "defaultMessage": "只要引擎在工作"
   },
   "engineGlanceSettings.dismissedUntilNew": {
     "defaultMessage": "你已關閉它——在有新工作開始前保持隱藏。"
@@ -2320,6 +2335,9 @@
   },
   "engineGlanceSettings.inAppDesc": {
     "defaultMessage": "在側邊欄底部、工作階段清單下方。可直接在卡片上隱藏；之後可透過它留在原處的那一行或在這裡恢復。"
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "重新顯示"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "引擎一覽"
@@ -2627,6 +2645,117 @@
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "連線至在其他位置執行的 goose 伺服器（需要重新啟動應用程式）"
   },
+  "forgeSeries.between": {
+    "defaultMessage": "建置 1 已完成。正在準備建置 2。"
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "建置 {index} / 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "每次建置可呼叫 {calls} 次"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "停止目前的建置並阻止下一次建置啟動。已完成的評分和證據會保留；取消不會發布任何內容。"
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "取消這項包含兩次建置的基準測試？"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "兩次建置的連續執行已取消"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "兩次建置的連續執行已取消。"
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "正在檢查兩次建置…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "已取消"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "未完成"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "兩次建置已完成。"
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "發布剩餘建置"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "兩次建置的連續執行未完成"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "兩次建置的連續執行未完成。"
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "兩次建置均已完成"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "應用程式在兩次建置完成前已結束。已儲存的證據會保留。"
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "在本應用程式中按一次執行即可啟動兩次獨立建置。第一次評分後開始第二次；每次都保留自己的證據。"
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "已在 leanzero.net 發布"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "本機中位數 {median} · 範圍 {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "發布未收到回應"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "目前還沒有已評分的建置。"
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "正在準備建置 {index} / 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "只有一次已評分建置時結果為暫定結果。無法提供兩次建置的中位數。"
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "發布 2 次建置"
+  },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "分別發布建置"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "發布標題"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "正在發布建置 {index} / 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "等待啟動"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "執行 2 次建置"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "建置 {index} / 2 正在執行"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "已評分"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "應用程式使用相同模型、任務和設定連續執行兩次全新建置。每次保留自己的評分和證據。"
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "未啟動"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "兩次獨立建置"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "無法讀取已儲存的兩次建置證據。各次建置仍可單獨查看。"
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "開啟建置 {index} 的證據"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "發布需要兩次已完成且可比較的建置，以及各自的原生證據。"
+  },
   "formingPanel.callChars": {
     "defaultMessage": "{chars} 個字元"
   },
@@ -2768,6 +2897,9 @@
   "freeMemory.nuclearTotal": {
     "defaultMessage": "已勾選:<b>{gb} GB</b>"
   },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "僅在 {mac} 上"
+  },
   "freeMemory.protectedChip": {
     "defaultMessage": "受保護"
   },
@@ -2788,9 +2920,6 @@
   },
   "freeMemory.remoteQuitOff": {
     "defaultMessage": "{mac} 不允許其他 Mac 結束它的 App 或卸載它的模型伺服器，因此從這裡只能釋放 goose 自己的記憶體。若要允許，請在 {mac} 上開啟 goose，前往 設定 › 應用程式，開啟「允許已連結的 Mac 結束這台 Mac 上的 App」。或直接在 {mac} 上結束它們。"
-  },
-  "freeMemory.onlyThere": {
-    "defaultMessage": "僅在 {mac} 上"
   },
   "freeMemory.title": {
     "defaultMessage": "釋放 {mac} 上的記憶體"
@@ -4310,14 +4439,14 @@
   "macLoad.policy": {
     "defaultMessage": "有人使用這台 Mac 時"
   },
-  "macLoad.policyHint": {
-    "defaultMessage": "忙碌以實測為準：高於下限的記憶體、空閒的重任務槽位、每核負載。有人在用鍵盤只用於打破平手。"
-  },
   "macLoad.policy.allow": {
     "defaultMessage": "接受工作"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "拒絕工作"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "忙碌以實測為準：高於下限的記憶體、空閒的重任務槽位、每核負載。有人在用鍵盤只用於打破平手。"
   },
   "macLoad.queueNoTry": {
     "defaultMessage": "尚未分配給任何 Mac：前面有工作在等待。"
@@ -4345,6 +4474,27 @@
   },
   "macLoad.state": {
     "defaultMessage": "狀態"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "正在取消…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "等待中，排第 {position} 位"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "我的工作在哪裡執行"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "先用我的 Mac"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "先用其他 Mac"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "這台 Mac 有空間就在這裡執行，否則在空間最多的其他 Mac 上執行，都沒有就在佇列中等待。"
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "在空間最多的其他 Mac 上執行，否則在這台 Mac 上執行，都沒有就在佇列中等待。讓這台 Mac 保持空閒。"
   },
   "macLoad.title": {
     "defaultMessage": "負載"
@@ -5648,6 +5798,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "無法讀取引擎設定。"
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "重新讀取"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "停止"
   },
@@ -6233,6 +6386,9 @@
   "mlxStateTile.state.stopped": {
     "defaultMessage": "已停止"
   },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "在 goose 之外被停止"
+  },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "無法連線"
   },
@@ -6389,6 +6545,9 @@
   "modelCustomFields.above": {
     "defaultMessage": "最大值為 {max}。"
   },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "自訂欄位：選擇一個模型 ID 以查看它接受的設定。"
+  },
   "modelCustomFields.below": {
     "defaultMessage": "最小值為 {min}。"
   },
@@ -6406,6 +6565,9 @@
   },
   "modelCustomFields.modelDefault": {
     "defaultMessage": "模型預設值（{value}）"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "自訂欄位：{provider} 沒有為「{model}」宣告任何欄位，因此它以供應商的預設值執行。"
   },
   "modelCustomFields.notANumber": {
     "defaultMessage": "請輸入數字。"
@@ -6944,6 +7106,9 @@
   "myMacs.reconnecting": {
     "defaultMessage": "正在重新連線…（與這台 Mac 的 goose 失去聯繫）"
   },
+  "myMacs.runJob": {
+    "defaultMessage": "執行工作…"
+  },
   "myMacs.saveFailed": {
     "defaultMessage": "開關未儲存"
   },
@@ -6958,6 +7123,9 @@
   },
   "myMacs.title": {
     "defaultMessage": "我的 Mac"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "{seconds} 秒前更新"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -6995,30 +7163,6 @@
   "needsYouCard.closeNotice": {
     "defaultMessage": "關閉此提示"
   },
-  "needsYouCard.queued": {
-    "defaultMessage": "已排入佇列 · 本輪結束時回答"
-  },
-  "needsYouCard.queuedChip": {
-    "defaultMessage": "已排入佇列"
-  },
-  "needsYouCard.sending": {
-    "defaultMessage": "正在傳送你的回答…"
-  },
-  "needsYouCard.stack": {
-    "defaultMessage": "{count, plural, other {需要你 · # 個問題}}"
-  },
-  "needsYouCard.stackQueued": {
-    "defaultMessage": "{count} 個已排入佇列"
-  },
-  "needsYouCard.unsentAnswer": {
-    "defaultMessage": "你的回答：{answer}"
-  },
-  "needsYouCard.unsentClosed": {
-    "defaultMessage": "未傳送——排入佇列的回答送出之前，這個問題已關閉。"
-  },
-  "needsYouCard.unsentFailed": {
-    "defaultMessage": "未傳送——無法儲存你排入佇列的回答：{error}"
-  },
   "needsYouCard.dismiss": {
     "defaultMessage": "略過"
   },
@@ -7037,11 +7181,35 @@
   "needsYouCard.position": {
     "defaultMessage": "第 {index} / {total} 個"
   },
+  "needsYouCard.queued": {
+    "defaultMessage": "已排入佇列 · 本輪結束時回答"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "已排入佇列"
+  },
   "needsYouCard.recommended": {
     "defaultMessage": "推薦"
   },
+  "needsYouCard.sending": {
+    "defaultMessage": "正在傳送你的回答…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, other {需要你 · # 個問題}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} 個已排入佇列"
+  },
   "needsYouCard.title": {
     "defaultMessage": "需要你"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "你的回答：{answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "未傳送——排入佇列的回答送出之前，這個問題已關閉。"
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "未傳送——無法儲存你排入佇列的回答：{error}"
   },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX 引擎儲存的模型提供 {served}；此節點需要 {wanted}。請在 Providers 中選擇模型。"
@@ -9641,6 +9809,72 @@
   "responseStyle.detailedLabel": {
     "defaultMessage": "詳細"
   },
+  "runJob.best": {
+    "defaultMessage": "最佳 Mac"
+  },
+  "runJob.close": {
+    "defaultMessage": "關閉"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {指令} other {提示}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "重型工作"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "一台 Mac 能同時執行的重工作（建置、算繪、訓練）數量取決於它的槽位與記憶體。"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name}（使用中）"
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "此 Mac 已關閉工作"
+  },
+  "runJob.kind": {
+    "defaultMessage": "類型"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "提示"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Shell 指令"
+  },
+  "runJob.mem": {
+    "defaultMessage": "所需記憶體（GB，選填）"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "目前沒有 Mac 能接受此工作。"
+  },
+  "runJob.none": {
+    "defaultMessage": "你的 Mac 目前都不接受工作。請在要執行工作的 Mac 上開啟「執行其他 Mac 傳來的工作」。"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "目前最佳：{macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}：{reason}"
+  },
+  "runJob.refused": {
+    "defaultMessage": "未送出：{reason}"
+  },
+  "runJob.submit": {
+    "defaultMessage": "執行工作"
+  },
+  "runJob.target": {
+    "defaultMessage": "執行位置"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "時間限制（秒，選填）"
+  },
+  "runJob.title": {
+    "defaultMessage": "在…上執行工作"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}：{verdict}"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "現在沒有 Mac 有空間。執行後它會在這台 Mac 的佇列中等待，並在第一台有空間的 Mac 上啟動。"
+  },
   "scheduleDetailView.actions": {
     "defaultMessage": "動作"
   },
@@ -11747,29 +11981,29 @@
   "unansweredPrompt.appClosed": {
     "defaultMessage": "這一輪沒有回覆就結束了——可能是 goose 工作時應用程式被關閉了。"
   },
-  "unansweredPrompt.failed": {
-    "defaultMessage": "這一輪在回覆之前失敗了。"
-  },
-  "unansweredPrompt.failedWithReason": {
-    "defaultMessage": "這一輪在回覆之前失敗了：{reason}"
-  },
-  "unansweredPrompt.resend": {
-    "defaultMessage": "重新傳送"
-  },
-  "unansweredPrompt.title": {
-    "defaultMessage": "goose 在回答這則之前停止了"
-  },
   "unansweredPrompt.continue": {
     "defaultMessage": "繼續"
   },
   "unansweredPrompt.continueMessage": {
     "defaultMessage": "從剛才停下的地方繼續。"
   },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "這一輪在回覆之前失敗了。"
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "這一輪在回覆之前失敗了：{reason}"
+  },
   "unansweredPrompt.midway": {
     "defaultMessage": "goose 中途停止了"
   },
   "unansweredPrompt.midwayAppClosed": {
     "defaultMessage": "goose 中途停止了——應用程式在它工作時被關閉了"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "重新傳送"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose 在回答這則之前停止了"
   },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "取消"
@@ -11935,230 +12169,5 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
-  },
-  "engineGlance.dismissed.way": {
-    "defaultMessage": "可在 設定 › 應用程式 中重新顯示，也可以在那裡將它關閉。"
-  },
-  "engineGlance.dismissed.wayTray": {
-    "defaultMessage": "可透過選單列中的 goose 圖示或 設定 › 應用程式 重新顯示，也可以在設定中將它關閉。"
-  },
-  "engineGlanceSettings.showAgain": {
-    "defaultMessage": "重新顯示"
-  },
-  "benchmarkSection.build": {
-    "defaultMessage": "建置 {index}"
-  },
-  "benchmarkSection.twoBuilds": {
-    "defaultMessage": "2 次建置"
-  },
-  "forgeSeries.between": {
-    "defaultMessage": "建置 1 已完成。正在準備建置 2。"
-  },
-  "forgeSeries.build": {
-    "defaultMessage": "建置 {index} / 2"
-  },
-  "forgeSeries.callBudget": {
-    "defaultMessage": "每次建置可呼叫 {calls} 次"
-  },
-  "forgeSeries.cancelDetail": {
-    "defaultMessage": "停止目前的建置並阻止下一次建置啟動。已完成的評分和證據會保留；取消不會發布任何內容。"
-  },
-  "forgeSeries.cancelTitle": {
-    "defaultMessage": "取消這項包含兩次建置的基準測試？"
-  },
-  "forgeSeries.cancelled": {
-    "defaultMessage": "兩次建置的連續執行已取消"
-  },
-  "forgeSeries.cancelledStatus": {
-    "defaultMessage": "兩次建置的連續執行已取消。"
-  },
-  "forgeSeries.checking": {
-    "defaultMessage": "正在檢查兩次建置…"
-  },
-  "forgeSeries.childCancelled": {
-    "defaultMessage": "已取消"
-  },
-  "forgeSeries.childFailed": {
-    "defaultMessage": "未完成"
-  },
-  "forgeSeries.completeStatus": {
-    "defaultMessage": "兩次建置已完成。"
-  },
-  "forgeSeries.continuePublish": {
-    "defaultMessage": "發布剩餘建置"
-  },
-  "forgeSeries.failed": {
-    "defaultMessage": "兩次建置的連續執行未完成"
-  },
-  "forgeSeries.failedStatus": {
-    "defaultMessage": "兩次建置的連續執行未完成。"
-  },
-  "forgeSeries.finished": {
-    "defaultMessage": "兩次建置均已完成"
-  },
-  "forgeSeries.interrupted": {
-    "defaultMessage": "應用程式在兩次建置完成前已結束。已儲存的證據會保留。"
-  },
-  "forgeSeries.intro": {
-    "defaultMessage": "在本應用程式中按一次執行即可啟動兩次獨立建置。第一次評分後開始第二次；每次都保留自己的證據。"
-  },
-  "forgeSeries.live": {
-    "defaultMessage": "已在 leanzero.net 發布"
-  },
-  "forgeSeries.median": {
-    "defaultMessage": "本機中位數 {median} · 範圍 {min}–{max}"
-  },
-  "forgeSeries.noResponse": {
-    "defaultMessage": "發布未收到回應"
-  },
-  "forgeSeries.noScore": {
-    "defaultMessage": "目前還沒有已評分的建置。"
-  },
-  "forgeSeries.preparing": {
-    "defaultMessage": "正在準備建置 {index} / 2"
-  },
-  "forgeSeries.provisional": {
-    "defaultMessage": "只有一次已評分建置時結果為暫定結果。無法提供兩次建置的中位數。"
-  },
-  "forgeSeries.publish": {
-    "defaultMessage": "發布 2 次建置"
-  },
-  "forgeSeries.publishSeparately": {
-    "defaultMessage": "分別發布建置"
-  },
-  "forgeSeries.publishTitle": {
-    "defaultMessage": "發布標題"
-  },
-  "forgeSeries.publishing": {
-    "defaultMessage": "正在發布建置 {index} / 2…"
-  },
-  "forgeSeries.queued": {
-    "defaultMessage": "等待啟動"
-  },
-  "forgeSeries.run": {
-    "defaultMessage": "執行 2 次建置"
-  },
-  "forgeSeries.running": {
-    "defaultMessage": "建置 {index} / 2 正在執行"
-  },
-  "forgeSeries.scored": {
-    "defaultMessage": "已評分"
-  },
-  "forgeSeries.settings": {
-    "defaultMessage": "應用程式使用相同模型、任務和設定連續執行兩次全新建置。每次保留自己的評分和證據。"
-  },
-  "forgeSeries.skipped": {
-    "defaultMessage": "未啟動"
-  },
-  "forgeSeries.title": {
-    "defaultMessage": "兩次獨立建置"
-  },
-  "forgeSeries.unreadable": {
-    "defaultMessage": "無法讀取已儲存的兩次建置證據。各次建置仍可單獨查看。"
-  },
-  "forgeSeries.view": {
-    "defaultMessage": "開啟建置 {index} 的證據"
-  },
-  "forgeSeries.waitingPublish": {
-    "defaultMessage": "發布需要兩次已完成且可比較的建置，以及各自的原生證據。"
-  },
-  "modelCustomFields.awaitingModel": {
-    "defaultMessage": "自訂欄位：選擇一個模型 ID 以查看它接受的設定。"
-  },
-  "modelCustomFields.noFields": {
-    "defaultMessage": "自訂欄位：{provider} 沒有為「{model}」宣告任何欄位，因此它以供應商的預設值執行。"
-  },
-  "macLoad.stateCancelling": {
-    "defaultMessage": "正在取消…"
-  },
-  "macLoad.stateWaiting": {
-    "defaultMessage": "等待中，排第 {position} 位"
-  },
-  "macLoad.strategy": {
-    "defaultMessage": "我的工作在哪裡執行"
-  },
-  "macLoad.strategy.localFirst": {
-    "defaultMessage": "先用我的 Mac"
-  },
-  "macLoad.strategy.selfish": {
-    "defaultMessage": "先用其他 Mac"
-  },
-  "macLoad.strategyHint.localFirst": {
-    "defaultMessage": "這台 Mac 有空間就在這裡執行，否則在空間最多的其他 Mac 上執行，都沒有就在佇列中等待。"
-  },
-  "macLoad.strategyHint.selfish": {
-    "defaultMessage": "在空間最多的其他 Mac 上執行，否則在這台 Mac 上執行，都沒有就在佇列中等待。讓這台 Mac 保持空閒。"
-  },
-  "myMacs.runJob": {
-    "defaultMessage": "執行工作…"
-  },
-  "runJob.title": {
-    "defaultMessage": "在…上執行工作"
-  },
-  "runJob.willQueue": {
-    "defaultMessage": "現在沒有 Mac 有空間。執行後它會在這台 Mac 的佇列中等待，並在第一台有空間的 Mac 上啟動。"
-  },
-  "runJob.target": {
-    "defaultMessage": "執行位置"
-  },
-  "runJob.best": {
-    "defaultMessage": "最佳 Mac"
-  },
-  "runJob.ranking": {
-    "defaultMessage": "目前最佳：{macs}"
-  },
-  "runJob.refusal": {
-    "defaultMessage": "{mac}：{reason}"
-  },
-  "runJob.verdictLine": {
-    "defaultMessage": "{mac}：{verdict}"
-  },
-  "runJob.inUse": {
-    "defaultMessage": "{name}（使用中）"
-  },
-  "runJob.noPlace": {
-    "defaultMessage": "目前沒有 Mac 能接受此工作。"
-  },
-  "runJob.none": {
-    "defaultMessage": "你的 Mac 目前都不接受工作。請在要執行工作的 Mac 上開啟「執行其他 Mac 傳來的工作」。"
-  },
-  "runJob.jobsOff": {
-    "defaultMessage": "此 Mac 已關閉工作"
-  },
-  "runJob.kind": {
-    "defaultMessage": "類型"
-  },
-  "runJob.kindShell": {
-    "defaultMessage": "Shell 指令"
-  },
-  "runJob.kindPrompt": {
-    "defaultMessage": "提示"
-  },
-  "runJob.command": {
-    "defaultMessage": "{kind, select, shell {指令} other {提示}}"
-  },
-  "runJob.heavy": {
-    "defaultMessage": "重型工作"
-  },
-  "runJob.heavyHint": {
-    "defaultMessage": "一台 Mac 能同時執行的重工作（建置、算繪、訓練）數量取決於它的槽位與記憶體。"
-  },
-  "runJob.mem": {
-    "defaultMessage": "所需記憶體（GB，選填）"
-  },
-  "runJob.timeout": {
-    "defaultMessage": "時間限制（秒，選填）"
-  },
-  "runJob.submit": {
-    "defaultMessage": "執行工作"
-  },
-  "runJob.close": {
-    "defaultMessage": "關閉"
-  },
-  "runJob.refused": {
-    "defaultMessage": "未送出：{reason}"
-  },
-  "myMacs.updatedAgo": {
-    "defaultMessage": "{seconds} 秒前更新"
   }
 }

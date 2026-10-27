@@ -118,6 +118,10 @@ const i18n = defineMessages({
   mounting: { id: 'mlxStateTile.state.mounting', defaultMessage: 'Mounting' },
   failed: { id: 'mlxStateTile.state.failed', defaultMessage: 'Failed' },
   stopped: { id: 'mlxStateTile.state.stopped', defaultMessage: 'Stopped' },
+  stoppedOutside: {
+    id: 'mlxStateTile.state.stoppedOutside',
+    defaultMessage: 'Stopped outside goose',
+  },
   unreachable: { id: 'mlxStateTile.state.unreachable', defaultMessage: 'Unreachable' },
   checking: { id: 'mlxStateTile.state.checking', defaultMessage: 'Checking' },
   reconnecting: { id: 'mlxStateTile.state.reconnecting', defaultMessage: 'Reconnecting' },
@@ -354,6 +358,7 @@ const STATE_WORD = {
   mounting: i18n.mounting,
   failed: i18n.failed,
   stopped: i18n.stopped,
+  stoppedOutside: i18n.stoppedOutside,
   unreachable: i18n.unreachable,
   checking: i18n.checking,
   reconnecting: i18n.reconnecting,
@@ -367,6 +372,11 @@ const LINE = cx('text-lz-body', TNUM);
 
 export interface MlxStateTileProps {
   state: MlxEngineState | null;
+  /**
+   * The status's `stoppedBy` while `state` is stopped: `outside` (a SIGTERM/SIGINT no goose path
+   * sent) is said as "Stopped outside goose", a stop and never a failure. Absent = plain Stopped.
+   */
+  stoppedBy?: string | null;
   unreachable: boolean;
   /**
    * RUNNING: the last /v1/status read (null before the first one lands) — of the single engine, or
@@ -1400,7 +1410,15 @@ export function servingEngine(
   intl: IntlShape,
   input: Pick<
     MlxStateTileProps,
-    'state' | 'unreachable' | 'live' | 'distributed' | 'remote' | 'load' | 'swap' | 'modelId'
+    | 'state'
+    | 'stoppedBy'
+    | 'unreachable'
+    | 'live'
+    | 'distributed'
+    | 'remote'
+    | 'load'
+    | 'swap'
+    | 'modelId'
   >
 ): ServingEngine {
   const { state, unreachable, live, distributed } = input;
@@ -1453,7 +1471,9 @@ export function servingEngine(
           : 'failed'
     : starting
       ? 'mounting'
-      : (state ?? (unreachable ? 'unreachable' : 'checking'));
+      : state === 'stopped' && input.stoppedBy === 'outside'
+        ? 'stoppedOutside'
+        : (state ?? (unreachable ? 'unreachable' : 'checking'));
   // While the engine is up and read, the headline IS what it is doing — the tray's word
   // ("Remote · Idle"). "Running" beside a grey idle fill read as work (3.0.30, the owner).
   const wordText = swapTo

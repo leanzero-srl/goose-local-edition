@@ -9,8 +9,10 @@ import { createSharedPoll, useSharedPoll, type PollSnapshot } from './sharedStat
  * a timer. The argument is the Engine tab's `fitModelId`: the fit is an additive field of the same
  * answer, so every other watcher reads the answer unchanged.
  */
-export const localEngineStatusPoll = createSharedPoll<MlxEngineStatus, string>((fitModelId) =>
-  fitModelId != null ? mlxEngineStatus(undefined, fitModelId) : mlxEngineStatus()
+export const localEngineStatusPoll = createSharedPoll<MlxEngineStatus, string>(
+  (fitModelId) =>
+    fitModelId != null ? mlxEngineStatus(undefined, fitModelId) : mlxEngineStatus(),
+  { what: 'the engine status' }
 );
 
 /** Read this Mac's engine now, for every watcher (after a mount, a stop, a settings save). */
