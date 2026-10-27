@@ -70,6 +70,8 @@ fn config_from_dto(dto: MlxDistributedConfigDto) -> anyhow::Result<DistributedCo
         watchdog_warn_ratio: dto.watchdog_warn_ratio,
         watchdog_critical_ratio: dto.watchdog_critical_ratio,
         plan_reserve_ratio: dto.plan_reserve_ratio,
+        // Config-file only (no DTO field yet): `resolve_config` carries the persisted value.
+        gpu_headroom_gb: None,
         nodes: dto
             .nodes
             .into_iter()
@@ -396,7 +398,11 @@ fn resolve_config(
     dto: Option<MlxDistributedConfigDto>,
 ) -> Result<DistributedConfig, agent_client_protocol::Error> {
     let config = match dto {
-        Some(dto) => config_from_dto(dto).invalid_params_err()?,
+        Some(dto) => {
+            let mut config = config_from_dto(dto).invalid_params_err()?;
+            config.gpu_headroom_gb = persisted_config()?.and_then(|p| p.gpu_headroom_gb);
+            config
+        }
         None => persisted_config()?.ok_or_else(|| {
             agent_client_protocol::Error::invalid_params().data(
                 "no distributed config: send `config`, or save one with distributedConfigUpdate",

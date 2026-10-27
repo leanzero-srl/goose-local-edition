@@ -41,7 +41,7 @@ pub struct LayerSplitFacts {
     /// window × swa_kv_heads × (swa_head_dim + swa_v_head_dim) × act.
     pub swa_state_bytes: u64,
     /// Bytes per chunk token × context token of one full-attention layer's prefill scores:
-    /// attention heads × act + 1 (the mask).
+    /// 2 × attention heads × act (the scores and their softmax) + 1 (the mask).
     pub pair_bytes: u64,
     pub max_position: u64,
 }
@@ -127,7 +127,10 @@ impl LayerSplitFacts {
                 * cfg(config, "swa_num_key_value_heads")?
                 * (cfg(config, "swa_head_dim")? + cfg(config, "swa_v_head_dim")?)
                 * act,
-            pair_bytes: cfg(config, "num_attention_heads")? * act + 1,
+            // The scores AND their softmax are live at once in MLX 0.32's SDPA fallback (no fused
+            // kernel for head_dim 192): measured 2026-10-27 on the 64k MiMo prompt, both ranks
+            // held 9.5-10 GB past their resident bytes against a 5.1 GB one-copy workspace.
+            pair_bytes: 2 * cfg(config, "num_attention_heads")? * act + 1,
             max_position: cfg(config, "max_position_embeddings")?,
         })
     }
@@ -138,6 +141,18 @@ impl LayerSplitFacts {
 
     /// The need of the stage holding `[start, end)` at `context` with prefill chunk `chunk`.
     pub fn stage_need(&self, start: usize, end: usize, context: u64, chunk: u64) -> StageNeed {
+        self.stage_need_cached(start, end, context, chunk, PROMPT_CACHE_CONTEXTS)
+    }
+
+    /// `stage_need` with `cached` prompt-cache contexts charged beside the live one.
+    pub fn stage_need_cached(
+        &self,
+        start: usize,
+        end: usize,
+        context: u64,
+        chunk: u64,
+        cached: u64,
+    ) -> StageNeed {
         let width = context.div_ceil(KV_CACHE_STEP) * KV_CACHE_STEP;
         let full = self.full_attention[start..end]
             .iter()
@@ -155,7 +170,7 @@ impl LayerSplitFacts {
             full_layers: full,
             weights,
             state,
-            prompt_cache: PROMPT_CACHE_CONTEXTS * state,
+            prompt_cache: cached * state,
             workspace,
         }
     }
@@ -285,6 +300,7 @@ fn best_split(
     reserve_ratio: f64,
     context: u64,
     chunk: u64,
+    cached: u64,
 ) -> (Vec<usize>, i128, Vec<i128>) {
     let spares_of = |split: &[usize]| -> Vec<i128> {
         ranges(split)
@@ -292,7 +308,9 @@ fn best_split(
             .zip(nodes)
             .map(|((start, end), node)| {
                 node.budget(reserve_ratio) as i128
-                    - facts.stage_need(*start, *end, context, chunk).total() as i128
+                    - facts
+                        .stage_need_cached(*start, *end, context, chunk, cached)
+                        .total() as i128
             })
             .collect()
     };
@@ -315,12 +333,13 @@ fn fitting_reserve(
     from: f64,
     context: u64,
     chunk: u64,
+    cached: u64,
 ) -> Option<(f64, Vec<usize>, Vec<i128>)> {
     // ratio: the search's resolution, 0.1% of a node's RAM.
     let step = 0.001;
     let mut ratio = (from / step).floor() * step;
     while ratio >= 0.0 {
-        let (split, min, spares) = best_split(facts, nodes, ratio, context, chunk);
+        let (split, min, spares) = best_split(facts, nodes, ratio, context, chunk, cached);
         if min >= 0 {
             return Some((ratio, split, spares));
         }
@@ -377,11 +396,24 @@ pub fn plan_layer_split(
     // A requested context that no split fits with a KV-step chunk may still fit with a smaller
     // one: the scores workspace is chunk x width x pair, so halving the chunk halves the largest
     // term at a long context (MiMo at 360k: ~23.7 GB at 256 tokens, ~5.9 GB at 64).
-    let select_chunk = prefill_chunk_candidates()
-        .find(|chunk| best_split(facts, nodes, reserve_ratio, select_context, *chunk).1 >= 0)
-        .unwrap_or(KV_CACHE_STEP);
-    let (split, min_spare, spares) =
-        best_split(facts, nodes, reserve_ratio, select_context, select_chunk);
+    // When no chunk fits with a cached prompt context beside the live one, the plan charges
+    // none: the prompt cache then holds the live request's own entry only, and the reason says
+    // a follow-up reads its prompt again (MiMo at 300k-350k on 96 + 128 GB, 2026-10-27).
+    let (select_chunk, cached) = [PROMPT_CACHE_CONTEXTS, 0]
+        .into_iter()
+        .flat_map(|cached| prefill_chunk_candidates().map(move |chunk| (chunk, cached)))
+        .find(|(chunk, cached)| {
+            best_split(facts, nodes, reserve_ratio, select_context, *chunk, *cached).1 >= 0
+        })
+        .unwrap_or((KV_CACHE_STEP, PROMPT_CACHE_CONTEXTS));
+    let (split, min_spare, spares) = best_split(
+        facts,
+        nodes,
+        reserve_ratio,
+        select_context,
+        select_chunk,
+        cached,
+    );
     if min_spare < 0 {
         let per_node = nodes
             .iter()
@@ -394,7 +426,7 @@ pub fn plan_layer_split(
                     node.name,
                     end - 1,
                     gb(facts
-                        .stage_need(start, end, select_context, MIN_PREFILL_CHUNK)
+                        .stage_need_cached(start, end, select_context, MIN_PREFILL_CHUNK, 0)
                         .total() as i128),
                     gb(node.budget(reserve_ratio) as i128),
                     gb(node.available as i128),
@@ -406,7 +438,14 @@ pub fn plan_layer_split(
             })
             .collect::<Vec<_>>()
             .join("; ");
-        let found = fitting_reserve(facts, nodes, reserve_ratio, select_context, select_chunk);
+        let found = fitting_reserve(
+            facts,
+            nodes,
+            reserve_ratio,
+            select_context,
+            select_chunk,
+            cached,
+        );
         // ratio: the search steps by 0.1% of RAM, so the named reserve is rounded to that step.
         let settable = found
             .as_ref()
@@ -475,7 +514,7 @@ pub fn plan_layer_split(
         .iter()
         .zip(nodes)
         .filter_map(|((start, end), node)| {
-            let need = facts.stage_need(*start, *end, planned_context, 0);
+            let need = facts.stage_need_cached(*start, *end, planned_context, 0, cached);
             (need.full_layers > 0).then(|| {
                 node.budget(reserve_ratio).saturating_sub(need.resident())
                     / (width * facts.pair_bytes)
@@ -501,7 +540,7 @@ pub fn plan_layer_split(
 
     let needs: Vec<StageNeed> = stages
         .iter()
-        .map(|(start, end)| facts.stage_need(*start, *end, planned_context, chunk))
+        .map(|(start, end)| facts.stage_need_cached(*start, *end, planned_context, chunk, cached))
         .collect();
     let kv_per_token = needs
         .iter()
@@ -570,10 +609,16 @@ pub fn plan_layer_split(
         format!(
         "split {} (rank 0 = the last layers) leaves the most memory on the tightest Mac of all {} \
          contiguous splits: spare {spares} at context {planned_context} with a {chunk}-token \
-         prefill chunk, reserve {:.1}% of RAM",
+         prefill chunk, reserve {:.1}% of RAM{}",
         layers.iter().map(u32::to_string).collect::<Vec<_>>().join("/"),
         compositions(facts.num_layers(), nodes.len()).len(),
         reserve_ratio * 100.0,
+        if cached == 0 {
+            "; no cached prompt context fits beside the live one, so a follow-up request reads \
+             its whole prompt again"
+        } else {
+            ""
+        },
     );
     Ok(LayerSplit {
         layers,
@@ -586,10 +631,12 @@ pub fn plan_layer_split(
     })
 }
 
-/// The smallest prefill chunk the planner hands a rank: a quarter KV step. Below it the MoE
-/// matmuls run on so few tokens that a 350k prompt would take hours (64-token chunks read MiMo's
-/// first 6 layers at 0.83x the 256-token rate, measured 2026-10-27).
-pub const MIN_PREFILL_CHUNK: u64 = KV_CACHE_STEP / 4;
+/// The smallest prefill chunk the planner hands a rank at the full context: a sixteenth KV
+/// step. The rank takes larger chunks while the prompt is shorter (rank_prefill.py), so the
+/// floor only paces the last stretch of a very long prompt; 64-token chunks read MiMo's first 6
+/// layers at 0.83x the 256-token rate (measured 2026-10-27), and MiMo at 350k on 96 + 128 GB
+/// with 8 GB left under each GPU ceiling fits only at 16.
+pub const MIN_PREFILL_CHUNK: u64 = KV_CACHE_STEP / 16;
 
 /// The chunks the planner tries, largest first: the KV step, then halvings to
 /// `MIN_PREFILL_CHUNK`.
@@ -679,7 +726,7 @@ pub(crate) mod tests {
         let f = mimo_facts();
         assert_eq!(f.full_kv_bytes_per_token, 2560);
         assert_eq!(f.swa_state_bytes, 655_360);
-        assert_eq!(f.pair_bytes, 129);
+        assert_eq!(f.pair_bytes, 257);
         assert_eq!(f.full_attention.iter().filter(|x| **x).count(), 9);
         assert_eq!(f.shared_bytes, 1_328_029_696);
     }
@@ -731,7 +778,7 @@ pub(crate) mod tests {
         assert_eq!(split.plans[0].weights_bytes, 68_279_546_752);
         assert_eq!(split.plans[1].weights_bytes, 100_312_603_648);
         assert!(split.plans.iter().all(|p| p.fits));
-        assert_eq!(split.context, 60_672);
+        assert_eq!(split.context, 37_632);
         assert_eq!(split.chunk, 256);
         assert!(split.reason.contains("split 19/29"), "{}", split.reason);
     }
@@ -753,11 +800,11 @@ pub(crate) mod tests {
         let warn = super::super::WATCHDOG_WARN_RESERVE_RATIO;
         let facts = mimo_facts();
         let nodes = nodes();
-        let past = (60_672..)
+        let past = (37_632..)
             .step_by(KV_CACHE_STEP as usize)
-            .find(|c| best_split(&facts, &nodes, warn, *c, KV_CACHE_STEP).1 < 0)
+            .find(|c| best_split(&facts, &nodes, warn, *c, KV_CACHE_STEP, 1).1 < 0)
             .unwrap();
-        assert!(best_split(&facts, &nodes, warn, past, MIN_PREFILL_CHUNK).1 >= 0);
+        assert!(best_split(&facts, &nodes, warn, past, MIN_PREFILL_CHUNK, 1).1 >= 0);
         let split = plan_layer_split(&facts, &nodes, warn, warn, Some(past)).unwrap();
         assert_eq!(split.context, past);
         assert!(
@@ -781,6 +828,42 @@ pub(crate) mod tests {
             "{}",
             split.reason
         );
+    }
+
+    #[test]
+    fn a_context_past_every_chunk_with_a_cached_context_plans_without_one() {
+        let warn = super::super::WATCHDOG_WARN_RESERVE_RATIO;
+        let facts = mimo_facts();
+        let nodes = nodes();
+        let past = (37_632..)
+            .step_by(KV_CACHE_STEP as usize)
+            .find(|c| best_split(&facts, &nodes, warn, *c, MIN_PREFILL_CHUNK, 1).1 < 0)
+            .unwrap();
+        let split = plan_layer_split(&facts, &nodes, warn, warn, Some(past)).unwrap();
+        assert!(split
+            .plans
+            .iter()
+            .all(|p| p.prompt_cache_bytes == 0 && p.fits));
+        assert!(
+            split.reason.contains("reads its whole prompt again"),
+            "{}",
+            split.reason
+        );
+    }
+
+    #[test]
+    fn the_gpu_headroom_lowers_the_ceiling_the_budget_is_capped_at() {
+        let mut config = super::super::config::tests::two_mac_config();
+        assert_eq!(config.planned_ceiling(83_494_174_720), 83_494_174_720);
+        config.gpu_headroom_gb = Some(8.0);
+        assert_eq!(config.planned_ceiling(83_494_174_720), 75_494_174_720);
+        let node = SplitNode {
+            name: "workhorse".to_string(),
+            available: 90_000_000_000,
+            total: 96 * GIB,
+            ceiling: config.planned_ceiling(83_494_174_720),
+        };
+        assert_eq!(node.budget(0.05), 75_494_174_720);
     }
 
     #[test]

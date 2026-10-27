@@ -685,7 +685,7 @@ pub fn layer_split_fit(
             name: node.name.clone(),
             available: memory.available_after_switch(),
             total: memory.total_bytes,
-            ceiling: *ceiling,
+            ceiling: config.planned_ceiling(*ceiling),
         });
     }
     let (reserve, _) = config.plan_reserve(Some(model_type));

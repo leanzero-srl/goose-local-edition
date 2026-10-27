@@ -244,11 +244,22 @@ pub struct DistributedConfig {
     /// admission on a plan that fits) and below the shared default (it only ever loosens).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_reserve_ratio: Option<f64>,
+    /// GB the layer split's plan leaves free under each Mac's GPU ceiling (the owner's rule for
+    /// long-context runs, 2026-10-27: "at least ~8 GB under the Metal limit"): the ceiling the
+    /// budget is capped at is the measured one less this. `None` = the measured ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_headroom_gb: Option<f64>,
     /// Rank order: `nodes[0]` is this Mac.
     pub nodes: Vec<NodeConfig>,
 }
 
 impl DistributedConfig {
+    /// A node's GPU ceiling less the config's `gpu_headroom_gb`.
+    pub fn planned_ceiling(&self, ceiling: u64) -> u64 {
+        let headroom = self.gpu_headroom_gb.unwrap_or(0.0).max(0.0) * 1e9;
+        ceiling.saturating_sub(headroom as u64)
+    }
+
     pub fn validate(&self) -> Result<()> {
         ensure!(!self.model_id.trim().is_empty(), "model_id is empty");
         ensure!(
@@ -393,6 +404,7 @@ pub(crate) mod tests {
             watchdog_warn_ratio: None,
             watchdog_critical_ratio: None,
             plan_reserve_ratio: None,
+            gpu_headroom_gb: None,
             nodes: vec![
                 NodeConfig {
                     name: "MacBook Pro".to_string(),
