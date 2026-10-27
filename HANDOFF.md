@@ -504,3 +504,63 @@ OPEN (in order):
 TRAPS: Mac memory (CI runner / TTS on workhorse) can stop the split (watchdog); NFS mule mount now hard (61f1b54);
 reload ~271 s via mimo10/go.sh. Local prefill slows past ~19k tokens (64k TTFT 218 s cold), so a cold re-read after
 a cache eviction or compaction is minutes.
+
+## Session 12 (2026-10-27 13:20-21:40 EET): local MiMo Gauntlet sb-7.2 = 0.5894 vs cloud 0.7909; image fix; plan
+FACTS (article): model mlx-community/MiMo-V2.6-Flash-RL-mxfp4-q8 (MoE experts native MXFP4, rest 8-bit, 156 GB,
+TEXT-ONLY conversion: vision/audio encoders and MTP not included, per its README). Split = mlx_lm pipeline over
+JACCL/RDMA on the Thunderbolt link (rdma_en3, link reports 80 Gb/s): workhorse Mac Studio M3 Ultra 96 GB (Mac15,14)
+layers 30-47 (18), workmule Mac Studio M5 Max 128 GB (Mac17,14) layers 0-29 (30). Served window 119,808 (run 1:
+118,016), goose compacts at ~0.88 of it. App = dev build 3.0.132 from mimo-distributed (9411914e0f), provider openai
+-> http://127.0.0.1:8191, thinking on (tool_turns_think true; reasoning in every turn), sampling 1.0/0.95.
+- Run 1 (cloud-d078261f, 13:26): did_not_finish after 2h08m: read_image(selftest.png) sent an image part, :8191 404
+  "Only 'text' content type is supported", the 404 was retried then fatal. 2 compactions before it died.
+- FIX 9411914e0f (pushed): the openai provider at a loopback host asks /v1/models before sending an image (text-only
+  engine -> named placeholder + one chat notice); an endpoint that still refuses gets the turn once more without the
+  image; that refusal is a permanent 4xx in retry.rs. Tests + negative control (test fails without the fix: 6 bodies).
+  LIVE: run 2 read screenshot1.png, got the placeholder, carried on.
+- Run 2 (cloud-a6f8f01a, 16:44-21:26): score 0.5894 (raw 0.8083, inner 0.8231, ADMISSION CEILING 0.599 because
+  s_visible_surface failed), 130 calls, 6.99M prompt / 334k completion tokens, decode 27.4 tok/s, agent 4h32m +
+  scoring 9.5 min, 5 compactions (55, 106, 171, 223, 265 min in; max prompt 116,248). Cloud: 0.7909, 131 calls,
+  37.0M prompt, 0 compactions at 1M, 2h08m.
+- PUBLISHED BY MISTAKE: brun-0312730b-6286-4bb1-8dcc-6e9d0f57c2bb ("MiMo-V2.6-Flash, run locally split across two
+  Mac Studios", community row, 58.9%) went live at ~21:35, minutes before the owner's "do NOT publish yet" arrived.
+  It is still live. Removal is the owner's call (Sanity doc delete + revalidate; skill "Board audit" query).
+- End state: ranks stopped on both Macs, holds killed, dev app quit, dev config restored (config.yaml.before-s12),
+  installed app back on 9897 (goose-single-guard OK on both). ngram-go NOT touched (owner). Run 2 dir:
+  /tmp/gmimo/userdata/benchmark/runs/build/openai-cloud-a6f8f01a-...-r0 (verdict.json, sessions.db); run 1 dir moved
+  to <scratchpad>/s12/run1/build. Copy what is needed before /tmp is cleared.
+
+### Session 12 plan (tomorrow)
+1. PARITY CHECK before any local-vs-cloud run: `~/goose-builds/loop-state/local-parity/parity_check.py --port 8191`
+   (b20669d in loop-state; PASS/FAIL table, exit 1 on any FAIL). Rows: served window >= 256k AND goose's
+   GOOSE_CONTEXT_LIMIT set to it (no compaction where cloud had none; split proven to 275k at gpu_headroom_gb 8-9,
+   setctx.sh 262144); vision parity (local /v1/models capabilities vs cloud input_modalities); thinking on
+   (E_RANK_PIPELINE_SPLIT tool_turns_think); sampling = card (1.0/0.95 from /v1/status); tool parser qwen3_coder;
+   max output (GOOSE_MAX_TOKENS unset or >= 32k; one think measured 20k tokens); no read timeout configured.
+   VISION FINDINGS: XiaomiMiMo/MiMo-V2.6-Flash-RL is natively multimodal (OpenRouter xiaomi/mimo-v2.6-flash
+   input_modalities text,image,video,audio; config vision_model_type mimovl). Our mlx-community quant has NO vision
+   tower (index = model.layers/embed/lm_head only). mlx-vlm HAS mimo_v2 vision (mlx_vlm/models/mimo_v2/vision.py);
+   ggml-org ships mmproj for the GGUF. Our pipeline split (mlx_lm) cannot serve images. Whether the cloud run
+   ACTUALLY sent images is UNVERIFIED: its run dir (2026-10-02) is gone from this Mac; only the board doc remains.
+   So until proven otherwise: the cloud COULD see its screenshots, local could not. State it next to any score.
+2. PER-TASK DIFF run 2 vs cloud (verdict.json vs Sanity brun-029b6e80 checksSummary; lost points and cause):
+   s_visible_surface 0 vs 1 (109/120 predicted pixels matched; this alone sets the 0.599 ceiling = most of the 0.20
+   gap), t_height_pixels 0 vs 1 (0/6 tower tops within 3 px), q_inspector_framing 0 vs 1, s_currency_collar 0.5 vs 1,
+   t_labels_culling 0.58, t_vs7dbg_truth 0.7 (restPixel False), q_overview_legibility 0.71, t_camera_math 0.86,
+   t_brush_link 0.89, v_presentation_text 0.75, c_b5_generation_304 0.67 vs 1. Local WON: r_b3_sigkill_resync,
+   r_b6_outbox_atomic, r_notifier_exactly_once, p_stream_apply, t_stream_diff, j_error_state, e_stream_apply_latency.
+   CAUSE so far: the losses are all 3D PIXEL geometry, the backend is better than cloud. heightOf() in web/viz.js
+   matches the contract (h = clamp(0.9+0.55 log10(a_major),0.2,4.2)), so the error is in projection/geometry, which
+   only a screenshot shows: classed IMAGE (its one screenshot read was withheld) + MODEL ERROR. Compaction: 5
+   summaries kept the contract file names; not shown to drop the geometry rules, NOT PROVEN either way. Quant and
+   timeouts: no evidence (0 failed calls, no timeouts). TODO: diff viz.js projection vs SB7-CONTRACT camera/geometry
+   and read the 5 summaries for what they dropped, to class each lost check as compaction vs image vs model.
+3. RUN STEPS: (a) wait until node-probe shows no TTS/fam jobs on workhorse+workmule; place holds
+   (perl $0="mimo-gauntlet benchmark hold"; kill by pid after); (b) mimo10/app.sh up; config: add OPENAI_HOST
+   http://127.0.0.1:8191, OPENAI_BASE_PATH v1/chat/completions, provider_default_models.openai, GOOSE_CONTEXT_LIMIT
+   262144, mlx_distributed context 262144 + gpu_headroom_gb 9 (app QUIT while editing); (c) mimo10/go.sh; (d)
+   parity_check.py must exit 0 except the vision row (documented caveat); (e) Benchmark view over CDP 9461:
+   Gauntlet, Single model, Refresh providers, cdpkeys.mjs OpenAI, Model ID, clear $ stop, Run benchmark; verify
+   `pgrep -fl "[r]un_build.py --entrant"` (bracket the pattern: an unbracketed pgrep inside a waiter matches itself);
+   (f) at scoring: stop the split (mimo10/stop.sh), drop holds; (g) publish ONLY on the owner's word; (h) app.sh
+   down, restore config, single-guard --check on both Macs; touch ngram-go only when the owner says.
