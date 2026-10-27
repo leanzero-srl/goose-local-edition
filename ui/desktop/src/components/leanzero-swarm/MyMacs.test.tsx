@@ -222,12 +222,15 @@ describe('MyMacs — Nodes on this Mac, and Add another Mac', () => {
     expect(screen.queryByTestId('my-mac-nodes-self')).toBeNull();
   });
 
-  it('says the master switch is goose’s own operations and that jobs are the separate jobs switch', async () => {
+  it('names linked-device management and keeps jobs on their separate switch', async () => {
     renderMacs();
     const perms = await screen.findByTestId('my-mac-permissions');
     expect(perms.textContent).not.toContain('never an arbitrary command');
     expect(perms).toHaveTextContent(
-      'Shell commands and prompt jobs are a separate switch, “Run jobs other Macs send”, off until you turn it on.'
+      'Only devices signed in to your LeanZero Link account. Choose what they can do on this Mac. “Run jobs other Macs send” is a separate switch below.'
+    );
+    expect(perms).toHaveTextContent(
+      'Your linked devices can manage models and provider settings, start or steer sessions, stop runs and answer requests for input on this Mac.'
     );
   });
 

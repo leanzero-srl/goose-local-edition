@@ -172,15 +172,24 @@ describe('linked catalog selection', () => {
             : { state, email: 'fixture@example.com' },
         nodeCount: 1,
       });
-      render(<LinkedSessionsView navigation={null} />, { wrapper: IntlTestWrapper });
-      await waitFor(() => expect(leanzeroLinkStatus).toHaveBeenCalledOnce());
-      expect(screen.getByText('Connecting to your linked Macs…')).toBeInTheDocument();
-      expect(screen.queryByText(/Sign in to LeanZero Link/)).not.toBeInTheDocument();
-      expect(api.controllerCatalog).not.toHaveBeenCalled();
-      expect(
-        await screen.findByText('Original session', {}, { timeout: 3000 })
-      ).toBeInTheDocument();
-      expect(screen.queryByText(/Sign in to LeanZero Link/)).not.toBeInTheDocument();
+      vi.useFakeTimers();
+      const view = render(<LinkedSessionsView navigation={null} />, { wrapper: IntlTestWrapper });
+      try {
+        await act(async () => {});
+        expect(leanzeroLinkStatus).toHaveBeenCalledOnce();
+        expect(screen.getByText('Connecting to your linked Macs…')).toBeInTheDocument();
+        expect(screen.queryByText(/Sign in to LeanZero Link/)).not.toBeInTheDocument();
+        expect(api.controllerCatalog).not.toHaveBeenCalled();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000);
+        });
+        expect(api.controllerStatus).toHaveBeenCalledTimes(2);
+        expect(screen.getByText('Original session')).toBeInTheDocument();
+        expect(screen.queryByText(/Sign in to LeanZero Link/)).not.toBeInTheDocument();
+      } finally {
+        view.unmount();
+        vi.useRealTimers();
+      }
     }
   );
   it('treats a catalog without its first sync timestamp as pending', async () => {
