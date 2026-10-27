@@ -432,3 +432,25 @@ and commit in ONE command (`git add <paths> && git commit`), never leave things 
   split reports runner mlxLmPipeline, which goose's plan does not key".
 - End state: no ranks on either Mac; dev app quit; installed app restored (pid 51399, CDP 9897). Config restored
   (scratchpad mimo9/config.before-context.yaml). Screenshot /Volumes/AI-workhorse/media/goose/mimo-2026-10-26/.
+
+## Session 10 (2026-10-27 08:30-13:30 EET): prefill cause fixed, memory model, 128k/250k/275k live, NFS + UI fixed
+- Commits (mimo-distributed): 09ec8d0bf5 planner small chunks + adaptive step + PREFILL_PACE; 1a6e21d5b1.. load turns;
+  d25db67adb scores x2 (pair 257) + gpu_headroom_gb + no-cache fallback; 7b6206228b node_gpu_headroom_gb; 879670cf5e
+  adopting_extend (no KV copy into an empty generation batch) + end-copy charge; 3cf09e33ae per-shard eval + file-cache
+  drop; wire-touch commit; final: rank 0 loads LAST after dropping the folder's file cache (msync MS_INVALIDATE).
+  UI (agent): 590c272758 hero, 22ff9e614a card context = layer-split plan, 5bd17ea712 measured runs key mlxLmPipeline.
+  NFS (agent, machine-sync 61f1b54): mule mount hard,intr,deadtimeout=180 (soft mount gave ETIMEDOUT -> Failed to open).
+- PREFILL CAUSE: attention maths is ~60 s of a 64k prefill; the rest was rank 0's weights compressed by the kernel
+  (MLX arrays are not wired until the GPU uses them) whenever the workhorse's RAM was contested: the mule's NFS reads
+  through its file cache, TTS jobs, a GitHub Actions runner (16 GB), our own builds. 64k: TTFT 562 -> 218 s.
+- RIG (scratchpad mimo10/): app.sh up|down, setctx.sh <ctx>, go.sh <tag> (reload, Run, wait PIPELINE_WARM both, load
+  facts), hc.sh <key> (bench + abort -> stop.sh), memwatch.sh (3 s; ABORT at pressure warn or swap +1 GB in a run;
+  load grace 20 samples / +2 GB while LOADING exists), stop.sh (reloads if the Stop button vanished), mkprompts2.py
+  (swarm.rs prompts + answer key prompts.json.key). Holds: perl "mimo-longctx benchmark hold" on both Macs (node-probe
+  BUSY -> TTS jobs queue): pids in mimo10/hold.wh, hold.wm — KILL BY PID when done.
+- Config used (/tmp/gmimo/root/config/config.yaml mlx_distributed): context <N>, gpu_headroom_gb: 8.0. Restore after.
+- MEMORY MODEL: peak/rank = weights + 2 x full_layers x 2560 B x N (live + end copy) + chunk x width x 257 B.
+  19/29 weights 68.28 / 100.31 GB. Under 8 GB headroom the mule caps the context at ~277.5k: 300k short 0.65 GB,
+  350k short 1.94 GB (planner refusals on the card, 12:00). Without the headroom rule they would plan.
+- WAITING TRAPS: a CI runner on the workhorse (actions-runner-*), fam-lane TTS node jobs, our builds: wait them out
+  before a load (the 10:24 and 12:10 loads were stopped for swap). go.sh's "NO RANKS" = the plan refused.
