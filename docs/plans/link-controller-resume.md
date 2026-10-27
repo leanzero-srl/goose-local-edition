@@ -1,8 +1,8 @@
-# Goose Remote continuation — 2026-10-27 10:17 UTC
+# Goose Remote continuation — paused by owner, 27 October 2026
 
 ## Authority
 
-Owner requests unattended completion until testing/App Store readiness or a genuine owner dependency. Original four Mac upgrades approved WHEN IDLE, preserving data/settings, no benchmark interruption. Apple desktop notarization approved and complete. No permission re-ask for these actions. Organization seller LEANZERO S.R.L. required before publication. No App Store record, upload or submission yet. Do not weaken enrollment, delete nodes, copy credentials between profiles or consume old OTP codes.
+Owner explicitly requested a handover and pause on 27 October 2026 because usage was nearly exhausted. Do not resume work or reactivate the heartbeat until the owner resumes it. The prior unattended mandate is suspended; existing action approvals below remain recorded for that future resumption. Original four Mac upgrades approved WHEN IDLE, preserving data/settings, no benchmark interruption. Apple desktop notarization approved and complete. No permission re-ask for these actions. Organization seller LEANZERO S.R.L. required before publication. No App Store record, upload or submission yet. Do not weaken enrollment, delete nodes, copy credentials between profiles or consume old OTP codes.
 
 ## Current result
 
@@ -16,7 +16,7 @@ The isolated laptop app is CLOSED to free controller TLS41227. Its test state /t
 
 Workhorse and workmule benchmark campaign remains active at11:19UTC. The275k case completed in1840.42s and holds77789/99590 disappeared, but the same isolated campaign app84939/backend85025 launched rank94895 plus SSH94906 owning workmule rank91966. Root measured local rank89.6%CPU and49.3GiB RSS; independent reader observed growing rank memory and103.8GB on workmule. The earlier node-probe OK was a loading snapshot, not campaign completion. Current logs /tmp/gmimo/root/state/logs/distributed/rank0-work-s-mac-studio-1793099639303.log and rank1-work-mule-studio-1793099639352.log on workhorse. Do not treat absent holds, idle GPU or rank exit between cases as campaign completion. Evidence on workhorse: /private/tmp/claude-501/-Users-workhorse-Projects/b3c77359-c57d-472f-be64-067a0ce26b03/scratchpad/mimo10. Check current node-probe plus primary campaign state, then upgrade only genuinely idle original profiles. Workhorse original app absent; workmule original app/backend/mesh99905/99912/99919 last known. Read docs/plans/link-controller-host-upgrade.md before install; verify current PIDs, original activity and rollback point.
 
-Heartbeat finish-goose-remote-testing is ACTIVE every30minutes in this chat. Quiet while dependency unchanged; resumes approved work when idle. Disable once testing complete or only owner work remains. Never create a duplicate. No other-chat messages authorized.
+Heartbeat finish-goose-remote-testing is PAUSED, confirmed by the app tool on 27 October 2026 at the owner's request. Its existing30minute schedule is retained but inactive. Do not reactivate until the owner resumes. All delegated agents are completed. No other-chat messages authorized.
 
 ## Artifacts
 
@@ -33,3 +33,7 @@ After remaining host upgrades, prove iPad view/send/nudge, exact delivery/respon
 ## Local verification helpers
 
 /tmp/goose-original-activity-probe.py PID, /tmp/goose-laptop-link-state.py PID, /tmp/goose-original-catalog-scale-probe.py PID use supported authenticated loopbackACP and never print credentials. /tmp/goose-laptop-profile-snapshot.py hashes original records/config read-only. Latest /tmp/goose-laptop-restart-snapshot.json. Historical /tmp/goose-laptop-upgrade-before.json and after/comparison receipts. Private rollback /tmp/goose-original-recovery-dvlxxx85 holds config.yaml and tailscaled.state,0700/0600, never output or transfer; retain until final acceptance then delete exact paths. The only intentional untracked item is ui/desktop/bundled-mcps, a dev symlink into installed tools; never package through it.
+
+## Latest observation before owner pause
+
+At13:17UTC (15:17 Europe/Bucharest), workhorse still ran Gauntlet benchmark61294, child61615, and inference rank94895 at92.5%CPU. Workmule remained busy with16%free memory and75%GPU. These are historical observations, not fresh guarantees; re-probe before any future upgrade. No application, inference process, benchmark or service was stopped for this pause.
