@@ -134,6 +134,24 @@ describe('EngineGlanceDockSlot — the card at the foot of the sidebar', () => {
   });
 });
 
+describe('EngineGlanceDockSlot — owner 2026-10-27: the floating pill opt-in tick under the card', () => {
+  it('not opted in: unticked; ticking stores the opt-in', () => {
+    renderDock({ ...writing, prefs: { ...writing.prefs, desktopOptIn: false } });
+    const tick = screen.getByTestId('engine-glance-float-tick');
+    expect(tick.getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(tick);
+    expect(prefsSet).toHaveBeenCalledWith(expect.objectContaining({ desktopOptIn: true }));
+  });
+
+  it('negative control: opted in shows ticked, and unticking stores the opt-out', () => {
+    renderDock(writing);
+    const tick = screen.getByTestId('engine-glance-float-tick');
+    expect(tick.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(tick);
+    expect(prefsSet).toHaveBeenCalledWith(expect.objectContaining({ desktopOptIn: false }));
+  });
+});
+
 describe('glanceSessionsOf — the session-state store as the glance reports it', () => {
   it('counts running turns and lists every open question, with its session', () => {
     const auth = {

@@ -62,7 +62,40 @@ describe('EngineGlanceSettings — Q-426: the way back after the floating window
   it('the description says what the close does now', () => {
     mount(writing);
     expect(screen.getByTestId('engine-glance-settings').textContent).toContain(
-      'Its close button hides it until a new job, run or split starts.'
+      'Only its ⤢ button opens goose; dragging just moves it, and its ✕ hides it until a new job, run or split starts.'
     );
+  });
+});
+
+describe('EngineGlanceSettings — owner 2026-10-27: the floating pill is opt-in', () => {
+  let setPrefs: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    setPrefs = vi.fn(async () => undefined);
+    saved.engineGlancePrefsSet = electron.engineGlancePrefsSet;
+    Object.assign(electron, { engineGlancePrefsSet: setPrefs });
+  });
+
+  it('not ticked: the switch is off, no "when" choice, and no way back offered for a close', () => {
+    mount({ ...writing, desktopDismissed: true, prefs: { ...writing.prefs, desktopOptIn: false } });
+    expect(screen.getByTestId('engine-glance-desktop-optin').getAttribute('aria-checked')).toBe(
+      'false'
+    );
+    expect(screen.queryByTestId('engine-glance-desktop-away')).toBeNull();
+    expect(screen.queryByTestId('engine-glance-desktop-dismissed')).toBeNull();
+  });
+
+  it('ticking stores the opt-in (a stored "off" becomes "while in the background")', () => {
+    mount({ ...writing, prefs: { ...writing.prefs, desktopOptIn: false, desktop: 'off' } });
+    fireEvent.click(screen.getByTestId('engine-glance-desktop-optin'));
+    expect(setPrefs).toHaveBeenCalledWith(
+      expect.objectContaining({ desktopOptIn: true, desktop: 'away' })
+    );
+  });
+
+  it('negative control: ticked, the "when" choice shows and unticking stores the opt-out', () => {
+    mount(writing);
+    expect(screen.getByTestId('engine-glance-desktop-away')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('engine-glance-desktop-optin'));
+    expect(setPrefs).toHaveBeenCalledWith(expect.objectContaining({ desktopOptIn: false }));
   });
 });
