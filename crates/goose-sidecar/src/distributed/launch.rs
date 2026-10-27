@@ -5025,9 +5025,12 @@ def chat(system, steps):
     seen, sent = [], []
     for k in range(steps + 1):
         sent.append(json.loads(json.dumps(messages)))
-        prompt = render(messages)
-        _, rest = cache.fetch_nearest_cache(provider.model_key, prompt)
-        restorable.append(len(prompt) - len(rest))
+        if provider.tokenizer is None:
+            restorable.append(0)  # nothing loaded, nothing cached: the first request loads the model
+        else:
+            prompt = render(messages)
+            _, rest = cache.fetch_nearest_cache(provider.model_key, prompt)
+            restorable.append(len(prompt) - len(rest))
         reply = call({"model": served, "messages": messages, "tools": TOOLS, "max_tokens": 3,
                       "temperature": 0.0, "chat_template_kwargs": THINKING})
         seen.append([reply["usage"]["prompt_tokens"], reply["usage"]["prompt_tokens_details"]["cached_tokens"]])
@@ -5075,7 +5078,10 @@ os._exit(0)
         let prompts: Vec<u64> = serde_json::from_value(seen["prompts"].clone()).unwrap();
         let restorable: Vec<u64> = serde_json::from_value(seen["restorable"].clone()).unwrap();
         let cut = pairs("cut");
-        assert_eq!(seen["tail_free"], true, "MiMo thinking on ends on a bare assistant turn: {seen}");
+        assert_eq!(
+            seen["tail_free"], true,
+            "MiMo thinking on ends on a bare assistant turn: {seen}"
+        );
         assert_eq!(
             cut.iter().map(|(prompt, _)| *prompt).collect::<Vec<_>>(),
             prompts,
