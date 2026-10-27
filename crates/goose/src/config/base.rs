@@ -240,6 +240,35 @@ fn without_quoted_values(message: &str) -> String {
     out
 }
 
+/// (len, mtime, inode) of one config layer, `None` for an absent layer.
+type LayerStamp = Option<(u64, std::time::SystemTime, u64)>;
+type LoadMemo = HashMap<Vec<PathBuf>, (Vec<LayerStamp>, Mapping)>;
+
+fn load_memo() -> &'static Mutex<LoadMemo> {
+    static MEMO: std::sync::OnceLock<Mutex<LoadMemo>> = std::sync::OnceLock::new();
+    MEMO.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The stamps of every layer, or `None` when one cannot be stamped (no mtime): never cached then.
+fn layer_stamps(paths: &[PathBuf]) -> Option<Vec<LayerStamp>> {
+    #[cfg(unix)]
+    fn inode(meta: &std::fs::Metadata) -> u64 {
+        std::os::unix::fs::MetadataExt::ino(meta)
+    }
+    #[cfg(not(unix))]
+    fn inode(_meta: &std::fs::Metadata) -> u64 {
+        0
+    }
+    paths
+        .iter()
+        .map(|path| match std::fs::metadata(path) {
+            Ok(meta) => Some(Some((meta.len(), meta.modified().ok()?, inode(&meta)))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(None),
+            Err(_) => None,
+        })
+        .collect()
+}
+
 pub(crate) fn parse_settings_file(path: &Path, content: &str) -> Result<Mapping, ConfigError> {
     parse_settings_content(content).map_err(|failure| ConfigError::Unparseable {
         path: path.to_path_buf(),
@@ -802,6 +831,37 @@ impl Config {
     }
 
     fn load(&self) -> Result<Mapping, ConfigError> {
+        // Every get_param lands here, and the Link and engine polls call get_param dozens of
+        // times a second (node_allows, remote_execution_allowed, ...): re-reading and re-parsing
+        // the YAML each time was the top CPU frame of goose serve on Gabee (2026-10-27). The
+        // merged mapping is memoised per layer set and reused while every layer file keeps its
+        // (len, mtime, inode); any write — ours or an outside editor's — changes the stamp.
+        let stamps = layer_stamps(&self.config_paths);
+        if let Some(stamps) = &stamps {
+            if let Some(hit) = load_memo()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&self.config_paths)
+                .filter(|(at, _)| at == stamps)
+            {
+                return Ok(hit.1.clone());
+            }
+        }
+        let merged = self.load_uncached()?;
+        if let Some(stamps) = stamps {
+            // Only cache when the files did not change while we read them.
+            if layer_stamps(&self.config_paths).as_ref() == Some(&stamps) {
+                let mut memo = load_memo().lock().unwrap_or_else(|e| e.into_inner());
+                if memo.len() >= 64 {
+                    memo.clear();
+                }
+                memo.insert(self.config_paths.clone(), (stamps, merged.clone()));
+            }
+        }
+        Ok(merged)
+    }
+
+    fn load_uncached(&self) -> Result<Mapping, ConfigError> {
         let mut merged = Mapping::new();
 
         for path in &self.config_paths {
