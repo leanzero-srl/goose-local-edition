@@ -142,7 +142,7 @@ for (const backend of ["sqlite", "durable"] as const) {
       });
       const mints = provider.keys.length;
       const result = await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token);
-      expect(result.status).toBe(409); expect(await result.json()).toMatchObject({ error: { code: "update_required" } });
+      expect(result.status).toBe(409); expect(await result.json()).toMatchObject({ error: { code: "update_required", message: "Update Goose Swarm on the Macs linked to this account, reconnect LeanZero Link on each Mac, then try again." } });
       expect(provider.keys).toHaveLength(mints);
     });
     it.each([null, {}, { node_id: "1", node_key: "bad", user_id: "1", key_id: "1" }, { node_id: "1", node_key: "nodekey:" + "a".repeat(64), user_id: 1, key_id: "1" }])("fails closed on a corrupt activation receipt %#", async receipt => {
