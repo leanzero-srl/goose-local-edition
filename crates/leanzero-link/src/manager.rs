@@ -255,8 +255,8 @@ pub enum LinkError {
     ControllerHost(String),
     #[error("host enrollment could not reconcile {join}: {source}")]
     HostEnrollmentReconciliation {
-        join: MeshError,
-        source: WorkerError,
+        join: Box<MeshError>,
+        source: Box<WorkerError>,
     },
     #[error("Link teardown incomplete: {0}")]
     Teardown(String),

@@ -585,7 +585,10 @@ impl PreparedHost {
             .confirm_controller_host(&self.credentials.host_credential, enrollment_id, node_key)
             .await
             .map_err(|source| match cli_failure {
-                Some(join) => LinkError::HostEnrollmentReconciliation { join, source },
+                Some(join) => LinkError::HostEnrollmentReconciliation {
+                    join: Box::new(join),
+                    source: Box::new(source),
+                },
                 None => source.into(),
             })?;
         if confirmed.owner_node_id != self.owner.owner_node_id

@@ -1416,8 +1416,16 @@ mod ambiguous_host_enrollment {
                     .to_string();
                 assert!(
                     matches!(error, LinkError::HostEnrollmentReconciliation { ref join, ref source }
-                    if matches!(join, MeshError::JoinFailed { .. }) && source.has_controller_code(&expected))
+                    if matches!(join.as_ref(), MeshError::JoinFailed { .. }) && source.has_controller_code(&expected))
                 );
+                assert!(error
+                    .to_string()
+                    .contains("synthetic CLI failure after issued key attempt"));
+                let cause =
+                    std::error::Error::source(&error).expect("typed worker cause is retained");
+                if let LinkError::HostEnrollmentReconciliation { ref source, .. } = error {
+                    assert_eq!(cause.to_string(), source.to_string());
+                }
             } else {
                 assert!(error
                     .to_string()
