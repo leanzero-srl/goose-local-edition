@@ -6119,6 +6119,9 @@
   "mlxSetup.step2": {
     "defaultMessage": "模型"
   },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "正在讀取你的 Mac…"
+  },
   "mlxSetup.step2Done": {
     "defaultMessage": "你的 Mac 上有 {count} 個"
   },

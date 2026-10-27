@@ -6119,6 +6119,9 @@
   "mlxSetup.step2": {
     "defaultMessage": "모델"
   },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Mac 정보를 읽는 중…"
+  },
   "mlxSetup.step2Done": {
     "defaultMessage": "Mac에 {count}개"
   },

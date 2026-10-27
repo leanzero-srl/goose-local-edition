@@ -6119,6 +6119,9 @@
   "mlxSetup.step2": {
     "defaultMessage": "Modeller"
   },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Mac'leriniz okunuyor…"
+  },
   "mlxSetup.step2Done": {
     "defaultMessage": "Mac’lerinizde {count}"
   },

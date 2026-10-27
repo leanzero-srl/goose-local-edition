@@ -6119,6 +6119,9 @@
   "mlxSetup.step2": {
     "defaultMessage": "Модели"
   },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Чтение ваших Mac…"
+  },
   "mlxSetup.step2Done": {
     "defaultMessage": "На ваших Mac: {count}"
   },

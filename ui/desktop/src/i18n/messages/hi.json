@@ -6119,6 +6119,9 @@
   "mlxSetup.step2": {
     "defaultMessage": "मॉडल"
   },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "आपके Mac पढ़े जा रहे हैं…"
+  },
   "mlxSetup.step2Done": {
     "defaultMessage": "आपके Mac पर {count}"
   },

@@ -6119,6 +6119,9 @@
   "mlxSetup.step2": {
     "defaultMessage": "Mô hình"
   },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Đang đọc các máy Mac của bạn…"
+  },
   "mlxSetup.step2Done": {
     "defaultMessage": "{count} trên các Mac của bạn"
   },

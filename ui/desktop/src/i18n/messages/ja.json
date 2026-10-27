@@ -6119,6 +6119,9 @@
   "mlxSetup.step2": {
     "defaultMessage": "モデル"
   },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Mac を読み込み中…"
+  },
   "mlxSetup.step2Done": {
     "defaultMessage": "Mac 上に {count} 個"
   },

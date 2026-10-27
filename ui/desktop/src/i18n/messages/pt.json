@@ -6119,6 +6119,9 @@
   "mlxSetup.step2": {
     "defaultMessage": "Modelos"
   },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Lendo seus Macs…"
+  },
   "mlxSetup.step2Done": {
     "defaultMessage": "{count} nos seus Macs"
   },

@@ -6119,6 +6119,9 @@
   "mlxSetup.step2": {
     "defaultMessage": "Model"
   },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Membaca Mac Anda…"
+  },
   "mlxSetup.step2Done": {
     "defaultMessage": "{count} di Mac Anda"
   },
