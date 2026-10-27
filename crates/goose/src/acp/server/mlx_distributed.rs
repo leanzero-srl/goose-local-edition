@@ -72,6 +72,7 @@ fn config_from_dto(dto: MlxDistributedConfigDto) -> anyhow::Result<DistributedCo
         plan_reserve_ratio: dto.plan_reserve_ratio,
         // Config-file only (no DTO field yet): `resolve_config` carries the persisted value.
         gpu_headroom_gb: None,
+        node_gpu_headroom_gb: None,
         nodes: dto
             .nodes
             .into_iter()
@@ -400,7 +401,10 @@ fn resolve_config(
     let config = match dto {
         Some(dto) => {
             let mut config = config_from_dto(dto).invalid_params_err()?;
-            config.gpu_headroom_gb = persisted_config()?.and_then(|p| p.gpu_headroom_gb);
+            if let Some(persisted) = persisted_config()? {
+                config.gpu_headroom_gb = persisted.gpu_headroom_gb;
+                config.node_gpu_headroom_gb = persisted.node_gpu_headroom_gb;
+            }
             config
         }
         None => persisted_config()?.ok_or_else(|| {

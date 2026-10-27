@@ -249,14 +249,28 @@ pub struct DistributedConfig {
     /// budget is capped at is the measured one less this. `None` = the measured ceiling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu_headroom_gb: Option<f64>,
+    /// Per-node `gpu_headroom_gb` by node name, over the config-wide one. Why (2026-10-27): the
+    /// workhorse is also the NFS server of the model and a desktop; at 8 GB under its ceiling
+    /// rank 0's 71 GB plan (19 layers) still pushed it to swap +6 GB and memory pressure WARN
+    /// during its load, twice, where 18 layers (65.8 GB) loaded clean.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_gpu_headroom_gb: Option<std::collections::BTreeMap<String, f64>>,
     /// Rank order: `nodes[0]` is this Mac.
     pub nodes: Vec<NodeConfig>,
 }
 
 impl DistributedConfig {
-    /// A node's GPU ceiling less the config's `gpu_headroom_gb`.
-    pub fn planned_ceiling(&self, ceiling: u64) -> u64 {
-        let headroom = self.gpu_headroom_gb.unwrap_or(0.0).max(0.0) * 1e9;
+    /// A node's GPU ceiling less its headroom: `node_gpu_headroom_gb[node]`, else
+    /// `gpu_headroom_gb`, else none.
+    pub fn planned_ceiling(&self, node: &str, ceiling: u64) -> u64 {
+        let headroom = self
+            .node_gpu_headroom_gb
+            .as_ref()
+            .and_then(|by_node| by_node.get(node).copied())
+            .or(self.gpu_headroom_gb)
+            .unwrap_or(0.0)
+            .max(0.0)
+            * 1e9;
         ceiling.saturating_sub(headroom as u64)
     }
 
@@ -405,6 +419,7 @@ pub(crate) mod tests {
             watchdog_critical_ratio: None,
             plan_reserve_ratio: None,
             gpu_headroom_gb: None,
+            node_gpu_headroom_gb: None,
             nodes: vec![
                 NodeConfig {
                     name: "MacBook Pro".to_string(),

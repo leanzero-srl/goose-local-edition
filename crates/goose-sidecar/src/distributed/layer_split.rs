@@ -854,14 +854,21 @@ pub(crate) mod tests {
     #[test]
     fn the_gpu_headroom_lowers_the_ceiling_the_budget_is_capped_at() {
         let mut config = super::super::config::tests::two_mac_config();
-        assert_eq!(config.planned_ceiling(83_494_174_720), 83_494_174_720);
+        assert_eq!(config.planned_ceiling("w", 83_494_174_720), 83_494_174_720);
         config.gpu_headroom_gb = Some(8.0);
-        assert_eq!(config.planned_ceiling(83_494_174_720), 75_494_174_720);
+        assert_eq!(config.planned_ceiling("w", 83_494_174_720), 75_494_174_720);
+        config.node_gpu_headroom_gb = Some([("w".to_string(), 16.0)].into());
+        assert_eq!(config.planned_ceiling("w", 83_494_174_720), 67_494_174_720);
+        assert_eq!(
+            config.planned_ceiling("m", 115_000_000_000),
+            107_000_000_000
+        );
+        config.node_gpu_headroom_gb = None;
         let node = SplitNode {
             name: "workhorse".to_string(),
             available: 90_000_000_000,
             total: 96 * GIB,
-            ceiling: config.planned_ceiling(83_494_174_720),
+            ceiling: config.planned_ceiling("w", 83_494_174_720),
         };
         assert_eq!(node.budget(0.05), 75_494_174_720);
     }

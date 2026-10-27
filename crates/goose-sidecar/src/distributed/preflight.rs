@@ -1755,7 +1755,7 @@ fn plan_mlx_pipeline(
             name: node.name.clone(),
             available: figures.available,
             total: figures.total,
-            ceiling: config.planned_ceiling(figures.ceiling),
+            ceiling: config.planned_ceiling(&node.name, figures.ceiling),
         })
         .collect();
     let (warn, _) = config.watchdog_ratios();
