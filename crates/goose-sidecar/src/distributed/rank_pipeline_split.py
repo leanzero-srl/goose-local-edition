@@ -187,7 +187,7 @@ if spec.get("pipeline_split") is not None:
             # pages sit in the file cache beside their copies until it returns, and on the
             # workhorse (96 GB, a 68 GB stage) the kernel compressed the fresh weights instead
             # (compressor 53 GB, swap +2.3 GB, 2026-10-27 12:28 with rank 0 loading alone).
-            # Each shard is evaluated and then dropped from the file cache.
+            # Each shard is evaluated, wired, and then dropped from the file cache.
             if weight_map is None or len(arrays) != 1 or not isinstance(arrays[0], dict):
                 return upstream_eval(*arrays)
             from mlx.utils import tree_flatten
@@ -195,6 +195,10 @@ if spec.get("pipeline_split") is not None:
             flat = dict(tree_flatten(arrays[0]))
             for name, names in shard_groups(list(flat), weight_map):
                 upstream_eval([flat[n] for n in names])
+                # A loaded array is not wired until a GPU command buffer uses it (measured: a
+                # 4.8 GB shard left wired memory at 10.2 GB, a one-element GPU sum per array
+                # took it to 14.7): until then the kernel may compress it. Touch each now.
+                upstream_eval([mx.sum(flat[n].reshape(-1)[:1]) for n in names])
                 if name is not None:
                     dropped = evict_file_cache(str(model_dir / name))
                     evicted["files"] += 1 if dropped else 0
