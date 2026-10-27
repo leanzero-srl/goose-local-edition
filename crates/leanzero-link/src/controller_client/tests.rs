@@ -31,6 +31,7 @@ struct Fixture {
     device: Uuid,
     history_reads: Arc<AtomicUsize>,
     catalog_reads: Arc<AtomicUsize>,
+    updates: Arc<Mutex<Option<CatalogChanges>>>,
     accepted: Arc<Mutex<HashMap<Uuid, WorkCommand>>>,
     lose_ack: Arc<AtomicBool>,
     command_requests: Arc<AtomicUsize>,
@@ -61,6 +62,7 @@ impl Fixture {
             device,
             history_reads: Arc::new(AtomicUsize::new(0)),
             catalog_reads: Arc::new(AtomicUsize::new(0)),
+            updates: Arc::new(Mutex::new(None)),
             accepted: Arc::new(Mutex::new(HashMap::new())),
             lose_ack: Arc::new(AtomicBool::new(true)),
             command_requests: Arc::new(AtomicUsize::new(0)),
@@ -100,6 +102,9 @@ async fn catalog(State(f): State<Fixture>) -> Json<CatalogPage> {
     })
 }
 async fn changes(State(f): State<Fixture>) -> Json<CatalogChanges> {
+    if let Some(updates) = f.updates.lock().await.clone() {
+        return Json(updates);
+    }
     Json(CatalogChanges {
         resume_cursor: "fixture-signed-catalog".into(),
         changes: vec![],
@@ -303,6 +308,32 @@ async fn two_pinned_owners_refresh_offline_cache_and_lost_ack_outbox() {
         first.history_reads.load(Ordering::SeqCst) + second.history_reads.load(Ordering::SeqCst),
         0
     );
+    let catalog_path = directory.path().join("desktop/catalog.json");
+    let original_bytes = std::fs::read(&catalog_path).unwrap();
+    let unchanged_mtime = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1);
+    std::fs::File::options()
+        .write(true)
+        .open(&catalog_path)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(unchanged_mtime))
+        .unwrap();
+    let refreshed_catalog = service.sync(Some(proxy)).await.unwrap();
+    assert!(refreshed_catalog.updated_at > catalog.updated_at);
+    assert_eq!(std::fs::read(&catalog_path).unwrap(), original_bytes);
+    assert_eq!(
+        std::fs::metadata(&catalog_path)
+            .unwrap()
+            .modified()
+            .unwrap(),
+        unchanged_mtime
+    );
+    let stale = service.sync(None).await.unwrap();
+    assert!(stale.hosts.iter().all(|h| h.stale && h.error.is_some()));
+    let persisted = private_json::<FleetCatalog>(&catalog_path)
+        .unwrap()
+        .unwrap();
+    assert!(persisted.hosts == stale.hosts);
+    assert_ne!(std::fs::read(&catalog_path).unwrap(), original_bytes);
     service.sync(Some(proxy)).await.unwrap();
     assert_eq!(first.catalog_reads.load(Ordering::SeqCst), 1);
     assert_eq!(second.catalog_reads.load(Ordering::SeqCst), 1);
@@ -366,16 +397,41 @@ async fn two_pinned_owners_refresh_offline_cache_and_lost_ack_outbox() {
         .await
         .unwrap()
         .is_empty());
+    let before_entry_change = std::fs::read(&catalog_path).unwrap();
+    let mut changed_entry = first.entry.clone();
+    changed_entry.title = "Owner renamed the work".into();
+    changed_entry.revision = 2;
+    let mut changed_cursor = first.cursor();
+    changed_cursor.revision = 2;
+    *first.updates.lock().await = Some(CatalogChanges {
+        resume_cursor: "fixture-signed-catalog-2".into(),
+        cursor: changed_cursor.clone(),
+        has_more: false,
+        changes: vec![CatalogChange {
+            resume_cursor: "fixture-signed-catalog-2".into(),
+            cursor: changed_cursor,
+            kind: CatalogChangeKind::Upsert,
+            work: changed_entry.work.clone(),
+            entry: Some(changed_entry.clone()),
+        }],
+    });
+    service.sync(Some(proxy)).await.unwrap();
+    assert_ne!(std::fs::read(&catalog_path).unwrap(), before_entry_change);
+    let persisted = private_json::<FleetCatalog>(&catalog_path)
+        .unwrap()
+        .unwrap();
+    assert_eq!(persisted.hosts[0].entries, vec![changed_entry]);
     drop(hosts_mock);
     hosts[1].availability = HostAvailability::Offline;
     hosts[1].endpoints.clear();
     hosts[1].capabilities.clear();
-    Mock::given(method("GET"))
+    let offline_mock = Mock::given(method("GET"))
         .and(path("/v1/controller/hosts"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(HostsResponse { revision: 2, hosts }),
-        )
-        .mount(&authority)
+        .respond_with(ResponseTemplate::new(200).set_body_json(HostsResponse {
+            revision: 2,
+            hosts: hosts.clone(),
+        }))
+        .mount_as_scoped(&authority)
         .await;
     let mixed = service.sync(Some(proxy)).await.unwrap();
     assert!(!mixed.hosts[0].stale);
@@ -401,6 +457,27 @@ async fn two_pinned_owners_refresh_offline_cache_and_lost_ack_outbox() {
             .count(),
         1
     );
+    let persisted = private_json::<FleetCatalog>(&catalog_path)
+        .unwrap()
+        .unwrap();
+    assert!(persisted.hosts == mixed.hosts);
+    drop(offline_mock);
+    hosts.pop();
+    hosts[0].name = "Renamed Mac".into();
+    Mock::given(method("GET"))
+        .and(path("/v1/controller/hosts"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(HostsResponse { revision: 3, hosts }),
+        )
+        .mount(&authority)
+        .await;
+    let removed = service.sync(Some(proxy)).await.unwrap();
+    assert_eq!(removed.hosts.len(), 1);
+    assert_eq!(removed.hosts[0].host.name, "Renamed Mac");
+    let persisted = private_json::<FleetCatalog>(&catalog_path)
+        .unwrap()
+        .unwrap();
+    assert!(persisted.hosts == removed.hosts);
     for server in servers {
         server.shutdown().await.unwrap();
     }

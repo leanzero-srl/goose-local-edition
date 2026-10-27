@@ -480,41 +480,99 @@ async fn cursors_bind_owner_principal_purpose_work_and_generation_and_survive_re
 
 #[tokio::test]
 async fn fixed_catalog_pages_and_visibility_changes_do_not_leak_internal_sessions() {
-    let f = Fixture::new(1, 16).await;
+    let f = Fixture::new(2, 16).await;
     let (_, a) = f.create("visible a", SessionType::User).await;
-    let (_, b) = f.create("visible b", SessionType::Scheduled).await;
+    let (b_session, b) = f.create("visible b", SessionType::Scheduled).await;
+    let (_, acp) = f.create("visible acp", SessionType::Acp).await;
+    let (deleted_session, deleted) = f.create("deleted after snapshot", SessionType::User).await;
     let (_, hidden) = f.create("private hidden title", SessionType::Hidden).await;
     let (_, child) = f.create("private child title", SessionType::SubAgent).await;
-    let original = f.catalog.catalog_page(None, 20).await.unwrap();
-    let first = f.backend.catalog(&f.device, None).await.unwrap();
-    let target = original
-        .records
-        .iter()
-        .find(|r| r.work_id == b.work_id.to_string())
+    for index in 0..40 {
+        f.create(&format!("private {index}"), SessionType::Hidden)
+            .await;
+    }
+    let pool = f.pool().await;
+    let (before_hidden, _) = f.create("private before hide", SessionType::User).await;
+    sqlx::query("UPDATE sessions SET session_type='hidden' WHERE id=?")
+        .bind(&before_hidden.id)
+        .execute(&pool)
+        .await
         .unwrap();
+    let (before_deleted, _) = f.create("private before delete", SessionType::User).await;
+    f.manager.delete_session(&before_deleted.id).await.unwrap();
+    let mut expected = vec![
+        a.work_id.to_string(),
+        b.work_id.to_string(),
+        acp.work_id.to_string(),
+        deleted.work_id.to_string(),
+    ];
+    for kind in ["agent_work", "benchmark", "shell_job"] {
+        let record = f
+            .catalog
+            .upsert_external(&goose::session::work_catalog::ExternalWork {
+                kind: kind.into(),
+                locator: format!("/fixture/{kind}"),
+                title: kind.into(),
+                working_dir: "/fixture".into(),
+                state: "idle".into(),
+                run_key: None,
+                updated_at: Utc::now().to_rfc3339(),
+                event_kind: "created".into(),
+                log_bytes: None,
+            })
+            .await
+            .unwrap();
+        expected.push(record.work_id);
+    }
+    expected.sort();
+    let original = f.catalog.catalog_page(None, 100).await.unwrap();
+    assert_eq!(original.records.len(), 51);
+    assert_eq!(
+        original
+            .records
+            .iter()
+            .filter(|r| r.is_controller_visible())
+            .map(|r| r.work_id.clone())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    let first = f.backend.catalog(&f.device, None).await.unwrap();
+    assert_eq!(first.entries.len(), 2);
     f.manager
-        .update(&target.local_locator)
+        .update(&b_session.id)
         .user_provided_name("renamed")
         .apply()
         .await
         .unwrap();
-    let pool = f.pool().await;
     sqlx::query("UPDATE sessions SET session_type='hidden' WHERE id=?")
-        .bind(&target.local_locator)
+        .bind(&b_session.id)
         .execute(&pool)
         .await
         .unwrap();
+    f.manager.delete_session(&deleted_session.id).await.unwrap();
     f.create("another internal", SessionType::Hidden).await;
     let mut entries = first.entries;
     let mut next = first.next_page_token;
+    let mut pages = 1;
     while let Some(token) = next {
         let page = f.backend.catalog(&f.device, Some(&token)).await.unwrap();
         assert_eq!(page.watermark, first.watermark);
+        assert!(!page.entries.is_empty(), "hidden-only transport page");
+        if page.next_page_token.is_some() {
+            assert_eq!(page.entries.len(), 2);
+        }
         entries.extend(page.entries);
         next = page.next_page_token;
+        pages += 1;
     }
-    assert_eq!(entries.len(), 2);
-    assert!(entries.iter().any(|entry| entry.work == a));
+    assert_eq!(pages, 4);
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry.work.work_id.to_string())
+            .collect::<Vec<_>>(),
+        expected
+    );
     assert!(entries.iter().any(|entry| entry.title == "visible b"));
     let mut cursor = first.resume_cursor;
     let mut changes = Vec::new();
@@ -526,9 +584,12 @@ async fn fixed_catalog_pages_and_visibility_changes_do_not_leak_internal_session
             break;
         }
     }
-    assert!(changes
-        .iter()
-        .any(|change| change.work == b && matches!(change.kind, CatalogChangeKind::Tombstone)));
+    for work in [&b, &deleted] {
+        assert!(changes
+            .iter()
+            .any(|change| &change.work == work
+                && matches!(change.kind, CatalogChangeKind::Tombstone)));
+    }
     assert!(changes
         .iter()
         .all(|change| change.work != hidden && change.work != child));

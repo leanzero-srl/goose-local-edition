@@ -11,7 +11,7 @@ pub struct FleetCatalog {
     pub hosts: Vec<FleetHost>,
     pub updated_at: Option<DateTime<Utc>>,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct FleetHost {
     pub host: HostDescriptor,
     pub entries: Vec<CatalogEntry>,
@@ -131,7 +131,10 @@ impl DesktopController {
             hosts,
             updated_at: Some(Utc::now()),
         };
-        crate::controller_host::save_json(&self.path.with_file_name("catalog.json"), &result)?;
+        // Refresh time is live freshness, not a durable catalog change.
+        if previous.updated_at.is_none() || previous.hosts != result.hosts {
+            crate::controller_host::save_json(&self.path.with_file_name("catalog.json"), &result)?;
+        }
         *self.cache.write().await = result.clone();
         *self.last_error.write().await = None;
         *self.verified_at.write().await = proxy.map(|_| tokio::time::Instant::now());

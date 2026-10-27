@@ -804,3 +804,148 @@ async fn extension_and_tool_metadata_writes_enter_the_same_durable_journal() {
         1
     );
 }
+
+#[tokio::test]
+async fn projected_catalog_resolves_cross_source_versions_before_visibility() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = SessionManager::new(root.path().to_path_buf());
+    let session = create(&manager, "chat").await;
+    let catalog = manager.work_catalog().await.unwrap();
+    let record = catalog.lookup_local_session(&session.id).await.unwrap();
+    let pool = direct_pool(root.path()).await;
+    sqlx::query("INSERT INTO external_work_identity(work_id,kind,local_locator) VALUES (?,'benchmark','/collision')")
+        .bind(&record.work_id).execute(&pool).await.unwrap();
+    let insert_external = "INSERT INTO external_catalog_versions SELECT (SELECT revision FROM controller_store),work_id,'benchmark',local_locator,title,working_dir,'external',state,current_run_id,archived,updated_at,deleted,event_kind FROM catalog_versions WHERE revision=?";
+    sqlx::query("UPDATE controller_store SET revision=revision+1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(insert_external)
+        .bind(record.revision)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let external = catalog.controller_catalog_page(None, 1).await.unwrap();
+    assert_eq!(external.records.len(), 1);
+    assert_eq!(external.records[0].kind, "benchmark");
+    assert!(external.next.is_none());
+    sqlx::query("UPDATE sessions SET session_type='hidden' WHERE id=?")
+        .bind(&session.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(catalog
+        .controller_catalog_page(None, 1)
+        .await
+        .unwrap()
+        .records
+        .is_empty());
+    let raw = catalog.catalog_page(None, 1).await.unwrap();
+    assert_eq!(raw.records.len(), 1);
+    assert_eq!(raw.records[0].session_type, "hidden");
+    assert!(raw.next.is_none());
+    let frozen = catalog
+        .controller_catalog_page(
+            Some(&CatalogPageCursor {
+                watermark: external.watermark,
+                after_work_id: String::new(),
+            }),
+            1,
+        )
+        .await
+        .unwrap();
+    assert_eq!(frozen.records[0].kind, "benchmark");
+    sqlx::query("UPDATE controller_store SET revision=revision+1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(insert_external)
+        .bind(record.revision)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        catalog
+            .controller_catalog_page(None, 1)
+            .await
+            .unwrap()
+            .records[0]
+            .kind,
+        "benchmark"
+    );
+    manager.delete_session(&session.id).await.unwrap();
+    let deleted = catalog.catalog_page(None, 1).await.unwrap();
+    assert!(deleted.records[0].deleted);
+    sqlx::query("UPDATE controller_store SET revision=revision+1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(insert_external)
+        .bind(deleted.records[0].revision)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(catalog
+        .controller_catalog_page(None, 1)
+        .await
+        .unwrap()
+        .records
+        .is_empty());
+    assert!(catalog.catalog_page(None, 1).await.unwrap().records[0].deleted);
+}
+
+#[tokio::test]
+async fn latest_changes_coalesce_both_sources_and_resume_in_revision_order() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = SessionManager::new(root.path().to_path_buf());
+    let catalog = manager.work_catalog().await.unwrap();
+    let start = catalog.watermark().await.unwrap();
+    let first = create(&manager, "first").await;
+    let second = create(&manager, "second").await;
+    let mut external = goose::session::work_catalog::ExternalWork {
+        kind: "shell_job".into(),
+        locator: "/delta".into(),
+        title: "external".into(),
+        working_dir: "/fixture".into(),
+        state: "idle".into(),
+        run_key: None,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        event_kind: "created".into(),
+        log_bytes: None,
+    };
+    catalog.upsert_external(&external).await.unwrap();
+    for index in 0..10 {
+        manager
+            .update(&first.id)
+            .user_provided_name(format!("first {index}"))
+            .apply()
+            .await
+            .unwrap();
+        external.title = format!("external {index}");
+        catalog.upsert_external(&external).await.unwrap();
+    }
+    manager.delete_session(&second.id).await.unwrap();
+    let expected = catalog.latest_changes(&start, 100).await.unwrap();
+    assert_eq!(expected.records.len(), 3);
+    assert!(expected.records.iter().any(|r| r.title == "first 9"));
+    assert!(expected.records.iter().any(|r| r.title == "external 9"));
+    assert!(expected.records.iter().any(|r| r.deleted));
+    let mut cursor = start;
+    let mut records = Vec::new();
+    loop {
+        let page = catalog.latest_changes(&cursor, 1).await.unwrap();
+        assert_eq!(page.records.len(), 1);
+        assert!(page.cursor.revision > cursor.revision);
+        records.extend(page.records);
+        cursor = page.cursor;
+        if !page.has_more {
+            break;
+        }
+    }
+    assert_eq!(records, expected.records);
+    assert_eq!(cursor, expected.cursor);
+    let empty = catalog.latest_changes(&cursor, 1).await.unwrap();
+    assert!(empty.records.is_empty());
+    assert!(!empty.has_more);
+    assert_eq!(empty.cursor, cursor);
+}

@@ -682,7 +682,7 @@ impl ControllerBackend for GooseControllerBackend {
         let page = self
             .0
             .catalog
-            .catalog_page(cursor.as_ref(), self.0.policy.page_size)
+            .controller_catalog_page(cursor.as_ref(), self.0.policy.page_size)
             .await
             .map_err(store_error)?;
         let entries = page
@@ -1286,12 +1286,7 @@ fn stored_kind(kind: &str) -> Result<WorkKind, ControllerError> {
 }
 
 fn visible(record: &CatalogRecord) -> bool {
-    !record.deleted
-        && (matches!(
-            record.kind.as_str(),
-            "agent_work" | "benchmark" | "shell_job"
-        ) || record.kind == "chat"
-            && matches!(record.session_type.as_str(), "user" | "scheduled" | "acp"))
+    record.is_controller_visible()
 }
 
 fn visible_message(record: &HistoryRecord) -> Result<Option<HistoryItem>, ControllerError> {

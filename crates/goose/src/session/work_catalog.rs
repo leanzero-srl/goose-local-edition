@@ -42,6 +42,49 @@ pub struct CatalogRecord {
     pub event_kind: String,
 }
 
+const CONTROLLER_WORK_KINDS: &[&str] = &["agent_work", "benchmark", "shell_job"];
+const CONTROLLER_CHAT_TYPES: &[&str] = &["user", "scheduled", "acp"];
+
+impl CatalogRecord {
+    pub fn is_controller_visible(&self) -> bool {
+        !self.deleted
+            && (CONTROLLER_WORK_KINDS.contains(&self.kind.as_str())
+                || self.kind == "chat"
+                    && CONTROLLER_CHAT_TYPES.contains(&self.session_type.as_str()))
+    }
+}
+
+static CATALOG_PAGE_SQL: LazyLock<String> = LazyLock::new(|| {
+    let branch = |table| {
+        format!(
+        "SELECT v.* FROM {table} v WHERE v.work_id > ?2 AND v.revision = \
+         (SELECT MAX(revision) FROM ( \
+           SELECT MAX(revision) AS revision FROM catalog_versions WHERE work_id = v.work_id AND revision <= ?1 \
+           UNION ALL \
+           SELECT MAX(revision) AS revision FROM external_catalog_versions WHERE work_id = v.work_id AND revision <= ?1))"
+    )
+    };
+    // Resolve the latest version across both sources before visibility, so an older visible
+    // version cannot reappear after a hide/delete. The same policy powers the boundary check.
+    format!(
+        "SELECT * FROM ({} UNION ALL {}) \
+         WHERE (?4 = 0 OR (deleted = 0 AND (kind IN ('{}') OR (kind = 'chat' AND session_type IN ('{}'))))) \
+         ORDER BY work_id LIMIT ?3",
+        branch("catalog_versions"), branch("external_catalog_versions"),
+        CONTROLLER_WORK_KINDS.join("','"), CONTROLLER_CHAT_TYPES.join("','")
+    )
+});
+
+const LATEST_CHANGES_SQL: &str =
+    "WITH changed AS ( \
+       SELECT revision, work_id FROM catalog_versions WHERE revision > ?1 AND revision <= ?2 \
+       UNION ALL \
+       SELECT revision, work_id FROM external_catalog_versions WHERE revision > ?1 AND revision <= ?2 \
+     ), latest AS (SELECT MAX(revision) AS revision FROM changed GROUP BY work_id ORDER BY revision LIMIT ?3) \
+     SELECT v.* FROM latest JOIN catalog_versions v USING (revision) \
+     UNION ALL \
+     SELECT v.* FROM latest JOIN external_catalog_versions v USING (revision) ORDER BY revision";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogPageCursor {
     pub watermark: StoreWatermark,
@@ -186,6 +229,23 @@ impl WorkCatalog {
         cursor: Option<&CatalogPageCursor>,
         page_size: usize,
     ) -> Result<CatalogPage> {
+        self.catalog_page_projected(cursor, page_size, false).await
+    }
+
+    pub async fn controller_catalog_page(
+        &self,
+        cursor: Option<&CatalogPageCursor>,
+        page_size: usize,
+    ) -> Result<CatalogPage> {
+        self.catalog_page_projected(cursor, page_size, true).await
+    }
+
+    async fn catalog_page_projected(
+        &self,
+        cursor: Option<&CatalogPageCursor>,
+        page_size: usize,
+        controller_visible: bool,
+    ) -> Result<CatalogPage> {
         let limit = page_limit(page_size)?;
         let mut tx = self.pool.begin().await?;
         let current = read_watermark(&mut tx).await?;
@@ -196,12 +256,13 @@ impl WorkCatalog {
             }
             None => (current, ""),
         };
-        let mut records = sqlx::query_as::<_, CatalogRecord>(
-            "WITH versions AS (SELECT * FROM catalog_versions UNION ALL SELECT * FROM external_catalog_versions) \
-             SELECT v.* FROM versions v WHERE v.revision = \
-             (SELECT MAX(revision) FROM versions WHERE work_id = v.work_id AND revision <= ?) \
-             AND v.work_id > ? ORDER BY v.work_id LIMIT ?")
-            .bind(watermark.revision).bind(after).bind(limit).fetch_all(&mut *tx).await?;
+        let mut records = sqlx::query_as::<_, CatalogRecord>(&CATALOG_PAGE_SQL)
+            .bind(watermark.revision)
+            .bind(after)
+            .bind(limit)
+            .bind(controller_visible)
+            .fetch_all(&mut *tx)
+            .await?;
         let has_more = records.len() > page_size;
         records.truncate(page_size);
         let next = if has_more {
@@ -259,12 +320,12 @@ impl WorkCatalog {
         let mut tx = self.pool.begin().await?;
         let current = read_watermark(&mut tx).await?;
         validate_cursor(&current, cursor)?;
-        let mut records = sqlx::query_as::<_, CatalogRecord>(
-            "WITH versions AS (SELECT * FROM catalog_versions UNION ALL SELECT * FROM external_catalog_versions) \
-             SELECT v.* FROM versions v WHERE v.revision IN \
-             (SELECT MAX(revision) FROM versions WHERE revision > ? AND revision <= ? GROUP BY work_id) \
-             ORDER BY v.revision LIMIT ?")
-            .bind(cursor.revision).bind(current.revision).bind(limit).fetch_all(&mut *tx).await?;
+        let mut records = sqlx::query_as::<_, CatalogRecord>(LATEST_CHANGES_SQL)
+            .bind(cursor.revision)
+            .bind(current.revision)
+            .bind(limit)
+            .fetch_all(&mut *tx)
+            .await?;
         let has_more = records.len() > page_size;
         records.truncate(page_size);
         let revision = if has_more {
@@ -660,4 +721,84 @@ pub(crate) async fn create_objects(tx: &mut Transaction<'_, Sqlite>) -> Result<(
             .execute(&mut **tx).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod query_plan_tests {
+    use super::*;
+    use sqlx::Row;
+
+    #[tokio::test]
+    async fn catalog_queries_use_bounded_indexes_on_bundled_sqlite() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        for (table, index) in [
+            ("catalog_versions", "catalog_versions_work"),
+            ("external_catalog_versions", "external_versions_work"),
+        ] {
+            sqlx::query(&format!("CREATE TABLE {table}(revision INTEGER PRIMARY KEY, work_id TEXT, deleted INTEGER, kind TEXT, session_type TEXT)"))
+                .execute(&pool).await.unwrap();
+            sqlx::query(&format!(
+                "CREATE INDEX {index} ON {table}(work_id, revision DESC)"
+            ))
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(&format!("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000) INSERT INTO {table} SELECT x,printf('%06d', x/10),0,'chat','hidden' FROM n"))
+                .execute(&pool).await.unwrap();
+        }
+        let version: String = sqlx::query_scalar("SELECT sqlite_version()")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let catalog = sqlx::query(&format!("EXPLAIN QUERY PLAN {}", *CATALOG_PAGE_SQL))
+            .bind(1000_i64)
+            .bind("000050")
+            .bind(3_i64)
+            .bind(true)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let delta = sqlx::query(&format!("EXPLAIN QUERY PLAN {LATEST_CHANGES_SQL}"))
+            .bind(999_i64)
+            .bind(1000_i64)
+            .bind(3_i64)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let details = |rows: Vec<sqlx::sqlite::SqliteRow>| {
+            rows.into_iter()
+                .map(|r| r.get::<String, _>("detail"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let catalog = details(catalog);
+        let delta = details(delta);
+        eprintln!("SQLite {version} catalog plan:\n{catalog}\ndelta plan:\n{delta}");
+        for index in ["catalog_versions_work", "external_versions_work"] {
+            assert!(
+                catalog.contains(&format!("USING INDEX {index} (work_id>?)")),
+                "{catalog}"
+            );
+            assert!(
+                catalog.contains(&format!(
+                    "USING COVERING INDEX {index} (work_id=? AND revision<?)"
+                )),
+                "{catalog}"
+            );
+        }
+        for table in ["catalog_versions", "external_catalog_versions"] {
+            assert!(
+                delta.contains(&format!(
+                    "SEARCH {table} USING INTEGER PRIMARY KEY (rowid>? AND rowid<?)"
+                )),
+                "{delta}"
+            );
+        }
+        assert!(!catalog.contains("MATERIALIZE"), "{catalog}");
+        assert!(!delta.contains("MATERIALIZE versions"), "{delta}");
+        assert!(
+            delta.contains("SEARCH v USING INTEGER PRIMARY KEY (rowid=?)"),
+            "{delta}"
+        );
+    }
 }
