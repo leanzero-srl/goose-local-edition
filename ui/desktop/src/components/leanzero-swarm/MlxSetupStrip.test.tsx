@@ -105,6 +105,16 @@ describe('MlxSetupStrip renders each step state in its words and its solid colou
     expect(stepsRow()[0]).toEqual(['done', '1Your Macs·1 Mac']);
   });
 
+  it('models not read yet: step 2 says it is reading, never "0 on your Macs" (Gabee 2026-10-27)', () => {
+    renderStrip({ ...ALL_DONE, models: null, running: null });
+    expect(stepsRow()[1][1]).toContain('Reading your Macs…');
+    expect(stepsRow()[1][1]).not.toContain('0 on your Macs');
+    cleanup();
+    // Control: a read folder with no model is a real zero and keeps its words.
+    renderStrip({ ...ALL_DONE, models: 0, running: null });
+    expect(stepsRow()[1][1]).toContain('Get a model');
+  });
+
   it('no model: step 2 is Next "Get a model", and Run it after it is a slate later step', () => {
     renderStrip({ ...ALL_DONE, models: 0, running: null });
     const buttons = within(screen.getByTestId('mlx-setup-steps')).getAllByRole('button');
