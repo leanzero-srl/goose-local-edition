@@ -74,16 +74,16 @@ def shard_groups(names, weight_map):
 
 
 def pipeline_load_turn(rank, size):
-    """(barriers before, barriers after) this rank's load: the ranks load one at a time, rank 0
-    first. Every rank joins `size - 1` CPU barriers around its load (plus mlx_lm's own one at
-    the end of `sharded_load`), so barrier k completes when rank k has loaded and lets rank k+1
-    start. Why (2026-10-27): rank 0's Mac (the workhorse) also serves the model's files to the
-    others over NFS. While rank 0's fresh weights are not yet wired, the kernel compresses them
-    rather than drop the file cache the others' reads fill: loading beside the mule, and
-    loading after it (file cache 83 GB at 12:10), both pushed the compressor to ~54 GB and swap
-    up by 2.5-6 GB. Loaded first, rank 0's weights are wired (78 GB) before the others' reads
-    begin, and those reads only churn clean file pages."""
-    return rank, size - 1 - rank
+    """(barriers before, barriers after) this rank's load: the ranks load one at a time, the last
+    rank first and rank 0 last. Every rank joins `size - 1` CPU barriers around its load (plus
+    mlx_lm's own one at the end of `sharded_load`), so barrier k completes when rank `size-1-k`
+    has loaded and lets rank `size-2-k` start. Why (2026-10-27): rank 0's Mac (the workhorse)
+    also serves the model's files to the others over NFS, and a loaded MLX array is not wired
+    until the GPU uses it: rank 0's weights sitting idle while the mule's reads filled the
+    workhorse's file cache were compressed (12:44, rank 0 first: wired 9 GB, compressor 55 GB,
+    swap +3.2 GB). Rank 0 now loads last, after dropping the folder's cached pages
+    (`evict_file_cache`), and serves at once."""
+    return size - 1 - rank, rank
 
 
 if spec.get("pipeline_split") is not None:
@@ -205,6 +205,12 @@ if spec.get("pipeline_split") is not None:
                     evicted["bytes"] += dropped
             return None
 
+        if model_dir is not None:
+            # The others' reads of this folder (rank 0's Mac serves it over NFS) left it in the
+            # file cache: drop it before this rank's weights need the room.
+            for shard in sorted(model_dir.glob("*.safetensors")):
+                dropped = evict_file_cache(str(shard))
+                evicted["before_bytes"] = evicted.get("before_bytes", 0) + dropped
         mx.eval = eval_shard_by_shard
         try:
             loaded = original_sharded_load(*args, **kwargs)

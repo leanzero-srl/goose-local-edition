@@ -12214,21 +12214,21 @@ mod pipeline_launch_tests {
     }
 
     #[test]
-    fn the_pipeline_ranks_load_one_at_a_time_rank_zero_first() {
+    fn the_pipeline_ranks_load_one_at_a_time_rank_zero_last() {
         let source = include_str!("rank_pipeline_split.py");
         let start = source.find("def pipeline_load_turn").unwrap();
         let end = source[start..].find("\n\n\n").unwrap() + start;
         // Each rank's collectives in order: `before` barriers, its load, mlx_lm's own barrier,
         // `after` barriers. Barrier k completes when every rank reached it, so a rank's load
         // starts once barrier `before - 1` completed: the loads must come strictly one after
-        // another, rank 0 first, and every rank must join the same number of barriers.
+        // another, the last rank first, and every rank must join the same number of barriers.
         let check = format!(
             "{}\n\
              for size in (2, 3, 4):\n\
              \x20   turns = [pipeline_load_turn(r, size) for r in range(size)]\n\
              \x20   assert all(b + 1 + a == size for b, a in turns), turns\n\
              \x20   order = sorted(range(size), key=lambda r: turns[r][0])\n\
-             \x20   assert order == list(range(size)), order\n\
+             \x20   assert order == list(range(size - 1, -1, -1)), order\n\
              \x20   assert sorted(b for b, _ in turns) == list(range(size)), turns\n\
              print('ok')\n",
             &source[start..end]
