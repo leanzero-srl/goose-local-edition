@@ -32,16 +32,16 @@
 
 
 def pipeline_load_turn(rank, size):
-    """(barriers before, barriers after) this rank's load: the ranks load one at a time, the last
-    rank first and rank 0 last. Every rank joins `size - 1` CPU barriers around its load (plus
-    mlx_lm's own one at the end of `sharded_load`), so barrier k completes when rank `size-1-k`
-    has loaded and lets rank `size-2-k` start. Why (2026-10-27): the mule's 100 GB came over
-    NFS from the workhorse's SSD while rank 0 loaded its 68 GB on the workhorse itself; the
-    workhorse's file cache filled with the mule's reads and the kernel compressed rank 0's fresh
-    weights instead (compressor 54 GB, swap +2.5 GB, memory pressure WARN for minutes) — twice
-    in a row the load had to be stopped. Loading rank 0 after the others leaves only clean file
-    pages to evict. The shared SSD is the bottleneck either way, so the turns cost little."""
-    return size - 1 - rank, rank
+    """(barriers before, barriers after) this rank's load: the ranks load one at a time, rank 0
+    first. Every rank joins `size - 1` CPU barriers around its load (plus mlx_lm's own one at
+    the end of `sharded_load`), so barrier k completes when rank k has loaded and lets rank k+1
+    start. Why (2026-10-27): rank 0's Mac (the workhorse) also serves the model's files to the
+    others over NFS. While rank 0's fresh weights are not yet wired, the kernel compresses them
+    rather than drop the file cache the others' reads fill: loading beside the mule, and
+    loading after it (file cache 83 GB at 12:10), both pushed the compressor to ~54 GB and swap
+    up by 2.5-6 GB. Loaded first, rank 0's weights are wired (78 GB) before the others' reads
+    begin, and those reads only churn clean file pages."""
+    return rank, size - 1 - rank
 
 
 if spec.get("pipeline_split") is not None:
