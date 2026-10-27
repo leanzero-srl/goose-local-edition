@@ -19,6 +19,13 @@ The host then reauthenticates its existing mesh state with a one-use provider-ve
 
 Record before/after node ID, machine/node key hashes, IP and preauth binding without recording secret values. Prove exactly one usable node for the original Mac, original sessions retained, permissions retained, controller exclusion, real lease, and immediate clean quit/reconnect. An unexpected extra legacy node requires diagnosis; do not delete it to make a test pass. A fake mesh test does not prove Headscale reauthentication preserves identity.
 
-The current deployed admission rule requires every usable host to have a verified current lease. The separately reviewed offline-host proposal is pending explicit approval and is not deployed. It would not exempt unknown legacy hosts from upgrade.
+The approved offline-host update is deployed (worker candidate `5f10daaa5`, workhorse receipt `70bd2a7d50`). A previously activated exact provider binding remains verified while offline; routing and commands still require a current lease. Unknown legacy hosts are not exempt from upgrade. Old rows gain activation only through their next genuine verified lease, never backfill.
 
 27 October 2026: Written after the real account was blocked by four original legacy nodes while the isolated desktop owner connected successfully. Signed iOS export and an isolated desktop response are proven separately; neither establishes phone-to-owner operation.
+
+
+## Development launch isolation
+
+`facf47ca35` implements `GOOSE_SKIP_PROTOCOL_REGISTRATION=1` only for unpackaged dev-server launches. Set it for test/development upgrades so they do not replace the installed app's goose:// handler. Isolated profiles additionally use `GOOSE_PATH_ROOT`, `GOOSE_USER_DATA_DIR` and `GOOSE_DISABLE_KEYRING=1`; an authorized original-profile upgrade omits all three to retain its own store and keyring. Keep the verified CLI outside the signed app and supply the owned mesh binary paths explicitly.
+
+A terminal-launched development app needs its terminal input kept open; Electron Forge exited when its input closed. Use the repository's pinned pnpm10.30.3 and hoisted configuration rather than an unrelated fallback executable. If launched over SSH, remove SSH_CONNECTION/SSH_CLIENT/SSH_TTY from this app's environment to match a normal desktop launch; otherwise the private userspace mesh CLI can issue a misleading SSH-disconnection prompt. Do not add a production accept-risk flag or touch personal Tailscale.

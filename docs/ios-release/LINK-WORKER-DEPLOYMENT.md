@@ -38,3 +38,12 @@ Applied only the reviewed four-file worker delta from `895702b45` through `23b6f
 Source checks: full worker suite 229 tests, final focused registry suite 33 tests, typecheck, Wrangler dry-run and independent security review. Live public checks after restart: health 200 with mail=true/audience=false/mesh=true/headscale unchanged; new POST `/v1/controller/hosts/recover-node-secret` without credentials returns 401 invalid_credential and no-store; carrying Origin returns 403 origin_denied and no-store. These prove deployment and refusal boundaries; a live saved-login migration is still pending.
 
 The separate offline-host admission proposal is excluded. The live service still requires current verified host leases before admitting controllers. No original node was removed, no account secret was rotated and no controller gained host authority.
+
+
+## Approved verified-offline host update — 27 October 2026
+
+The owner explicitly approved implementation and tested deployment. Candidate `5f10daaa5` passed 299 worker tests, typecheck, Wrangler dry-run and independent review (106 rerun cases plus a separate activation/withdrawal/renewal probe). The deployed baseline tree matched `1c3631bf526da860beeac87d89a05c76891adb2c` exactly and had no worker edits. Applied the reviewed eight-file delta, recorded workhorse commit `70bd2a7d50`, then restarted only `com.leanzero.link-auth`. No credentials, registry rows, original profiles or provider nodes were directly edited.
+
+Public smoke: health200 with unchanged capability flags; unauthenticated hosts401/no-store; Origin403/no-store. The running isolated desktop renewed normally and its previously confirmed enrollment gained the exact activation receipt through the live lease route. A real desktop quit then cleared its live lease while preserving that receipt; immediate restart obtained a current lease again. These observations came from read-only registry metadata and the actual test app. The original Forge benchmark stayed running.
+
+Verified sleeping hosts can now permit controller enrollment without advertising endpoints/capabilities or authorizing commands until leased. Unknown legacy nodes still require their own upgrade. Phone admission into the owner's mixed-version fleet remains unproved; no legacy nodes were deleted to bypass it.
