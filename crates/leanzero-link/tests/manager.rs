@@ -1507,10 +1507,30 @@ async fn remote_execute_self_without_executor_is_loud() {
 
 #[tokio::test]
 async fn remote_execute_posts_to_a_peer_execute_route() {
-    // Node B: a real control service with a recording executor, on ephemeral loopback.
+    use leanzero_link::load::{NodeLimits, OwnLoad};
+
+    // Node B's real receive-side admission reads measured resources, not NamedIdleSource.
+    // Keep its registry separate from A and from concurrent tests keyed by jobs.root.
+    let b_storage = tempfile::tempdir().unwrap();
+    let measured = Arc::new(StdMutex::new(OwnLoad {
+        mem_free_pct: Some(10.0),
+        mem_total_gb: Some(128.0),
+        user_idle_s: Some(9999.0),
+        cpu_load_per_core: Some(0.1),
+        ncpu: 16,
+        on_ac: Some(true),
+        thermal_limit: Some(0),
+        ..Default::default()
+    }));
     let b_executor = RecordingExecutor::new("sess-on-b");
     let mut b_config = ControlConfig::new(node_token_from_secret(SECRET), None);
     b_config.port = 0;
+    b_config.jobs.root = b_storage.path().join("jobs");
+    b_config.jobs.heavy_lock = b_storage.path().join("heavy.lock");
+    b_config.jobs.limits = Some(NodeLimits::default());
+    b_config.jobs.min_free = Some(20.0);
+    let sampler = measured.clone();
+    b_config.jobs.sampler = Arc::new(move || sampler.lock().unwrap().clone());
     b_config.allow_remote_execution = true; // B opts in to being acted on
     let b = ControlService::start(
         b_config,
@@ -1556,27 +1576,43 @@ async fn remote_execute_posts_to_a_peer_execute_route() {
     // The peer-sync loop reconciles mesh-derived peers to [] exactly once at connect; re-seed
     // B until the POST lands (after that first reconcile it never wipes again, since the fake
     // mesh keeps reporting zero peers).
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    let accepted = loop {
-        registry.set_peers(vec![target.clone()]);
-        match manager
-            .remote_execute(
-                "node-b",
-                ExecuteRequest {
-                    prompt: "run this on B".to_string(),
-                    working_dir: None,
-                    session_id: None,
-                },
-            )
-            .await
-        {
-            Ok(accepted) => break accepted,
-            Err(LinkError::UnknownPeer(_)) if tokio::time::Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(25)).await;
+    let execute_on_b = || async {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            registry.set_peers(vec![target.clone()]);
+            match manager
+                .remote_execute(
+                    "node-b",
+                    ExecuteRequest {
+                        prompt: "run this on B".to_string(),
+                        working_dir: None,
+                        session_id: None,
+                    },
+                )
+                .await
+            {
+                Ok(accepted) => break Ok(accepted),
+                Err(LinkError::UnknownPeer(_)) if tokio::time::Instant::now() < deadline => {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(other) => break Err(other),
             }
-            Err(other) => panic!("unexpected remote_execute error: {other:?}"),
         }
     };
+
+    assert!(
+        matches!(
+            execute_on_b().await,
+            Err(LinkError::Execute(ExecuteError::Busy))
+        ),
+        "an Idle state source cannot override measured low memory"
+    );
+    assert!(b_executor.recorded.lock().unwrap().is_empty());
+    assert!(a_executor.recorded.lock().unwrap().is_empty());
+    measured.lock().unwrap().mem_free_pct = Some(80.0);
+    let accepted = execute_on_b()
+        .await
+        .expect("controlled resources admit the routed request");
 
     assert_eq!(
         accepted.session_id, "sess-on-b",
