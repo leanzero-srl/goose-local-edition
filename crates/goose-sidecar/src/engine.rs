@@ -464,6 +464,17 @@ impl ModelProfile {
     }
 }
 
+/// `model_id` in `models_dir`, assessed alone (never a walk of every model): a status poll asks
+/// this for the selected model several times a second.
+fn find_local_model(models_dir: &Path, model_id: &str) -> Result<LocalModel> {
+    hf::local_model(models_dir, model_id)?.with_context(|| {
+        format!(
+            "model '{model_id}' not found in {} (download it first)",
+            models_dir.display()
+        )
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EngineSettings {
@@ -1665,19 +1676,7 @@ impl MlxEngineManager {
     }
 
     fn local_model(&self, settings: &EngineSettings, model_id: &str) -> Result<LocalModel> {
-        hf::validate_model_id(model_id)?;
-        let models_dir = expand_tilde(&settings.models_dir);
-        let models = hf::list_local_models(&models_dir)?;
-        let model = models
-            .into_iter()
-            .find(|m| m.id == model_id)
-            .with_context(|| {
-                format!(
-                    "model '{model_id}' not found in {} (download it first)",
-                    models_dir.display()
-                )
-            })?;
-        Ok(model)
+        find_local_model(&expand_tilde(&settings.models_dir), model_id)
     }
 
     /// The one fit rule (`crate::fit`) for `model_id` on this Mac right now — the verdict the mount
@@ -1686,7 +1685,15 @@ impl MlxEngineManager {
     /// when it is this model).
     pub async fn mount_fit(&self, model_id: &str) -> Result<FitVerdict> {
         let settings = self.settings();
-        let model = self.local_model(&settings, model_id)?;
+        // Off the async thread: the assessment stats every file of the model, and on a Mac
+        // whose models live on the NFS-linked SSD a busy server makes each stat wait.
+        let model = {
+            let models_dir = expand_tilde(&settings.models_dir);
+            let id = model_id.to_string();
+            tokio::task::spawn_blocking(move || find_local_model(&models_dir, &id))
+                .await
+                .context("model assessment task")??
+        };
         self.judge_model(&settings, &model).await
     }
 

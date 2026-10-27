@@ -868,6 +868,15 @@ async fn core_settings_update(
 async fn core_models_list(
     _req: MlxEngineModelsListRequest,
 ) -> Result<MlxEngineModelsListResponse, agent_client_protocol::Error> {
+    // Every byte of this is synchronous filesystem work (a walk of every model, its index, its
+    // thinking/KV facts, disk space), on Gabee over the NFS-linked SSD: run it on the blocking
+    // pool so a slow server holds this request only, never the async workers serving the rest.
+    tokio::task::spawn_blocking(models_list_blocking)
+        .await
+        .internal_err_ctx("models list task")?
+}
+
+fn models_list_blocking() -> Result<MlxEngineModelsListResponse, agent_client_protocol::Error> {
     let settings = load_engine_settings()?;
     let models_dir = expand_tilde(&settings.models_dir);
     let models = hf::list_local_models(&models_dir).internal_err()?;
