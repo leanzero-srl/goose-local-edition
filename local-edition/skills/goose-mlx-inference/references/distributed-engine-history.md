@@ -406,3 +406,24 @@ default OFF, read per request — flips without a reconnect). The ssh path is un
   `cargo test -p goose-sidecar --features rustls-tls --test distributed_live -- --ignored --nocapture live_q114` with
   GOOSE_DIST_LOCAL_PYTHON / GOOSE_DIST_REMOTE_PYTHON = the managed envs and GOOSE_DIST_REMOTE_MODEL=/Users/workhorse/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx
   (the recorded_config defaults point at the deleted jaccl-smoke venvs).
+
+## 2026-10-26 MiMo-V2.6-Flash (mimo_v2, 48 layers, 256 experts) across workhorse + workmule
+- goose's distributed engine refuses mimo_v2 (config.rs only qwen3_5 tensor / qwen4_exp pipeline); run raw mlx_lm via
+  ~/jaccl-smoke/mimo-serve.sh (mlx_lm PR #1219 branch, pipeline split 19,29, port 8097). TP even split (~84 GB/rank) does not fit the M3U.
+- KV is tiny: 9 full-attn layers x 2560 B/token (4 kv heads, k192/v128, bf16); 39 SWA layers windowed at 128.
+- The JACCL pipeline crash seen on the random tiny model came from an mxfp4 embedding only; real layout passes (mlx-jaccl-cluster changelog).
+
+## 2026-10-26 (evening) MiMo split in goose: three findings on branch mimo-distributed
+- Debug `goose serve` died on the desktop's first providers/config/status request ("tokio-rt-worker has
+  overflowed its stack"). Cause: goose-acp-macros' generated `handle_custom_request` awaited every handler
+  inline, a 1.8 MB debug stack frame on a 2 MiB worker. Each arm is now a boxed future (frame 0.79 MB);
+  test acp_custom_request_stack_test runs on 2 MiB workers. RUST_MIN_STACK is no longer needed.
+  Read frame sizes from a macOS .ips crash report: map each frame to its function start (nm -n) and read
+  the prologue (`sub x9, sp, #N, lsl #12` = probed frame size).
+- Pipeline fork pin: lz-pipeline-qwen4.15 = 07126f05 (vendors mlx-lm's mimo_v2). "Save and provision"
+  builds both Macs' envs in under 10 s when uv's cache is warm.
+- rdmaGid: GID[0] ULA, GID[1] fe80, GID[2] ::ffff:v4 on both TB ends is fine (JACCL all_sum 8.95 GB/s).
+  Only an EMPTY index below the IPv4 GID fails (the 2026-09-24 soak, errno 96). The preflight link
+  repair cannot reorder the table, so the old "must be GID[1]" check refused a working link.
+- Plan with both Macs free: split 17/31 (workhorse L31-47 61.2 GB, workmule L0-30 107.4 GB), context
+  126,208 at the 5% mimo_v2 reserve. Any other model or TTS job on either Mac (30+ GB) and no split fits.

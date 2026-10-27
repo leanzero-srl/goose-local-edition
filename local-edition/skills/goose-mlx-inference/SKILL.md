@@ -1327,6 +1327,169 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
     Boot log must say `tool_call_parser=xing4, reasoning_parser=qwen3`. Smoke:
     `python3 ~/goose-builds/loop-state/engine-smoke/smoke.py 8198 xing-smoke` and `... --effort medium` (TEXT clean, no
     leaked `<think>`/`<tool_call>` in content, 3/3 write calls). In the app: engine-wrap pin to the full sha above.
+- **2026-10-18 (night, laptop session) — Xing 4.0 live in the STUDIO APP on an unreleased engine (pin-by-wrapper).** Studio
+  ~/goose-builds/loop-state/engine-wrap-xing.sh (REV 1c513d17 = lz/xing4-rc13; drops --cache-memory-percent like Gabee's
+  RC13 wrapper) set as mlx_engine.spawn_command with the app QUIT; model_id TokenAI-zer/Xing4.0-29B-A4B-8bit-MLX via the
+  symlink ~/.goose/models/TokenAI-zer -> /Volumes/AI-workhorse/models/goose/TokenAI-zer; OPENAI_HOST http://127.0.0.1:8090
+  added for the benchmark lane (Studio config backup config.yaml.before-nemotron-local-20261018). App mount: served with
+  tool_call_parser xing4 / reasoning qwen3, engine argv shows Rapid-MLX@1c513d17. Smoke through the app's :8090: text PASS,
+  tools 3/3 plain (6-9 s/call) and 3/3 at medium (14-73 s, 237-570 reasoning tokens). A Nemotron-4bit mount on the Studio was
+  REFUSED by the app's memory gate (64.8 GB needed, 62.6 free of 96 GB with other sessions' work) — Nemotron goes to the laptop.
+  APP PLANNER BUG (both MoE folders): "config.json declares 512 experts (Xing: 64) but no tensor has a leading dimension of
+  512 — the routed weights could not be found, so the active bytes are unknown" -> no speed plan; Run still allowed. The
+  planner's expert-tensor detector does not know nemotron_h's / xing4_0's routed-weight layout. Restore the Studio's config
+  from the backup when the local runs end (the released engine is the default for its cloud chain).
+- **2026-10-18 (night) — GEMMA 4 PREFIX-CACHE MISS: 12 % reuse, two causes, fixed on lz/rotating-boundary-state cc00328e
+  (on lz/xing4-rc13 1c513d17, so ONE pin carries Nemotron + Xing + this).** Owner saw Gabee "barely hitting 3-4k context
+  cache out of 30-40k". MEASURED (live gemma-4-31B-it 8-bit Forge run, goose request logs `cache_read_input_tokens`):
+  a constant 3,265 cached of 15-30k on EVERY turn; every other local run on the same RC13 engine reuses 92-99 %
+  (Glimmer 79,455/79,531, Qwen3.8-27B 98-99 %). Goose's messages are strictly append-only (same system, same tools) —
+  NOT a client problem. CAUSE 1 (`engine/batched.py _compute_prefix_boundary`): after a `tool` message the Gemma 4
+  template renders IDENTICALLY with and without add_generation_prompt (25,569 = 25,569 tokens); the strict-prefix check
+  `stable_lcp < len(real)` rejected equality and the fallback dummies the LAST USER message = the original task in an
+  agent loop, so the boundary was always system+tools+task (1,168 on the 12B, 3,265 on the 31B). Fix: accept the
+  equality case with the 8-token replay margin. CAUSE 2 (`scheduler._memguard_keep_boundary_state`): with a correct
+  boundary the 25-30k boundary COPY (3.7-4.4 GB) is still refused beside the live KV on 64 GB ("skipped storing a 4.42GB
+  prefix entry ... ceiling 40-43 GB"), and only ArraysCache+KVCache layouts got the turn-end hand-over; a wrapped
+  RotatingKVCache reports is_trimmable() False, so it ALSO read as "non-trimmable but not ArraysCache" and gave up, and
+  the turn-end prompt+output entry is useless (the next prompt diverges at the reply; a wrapped ring cannot rewind).
+  Fix: keep the ring layers' state at the boundary (window-bounded: 0.6-0.7 GB on the 12B at 25k) and hand the
+  full-attention KV over at the turn end. PROOF: red/green tests (tests/test_memory_guard_rotating_boundary.py: tiny
+  gemma3_text, window 16, real scheduler: cached 0 -> 48, answers == copied == cold; test_prefix_boundary_path_parity
+  ::test_boundary_when_the_template_adds_no_generation_suffix 35 -> 317); 215 boundary/hand-over/transient tests pass
+  (2 pre-existing HF-offline failures identical on the base). REPLAY of the live run's 10 recorded requests on the
+  Studio (gemma-4-12B-it MLX 4-bit at /Volumes/AI-workhorse/models/goose/lmstudio-community/, own engine :8199, boundary
+  copies refused past 4k tokens to mimic Gabee's pressure, same hook on both engines): base 1c513d17 = 1,168 cached
+  every turn (3-4 %), 39-56 s/request; cc00328e = 93-99 % from turn 2, 1.3-10.6 s/request. Logs /private/tmp/replay-*.log
+  on the workhorse. DEPLOY: engine-wrap REV=cc00328e439ffb20e98a50321bf9e36dfc06bc50 (Gabee: ~/t12-bench/engine-wrap.sh,
+  keeps its --cache-memory-percent filter; Studio: engine-wrap-xing.sh) with the app QUIT between series — NOT mid-run.
+  Release = workhorse session (tag + ENGINE_LAUNCHER bump). Also check other no-generation-suffix templates (any model
+  whose render after a tool message equals the generation prompt) — the boundary fix helps them all.
+- **2026-10-18 23:2x audit — reading the engine's own counters during a live run (GET /v1/status only):** `cache.hit_rate`,
+  `cache.tokens_saved` vs `total_prompt_tokens`, `memory_guard.actions.boundary_states_kept/boundary_handoffs` (the Gemma-4 fix
+  cc00328e working: 13/13), `busy_machine_evictions`, `machine_prefix_budget_mb` and `memory_guard.others_bytes`. others_bytes =
+  wired + anonymous - purgeable + compressor (file cache NOT counted) with a rise-at-once / fall-only-without-swapouts
+  hysteresis — it is real pressure, not a bug: compare with vm_stat before blaming the guard. A miss to read: the released
+  app's context probe wants meta.n_ctx or loaded_context_length, the RC13-line engine lists `context_window` (RUN-ISSUES I-12).
+- **2026-10-18 (late night) — MEMORY GUARD OVER-SIZED LATENT ATTENTION (MLA) 12.4x: Xing capped at 35,328 tokens (RUN-ISSUES
+  I-7).** The guard/admission KV figure is the uniform `2 x num_key_value_heads x head_dim x dtype x layers`; for Xing4.0
+  (32 kv heads, head_dim 3584/32=112, 40 layers, bf16) = 573,440 B/token, one-layer copy 14,336. mlx-lm's ABSORBED MLA
+  (`DeepseekV3Attention`, reused by xing4_0; also deepseek_v32, glm4_moe_lite, longcat_flash) caches ONE head:
+  `cache.update_and_fetch(kv_latent[kv_lora_rank], k_pe[qk_rope_head_dim])` = (512+64) x 2 B x 40 = 46,080 B/token. Result
+  on the 96 GB Studio: "82684 tokens needs 131.8 GB, this Mac can hold 75.1 GB, maximum context 35328" -> goose's recovery
+  compaction could not fit the Forge task and the session ended at 43 calls (score 0.0617, invalid). mlx-lm deepseek_v2 has
+  kv_lora_rank but caches full per-head K/V (no embed_q) — never key a latent rule on the config alone.
+  FIX lz/xing-guard-kv 87e71b18 (on cc00328e): `kv_estimation.latent_attention_bytes_per_layer(model, dtype)` from the loaded
+  modules (embed_q + int kv_lora_rank + qk_rope_head_dim on EVERY layer, else None); `Scheduler._mla_latent_layer_bytes()`
+  overrides per-token growth (baseline/sliding 0) and the guard prior's layer copy. Test
+  tests/test_kv_estimation_mla_latent.py (tiny Xing: base 1,536 vs measured 288 B/token -> 288). Patched engine on the real
+  weights: guard prior kv_copy 1,152 B/context-token, context_window 262,144. Run the fork's guard tests with the engine env
+  (archive sERprzWJ…) + `hypothesis` (test_memory_guard.py imports it; uv pip install --target /tmp/xingref/pyext).
+  RULE learned: never start a real-model check on a Mac with a live `run_build.py` (the coordinator had to kill one: the Studio
+  dropped to 11 % free + 9.5 GB swap during a Gemma 26B run).
+- **2026-10-19 (audit #3) — Gemma 4 still ~10 % reuse on 87e71b18: the NEXT-TURN check was too strict (fixed lz/gemma4-boundary-tail
+  1b5f497a5).** Live Gabee 31B run: boundary snapshots stuck at 3,491 of 37.6k (guard: boundary_states_kept 0, handoffs 0).
+  Offline emulation of `_compute_prefix_boundary` with the model's own tokenizer (engine env uv archive B2_VXO2n1vVyID1R,
+  transformers 5.15.1, apply_chat_template on the request's messages): real == stable = 37,469, but the next-turn probe shares
+  only 37,466 — appending a message RE-TOKENISES the last 3 tokens. The code required next_turn_lcp >= len(stable_tokens) and
+  fell back to the last-user dummy. Fix: require next_turn_lcp >= stable_boundary (stable - 8 replay tokens). Test
+  test_prefix_boundary_path_parity::test_boundary_when_the_next_turn_retokenises_the_tail (red before, green after; file 17/17;
+  the 6 boundary/transient files 69 pass; run with ~/Projects/Rapid-MLX/.venv/bin/python, PYTHONPATH=<worktree>, nice 19 — the
+  uv engine env has no pytest). Replays that reuse the probe render with the full tail CANNOT see this; emulate with a real
+  appended message. Not deployed: needs engine-wrap REV=1b5f497a5… between series, then re-check the guard counters (on 64 GB
+  the 5.0 GB prompt-end copy is still skipped, so the ring-keep path must be the one that fires).
+- **2026-10-19 (night, audit #4) — read Gemma 4 speed from the engine log, not the call count.** On Gabee (M3 Max 64 GB) Gemma 4
+  31B 8-bit on 1b5f497a reuses 91-99 % of each prompt (I-4b fix verified live: `[cache_fetch] HIT prompt_tokens=43136
+  cached=40662`), yet turns take ~5 min because DECODE is ~6.1 tok/s (Metal-memory lines every 256 steps ~42 s apart) and the
+  model writes 1.5-3.8k reasoning tokens per turn. A goose compaction summary request is an expected cache MISS (new prompt from
+  token 4). Speed lever not yet used: Google's drafter google/gemma-4-31B-it-assistant for speculative decoding.
+- **2026-10-19 (01:30-02:30, fork) — D-METAL-CAP OVER-PRICED GEMMA 4 KV 8x AND MASKED ITS REFUSAL (RUN-ISSUES I-17; fix
+  lz/gemma4-kv-window 3cfe2384 on 1b5f497a5).** Studio Gemma 4 12B 8-bit run openai-cloud-9e5d0bd2 refused: "needs ~42.6 GB on
+  top of 38.0 GB (reserved 0.0 + projected 42.6), limit 75.1 GB" -> goose saw "Internal error during streaming" x3 -> REFUSED.
+  NUMBERS (real loaded model, kvprobe in /private/tmp on the workhorse): guard 131,072 B/token + 655,360 B/sliding slot vs
+  MEASURED 16,384 + 327,680 (cache nbytes after a forward). Factors: 4x head shape (Gemma 4 full layers cache
+  num_global_key_value_heads x global_head_dim = 1 x 512; the config's base 8 x 256 is the SLIDING shape) x 2x dtype (mlx-vlm's
+  inner TextConfig has no `dtype` -> _infer_kv_dtype_bytes fp32 fallback). AMPLIFIER: max_tokens unset is resolved to
+  window - prompt (~222k for a 40k prompt), so T = 262,144 every turn, and an untokenized prompt string was counted as UTF-8
+  bytes. Pre-existing (same estimator in e3a92b55; 87e71b18's latent override returns None for Gemma) — NOT a regression.
+  FIX: kv_estimation.attention_module_kv_bytes (per-layer self_attn n_kv_heads/head_dim/is_sliding, is_kv_shared_layer = 0),
+  Scheduler._kv_element_bytes (loaded params' itemsize first, for growth + latent + quantized re-pricing), prompt counted by
+  the engine tokenizer, BackpressureError(error_object=...) = context_length_exceeded when it cannot fit alone (HTTP 400
+  pre-stream / SSE object mid-stream), else SSE code rate_limit_exceeded (goose in_stream_error -> RateLimitExceeded -> retry).
+  Final head b20ec1b7 (+9acd7982: a waiting request's prompt is tokenized ONCE — _sum_in_flight_kv_bytes re-projects every
+  waiting request per admission under the lock; +b20ec1b7: test_metal_cap_enforcement's byte-fallback test now drives the
+  fallback). Tests tests/test_gemma4_kv_admission.py (11 red on base, 14 green). DEPLOY REV=b20ec1b73f3ee4bb61aa1013862da516d9691a59.
+  TRAP: tests/test_memory_guard_mtp_decode.py::test_a_fixed_verify_cost_is_planned_without_a_crossing[m4max128] takes ~96 s on
+  the Studio — a --timeout 90 (thread method) kills the WHOLE run there; use >= 300. HF_HUB_OFFLINE=1 makes
+  test_streaming_detokenizer / test_tokenizer_gemma4_hybrid fail on base too (no cached tokenizer). REPLAY (own engine :8197, the app's argv, worktree via
+  M_WORKTREE sys.path launcher /private/tmp/m_engine.py, client /private/tmp/m_replay.py = 7 msgs/85k chars/5 tools/max_tokens
+  unset): 3 concurrent turns -> base refuses 2 ("projected KV 41.6 GB", masked); fix admits all, peak 29 GB.
+  GOOSE GAP (not fixed here): goose's in-stream error mapper (goose-provider-types formats/openai.rs in_stream_error) maps only
+  rate limits; a mid-stream context_length_exceeded becomes ServerError, NOT compaction — only the pre-stream 400 compacts.
+  Gemma 4 31B on Gabee: dtype present, so only the 2x head-shape over-price (163,840 vs 81,920 B/token); its live log
+  (mlx-engine-1792361017063.log, 21 requests to 43k prompt, max_tokens ~219k) has ZERO D-METAL-CAP lines — WHY the same
+  estimator does not bite there (50.1 GB cap) is UNEXPLAINED; check before trusting the 64 GB Mac with concurrent turns.
+- **2026-10-19 (03:40) — GRANITE 4.2 30B: stale `granite[-_]?4` profile (RUN-ISSUES I-23).** Engine b20ec1b7 boots
+  lmstudio-community/granite-4.2-30b-MLX-8bit as hermes / reasoning None / hybrid True. It is DENSE (GraniteForCausalLM) and its
+  template primes `<think>\n` behind enable_thinking (default True), so reasoning streams as content and a text call never
+  stops. The serve CLI has `--reasoning-parser <name>`, `--no-hybrid`, `--force-hybrid`, `--no-tool-call-parser`: appending
+  them to the wrapper's exec line overrides auto-detect (Studio ~/goose-builds/loop-state/engine-wrap-granite.sh adds
+  `--reasoning-parser qwen3 --no-hybrid`). Engine fix still owed: key granite profiles on model_type (granite = dense,
+  granitemoehybrid = hybrid) and pick qwen3 when the template primes <think>.
+  FIXED 2026-10-19 (fork `lz/granite42-profile` 7108304a01658d9cf61f74ea8d60bdf5f9c18090 on b20ec1b7, not released): the
+  name rule defers to model_type (granite -> qwen3_coder_xml / qwen3 / not hybrid, = IBM's granite-4.2 aliases), and a
+  bare `--tool-call-parser X` now binds. TRAP that hid behind the wrapper: on `rapid-mlx serve` an explicit
+  `--tool-call-parser` WITHOUT `--enable-auto-tool-choice` was silently dropped (/v1/models `tool_call_parser: null`):
+  non-streaming calls still parsed via the generic fallback scan, STREAMED calls came back as content, finish stop. Check
+  `/v1/models` after any parser override. Studio wrapper now passes the app argv only; smoke: no-effort text + 3/3 tools,
+  medium 3/3 tools; medium text overthinks past smoke's 600-token cap about half the time (model, not parser).
+- **2026-10-19 — the three Macs do NOT run the same goose.** Gabee's app is a t12-line build that sends
+  `reasoning_effort: medium`; the Studio and laptop run released 3.0.118, which sends no thinking preference, so the engine's
+  R12-T1F injects enable_thinking=False. Gemma 4 then reasons exactly "\n" each turn, and the released formatter folds every
+  turn into turn 2 (I-22, fix branch lz/i22-turn-merge 6464f335). Check `[REQUEST]` roles in the engine log on a new machine.
+- **2026-10-19 — Nex-N2.5-mini (qwen3_5_moe, abenzerps folder) gets NO parsers from auto-detect (RUN-ISSUES I-27).** Wrapper
+  flags `--tool-call-parser qwen3_coder_xml --reasoning-parser qwen3` fix it on 7108304a+ (earlier engines silently ignored
+  an explicit --tool-call-parser without --enable-auto-tool-choice — the I-23 finding). Generalise the I-23 template-wire rule.
+- **2026-10-19 — NEMOTRON 3.5 BOLT (`nemotron_h_puzzle`) PORTED + the guard's KV over-prices (RUN-ISSUES I-29, I-30).** Fork
+  `lz/nemotron-h-puzzle` 6d127474875ded467922111b5825329758751776 (on 7108304a; 1b025e4f5 = port of raullenchai/Rapid-MLX#4679:
+  vendored rapid_mlx/models/nemotron_h_puzzle.py over mlx-lm nemotron_h, aliases, sizes, tiny-forward tests). Folder profile is
+  TEMPLATE-driven (the PR pins nemotron/qwen3 unconditionally): the Nemotron-H fallback now covers both model types; MoE when any
+  block_configs entry is moe. Two guard fixes in the same branch: (1) `_kv_footprint_terms`' mlx-lm fallback priced KV with the
+  config dtype probe, which has no dtype in mlx-lm ModelArgs -> fp32 -> KV DOUBLED (Granite 4.2 30B 524,288 vs 262,144 B/token,
+  window 69,888 -> 131,072 native); now `_kv_element_bytes`. Read it from the boot line: `token=` in `[memory_guard] enabled: prior`
+  = KV/token + 16 x hidden + 6 x intermediate (bf16) -- a KV/token twice the model's real figure is this bug. Qwen3.8 unaffected.
+  (2) Nemotron-H block stacks carry no `layer_types`, so they were priced as all-attention (Bolt 180,224 B/token, window 116,480);
+  `kv_estimation.block_pattern_kv_bytes` reads the loaded blocks ("*" KV, "M" fixed conv+SSM state, "E"/"-" nothing): Bolt 8,192
+  B/token + 170,229,760 B state (= the live `recurrent=162.3MB`), window 262,144. PROBE without loading weights: a stub scheduler
+  (`Scheduler.__new__` + model/config/_kv_* fields) over `mlx_lm.utils.load_model(dir, lazy=True)` prints `_kv_footprint_terms()`,
+  `_memguard_prior()` and `MemoryGuard.max_context` in a second (scratch m_guardprobe.py / m_windowprobe.py pattern). LIVE (Studio
+  app, picker swap, no app quit): Bolt boot clean, smoke text + 3/3 tools (medium: reasoning split), 58.6k prompt admitted 93 s;
+  Granite 81.6k admitted (was refused at 80k). DEPLOY TRICK when the app must not be quit (a cloud chain run is live): the engine is
+  spawned from the wrapper FILE at every mount, so bump REV in the currently configured wrapper and swap models with the
+  #/leanzero-swarm picker -> "Run on this Mac"; config.yaml stays untouched. RESIDUAL: head_dim-128 models never calibrate the
+  attention coefficient (every pair slope < one layer's copy is discarded), so the 4-copy prior stays and prefill chunks get cut
+  (chunks_reduced 13-25 per long prompt) -- safe, slower. App planner gap: "config.json has no integer num_hidden_layers" for Bolt.
+- **2026-10-19 (audit #9) — THE ENGINE DOUBLED HISTORY THINK BLOCKS on a template that renders them on every row (RUN-ISSUES I-32;
+  fix lz/think-retain-once e874f045).** Signature: requests whose LAST role is `user` (a goose nudge, a compaction request) reuse almost
+  nothing (`cached=` a few thousand of 100k) right after a stored boundary, while tool-ending requests reuse 90 %+. The client is NOT
+  the cause if goose's bodies share their prefix: replay the ENGINE's render offline — `rapid_mlx.utils.chat_template.apply_chat_template
+  (AutoTokenizer.from_pretrained(<model dir>), engine._normalize_tool_call_arguments_for_template(msgs), tools=...,
+  enable_thinking=False, add_generation_prompt=True)` with the engine's uv-archive python (`ps` of rapid-mlx serve), CPU only,
+  HF_HUB_OFFLINE=1 — and diff the two renders. `_retain_tool_loop_think_blocks` was armed by literals alone; a probe render now decides.
+  Rule: never decide row edits from rendered text (an existing test pins that a row's CONTENT may open with its own think block); decide
+  per TEMPLATE with a cached probe render, like `_template_puts_narration_before_calls`.
+- **Speed math for a dense model at long context (laptop Granite 4.2 30B, 2026-10-19):** decode tok/s ~= bandwidth / (weights +
+  KV bytes per token x context). Granite 30B KV = 64 x 8 x 128 x 2 x 2 B = 256 KB/token -> 25.6 GB read per token at 100k + 32 GB
+  weights -> ~9 tok/s ceiling on an M4 Max (546 GB/s); measured ~7. Slow is the architecture, not the NFS model mount.
+- **2026-10-19 — Providers > Models delete refused SSD-linked models ("refusing to delete '<id>': /Volumes/AI-workhorse/... resolves
+  outside /Users/workhorse/.goose/models").** The Studio's ~/.goose/models/<publisher> are SYMLINKS to the SSD; the listing follows
+  them (a20f78b5b) but `hf::delete_local_model`, `hf::remove_partial_repo` and leanzero-link `replica::remove_partial` refused any
+  canonical path outside the models dir. Fixed on main ec7ba61d7 (74f751335 + review fix; ships in the release after 3.0.119): one helper `remove_model_dir`, Need::Model
+  requires config.json behind a link, never the models dir or an ancestor, per-model link removed with its target, publisher link kept;
+  read-only error hint; a CANCELLED download/copy removes the folder only if that job CREATED it, else only `.part` files - review D1 found a Resume+Cancel of an existing incomplete model wiped it, also before the change; ancestor check by dev+inode for macOS firmlinks). Until it ships: delete on the Studio with `rm -rf` of the EXACT SSD path after the marker check, and log it in
+  /Volumes/AI-workhorse/models/goose/DELETED-2026-10-19.log. The LAPTOP column is the SAME files over a read-only rclone NFS share
+  (192.168.0.2:/ = models/goose), so a laptop-side delete can never work and both columns vanish together; the laptop's listing lags a
+  deletion by minutes (rclone dir cache).
 - **2026-10-19 — RELEASE 3.0.119: engine pin v0.14.3-lz.12, overnight wrappers RETIRED.** ENGINE_LAUNCHER =
   `rapid-mlx[mtp] @ git+...Rapid-MLX@v0.14.3-lz.12` (tag object 5dfea7d5 -> cd53a8247 = lz/overnight-stack 429d0b40d +
   lz.11's LFM auto-config c56728690, which the overnight stack lacked: pin 429d0b40d alone and a local LFM2.5 folder
