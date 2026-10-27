@@ -15,8 +15,8 @@
 # - a timed local GPU round trip and a second CPU barrier before the sampling seed (the first
 #   GPU-stream collective): rank 1's Metal watchdog killed that seed on three loads in a row
 #   (2026-10-27), GOOSE_RANK_PIPELINE_WARM says how long each GPU took to answer.
-# - the tool parser for a template that writes `<tool_call><function=` with no newline (MiMo):
-#   qwen3_coder, which mlx_lm 0.31.3's inference misses (it picked json_tools).
+# - the tool parser for a template that writes `<tool_call><function=` (MiMo): qwen3_coder, where
+#   the model's tokenizer_config.json names json_tools.
 # - one rank-invariant prompt-cache byte count (`pipeline_cache_weights`): every rank runs its own
 #   prompt cache over the same requests and must evict alike (a rank that reuses a different
 #   prefix runs a different number of prefill steps, and the hidden states it sends no longer
@@ -50,22 +50,35 @@ if spec.get("pipeline_split") is not None:
             f"goose rank pipeline: {pipeline_class.__module__}.MiMoV2Model.pipeline takes no split "
             "(not the fork's vendored module): the planned split cannot be loaded"
         )
-    # mlx_lm 0.31.3 infers the tool parser from the chat template and knows qwen3_coder's XML only
-    # with a newline after `<tool_call>`; MiMo-V2.6's template writes `<tool_call><function=NAME>`
-    # with none, so it fell to json_tools, and every tool call the model made was unparsed
-    # (2026-10-27: GOOSE_RANK_TOOL_CALL_UNPARSED "JSONDecodeError: Expecting value: line 1
-    # column 1"; goose's coding prompt got four empty responses in a row). That format is
-    # qwen3_coder's XML; the template decides, so a model whose template lacks it is untouched.
-    from mlx_lm import tokenizer_utils as pipeline_tokenizers  # noqa: E402
+    # MiMo-V2.6's chat template writes qwen3_coder's XML (`<tool_call><function=NAME><parameter=..`)
+    # but its tokenizer_config.json names `"tool_parser_type": "json_tools"` (and mlx_lm 0.31.3's
+    # own inference would miss the no-newline form too), so every tool call the model made was
+    # unparsed (2026-10-27: GOOSE_RANK_TOOL_CALL_UNPARSED "JSONDecodeError: Expecting value: line
+    # 1 column 1"; goose's coding prompt got four empty responses in a row). Both parsers share
+    # `<tool_call>`/`</tool_call>`, so only the parse function moves; the template decides, so a
+    # model whose template lacks that XML is untouched.
+    import mlx_lm.utils as pipeline_utils  # noqa: E402
+    from mlx_lm.tool_parsers import qwen3_coder as pipeline_xml_tools  # noqa: E402
 
-    original_infer_tool_parser = pipeline_tokenizers._infer_tool_parser
+    original_load_tokenizer = pipeline_utils.load_tokenizer
 
-    def infer_tool_parser(chat_template):
-        if isinstance(chat_template, str) and "<tool_call><function=" in chat_template:
-            return "qwen3_coder"
-        return original_infer_tool_parser(chat_template)
+    def load_tokenizer_reading_template(*args, **kwargs):
+        tokenizer = original_load_tokenizer(*args, **kwargs)
+        template = getattr(tokenizer, "chat_template", None)
+        configured = getattr(tokenizer.tool_parser, "__module__", None)
+        if (
+            isinstance(template, str)
+            and "<tool_call><function=" in template
+            and tokenizer.tool_parser is not pipeline_xml_tools.parse_tool_call
+        ):
+            tokenizer._tool_parser = pipeline_xml_tools.parse_tool_call
+            emit(
+                "RANK_PIPELINE_TOOL_PARSER",
+                {"rank": spec["rank"], "configured": configured, "used": "qwen3_coder"},
+            )
+        return tokenizer
 
-    pipeline_tokenizers._infer_tool_parser = infer_tool_parser
+    pipeline_utils.load_tokenizer = load_tokenizer_reading_template
 
     original_pipeline = pipeline_class.pipeline
     pipeline_applied = []
