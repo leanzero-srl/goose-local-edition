@@ -465,3 +465,42 @@ and commit in ONE command (`git add <paths> && git commit`), never leave things 
   load fix (rank 0 last + folder cache drop) measured clean ONCE (12:36); confirm on the next loads.
 - End state: ranks stopped on both Macs, holds killed, dev config restored (no context/headroom), installed app back
   (goose-single-guard --check OK).
+
+## Session 11 (2026-10-27 13:15 EET, MiMo correctness + cache + Gauntlet agent; stopped at ctx-guard 350k)
+DONE (pushed to mimo-distributed): 1b12fafa1e TOOL_TURNS_THINK (MiMo tool turns keep the template's thinking-on;
+the rank used to force enable_thinking=false on every tool request, cloud baseline thought); 312cf5a3e reverted a
+redundant last-message cut; 85dae67e85/b8bb49344f real-mlx_lm test
+`a_thinking_mimo_chat_without_a_tail_reads_its_conversation_through_real_mlx_lm` (cached == LRU restore ==
+prompt[k-1]-1, rings past window, warm == cold). sidecar 509 lib + integration green on the laptop (port_holders flaky
+under parallel load, 3/3 alone). Correct-usage audit and cache design: skill goose-mlx-inference, section
+"MiMo-V2.6-Flash on the mlx_lm pipeline split".
+LIVE CACHE (13:20, split 18/30, plan context 119,808, served window 118,016; client scratchpad p1/cachetest.py,
+results p2cache/results.jsonl): 10,177-token prompt cold TTFT 23.6 s, repeat 0.15 s (cached 10,176), greedy output
+identical; conversation V cold 25.7 s vs 0.48 s, identical; W = A's conversation + new turn cached 10,176 (0.44 s);
+agent chat with tools, thinking on (reasoning 11-85 chars per turn), 3 tool calls parsed, every answer correct incl.
+item 17 from 4k tokens back, each turn cached = previous prompt - 1. The owner's "3 cached of 15,597" was a cold
+one-shot prompt (3 = mlx_lm system segment). Verdict: reuse real, counter right, SWA restore exact.
+STATE LEFT RUNNING FOR THE NEXT AGENT: dev app pid in scratchpad mimo10/app.pid (CDP 9461, profile /tmp/gmimo),
+split serving on :8191 (/v1, model id mlx-community/MiMo-V2.6-Flash-RL-mxfp4-q8). Installed app QUIT.
+OPEN (in order):
+1. Gauntlet sb-7.2 on local MiMo from the dev app's Benchmark view over CDP (port 9461): provider OpenAI configured
+   with host http://127.0.0.1:8191 (Configure providers; base path v1/chat/completions), entrant Single model, Model ID
+   as above, clear "Stop a run at $". Procedure = ~/goose-builds/loop-state/sb72_chain.py launch() (lines 275-322);
+   CDP tools with port env: scratchpad p2tools/{cdp.mjs,cdpkeys.mjs} (`CDP_PORT=9461 node cdp.mjs eval '...'`,
+   `node cdpkeys.mjs OpenAI`). Before: ~/Projects/machine-sync/bin/ai-disk-guard --need-gb 5 --out
+   /Volumes/AI-workhorse/runs/2026-10-27-mimo-gauntlet. Verify `ps -A -o command= | grep 'run_build.py --entrant'`.
+   Record app version, engine argv (ps), provider+host, one rendered prompt showing thinking (rank log
+   tool_turns_think true; responses carry reasoning).
+2. Cloud baseline already on the board: Gauntlet sb-7.2 0.7909 (2026-10-02 OpenRouter xiaomi/mimo-v2.6-flash,
+   https://leanzero.net/agentic-benchmarks/run/brun-029b6e80-82b5-49e1-83f9-e501cd296cb8). Compare overall + per
+   section; if local is clearly below, find why (logs, template, parsing, truncation at 118k window/compaction,
+   quant) before accepting. Run audit: goose-benchmark-iteration scripts/run_audit.py on the run dir.
+3. Owner: if Gauntlet is close with no unexplained failures, Forge 2.0 on local MiMo (forge2-local/dispatch with
+   port 9461; its preflight expects a single rapid-mlx engine, use --no-preflight + own checks). Cloud Forge 2.0:
+   0.5283 median of 2 (0.5538/0.5028, 2026-10-11). Otherwise investigate, skip Forge.
+4. Publish local scores from the app (skill "Publishing from the app"), then dated entry in goose-mlx-inference.
+5. LAST: touch scratchpad/ngram-go (only after Forge 2.0, or after the gap is explained if Forge is skipped).
+6. After: dev app down + installed app back: scratchpad mimo10/app.sh down; goose-single-guard --check.
+TRAPS: Mac memory (CI runner / TTS on workhorse) can stop the split (watchdog); NFS mule mount now hard (61f1b54);
+reload ~271 s via mimo10/go.sh. Local prefill slows past ~19k tokens (64k TTFT 218 s cold), so a cold re-read after
+a cache eviction or compaction is minutes.
