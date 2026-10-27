@@ -465,6 +465,11 @@ struct PeerEntry {
     leaving_notices: u64,
     /// Consecutive polls that connected but got no answer in time ([`PollFailure::Slow`]).
     slow_looks: u32,
+    /// A poll has given this row a verdict: the peer answered `/v1/swarm/nodes`, or a poll
+    /// marked it `Offline` (unreachable, or [`PEER_SLOW_LOOKS`] slow looks). Until then the
+    /// row's status comes from tailscale's own flag and the liveness dial
+    /// ([`mark_peer_reachable`]); from then on only a poll turns an `Offline` row online.
+    poll_verdict: bool,
 }
 
 /// How often each peer's liveness DIAL runs (D2): a fresh TCP connect through the mesh proxy,
@@ -541,10 +546,21 @@ impl PeerRegistry {
     /// Reconcile the fabric against the current mesh peer list: removed peers
     /// have their tasks aborted and their sessions dropped from the mirror;
     /// new/changed peers start `Offline` and get a poll task + a stream task.
+    /// (Production goes through [`Self::set_mesh_peers`], which seeds each new row from
+    /// tailscale's own online flag.)
     pub fn set_peers(&self, targets: Vec<PeerTarget>) {
+        self.reconcile_peers(targets.into_iter().map(|t| (t, false)).collect());
+    }
+
+    /// [`Self::set_peers`] with each new row seeded from `online` (tailscale's flag for the
+    /// peer): `true` starts the row `Idle` instead of `Offline`, so a just-connected screen
+    /// does not show every peer Offline until its first full poll lands. The liveness dial
+    /// (first look after [`PEER_LIVENESS_INTERVAL`]) still turns a seeded row `Offline` when
+    /// nothing answers on the control port. A row that already exists keeps its state.
+    fn reconcile_peers(&self, targets: Vec<(PeerTarget, bool)>) {
         let mut peers = self.inner.peers.lock().unwrap();
 
-        let keep: HashSet<&str> = targets.iter().map(|t| t.hostname.as_str()).collect();
+        let keep: HashSet<&str> = targets.iter().map(|(t, _)| t.hostname.as_str()).collect();
         let removed: Vec<String> = peers
             .keys()
             .filter(|k| !keep.contains(k.as_str()))
@@ -564,7 +580,7 @@ impl PeerRegistry {
             }
         }
 
-        for target in targets {
+        for (target, online) in targets {
             if let Some(existing) = peers.get(&target.hostname) {
                 if existing.target == target {
                     continue;
@@ -579,7 +595,12 @@ impl PeerRegistry {
                 node_id: target.hostname.clone(),
                 hostname: target.hostname.clone(),
                 mesh_ip: target.mesh_ip.clone(),
-                status: NodeStatus::Offline,
+                // No IP means nothing can be dialled: Offline whatever tailscale says.
+                status: if online && target.mesh_ip.is_some() {
+                    NodeStatus::Idle
+                } else {
+                    NodeStatus::Offline
+                },
                 sessions_active: 0,
                 updated_at: Utc::now(),
                 last_poll_error: None,
@@ -623,6 +644,7 @@ impl PeerRegistry {
                     tasks,
                     leaving_notices: 0,
                     slow_looks: 0,
+                    poll_verdict: false,
                 },
             );
         }
@@ -630,10 +652,10 @@ impl PeerRegistry {
 
     /// Convenience over [`Self::set_peers`] straight from `MeshStatus.peers`.
     pub fn set_mesh_peers(&self, peers: &[MeshPeer], control_port: u16) {
-        self.set_peers(
+        self.reconcile_peers(
             peers
                 .iter()
-                .map(|p| PeerTarget::from_mesh_peer(p, control_port))
+                .map(|p| (PeerTarget::from_mesh_peer(p, control_port), p.online))
                 .collect(),
         );
     }
@@ -815,8 +837,8 @@ fn classify_send_error(error: reqwest::Error) -> PollFailure {
 /// hanging past [`PEER_LIVENESS_DIAL_TIMEOUT`] (the peer's Link is gone, or a slow relay) is
 /// re-dialled at once and marks `Offline` only after [`PEER_LIVENESS_TIMEOUTS`] in a row —
 /// either way without waiting out a poll — whose pooled connection to a dead peer stays open and silent
-/// for the whole request timeout. A successful dial changes nothing: only a poll restores
-/// a status.
+/// for the whole request timeout. A successful dial turns a row online only while no poll has
+/// given it a verdict yet ([`mark_peer_reachable`]); after that only a poll restores a status.
 async fn liveness_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, base_url: String) {
     let Ok(url) = url::Url::parse(&base_url) else {
         return;
@@ -833,6 +855,10 @@ async fn liveness_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, base_
         drop(inner);
         let Err(error) = proxy.tcp_stream(&url, PEER_LIVENESS_DIAL_TIMEOUT).await else {
             timeouts = 0;
+            let Some(inner) = weak.upgrade() else { return };
+            if let Some(event) = mark_peer_reachable(&inner, &target.hostname) {
+                inner.pubsub.publish(EventOrigin::Peer, event).await;
+            }
             continue;
         };
         if matches!(error, PeerDialError::SocksTimeout { .. }) {
@@ -849,6 +875,31 @@ async fn liveness_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, base_
             inner.pubsub.publish(EventOrigin::Peer, event).await;
         }
     }
+}
+
+/// The liveness dial connected: a row no poll has given a verdict yet turns `Idle` (online),
+/// so a peer whose first `/v1/swarm/nodes` is slow does not sit Offline for the whole poll
+/// timeout (measured 2026-10-27: 5.0 s after connect on Gabee). Never overrides a poll's
+/// verdict (an `Offline` from a transport failure or [`PEER_SLOW_LOOKS`] slow looks would
+/// otherwise flap back every [`PEER_LIVENESS_INTERVAL`], since a hung Link still accepts TCP)
+/// nor a going-away notice. Busy/Idle detail and identity arrive with the first poll.
+fn mark_peer_reachable(inner: &Arc<RegistryInner>, hostname: &str) -> Option<LinkEvent> {
+    let mut peers = inner.peers.lock().unwrap();
+    let entry = peers.get_mut(hostname)?;
+    if entry.poll_verdict
+        || entry.state.status != NodeStatus::Offline
+        || entry.state.leaving.is_some()
+    {
+        return None;
+    }
+    tracing::info!(
+        hostname,
+        "mesh peer accepts connections before its first poll answered; shown online"
+    );
+    entry.state.status = NodeStatus::Idle;
+    entry.state.last_poll_error = None;
+    entry.state.updated_at = Utc::now();
+    Some(LinkEvent::NodeStateChanged(entry.state.clone()))
 }
 
 /// The liveness dial failed: `Offline` with the dial's words — unless the row already reads
@@ -982,6 +1033,28 @@ async fn poll_peer_once(
         .get(&target.hostname)
         .map(|entry| entry.leaving_notices);
     let nodes: SwarmNodesResponse = fetch_json(inner, format!("{base_url}/v1/swarm/nodes")).await?;
+    // A row the polls have not settled yet (first answer, or back from Offline) is published
+    // from `/nodes` alone, before `/sessions` is asked: the session index must not hold the
+    // row back for another request timeout. A settled row folds once, below, so a peer whose
+    // `/sessions` keeps failing does not flip its error text twice per poll.
+    let publish_early = inner
+        .peers
+        .lock()
+        .unwrap()
+        .get(&target.hostname)
+        .is_some_and(|entry| !entry.poll_verdict || entry.state.status == NodeStatus::Offline);
+    if publish_early {
+        for event in fold_peer_snapshot(
+            inner,
+            &target.hostname,
+            notices_at_start,
+            nodes.self_node.clone(),
+            None,
+            None,
+        ) {
+            inner.pubsub.publish(EventOrigin::Peer, event).await;
+        }
+    }
     match fetch_json::<Vec<SessionSummary>>(
         inner,
         format!("{base_url}/v1/swarm/sessions?scope=local"),
@@ -1035,6 +1108,7 @@ fn fold_peer_snapshot(
     let Some(entry) = peers.get_mut(hostname) else {
         return events;
     };
+    entry.poll_verdict = true;
     let notice_during_poll = notices_at_start != Some(entry.leaving_notices);
     let remote_self = if entry.state.leaving.is_some() && notice_during_poll {
         None
@@ -1103,6 +1177,7 @@ fn fold_leaving(current: &NodeState, mut remote: NodeState) -> NodeState {
 fn mark_peer_offline(inner: &Arc<RegistryInner>, hostname: &str, error: &str) -> Option<LinkEvent> {
     let mut peers = inner.peers.lock().unwrap();
     let entry = peers.get_mut(hostname)?;
+    entry.poll_verdict = true;
     if entry.state.status == NodeStatus::Offline
         && entry.state.last_poll_error.as_deref() == Some(error)
     {
