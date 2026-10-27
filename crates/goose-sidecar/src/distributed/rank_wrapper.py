@@ -1802,6 +1802,10 @@ if spec.get("batch_kv_dtype"):
     BatchKVCache.extend = kv_extend
     BatchKVCache.merge = classmethod(kv_merge)
 
+# A finished prompt joins an EMPTY generation batch without a second copy of its KV
+# (rank_batch.py `adopting_extend`): the copy was the peak of a long request.
+BatchKVCache.extend = adopting_extend(BatchKVCache.extend)
+
 
 # A BaseException so mlx_lm's handle_completion (`except Exception` → 404) lets it through to
 # do_POST, which answers with the status it names.

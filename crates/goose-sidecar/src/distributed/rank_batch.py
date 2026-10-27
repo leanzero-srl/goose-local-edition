@@ -149,3 +149,24 @@ def generation_filter(upstream_filter):
         self.logits_processors = kept
 
     return filter
+
+
+def adopting_extend(upstream):
+    """BatchKVCache.extend that ADOPTS the joining batch's arrays when this batch holds no row.
+
+    mlx_lm 0.31.3 moves a finished prompt into the generation batch with `extend`, which pads
+    both sides and concatenates even when the generation side is empty — a full copy of the
+    row's KV while the prompt's own copy is still alive. Measured 2026-10-27 on MiMo at 250k:
+    both ranks' active memory jumped by one KV (rank 0 70.8 -> 73.4 GB) at the end of the
+    prefill, the peak of the whole request (rank 1 107.6 of 115.4 GB). An empty side has
+    nothing to pad, so the result is the joining arrays themselves (same values, no copy)."""
+
+    def extend(self, other):
+        if self.keys is None and self.offset.shape[0] == 0 and other.keys is not None:
+            self.keys, self.values = other.keys, other.values
+            self.offset, self.left_padding = other.offset, other.left_padding
+            self._idx = other._idx
+            return
+        return upstream(self, other)
+
+    return extend

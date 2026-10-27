@@ -170,7 +170,15 @@ impl LayerSplitFacts {
             full_layers: full,
             weights,
             state,
-            prompt_cache: cached * state,
+            // With no cached context charged, the row's own entry is still extracted (a copy of
+            // its KV) when it ends, beside the live batch — measured 2026-10-27, MiMo 250k: one
+            // KV more on both ranks at the end of the request. It is not live with the prefill
+            // workspace, so only the part of it the workspace does not already cover is charged.
+            prompt_cache: if cached == 0 {
+                state.saturating_sub(workspace)
+            } else {
+                cached * state
+            },
             workspace,
         }
     }
@@ -516,9 +524,16 @@ pub fn plan_layer_split(
         .zip(nodes)
         .filter_map(|((start, end), node)| {
             let need = facts.stage_need_cached(*start, *end, planned_context, 0, cached);
+            // With no cached context the row's end-of-request copy is not live with the
+            // workspace: the chunk may use the room beside weights + live KV (the copy's own
+            // fit is the `fits` check below).
+            let resident = if cached == 0 {
+                need.resident() - need.prompt_cache
+            } else {
+                need.resident()
+            };
             (need.full_layers > 0).then(|| {
-                node.budget(reserve_ratio).saturating_sub(need.resident())
-                    / (width * facts.pair_bytes)
+                node.budget(reserve_ratio).saturating_sub(resident) / (width * facts.pair_bytes)
             })
         })
         .min()
@@ -838,13 +853,16 @@ pub(crate) mod tests {
         let nodes = nodes();
         let past = (37_632..)
             .step_by(KV_CACHE_STEP as usize)
-            .find(|c| best_split(&facts, &nodes, warn, *c, MIN_PREFILL_CHUNK, 1).1 < 0)
+            .find(|c| {
+                best_split(&facts, &nodes, warn, *c, MIN_PREFILL_CHUNK, 1).1 < 0
+                    && best_split(&facts, &nodes, warn, *c, MIN_PREFILL_CHUNK, 0).1 >= 0
+            })
             .unwrap();
         let split = plan_layer_split(&facts, &nodes, warn, warn, Some(past)).unwrap();
         assert!(split
             .plans
             .iter()
-            .all(|p| p.prompt_cache_bytes == 0 && p.fits));
+            .all(|p| p.prompt_cache_bytes < p.state_bytes && p.fits));
         assert!(
             split.reason.contains("reads its whole prompt again"),
             "{}",

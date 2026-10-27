@@ -11916,6 +11916,40 @@ mod pipeline_launch_tests {
     }
 
     #[test]
+    fn a_prompt_joining_an_empty_generation_batch_adopts_its_kv() {
+        let source = include_str!("rank_batch.py");
+        let start = source.find("def adopting_extend").unwrap();
+        let check = format!(
+            "{}\n\
+             class Shape:\n\
+             \x20   def __init__(self, n): self.shape = (n,)\n\
+             class Cache:\n\
+             \x20   def __init__(self, keys, rows): self.keys = keys; self.values = keys; self.offset = Shape(rows); self.left_padding = rows; self._idx = 7\n\
+             calls = []\n\
+             extend = adopting_extend(lambda a, b: calls.append((a, b)))\n\
+             empty, row = Cache(None, 0), Cache(object(), 1)\n\
+             extend(empty, row)\n\
+             assert empty.keys is row.keys and empty._idx == 7 and not calls\n\
+             extend(empty, Cache(object(), 1))\n\
+             assert len(calls) == 1\n\
+             extend(Cache(None, 0), Cache(None, 1))\n\
+             assert len(calls) == 2\n\
+             print('ok')\n",
+            &source[start..]
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
     fn the_pipeline_ranks_load_one_at_a_time_rank_zero_last() {
         let source = include_str!("rank_pipeline_split.py");
         let start = source.find("def pipeline_load_turn").unwrap();
