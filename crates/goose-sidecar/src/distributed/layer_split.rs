@@ -35,6 +35,11 @@ pub struct LayerSplitFacts {
     pub full_attention: Vec<bool>,
     /// Tensors outside `model.layers.N.` (embed, norm, lm_head): every stage loads them.
     pub shared_bytes: u64,
+    /// An omni checkpoint's vision tower (`vision_tower.*`): loaded by the stage holding the LAST
+    /// layers (rank 0, which serves HTTP and encodes images: rank_media.py). The audio encoder,
+    /// the speech embeddings and the MTP heads are never loaded by the split (the vendored
+    /// mimo_v2 `sanitize` drops them), so they are charged nowhere.
+    pub encoder_bytes: u64,
     /// KV one token costs one full-attention layer: kv_heads × (head_dim + v_head_dim) × act.
     pub full_kv_bytes_per_token: u64,
     /// What one sliding-window layer holds per row whatever the context:
@@ -65,6 +70,32 @@ fn act_bytes(config: &serde_json::Value) -> Result<u64> {
         "float32" => 4,
         other => bail!("config.json dtype '{other}' is not bfloat16, float16 or float32"),
     })
+}
+
+/// What a checkpoint tensor costs the split. mlx-vlm-layout omni builds (EigenLabs
+/// MiMo-V2.6-Flash-MOPD-MLX-4bit-mtp) name the text model `language_model.*`.
+enum TensorRole {
+    Layer(usize),
+    Shared,
+    VisionTower,
+    NotLoaded,
+}
+
+fn tensor_role(name: &str) -> TensorRole {
+    if name.starts_with("vision_tower.") || name.starts_with("visual.") {
+        return TensorRole::VisionTower;
+    }
+    if name.starts_with("audio_encoder.") || name.starts_with("speech_embeddings.") {
+        return TensorRole::NotLoaded;
+    }
+    let text = name.strip_prefix("language_model.").unwrap_or(name);
+    if text.starts_with("model.mtp.") {
+        return TensorRole::NotLoaded;
+    }
+    match layer_index(text) {
+        Some(i) => TensorRole::Layer(i),
+        None => TensorRole::Shared,
+    }
 }
 
 /// `model.layers.N.` → N.
@@ -101,16 +132,19 @@ impl LayerSplitFacts {
         let act = act_bytes(config)?;
         let mut layer_bytes = vec![0u64; layers];
         let mut shared_bytes = 0u64;
+        let mut encoder_bytes = 0u64;
         for (name, bytes) in tensors {
-            match layer_index(&name) {
-                Some(i) => {
+            match tensor_role(&name) {
+                TensorRole::Layer(i) => {
                     ensure!(
                         i < layers,
                         "tensor {name} names layer {i}; config.json declares {layers}"
                     );
                     layer_bytes[i] += bytes;
                 }
-                None => shared_bytes += bytes,
+                TensorRole::Shared => shared_bytes += bytes,
+                TensorRole::VisionTower => encoder_bytes += bytes,
+                TensorRole::NotLoaded => {}
             }
         }
         if let Some(empty) = layer_bytes.iter().position(|b| *b == 0) {
@@ -120,6 +154,7 @@ impl LayerSplitFacts {
             layer_bytes,
             full_attention,
             shared_bytes,
+            encoder_bytes,
             full_kv_bytes_per_token: cfg(config, "num_key_value_heads")?
                 * (cfg(config, "head_dim")? + cfg(config, "v_head_dim")?)
                 * act,
@@ -159,7 +194,13 @@ impl LayerSplitFacts {
             .filter(|f| **f)
             .count() as u64;
         let swa = (end - start) as u64 - full;
-        let weights = self.shared_bytes + self.layer_bytes[start..end].iter().sum::<u64>();
+        let encoder = if end == self.layer_bytes.len() {
+            self.encoder_bytes
+        } else {
+            0
+        };
+        let weights =
+            self.shared_bytes + encoder + self.layer_bytes[start..end].iter().sum::<u64>();
         let state = width * full * self.full_kv_bytes_per_token + swa * self.swa_state_bytes;
         let workspace = if full > 0 {
             chunk * width * self.pair_bytes
@@ -776,6 +817,91 @@ pub(crate) mod tests {
             err.contains("set plan_reserve_ratio between 0.05 and 0.077"),
             "{err}"
         );
+    }
+
+    /// EigenLabs/MiMo-V2.6-Flash-MOPD-MLX-4bit-mtp (header bytes 2026-10-27): the same text
+    /// tensors as the RL mxfp4-q8 build under `language_model.`, plus vision_tower 1.457 GB,
+    /// audio_encoder + speech_embeddings 0.277 GB and the MTP heads 1.976 GB.
+    pub(crate) fn omni_tensors() -> BTreeMap<String, u64> {
+        let text = tensors_from_table(&mimo_facts().layer_bytes, mimo_facts().shared_bytes);
+        let mut out: BTreeMap<String, u64> = text
+            .into_iter()
+            .map(|(k, v)| (format!("language_model.{k}"), v))
+            .collect();
+        out.insert(
+            "vision_tower.blocks.0.attn.qkv.weight".to_string(),
+            1_457_000_000,
+        );
+        out.insert(
+            "audio_encoder.projection.mlp.0.weight".to_string(),
+            225_000_000,
+        );
+        out.insert("speech_embeddings.0.weight".to_string(), 52_000_000);
+        out.insert(
+            "language_model.model.mtp.layers.0.mlp.weight".to_string(),
+            1_976_000_000,
+        );
+        out
+    }
+
+    fn mimo_config() -> serde_json::Value {
+        let full = [0, 5, 11, 17, 23, 29, 35, 41, 47];
+        let pattern: Vec<u64> = (0..48).map(|i| u64::from(!full.contains(&i))).collect();
+        serde_json::json!({
+            "num_hidden_layers": 48, "hybrid_layer_pattern": pattern,
+            "num_attention_heads": 64, "num_key_value_heads": 4, "head_dim": 192,
+            "v_head_dim": 128, "swa_num_key_value_heads": 8, "swa_head_dim": 192,
+            "swa_v_head_dim": 128, "sliding_window_size": 128,
+            "max_position_embeddings": 1_048_576, "dtype": "bfloat16",
+        })
+    }
+
+    /// The largest context any split fits with the smallest prefill chunk, under the 8 GB GPU
+    /// headroom the 275k live run used (ceilings 83.49 / 115.45 GB less 8).
+    fn max_split_context(facts: &LayerSplitFacts) -> (u64, Vec<usize>) {
+        let nodes: Vec<SplitNode> = [("w", 83_494_174_720u64, 96), ("m", 115_450_000_000, 128)]
+            .iter()
+            .map(|(n, c, t)| SplitNode {
+                name: n.to_string(),
+                available: c - 8_000_000_000,
+                total: t * GIB,
+                ceiling: c - 8_000_000_000,
+            })
+            .collect();
+        let mut best = (0, vec![]);
+        let mut c = KV_CACHE_STEP;
+        loop {
+            let (split, min, _) = best_split(facts, &nodes, 0.0, c, MIN_PREFILL_CHUNK, 1);
+            if min < 0 {
+                return best;
+            }
+            best = (c, split);
+            c += KV_CACHE_STEP;
+        }
+    }
+
+    #[test]
+    fn an_omni_checkpoint_charges_the_vision_tower_to_rank_0_only_and_loads_no_audio_or_mtp() {
+        let text = mimo_facts();
+        let omni = LayerSplitFacts::from_parts(&mimo_config(), omni_tensors()).unwrap();
+        assert_eq!(omni.layer_bytes, text.layer_bytes);
+        assert_eq!(omni.shared_bytes, text.shared_bytes);
+        assert_eq!(omni.encoder_bytes, 1_457_000_000);
+        let last = omni.stage_need(29, 48, 0, 0).weights - text.stage_need(29, 48, 0, 0).weights;
+        let first = omni.stage_need(0, 29, 0, 0).weights - text.stage_need(0, 29, 0, 0).weights;
+        assert_eq!((last, first), (1_457_000_000, 0));
+
+        // The context budget (Session 12): text-only, vision on rank 0, everything loaded.
+        let (text_ctx, text_split) = max_split_context(&text);
+        let (omni_ctx, omni_split) = max_split_context(&omni);
+        let mut all = omni.clone();
+        all.encoder_bytes += 225_000_000 + 52_000_000 + 1_976_000_000;
+        let (all_ctx, all_split) = max_split_context(&all);
+        println!(
+            "max context under 8 GB headroom: text {text_ctx} {text_split:?}, vision on rank 0 \
+             {omni_ctx} {omni_split:?}, vision+audio+MTP {all_ctx} {all_split:?}"
+        );
+        assert!(text_ctx >= omni_ctx && omni_ctx >= all_ctx);
     }
 
     #[test]
