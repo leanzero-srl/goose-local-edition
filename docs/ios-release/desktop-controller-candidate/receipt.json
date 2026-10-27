@@ -1,0 +1,32 @@
+{
+  "sourceSha": "b018f72f51f0746c4219f6f08015da6951fdbd42",
+  "runtimeSourceSha": "adebf78f42333cd9682a31555043f80b3f992adf",
+  "originalCliSha256": "a1b0cd01dadc71585d50554af23ebb5cefe60a37d919de3a2f9c16aba6d63151",
+  "signedCliSha256": "788ddf7e19b22f52eca6326e5fc511631b2d8687a80bced6561345dad8ca700a",
+  "signatureEquivalence": {
+    "original": {
+      "vmSize": 166526976,
+      "fieldOffset": 1952,
+      "fileOffset": 298319872,
+      "fileSize": 162914404
+    },
+    "signed": {
+      "vmSize": 163840000,
+      "fieldOffset": 1952,
+      "fileOffset": 298319872,
+      "fileSize": 162914404
+    },
+    "equivalentSha256": "bb786135d4b73987e47299267ff0163c43beb8db53478a6697df92dfa8b45855",
+    "byteLength": 461234276
+  },
+  "permittedDifference": "Only read-only __LINKEDIT LC_SEGMENT_64.vmsize after removing signatures; every other byte equal",
+  "app": "/tmp/goose-controller-signed-stage/Goose Swarm.app",
+  "version": "3.0.132",
+  "signedAt": "2026-10-27T08:58:36.245Z",
+  "notarized": true,
+  "launched": false,
+  "installed": false,
+  "notarizedAt": "2026-10-27T09:04:32.191Z",
+  "archive": "/tmp/Goose-Swarm-controller-notarized.zip",
+  "archiveSha256": "520c8596fc790e8e4431e378aacef412458d905a19c7701209829a87ec9e94e0"
+}
