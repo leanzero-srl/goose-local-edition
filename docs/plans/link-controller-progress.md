@@ -143,3 +143,10 @@ Copy-only worker change `a431c33ce` passed16 targeted refusal tests and independ
 On the final desktop binary, Sessions → Linked Macs listed the isolated owner Online with two sessions. Opening `20261027_2` loaded all three prior prompt/response pairs, owner identity and working directory. Sending “This message comes from the Linked Macs session view. Reply exactly: Linked session control received. Do not change any files.” displayed “Accepted by the owner”, followed by the actual persisted reply “Linked session control received.” This exercises catalogue, history, command receipt and response refresh through the controller path. The owner and viewer were on the same physical laptop; it is not a substitute for iPad or two-physical-owner proof.
 
 Original-profile upgrade requires a distinct access decision: catalogue/history scopes are advertised after verified host enrollment, and all four original profiles currently enable remote execution. Preserving their settings would therefore expose real original sessions and enabled controls to account controllers. The owner has been asked to approve idle-only upgrades with identity/history/settings preserved and no benchmark interruption; isolated-test approval is not treated as that broader grant.
+
+
+### Original fleet upgrade authorized — 27 October 2026
+
+Owner explicitly approved original Mac upgrades when idle, including real session visibility and actions under their existing settings. Preserve original history, credentials and configuration; do not interrupt benchmarks. This clears the original-profile access hold. A complete signed staging app is being prepared once for all machines, outside their installed bundles.
+
+The laptop's first Forge build finished0.4174 and its second started10:36; actual original UI confirms it is running. It remains untouched. Workhorse/workmule retain their other campaign's benchmark holds. Gabee's original app has no backend/mesh socket or session-store handles; its16sessions/37messages are the pre-upgrade control. Installation awaits the tested signed bundle and a fresh idle check.
