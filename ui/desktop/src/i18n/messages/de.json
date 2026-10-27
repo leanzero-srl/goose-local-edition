@@ -5702,6 +5702,12 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Die Engine-Einstellungen konnten nicht gelesen werden."
   },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Konnte nicht lesen, ob ein Split diesen Mac bedient: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Wird gelesen, ob ein Split diesen Mac bedient …"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Stoppen"
   },

@@ -5702,6 +5702,12 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Impossible de lire les réglages du moteur."
   },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Impossible de lire si une répartition sert ce Mac : {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Lecture : une répartition sert-elle ce Mac ?…"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Arrêter"
   },

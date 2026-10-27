@@ -5702,6 +5702,12 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "इंजन सेटिंग पढ़ी नहीं जा सकीं।"
   },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "यह नहीं पढ़ा जा सका कि क्या कोई स्प्लिट इस Mac को सर्व करता है: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "पढ़ा जा रहा है कि क्या कोई स्प्लिट इस Mac को सर्व करता है…"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "रोकें"
   },

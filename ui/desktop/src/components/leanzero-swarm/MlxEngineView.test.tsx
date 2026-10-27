@@ -3835,3 +3835,50 @@ describe('MlxEngineView — one refusal, once, from one fit verdict (Q-277)', ()
     ).toEqual({ gateBlock: null, mountError: null });
   });
 });
+
+describe(`Engine hero — the split's status decides before the single engine's "Stopped"`, () => {
+  const MIMO = 'mlx-community/MiMo-V2.6-Flash-RL-mxfp4-q8';
+
+  it('a serving layer split (mlxLmPipeline): the hero is the split and its model, never "no model mounted"', async () => {
+    mockFeatures.mlxDistributed = true;
+    mockDistributedStatus.mockResolvedValue({
+      ...FLASH_READY,
+      state: 'serving',
+      runner: 'mlxLmPipeline',
+      modelId: MIMO,
+      contextLimit: 257_536,
+    });
+    render(<MlxEngineView />);
+    const hero = await screen.findByTestId('mlx-engine-hero');
+    await waitFor(() => expect(within(hero).getByText('Serving across Macs')).toBeInTheDocument());
+    expect(within(hero).getAllByText(MIMO).length).toBeGreaterThan(0);
+    expect(within(hero).queryByText('no model mounted')).toBeNull();
+    expect(within(hero).queryByText('Stopped')).toBeNull();
+    expect(screen.getByTestId('mlx-state-badge')).toHaveAttribute('data-mode', 'distributed');
+  });
+
+  it(`the split's status still unread: the hero says so, not "Stopped · no model mounted"`, async () => {
+    mockFeatures.mlxDistributed = true;
+    mockDistributedStatus.mockReturnValue(new Promise(() => undefined));
+    render(<MlxEngineView />);
+    const unread = await screen.findByTestId('mlx-split-unread');
+    expect(unread).toHaveTextContent('Reading whether a split serves this Mac…');
+    const hero = screen.getByTestId('mlx-engine-hero');
+    expect(within(hero).queryByText('no model mounted')).toBeNull();
+    expect(within(hero).queryByText('Stopped')).toBeNull();
+  });
+
+  it(`the split's status read failed: the hero names the failure, not "Stopped · no model mounted"`, async () => {
+    mockFeatures.mlxDistributed = true;
+    mockDistributedStatus.mockRejectedValue(new Error('goosed did not answer'));
+    render(<MlxEngineView />);
+    const unread = await screen.findByTestId('mlx-split-unread');
+    await waitFor(() =>
+      expect(unread).toHaveTextContent('Could not read whether a split serves this Mac')
+    );
+    expect(unread).toHaveTextContent('goosed did not answer');
+    const hero = screen.getByTestId('mlx-engine-hero');
+    expect(within(hero).queryByText('no model mounted')).toBeNull();
+    expect(within(hero).queryByText('Stopped')).toBeNull();
+  });
+});

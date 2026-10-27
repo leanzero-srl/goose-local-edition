@@ -5702,6 +5702,12 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Не удалось прочитать настройки движка."
   },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Не удалось прочитать, обслуживает ли этот Mac разделение: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Проверяем, обслуживает ли этот Mac разделение…"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Остановить"
   },

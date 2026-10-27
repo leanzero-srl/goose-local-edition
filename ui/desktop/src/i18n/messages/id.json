@@ -5702,6 +5702,12 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Tidak dapat membaca pengaturan mesin."
   },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Tidak dapat membaca apakah split melayani Mac ini: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Membaca apakah split melayani Mac ini…"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Hentikan"
   },

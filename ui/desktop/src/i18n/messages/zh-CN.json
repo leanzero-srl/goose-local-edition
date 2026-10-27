@@ -5702,6 +5702,12 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "无法读取引擎设置。"
   },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "无法读取是否有拆分在为此 Mac 提供服务：{error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "正在读取是否有拆分在为此 Mac 提供服务…"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "停止"
   },

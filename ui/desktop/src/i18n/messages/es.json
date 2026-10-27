@@ -5702,6 +5702,12 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "No se pudo leer la configuración del motor."
   },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "No se pudo leer si una división sirve este Mac: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Leyendo si una división sirve este Mac…"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Detener"
   },

@@ -5702,6 +5702,12 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Không đọc được cài đặt động cơ."
   },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Không đọc được liệu có bản chia nào phục vụ Mac này không: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Đang đọc xem có bản chia nào phục vụ Mac này không…"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Dừng"
   },

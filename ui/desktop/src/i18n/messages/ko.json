@@ -5702,6 +5702,12 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "엔진 설정을 읽지 못했습니다."
   },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "분할이 이 Mac에서 제공 중인지 읽을 수 없습니다: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "분할이 이 Mac에서 제공 중인지 읽는 중…"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "중지"
   },

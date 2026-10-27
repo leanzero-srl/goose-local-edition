@@ -5702,6 +5702,12 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "エンジン設定を読み取れませんでした。"
   },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "分割がこの Mac で提供中か読み取れませんでした: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "分割がこの Mac で提供中か読み取っています…"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "停止"
   },

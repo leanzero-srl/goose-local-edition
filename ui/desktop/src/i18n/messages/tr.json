@@ -5702,6 +5702,12 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Motor ayarları okunamadı."
   },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Bu Mac’e bir bölmenin hizmet verip vermediği okunamadı: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Bu Mac’e bir bölme hizmet veriyor mu, okunuyor…"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Durdur"
   },

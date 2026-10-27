@@ -5702,6 +5702,12 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Tidak dapat membaca tetapan enjin."
   },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Tidak dapat membaca sama ada split melayan Mac ini: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Membaca sama ada split melayan Mac ini…"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Hentikan"
   },
