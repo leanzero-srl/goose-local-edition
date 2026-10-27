@@ -527,6 +527,79 @@ impl OpenAiProvider {
         Ok(declared_image_input(&json, model_name))
     }
 
+    /// Whether this provider asks the endpoint's `/v1/models` if it reads images before sending
+    /// one: the `omlx` lane, and the built-in `openai` provider pointed at a loopback host, which is
+    /// how a benchmark's "Single model" entrant reaches the app's MLX engine (provider openai, host
+    /// http://127.0.0.1:<engine port>). 2026-10-27: a local MiMo-V2.6-Flash Gauntlet sb-7.2 run on
+    /// the pipeline split ended did_not_finish after 2 h when read_image's PNG went to :8191 as an
+    /// image part (404 "Only 'text' content type is supported") — Q-260 had covered omlx only.
+    /// A remote OpenAI-compatible host is not asked; its own answer decides (see
+    /// `refuses_non_text_content`).
+    fn asks_engine_for_image_input(&self) -> bool {
+        Self::PROVIDERS_FRONTING_RAPID_MLX.contains(&self.name.as_str())
+            || (self.name == "openai" && host_is_loopback(self.api_client.host()))
+    }
+
+    /// The request with every image part replaced by its named placeholder, and the chat's notice
+    /// for the images it is the first to withhold.
+    fn text_only_request(
+        &self,
+        model_config: &ModelConfig,
+        system: &str,
+        messages: &[Message],
+        tools: &[Tool],
+        format_options: OpenAiFormatOptions,
+    ) -> Result<(serde_json::Value, Option<String>), ProviderError> {
+        let (payload, images) = create_request_reporting_images(
+            model_config,
+            system,
+            messages,
+            tools,
+            &ImageFormat::OpenAi,
+            self.supports_streaming,
+            OpenAiFormatOptions {
+                text_only_engine: true,
+                ..format_options
+            },
+        )?;
+        Ok((
+            payload,
+            withheld_images_notice(&model_config.model_name, &images.withheld),
+        ))
+    }
+
+    /// The finishing touches every chat-completions body gets before it is posted.
+    fn finish_chat_payload(
+        &self,
+        model_config: &ModelConfig,
+        messages: &[Message],
+        payload: serde_json::Value,
+        transient_tail: bool,
+    ) -> Result<serde_json::Value, ProviderError> {
+        let mut payload = self.sanitize_request_for_compat(payload);
+        self.carry_thinking_off_to_mlx(model_config, &mut payload)?;
+        if transient_tail {
+            if let Some(tail) = turn_context_tail_suffix(messages, &payload) {
+                payload[RAPID_MLX_TRANSIENT_TAIL] = serde_json::Value::String(tail);
+            }
+        }
+        Ok(payload)
+    }
+
+    async fn post_chat(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Result<reqwest::Response, ProviderError> {
+        self.with_retry(|| async {
+            let resp = self
+                .api_client
+                .response_post(&self.base_path, payload)
+                .await?;
+            handle_status(resp).await
+        })
+        .await
+    }
+
     /// Q-260: the request for this engine, with every image part withheld behind a named
     /// placeholder when the engine declares it reads text only, and the chat's notice for the
     /// images this request is the first to withhold. A request with no image, a provider that does
@@ -552,7 +625,7 @@ impl OpenAiProvider {
             )?)
         };
         let (payload, images) = build(format_options)?;
-        if images.sent == 0 || !Self::PROVIDERS_FRONTING_RAPID_MLX.contains(&self.name.as_str()) {
+        if images.sent == 0 || !self.asks_engine_for_image_input() {
             return Ok((payload, None));
         }
         match self.image_input(&model_config.model_name).await {
@@ -740,6 +813,40 @@ fn served_entry<'a>(
 /// What a goose MLX engine's `/v1/models` entry declares about image input (Q-260): `capabilities`
 /// listing `vision` reads images, `capabilities` without it reads text only, and no `capabilities`
 /// (or no entry for the model) says nothing either way.
+/// A host on this machine: `localhost`, 127.0.0.0/8 or `::1`.
+fn host_is_loopback(host: &str) -> bool {
+    match url::Url::parse(host).ok().as_ref().and_then(|u| u.host()) {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
+/// An endpoint's refusal of a non-text content part. mlx_lm's server (the pipeline and tensor
+/// splits) answers 404 "Only 'text' content type is supported."; other text-only servers word it
+/// as "... does not support image ..." or "image input is not supported".
+fn refuses_non_text_content(error: &ProviderError) -> bool {
+    let text = error.to_string().to_ascii_lowercase();
+    text.contains("only 'text' content type")
+        || text.contains("only text content")
+        || (text.contains("image")
+            && (text.contains("not supported") || text.contains("does not support")))
+}
+
+/// Whether a chat-completions body carries an image part anywhere in its messages.
+fn payload_carries_images(payload: &serde_json::Value) -> bool {
+    payload["messages"].as_array().is_some_and(|messages| {
+        messages.iter().any(|m| {
+            m["content"].as_array().is_some_and(|parts| {
+                parts
+                    .iter()
+                    .any(|p| p["type"] == "image_url" || p.get("image_url").is_some())
+            })
+        })
+    })
+}
+
 fn declared_image_input(json: &serde_json::Value, model_name: &str) -> ImageInput {
     match served_entry(json, model_name)
         .and_then(|e| e.get("capabilities"))
@@ -1065,47 +1172,61 @@ impl Provider for OpenAiProvider {
             }
         } else {
             let transient_tail = self.transient_tail(&model_config.model_name).await;
-            let (payload, images_notice) = self
-                .chat_request(
-                    model_config,
-                    system,
-                    messages,
-                    tools,
-                    OpenAiFormatOptions {
-                        preserve_thinking_context: self.preserve_thinking_context,
-                        // Q-94: a chat's block rides the tool results it follows, never a user
-                        // turn of its own. It is kept in the history, so no engine needs it on a
-                        // user message to snapshot its cache before it.
-                        turn_context_joins_tool_results: true,
-                        text_only_engine: false,
-                    },
-                )
+            let format_options = OpenAiFormatOptions {
+                preserve_thinking_context: self.preserve_thinking_context,
+                // Q-94: a chat's block rides the tool results it follows, never a user
+                // turn of its own. It is kept in the history, so no engine needs it on a
+                // user message to snapshot its cache before it.
+                turn_context_joins_tool_results: true,
+                text_only_engine: false,
+            };
+            let (payload, mut images_notice) = self
+                .chat_request(model_config, system, messages, tools, format_options)
                 .await?;
-            let mut payload = self.sanitize_request_for_compat(payload);
-            self.carry_thinking_off_to_mlx(model_config, &mut payload)?;
-            if transient_tail {
-                if let Some(tail) = turn_context_tail_suffix(messages, &payload) {
-                    payload[RAPID_MLX_TRANSIENT_TAIL] = serde_json::Value::String(tail);
-                }
-            }
+            let payload =
+                self.finish_chat_payload(model_config, messages, payload, transient_tail)?;
             let mut log = start_log(model_config, &payload)?;
 
             // This provider is the one the swarm engine actually calls (lmstudio's declarative
             // engine resolves here) — the adversarial review caught the first telemetry pass
             // instrumenting only OpenAiCompatibleProvider, which the fleet never routes through.
-            let telemetry_t0 = std::time::Instant::now();
-            let response = self
-                .with_retry(|| async {
-                    let resp = self
-                        .api_client
-                        .response_post(&self.base_path, &payload)
-                        .await?;
-                    handle_status(resp).await
-                })
-                .await
-                .inspect_err(|e| {
-                    let _ = log.error(e);
-                })?;
+            let mut telemetry_t0 = std::time::Instant::now();
+            let response = match self.post_chat(&payload).await {
+                Ok(response) => response,
+                // An endpoint that refuses image parts (an engine that declares nothing, a remote
+                // text-only server) is sent the same turn once more with every image as its named
+                // placeholder, so the agent reads that the image was not sent and carries on
+                // instead of the session ending on the refusal (2026-10-27, MiMo Gauntlet).
+                Err(e) if refuses_non_text_content(&e) && payload_carries_images(&payload) => {
+                    let _ = log.error(&e);
+                    tracing::warn!(
+                        host = %sanitize_url(self.api_client.host()),
+                        model = %model_config.model_name,
+                        error = %e,
+                        "images_refused: the endpoint reads text only; the turn is sent again with \
+                         every image part as a named placeholder"
+                    );
+                    let (retry, notice) = self.text_only_request(
+                        model_config,
+                        system,
+                        messages,
+                        tools,
+                        format_options,
+                    )?;
+                    images_notice = notice;
+                    let retry =
+                        self.finish_chat_payload(model_config, messages, retry, transient_tail)?;
+                    log = start_log(model_config, &retry)?;
+                    telemetry_t0 = std::time::Instant::now();
+                    self.post_chat(&retry).await.inspect_err(|e| {
+                        let _ = log.error(e);
+                    })?
+                }
+                Err(e) => {
+                    let _ = log.error(&e);
+                    return Err(e);
+                }
+            };
 
             let stream = if self.supports_streaming {
                 super::openai_compatible::stream_openai_compat_timed(
@@ -1378,11 +1499,35 @@ mod tests {
         models_entry: serde_json::Value,
         conversations: &[Vec<Message>],
     ) -> (Vec<serde_json::Value>, usize, Vec<Vec<Message>>) {
+        image_calls_via("omlx", models_entry, conversations, false).await
+    }
+
+    /// `provider_name` at a loopback engine whose `/v1/models` lists `models_entry`. With
+    /// `refuse_images`, the engine answers a body carrying an image part as mlx_lm's server does
+    /// (404 "Only 'text' content type is supported.") and every other body 200.
+    async fn image_calls_via(
+        provider_name: &str,
+        models_entry: serde_json::Value,
+        conversations: &[Vec<Message>],
+        refuse_images: bool,
+    ) -> (Vec<serde_json::Value>, usize, Vec<Vec<Message>>) {
         use futures::StreamExt;
-        use wiremock::matchers::{method, path};
+        use wiremock::matchers::{body_string_contains, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
+        if refuse_images {
+            Mock::given(method("POST"))
+                .and(path("/v1/chat/completions"))
+                .and(body_string_contains("image_url"))
+                .respond_with(
+                    ResponseTemplate::new(404)
+                        .set_body_json(json!({"error": "Only 'text' content type is supported."})),
+                )
+                .with_priority(1)
+                .mount(&server)
+                .await;
+        }
         Mock::given(method("GET"))
             .and(path("/v1/models"))
             .respond_with(
@@ -1401,7 +1546,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut provider = make_provider("omlx");
+        let mut provider = make_provider(provider_name);
         provider.api_client =
             ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
         provider.supports_streaming = false;
@@ -1430,6 +1575,118 @@ mod tests {
             .map(|r| serde_json::from_slice(&r.body).unwrap())
             .collect();
         (bodies, probes, streamed)
+    }
+
+    /// 2026-10-27, local MiMo-V2.6-Flash Gauntlet sb-7.2 on the pipeline split (:8191): the
+    /// benchmark's "Single model" entrant is the built-in `openai` provider at a loopback host,
+    /// which Q-260 never asked, so read_image's PNG went as an image part, the engine answered 404
+    /// "Only 'text' content type is supported" and the run ended did_not_finish. The same provider
+    /// at a loopback engine that declares no vision now sends the placeholder instead.
+    #[tokio::test]
+    async fn the_benchmark_openai_entrant_at_a_text_only_local_engine_never_sends_an_image() {
+        let (_dir, png) = q260_png();
+        let (bodies, probes, streamed) = image_calls_via(
+            "openai",
+            json!({"id": "Org/Served-27B", "capabilities": ["text", "tools"]}),
+            &q260_conversations(&png),
+            true,
+        )
+        .await;
+        assert_eq!(bodies.len(), 3, "one request per turn, none refused");
+        for body in &bodies {
+            assert_eq!(image_parts(body), 0, "{body}");
+        }
+        assert_eq!(probes, 3, "asked once per request that carries an image");
+        let tool = bodies[2]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == json!("tool"))
+            .unwrap()
+            .clone();
+        assert_eq!(
+            tool["content"],
+            json!(
+                "Loaded image (image/png, 4112x2578). \
+                 [image from read_image (image/png) not sent: this model reads text only]"
+            ),
+        );
+        assert_eq!(
+            notices(&streamed[2]),
+            ["Served-27B reads text only — the image from read_image (image/png) was not sent"],
+        );
+    }
+
+    /// An engine that declares nothing and refuses the image part is sent the turn once more with
+    /// the placeholder, so the agent carries on; the chat is told the image was not sent.
+    #[tokio::test]
+    async fn an_endpoint_that_refuses_an_image_part_gets_the_turn_again_without_it() {
+        let (_dir, png) = q260_png();
+        let conversations = q260_conversations(&png);
+        let (bodies, _, streamed) = image_calls_via(
+            "openai",
+            json!({"id": "Org/Served-27B"}),
+            &conversations[2..],
+            true,
+        )
+        .await;
+        assert_eq!(
+            bodies.len(),
+            2,
+            "the refused body, then the text-only retry"
+        );
+        assert_eq!(image_parts(&bodies[0]), 1);
+        assert_eq!(image_parts(&bodies[1]), 0);
+        assert_eq!(
+            notices(&streamed[0]),
+            ["Served-27B reads text only — the image from read_image (image/png) was not sent"],
+        );
+        assert!(streamed[0].iter().any(|m| m.as_concat_text() == "ok"));
+    }
+
+    /// Negative controls: the `openai` provider at a loopback engine that declares vision is sent
+    /// every image as before with no notice; a remote host is never asked; an unrelated 4xx is
+    /// still an error and is not retried; a body with no image is never re-sent.
+    #[tokio::test]
+    async fn a_vision_engine_behind_openai_still_gets_its_images_and_other_errors_stay_errors() {
+        let (_dir, png) = q260_png();
+        let (bodies, _, streamed) = image_calls_via(
+            "openai",
+            json!({"id": "Org/Served-27B", "capabilities": ["text", "vision", "tools"]}),
+            &q260_conversations(&png),
+            false,
+        )
+        .await;
+        for body in &bodies {
+            assert_eq!(image_parts(body), 1, "{body}");
+        }
+        assert!(streamed.iter().all(|call| notices(call).is_empty()));
+
+        assert!(host_is_loopback("http://127.0.0.1:8191"));
+        assert!(host_is_loopback("http://localhost:8090"));
+        assert!(host_is_loopback("http://[::1]:8191"));
+        assert!(!host_is_loopback("https://api.openai.com"));
+        assert!(!host_is_loopback("http://192.168.0.2:8191"));
+        let mut remote = make_provider("openai");
+        remote.api_client =
+            ApiClient::new_with_tls("https://api.example.com".into(), AuthMethod::NoAuth, None)
+                .unwrap();
+        assert!(!remote.asks_engine_for_image_input());
+        assert!(make_provider("omlx").asks_engine_for_image_input());
+
+        assert!(refuses_non_text_content(&ProviderError::RequestFailed(
+            "Resource not found (404): Only 'text' content type is supported.".into()
+        )));
+        assert!(!refuses_non_text_content(&ProviderError::RequestFailed(
+            "Resource not found (404): model 'x' not found".into()
+        )));
+        assert!(!payload_carries_images(&json!({"messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "user", "content": [{"type": "text", "text": "hi"}]}
+        ]})));
+        assert!(payload_carries_images(&json!({"messages": [
+            {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:,"}}]}
+        ]})));
     }
 
     fn notices(messages: &[Message]) -> Vec<String> {
