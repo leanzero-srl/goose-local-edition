@@ -124,6 +124,11 @@ export async function handleController(request: Request, deps: Deps): Promise<Re
       case "/hosts/peers": {
         requireMethod(request, "GET"); result = await mesh.peers(bearer(request)); break;
       }
+      case "/hosts/recover-node-secret": {
+        requireMethod(request, "POST"); const f = await fields(request);
+        if (Object.keys(f).length !== 0) fail(400, "invalid_request", "Recovery accepts no account or secret override");
+        result = await hosts.recoverNodeSecret(bearer(request), string(request.headers.get("X-Link-Host-Credential"), "host_credential"), deps.kv); break;
+      }
       case "/hosts/bootstrap": {
         requireMethod(request, "GET"); result = await hosts.bootstrap(bearer(request)); break;
       }
