@@ -253,6 +253,11 @@ pub enum LinkError {
     ControllerAuthorization(#[from] crate::controller_auth::AuthorizationError),
     #[error("controller host: {0}")]
     ControllerHost(String),
+    #[error("host enrollment could not reconcile {join}: {source}")]
+    HostEnrollmentReconciliation {
+        join: MeshError,
+        source: WorkerError,
+    },
     #[error("Link teardown incomplete: {0}")]
     Teardown(String),
     #[error(transparent)]

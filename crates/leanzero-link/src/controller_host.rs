@@ -25,6 +25,7 @@ use crate::{
     controller_tls::{start_controller_tls, ControllerTlsIdentity},
     controller_wire::*,
     manager::{LinkError, Mesh},
+    mesh::{BackendState, MeshError},
     owner_identity::{
         invalid, load_or_create_private, read_private, OwnerIdentity, OwnerIdentityError,
     },
@@ -558,21 +559,52 @@ impl PreparedHost {
                 "worker enrollment receipt is inconsistent".into(),
             ));
         }
-        mesh.reauthenticate(&key.auth_key, hostname).await?;
+        // A one-use key can bind at the provider before the CLI reports failure.
+        // Reconcile only after the authority confirms this exact issued enrollment.
+        let cli_failure = match mesh.reauthenticate(&key.auth_key, hostname).await {
+            Ok(()) => None,
+            Err(error @ MeshError::JoinFailed { .. }) => Some(error),
+            Err(error) => return Err(error.into()),
+        };
+        let needs_resume = cli_failure.is_some();
         let status = mesh.status().await?;
+        let cli_failure = match cli_failure {
+            Some(error)
+                if status.backend_state != BackendState::Running
+                    || status.self_node_key.is_none() =>
+            {
+                return Err(error.into());
+            }
+            failure => failure,
+        };
         let node_key = status.self_node_key.as_deref().ok_or_else(|| {
             LinkError::ControllerHost("joined host has no provider node key".into())
         })?;
         let confirmed = self
             .worker
             .confirm_controller_host(&self.credentials.host_credential, enrollment_id, node_key)
-            .await?;
+            .await
+            .map_err(|source| match cli_failure {
+                Some(join) => LinkError::HostEnrollmentReconciliation { join, source },
+                None => source.into(),
+            })?;
         if confirmed.owner_node_id != self.owner.owner_node_id
             || confirmed.mesh_node_key != node_key
         {
             return Err(LinkError::ControllerHost(
                 "provider confirmation belongs to another host".into(),
             ));
+        }
+        if needs_resume {
+            mesh.resume().await?;
+            let resumed = mesh.status().await?;
+            if resumed.backend_state != BackendState::Running
+                || resumed.self_node_key.as_deref() != Some(node_key)
+            {
+                return Err(LinkError::ControllerHost(
+                    "provider-confirmed host identity changed or stopped during resume".into(),
+                ));
+            }
         }
         remove_private(&self.directory.join("pending-enrollment.json"))?;
         Ok(())

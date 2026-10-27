@@ -446,6 +446,7 @@ struct AuthorityFixture {
     outage: AtomicBool,
     revoked: AtomicBool,
     recovery_response: Mutex<Option<Value>>,
+    confirmation_response: Mutex<Option<(u16, Value)>>,
     directory: PathBuf,
 }
 
@@ -493,6 +494,11 @@ impl wiremock::Respond for AuthorityFixture {
                 ResponseTemplate::new(200).set_body_json(json!({"enrollment_id":id,"auth_key":"host-fixture-key","login_server":"https://fixture.invalid","expiry_seconds":60}))
             }
             "/v1/controller/hosts/mesh/confirm" => {
+                assert_eq!(request.headers.get("Authorization").unwrap(), "Bearer host-fixture-credential");
+                assert_eq!(body["enrollment_id"], json!(*self.enrollment.lock().unwrap()));
+                if let Some((status, response)) = self.confirmation_response.lock().unwrap().as_ref() {
+                    return ResponseTemplate::new(*status).set_body_json(response);
+                }
                 if body["mesh_node_key"] != format!("nodekey:{}","a".repeat(64)) { return error(403,"mesh_binding_unverified"); }
                 self.confirmed.store(true,Ordering::SeqCst);
                 ResponseTemplate::new(200).set_body_json(json!({"owner_node_id":owner(),"mesh_node_key":body["mesh_node_key"],"host_revision":1}))
@@ -543,6 +549,7 @@ async fn fixture() -> (
         outage: AtomicBool::new(false),
         revoked: AtomicBool::new(false),
         recovery_response: Mutex::new(None),
+        confirmation_response: Mutex::new(None),
         directory: directory.clone(),
     });
     let responder = authority.clone();
@@ -1131,4 +1138,299 @@ async fn old_worker_is_explicit_failure_and_never_a_legacy_enrollment() {
         .unwrap()
         .iter()
         .all(|r| r.url.path() != "/v1/mesh/join-key"));
+}
+
+mod ambiguous_host_enrollment {
+    use super::*;
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Outcome {
+        Bound,
+        OldBinding,
+        Offline,
+        MissingKey,
+        StatusFailure,
+        Stopped,
+        ResumeStopped,
+        ResumeFailure,
+        ResumeChangedKey,
+        BeforeCliFailure,
+    }
+
+    struct AmbiguousMesh {
+        inner: Arc<FakeMesh>,
+        outcome: Outcome,
+    }
+
+    #[async_trait]
+    impl Mesh for AmbiguousMesh {
+        async fn join(&self, _: &str, _: &str) -> Result<(), MeshError> {
+            panic!("host enrollment must never enter legacy mesh join")
+        }
+        async fn reauthenticate(&self, key: &str, name: &str) -> Result<(), MeshError> {
+            if self.outcome == Outcome::BeforeCliFailure {
+                return Err(MeshError::EmptyAuthKey);
+            }
+            if self.outcome == Outcome::OldBinding {
+                self.inner.reauth.fetch_add(1, Ordering::SeqCst);
+            } else {
+                self.inner.reauthenticate(key, name).await?;
+            }
+            Err(MeshError::JoinFailed {
+                stderr: "synthetic CLI failure after issued key attempt".into(),
+            })
+        }
+        async fn resume(&self) -> Result<(), MeshError> {
+            self.inner.resume().await?;
+            match self.outcome {
+                Outcome::ResumeFailure => Err(MeshError::JoinFailed {
+                    stderr: "resume failed".into(),
+                }),
+                Outcome::ResumeChangedKey => {
+                    *self.inner.key.lock().unwrap() = Some(format!("nodekey:{}", "b".repeat(64)));
+                    Ok(())
+                }
+                _ => Ok(()),
+            }
+        }
+        async fn status(&self) -> Result<MeshStatus, MeshError> {
+            if self.outcome == Outcome::StatusFailure {
+                return Err(MeshError::StatusFailed {
+                    stderr: "status unavailable".into(),
+                });
+            }
+            let mut status = self.inner.status().await?;
+            if self.outcome == Outcome::Stopped
+                || (self.outcome == Outcome::ResumeStopped
+                    && self.inner.resume.load(Ordering::SeqCst) > 0)
+            {
+                status.backend_state = BackendState::Stopped;
+            }
+            if self.outcome == Outcome::MissingKey {
+                status.self_node_key = None;
+            }
+            if self.outcome == Outcome::Offline {
+                status.online = false;
+            }
+            Ok(status)
+        }
+        async fn peer_proxy(&self) -> Result<MeshProxy, MeshError> {
+            self.inner.peer_proxy().await
+        }
+        async fn logout(&self) -> Result<(), MeshError> {
+            panic!("reconciliation must preserve the mesh identity")
+        }
+        async fn shutdown(&self) {}
+    }
+
+    fn requests(requests: &[wiremock::Request], suffix: &str) -> usize {
+        requests
+            .iter()
+            .filter(|r| r.url.path().ends_with(suffix))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn exact_provider_confirmation_recovers_cli_failure_before_lease_and_without_remint() {
+        let (_dir, server, authority, factory, inner) = fixture().await;
+        let mesh = Arc::new(AmbiguousMesh {
+            inner: inner.clone(),
+            outcome: Outcome::Offline,
+        });
+        let host = PreparedHost::prepare(
+            factory.clone(),
+            WorkerClient::new(server.uri()).unwrap(),
+            "account-fixture",
+            "owner@example.test",
+            "fixture-host",
+        )
+        .await
+        .unwrap();
+        host.enroll(
+            mesh.as_ref(),
+            host.mesh_context().await.unwrap(),
+            "fixture-host",
+        )
+        .await
+        .unwrap();
+        assert!(authority.confirmed.load(Ordering::SeqCst));
+        assert!(authority.runtime.lock().unwrap().is_none());
+        assert!(
+            host.gate.read().unwrap().is_none(),
+            "confirmation cannot open the receiver"
+        );
+        assert!(!factory.directory.join("pending-enrollment.json").exists());
+        assert_eq!(inner.reauth.load(Ordering::SeqCst), 1);
+        assert_eq!(inner.resume.load(Ordering::SeqCst), 1);
+        assert!(!mesh.status().await.unwrap().online);
+        let calls = server.received_requests().await.unwrap();
+        assert_eq!(requests(&calls, "/mesh/join-key"), 1);
+        assert_eq!(requests(&calls, "/mesh/confirm"), 1);
+        assert_eq!(requests(&calls, "/lease"), 0);
+        let handle = host
+            .activate(mesh, registry(), "100.64.0.1".into(), resources())
+            .await
+            .unwrap();
+        assert!(authority.runtime.lock().unwrap().is_some());
+        assert!(handle.gate.read().unwrap().is_some());
+        handle.shutdown(false).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ambiguous_cli_failure_never_trusts_old_running_state_or_failed_resume() {
+        for outcome in [
+            Outcome::OldBinding,
+            Outcome::MissingKey,
+            Outcome::StatusFailure,
+            Outcome::Stopped,
+            Outcome::ResumeStopped,
+            Outcome::ResumeFailure,
+            Outcome::ResumeChangedKey,
+            Outcome::BeforeCliFailure,
+        ] {
+            let (_dir, server, authority, factory, inner) = fixture().await;
+            let mesh = AmbiguousMesh {
+                inner: inner.clone(),
+                outcome,
+            };
+            let host = PreparedHost::prepare(
+                factory.clone(),
+                WorkerClient::new(server.uri()).unwrap(),
+                "account-fixture",
+                "owner@example.test",
+                "fixture-host",
+            )
+            .await
+            .unwrap();
+            let result = host
+                .enroll(&mesh, host.mesh_context().await.unwrap(), "fixture-host")
+                .await;
+            let error = result.expect_err("negative enrollment case must fail");
+            match outcome {
+                Outcome::OldBinding => assert!(matches!(error,
+                    LinkError::HostEnrollmentReconciliation { ref source, .. }
+                    if source.has_controller_code("mesh_binding_unverified"))),
+                Outcome::MissingKey | Outcome::Stopped => assert!(matches!(
+                    error,
+                    LinkError::Mesh(MeshError::JoinFailed { .. })
+                )),
+                Outcome::StatusFailure => assert!(matches!(
+                    error,
+                    LinkError::Mesh(MeshError::StatusFailed { .. })
+                )),
+                Outcome::ResumeFailure => assert!(error.to_string().contains("resume failed")),
+                Outcome::ResumeChangedKey | Outcome::ResumeStopped => {
+                    assert!(error.to_string().contains("identity changed or stopped"))
+                }
+                Outcome::BeforeCliFailure => {
+                    assert!(matches!(error, LinkError::Mesh(MeshError::EmptyAuthKey)))
+                }
+                Outcome::Bound | Outcome::Offline => panic!("positive case in negative table"),
+            }
+            assert!(
+                factory.directory.join("pending-enrollment.json").exists(),
+                "{outcome:?}"
+            );
+            assert!(host.gate.read().unwrap().is_none());
+            assert!(authority.runtime.lock().unwrap().is_none());
+            let calls = server.received_requests().await.unwrap();
+            assert_eq!(requests(&calls, "/mesh/join-key"), 1);
+            assert_eq!(requests(&calls, "/lease"), 0);
+            if matches!(
+                outcome,
+                Outcome::MissingKey
+                    | Outcome::Stopped
+                    | Outcome::StatusFailure
+                    | Outcome::BeforeCliFailure
+            ) {
+                assert_eq!(requests(&calls, "/mesh/confirm"), 0, "{outcome:?}");
+            }
+            if matches!(outcome, Outcome::OldBinding | Outcome::MissingKey) {
+                assert_eq!(inner.resume.load(Ordering::SeqCst), 0, "{outcome:?}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn ambiguous_cli_failure_requires_current_exact_authority_confirmation() {
+        for (status, response) in [
+            (
+                503,
+                json!({"error":{"code":"registry_unavailable","message":"unavailable","retryable":true}}),
+            ),
+            (
+                409,
+                json!({"error":{"code":"enrollment_expired","message":"expired","retryable":false}}),
+            ),
+            (
+                401,
+                json!({"error":{"code":"invalid_credential","message":"revoked","retryable":false}}),
+            ),
+            (
+                403,
+                json!({"error":{"code":"enrollment_mismatch","message":"another account or role","retryable":false}}),
+            ),
+            (
+                200,
+                json!({"owner_node_id":Uuid::new_v4(),"mesh_node_key":format!("nodekey:{}","a".repeat(64)),"host_revision":1}),
+            ),
+            (
+                200,
+                json!({"owner_node_id":Uuid::nil(),"mesh_node_key":format!("nodekey:{}","b".repeat(64)),"host_revision":1}),
+            ),
+        ] {
+            let (_dir, server, authority, factory, inner) = fixture().await;
+            let host = PreparedHost::prepare(
+                factory.clone(),
+                WorkerClient::new(server.uri()).unwrap(),
+                "account-fixture",
+                "owner@example.test",
+                "fixture-host",
+            )
+            .await
+            .unwrap();
+            // For the key-mismatch case the owner must be valid, so only the key can reject it.
+            let mut response = response;
+            if response["owner_node_id"] == Uuid::nil().to_string() {
+                response["owner_node_id"] = json!(host.owner.owner_node_id);
+            }
+            *authority.confirmation_response.lock().unwrap() = Some((status, response));
+            let mesh = AmbiguousMesh {
+                inner: inner.clone(),
+                outcome: Outcome::Bound,
+            };
+            let error = host
+                .enroll(&mesh, host.mesh_context().await.unwrap(), "fixture-host")
+                .await
+                .expect_err("authority refusal must fail enrollment");
+            if status != 200 {
+                let expected = authority
+                    .confirmation_response
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .unwrap()
+                    .1["error"]["code"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+                assert!(
+                    matches!(error, LinkError::HostEnrollmentReconciliation { ref join, ref source }
+                    if matches!(join, MeshError::JoinFailed { .. }) && source.has_controller_code(&expected))
+                );
+            } else {
+                assert!(error
+                    .to_string()
+                    .contains("provider confirmation belongs to another host"));
+            }
+            assert_eq!(inner.resume.load(Ordering::SeqCst), 0);
+            assert!(factory.directory.join("pending-enrollment.json").exists());
+            assert!(host.gate.read().unwrap().is_none());
+            assert!(authority.runtime.lock().unwrap().is_none());
+            let calls = server.received_requests().await.unwrap();
+            assert_eq!(requests(&calls, "/mesh/join-key"), 1);
+            assert_eq!(requests(&calls, "/mesh/confirm"), 1);
+            assert_eq!(requests(&calls, "/lease"), 0);
+        }
+    }
 }
