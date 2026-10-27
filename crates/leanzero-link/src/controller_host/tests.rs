@@ -871,6 +871,7 @@ async fn recovery_rejects_wrong_account_owner_and_email_and_preserves_missing_se
         .await
         .unwrap();
     let before = server.received_requests().await.unwrap().len();
+    remember_login_secret(&path, "owner@example.test", &"a".repeat(64)).unwrap();
     std::fs::write(secret_path(&path), b"corrupt").unwrap();
     assert!(host
         .login_secret(&path, "account-fixture", "owner@example.test")
@@ -878,6 +879,26 @@ async fn recovery_rejects_wrong_account_owner_and_email_and_preserves_missing_se
         .is_err());
     assert_eq!(server.received_requests().await.unwrap().len(), before);
     assert_eq!(std::fs::read(secret_path(&path)).unwrap(), b"corrupt");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        std::fs::set_permissions(secret_path(&path), std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        assert!(host
+            .login_secret(&path, "account-fixture", "owner@example.test")
+            .await
+            .is_err());
+        std::fs::remove_file(secret_path(&path)).unwrap();
+        let target = dir.path().join("unrelated-secret");
+        std::fs::write(&target, b"do not touch").unwrap();
+        symlink(&target, secret_path(&path)).unwrap();
+        assert!(host
+            .login_secret(&path, "account-fixture", "owner@example.test")
+            .await
+            .is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"do not touch");
+        assert_eq!(server.received_requests().await.unwrap().len(), before);
+    }
 }
 
 #[tokio::test]

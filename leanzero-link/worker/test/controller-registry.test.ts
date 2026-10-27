@@ -128,6 +128,32 @@ for (const backend of ["node-sqlite", "cloudflare-durable-object"] as const) {
       expect(await response.json()).toMatchObject({ error: { code: "account_credential_revoked" } });
       expect(raced).toBe(true); expect(f.h.calls).toEqual([]); expect(f.h.logs).toEqual([]);
     });
+    it("refuses deleted accounts and suspension racing the secret read", async () => {
+      for (const change of ["pending", "deleted", "suspended"] as const) {
+        const f = await recoveryFixture(); await f.h.kv.put(f.secretKey, "a".repeat(64));
+        const get = f.h.kv.get.bind(f.h.kv); let raced = false;
+        f.h.kv.get = async key => {
+          const value = await get(key);
+          if (!raced && key === f.secretKey) {
+            raced = true;
+            await f.service.registry.update(f.key, state => {
+              if (change === "suspended") state!.hosts[f.reg.host_credential.split(".")[2]!]!.suspended = true;
+              else state!.deletion = {
+                request_id: crypto.randomUUID(), actor_device_id: crypto.randomUUID(), token_hash: "a".repeat(64), token_receipt: null,
+                code_hash: "b".repeat(64), attempts: 0, expires_at: f.h.clock.now() + 60_000, status: change,
+                cleanup_lease: null, requested_at: f.h.clock.now(), completed_at: null, pending: [], retained: [],
+              };
+              return { state: state!, result: undefined };
+            });
+          }
+          return value;
+        };
+        const response = await f.recover(); expect(response.status).toBe(401);
+        expect(await response.json()).toMatchObject({ error: { code: change === "suspended" ? "invalid_credential" : "account_deleted" } });
+        expect(raced).toBe(true); expect(f.h.calls).toEqual([]);
+        expect(await get(f.secretKey)).toBe("a".repeat(64));
+      }
+    });
     it("refuses expiry while waiting for the existing secret", async () => {
       const f = await recoveryFixture(); await f.h.kv.put(f.secretKey, "a".repeat(64));
       const get = f.h.kv.get.bind(f.h.kv);
