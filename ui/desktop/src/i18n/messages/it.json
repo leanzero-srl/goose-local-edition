@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Chiudi la finestra mobile finché non parte qualcosa di nuovo"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Riduci a pillola"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Finestra mobile nascosta finché non parte qualcosa di nuovo"
   },
   "engineGlance.expand": {
     "defaultMessage": "Mostra la scheda intera"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Nascondi questa scheda — riportala dal fondo della barra laterale o da Impostazioni › App"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Chiudila qui: torna quando parte qualcosa di nuovo"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Capito"
@@ -2296,6 +2305,12 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Spento"
+  },
+  "engineGlanceSettings.desktopDescProcess": {
+    "defaultMessage": "Una piccola finestra sopra le altre app, nell’angolo in cui la trascini. Non prende mai il focus e porta goose in primo piano solo quando apri qualcosa da lì. Il pulsante di chiusura la nasconde finché non parte un nuovo lavoro, esecuzione o suddivisione."
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "L’hai chiusa: nascosta finché non parte qualcosa di nuovo."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Nella barra laterale"
@@ -5710,6 +5725,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Rango {rank} della suddivisione di {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Rango {rank} della suddivisione di un altro Mac · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Serve i livelli {first}–{last} per {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Serve i livelli {first}–{last} per un altro Mac · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rango {rank} della suddivisione di {requester} · {model}"
@@ -11909,26 +11933,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Chiudi la finestra mobile per questa sessione"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Chiudila qui finché non la riporti"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Finestra mobile nascosta per questa sessione"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "Riportala da Impostazioni › App, dove puoi anche disattivarla."
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "Riportala dall’icona di goose nella barra dei menu o da Impostazioni › App, dove puoi anche disattivarla."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Una piccola finestra sopra le altre app, nell’angolo in cui la trascini. Non prende mai il focus e porta goose in primo piano solo quando apri qualcosa da lì. Il pulsante di chiusura la nasconde per il resto di questa sessione."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "L’hai chiusa: nascosta finché non la riporti."
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Mostrala di nuovo"

@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "Чат · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Закрыть плавающее окно до запуска чего-то нового"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Свернуть в пилюлю"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Плавающее окно скрыто до запуска чего-то нового"
   },
   "engineGlance.expand": {
     "defaultMessage": "Показать всю карточку"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Скрыть эту карточку — вернуть её можно внизу боковой панели или в Настройки › Приложение"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Закройте здесь — окно вернётся, когда запустится что-то новое"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Понятно"
@@ -2296,6 +2305,12 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Выкл."
+  },
+  "engineGlanceSettings.desktopDescProcess": {
+    "defaultMessage": "Небольшое окно поверх других приложений, в углу, куда вы его перетащите. Оно никогда не забирает фокус и выводит goose вперёд, только когда вы что-то из него открываете. Кнопка закрытия скрывает его до запуска новой задачи, прогона или разделения."
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Вы закрыли его — скрыто до запуска чего-то нового."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "В боковой панели"
@@ -5710,6 +5725,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Ранг {rank} разделения {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Ранг {rank} разделения другого Mac · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Обслуживает слои {first}–{last} для {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Обслуживает слои {first}–{last} для другого Mac · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Ранг {rank} разделения {requester} · {model}"
@@ -11909,26 +11933,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Закрыть плавающее окно до конца сеанса"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Закройте его здесь — оно не вернётся, пока вы его не покажете"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Плавающее окно скрыто до конца сеанса"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "Вернуть его можно в Настройки › Приложение — там же его можно выключить."
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "Вернуть его можно через значок goose в строке меню или в Настройки › Приложение — там же его можно выключить."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Небольшое окно поверх других приложений, в углу, куда вы его перетащите. Оно никогда не забирает фокус и выводит goose на передний план, только когда вы что-то в нём открываете. Кнопка закрытия скрывает его до конца этого сеанса."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Вы его закрыли — оно скрыто, пока вы его не вернёте."
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Показать снова"

@@ -52,6 +52,8 @@ export type MlxModeSummary =
       requester: string;
       modelId: string;
       backend: string | null;
+      /** The layers this rank runs in a layer split (peerRank.ts); absent = not known here. */
+      layers?: { first: number; last: number } | null;
     };
 
 /**

@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "聊天 · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "關閉浮動視窗，直到有新工作開始"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "縮成膠囊"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "浮動視窗已隱藏，直到有新工作開始"
   },
   "engineGlance.expand": {
     "defaultMessage": "顯示完整卡片"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "隱藏此卡片 — 可在側邊欄底部或 設定 › 應用程式 中恢復"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "在此關閉——有新工作開始時它會回來"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "知道了"
@@ -2296,6 +2305,12 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "關閉"
+  },
+  "engineGlanceSettings.desktopDescProcess": {
+    "defaultMessage": "一個浮在其他 App 上方的小視窗，位於你拖放到的角落。它從不搶走焦點，只有在你從中開啟內容時才會把 goose 帶到前景。按下關閉按鈕後，它會隱藏，直到新的工作、執行或分割開始。"
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "你已關閉它——在有新工作開始前保持隱藏。"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "在側邊欄中"
@@ -5710,6 +5725,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "{requester} 分割的第 {rank} 個分片 · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "另一台 Mac 分割中的第 {rank} 級 · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "正在為 {requester} 執行第 {first}–{last} 層 · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "正在為另一台 Mac 執行第 {first}–{last} 層 · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} 分割的第 {rank} 個分片 · {model}"
@@ -11909,26 +11933,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "在本次工作階段中關閉懸浮視窗"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "在這裡關閉，直到你把它叫回來"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "懸浮視窗已在本次工作階段中隱藏"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "可在 設定 › 應用程式 中重新顯示，也可以在那裡將它關閉。"
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "可透過選單列中的 goose 圖示或 設定 › 應用程式 重新顯示，也可以在設定中將它關閉。"
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "一個浮在其他應用程式之上的小視窗，停在你拖到的角落。它從不搶走焦點，只有當你從中開啟內容時才會把 goose 帶到前景。按下關閉按鈕後，它會在本次工作階段剩餘時間內隱藏。"
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "你已將它關閉——在你叫回之前保持隱藏。"
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "重新顯示"

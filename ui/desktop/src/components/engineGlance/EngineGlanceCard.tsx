@@ -136,12 +136,12 @@ const i18n = defineMessages({
   collapse: { id: 'engineGlance.collapse', defaultMessage: 'Shrink to a pill' },
   expand: { id: 'engineGlance.expand', defaultMessage: 'Show the whole card' },
   close: {
-    id: 'engineGlance.close',
-    defaultMessage: 'Close the floating window for this session',
+    id: 'engineGlance.closeUntilNew',
+    defaultMessage: 'Close the floating window until something new starts',
   },
   hintClose: {
-    id: 'engineGlance.hintClose',
-    defaultMessage: 'Close it here until you bring it back',
+    id: 'engineGlance.hintCloseUntilNew',
+    defaultMessage: 'Close it here — it comes back when something new starts',
   },
   hintDismiss: { id: 'engineGlance.hintDismiss', defaultMessage: 'Got it' },
   hide: {

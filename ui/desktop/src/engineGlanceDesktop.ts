@@ -10,10 +10,13 @@ import {
   cornerBounds,
   coverageWanted,
   desktopGlanceVisible,
+  GlanceDismissal,
   glanceLive,
+  glanceProcesses,
   gooseOnScreen,
   nearestCorner,
   placeGlance,
+  pointIn,
   workingDisplay,
   type GlanceDisplay,
   type GlancePlacement,
@@ -37,6 +40,22 @@ export type { GlanceDisplay };
  * `openEngine`/`openSession`, the two deps that activate the app. Every other action (the body, a
  * drag, the X, collapse, details, the hint) works inside the floating window and never raises a
  * goose window; engineGlanceClicks.test.tsx drives each control through this controller to hold it.
+ *
+ * A REAL CLICK STILL ACTIVATES GOOSE (owner, 2026-10-27: "if you click on close or minimize it simply
+ * opens up goose"). Electron's `type: 'panel'` is not an NSPanel: ElectronNSPanel subclasses
+ * ElectronNSWindow and only adds NSWindowStyleMaskNonactivatingPanel in its `styleMask` GETTER
+ * (electron v41 shell/browser/ui/cocoa/electron_ns_panel.mm), a mask Apple documents as valid only
+ * for NSPanel. So the press activates goose; the panel cannot become key (`focusable: false`), so
+ * AppKit makes goose's own window key and brings it forward; that focus re-decided this window
+ * (goose on screen → hidden) before the release, so the X's click landed on nothing and the close
+ * never happened — the window came straight back the moment goose was covered again. The earlier
+ * "a panel click does not activate goose" (326db4656) was measured over CDP, whose input bypasses
+ * AppKit. Here: main reports every goose window that comes forward (`gooseRaised`); one that comes
+ * forward with the pointer on this window, paired with a press on it, is that click's doing and is
+ * put back where it was (`revertRaise`), and the window is held up through it. The opening controls
+ * raise goose on purpose and are exempt. What stays: goose is the active app (its menu bar) until
+ * the person clicks back into theirs — Electron has no way to deactivate an app that keeps a window
+ * up (app.hide() would hide this window too, and a hidden app cannot show it again inactive).
  */
 
 /** What the glance's renderer asks main to do. */
@@ -49,7 +68,9 @@ export type GlancePipAction =
   | { type: 'drag-start'; screenX: number; screenY: number }
   | { type: 'drag-move'; screenX: number; screenY: number }
   | { type: 'drag-end' }
-  | { type: 'size'; width: number; height: number };
+  | { type: 'size'; width: number; height: number }
+  /** A pointer press anywhere on the window (capture phase, before the control's own action). */
+  | { type: 'press' };
 
 export const GLANCE_PIP_ACTION_CHANNEL = 'engine-glance-pip';
 
@@ -71,6 +92,7 @@ export function isGlancePipAction(value: unknown): value is GlancePipAction {
     case 'open-engine':
     case 'close':
     case 'drag-end':
+    case 'press':
       return true;
     case 'open-session':
       return typeof v.sessionId === 'string' && v.sessionId.length > 0;
@@ -132,9 +154,28 @@ export interface GlanceDesktopDeps {
    * when a goose window comes to the front.
    */
   tellDismissed(): boolean;
-  /** The session dismissal began or ended: main republishes (Settings › App) and redraws the tray. */
+  /** The dismissal began or ended: main republishes (Settings › App) and redraws the tray. */
   dismissedChanged(): void;
+  /** ms clock (Date.now in main). */
+  now(): number;
+  /** Runs `fn` after `ms` (setTimeout in main). */
+  later(fn: () => void, ms: number): void;
+  /**
+   * Put back a goose window a click on this window brought forward: 'restore' → minimized again,
+   * 'focus' / 'show' → sent behind the app the person was in (BrowserWindow.blur: orderBack).
+   */
+  revertRaise(windowId: number, kind: GooseRaiseKind): void;
 }
+
+/** How a goose window came forward, as main hears it. */
+export type GooseRaiseKind = 'focus' | 'show' | 'restore';
+
+/** A press and the raise it caused land within this of each other (either order). */
+export const RAISE_PAIR_MS = 700;
+/** After a raise is put back, the occlusion events that follow are its own: held up this long. */
+export const RAISE_HOLD_MS = 1500;
+/** The opening controls' own raise (app.focus + show) is never put back. */
+export const OPEN_GRACE_MS = 2000;
 
 /** px from the work area's edges — the gap macOS leaves around its own Picture in Picture. */
 export const GLANCE_MARGIN = 16;
@@ -142,11 +183,12 @@ export const GLANCE_MARGIN = 16;
 export class EngineGlanceDesktop {
   private push: GlancePush | null = null;
   /**
-   * The person closed it in this app session (Q-426). Only `showAgain` ends it — the menu-bar item,
-   * Settings › App's "Show it again", or a new floating mode picked there — never the engine's next
-   * busy spell and never a stored setting.
+   * The person closed it (Q-426), held against the work it was closed on (`GlanceDismissal`, owner
+   * 2026-10-27): a NEW process ends it, and so does `showAgain` — the menu-bar item, Settings › App's
+   * "Show it again", or a new floating mode picked there. Never a blur, never the same work's next
+   * busy spell, never a stored setting.
    */
-  private dismissed = false;
+  private dismissal = new GlanceDismissal();
   private dismissedUntold = false;
   private dismissedTold = false;
   private size: { width: number; height: number } | null = null;
@@ -161,6 +203,12 @@ export class EngineGlanceDesktop {
    * returned at once. While quitting, nothing here makes or shows a window.
    */
   private quitting = false;
+  /** The goose windows as the last decision read them: what a raise is put back to. */
+  private lastWindows: GooseWindowFacts[] = [];
+  private pressAt = Number.NEGATIVE_INFINITY;
+  private openingAt = Number.NEGATIVE_INFINITY;
+  private holdUntil = Number.NEGATIVE_INFINITY;
+  private suspects: { windowId: number; kind: GooseRaiseKind; at: number }[] = [];
 
   constructor(private readonly deps: GlanceDesktopDeps) {}
 
@@ -185,9 +233,9 @@ export class EngineGlanceDesktop {
     this.refresh();
   }
 
-  /** Closed by the person in this app session (Q-426) — what main publishes and the tray offers. */
+  /** Closed by the person, and no new process since (Q-426) — what main publishes and the tray offers. */
   isDismissed(): boolean {
-    return this.dismissed;
+    return this.dismissal.active;
   }
 
   /**
@@ -195,37 +243,86 @@ export class EngineGlanceDesktop {
    * unless "whenever the engine works"). false = it was not dismissed; nothing changed.
    */
   showAgain(): boolean {
-    if (!this.dismissed) return false;
-    this.dismissed = false;
+    if (!this.dismissal.active) return false;
+    this.dismissal.clear();
     // Brought back before any goose window could say it was gone: nothing left to say.
     this.dismissedUntold = false;
     this.refresh();
     return true;
   }
 
+  /**
+   * A goose window came forward (main: browser-window-focus, a window's 'restore', its occlusion
+   * 'show'), told BEFORE the deferred re-decision it also triggers. With this window up, the pointer
+   * on it and a press on it (before or after, within RAISE_PAIR_MS), it is the click's doing: put
+   * back, and this window held up through it. Without a press it was the person's own way to goose
+   * (Cmd-Tab with the pointer resting here): the hold lapses and the ordinary rules decide.
+   */
+  gooseRaised(windowId: number, kind: GooseRaiseKind): void {
+    const { port } = this.deps;
+    if (this.quitting || !port.exists() || !port.isVisible()) return;
+    const now = this.deps.now();
+    if (now - this.openingAt < OPEN_GRACE_MS) return;
+    if (!pointIn(port.cursorPoint(), port.getBounds())) return;
+    if (now - this.pressAt <= RAISE_PAIR_MS) {
+      this.revert(windowId, kind, now);
+      return;
+    }
+    this.suspects.push({ windowId, kind, at: now });
+    this.holdUntil = Math.max(this.holdUntil, now + RAISE_PAIR_MS);
+    this.deps.later(() => {
+      const at = this.deps.now();
+      this.suspects = this.suspects.filter((s) => at - s.at <= RAISE_PAIR_MS);
+      this.refresh();
+    }, RAISE_PAIR_MS + 1);
+  }
+
+  private revert(windowId: number, kind: GooseRaiseKind, now: number): void {
+    // A window that was already in view before the click stays where it is: only one the click
+    // brought out of hiding (covered, another Space, minimized) is put back.
+    const before = this.lastWindows.find((w) => w.id === windowId);
+    if (kind !== 'restore' && before?.onScreen) return;
+    this.deps.revertRaise(windowId, kind);
+    this.holdUntil = Math.max(this.holdUntil, now + RAISE_HOLD_MS);
+    this.deps.later(() => this.refresh(), RAISE_HOLD_MS + 1);
+  }
+
   /** Re-decide after a fact the glance does not carry changed (a goose window was covered, or not). */
   refresh(): void {
     if (this.quitting) return;
+    const ended =
+      this.push != null && this.dismissal.observe(glanceProcesses(this.push), this.deps.now());
+    if (ended) this.dismissedUntold = false;
+    this.decide();
+    if (ended) this.deps.dismissedChanged();
+  }
+
+  private decide(): void {
     if (this.dismissedUntold && this.deps.tellDismissed()) {
       this.dismissedUntold = false;
       this.dismissedTold = true;
     }
     const { port } = this.deps;
     const push = this.push;
-    const windows = this.deps.gooseWindows();
-    if (coverageWanted(this.deps.platform, push, this.dismissed, windows))
-      this.deps.coverage.measure();
+    const live = this.deps.gooseWindows();
+    // While a raise a click on this window caused is being put back, goose's window in view is that
+    // click's doing, never a reason to hide or move.
+    const held = this.deps.now() < this.holdUntil;
+    if (!held) this.lastWindows = live;
+    const windows = held ? this.lastWindows : live;
+    const dismissed = this.dismissal.active;
+    if (coverageWanted(this.deps.platform, push, dismissed, windows)) this.deps.coverage.measure();
     else this.deps.coverage.forget();
     const visible =
       push != null &&
       desktopGlanceVisible(push, {
         gooseOnScreen: gooseOnScreen(this.deps.platform, windows),
-        dismissed: this.dismissed,
+        dismissed,
       });
     if (!visible) {
       if (port.exists() && port.isVisible()) port.hide();
-      // Turned off, or closed for the session: nothing floats and nothing is kept alive for it.
-      const gone = push?.prefs.desktop === 'off' || this.dismissed;
+      // Turned off, or closed: nothing floats and nothing is kept alive for it.
+      const gone = push?.prefs.desktop === 'off' || dismissed;
       if (gone && port.exists()) port.destroy();
       // Live while goose is in sight: the window is made (hidden) now, so it shows the moment goose
       // is covered instead of after a cold renderer loads (measured ~4 s on the packaged build).
@@ -269,26 +366,39 @@ export class EngineGlanceDesktop {
   handle(action: GlancePipAction): void {
     const { port } = this.deps;
     switch (action.type) {
+      case 'press': {
+        const now = this.deps.now();
+        this.pressAt = now;
+        const paired = this.suspects.filter((s) => now - s.at <= RAISE_PAIR_MS);
+        this.suspects = [];
+        for (const s of paired) this.revert(s.windowId, s.kind, now);
+        return;
+      }
       case 'open-engine':
+        this.openingAt = this.deps.now();
         this.deps.openEngine();
         return;
       case 'open-session':
+        this.openingAt = this.deps.now();
         this.deps.openSession(action.sessionId);
         return;
       case 'collapse':
         if (this.push) this.savePrefs({ ...this.push.prefs, desktopCollapsed: action.collapsed });
         return;
-      case 'close':
-        // The X, and only that: hidden and destroyed now, for the rest of this app session. No
-        // goose window is raised — the person was in another app and stays there (Q-426).
-        if (this.dismissed) return;
-        this.dismissed = true;
+      case 'close': {
+        // The X, and only that: hidden and destroyed now, until a new process starts. No goose
+        // window is raised — the person was in another app and stays there (Q-426): a raise the
+        // press caused was put back (gooseRaised).
+        if (this.dismissal.active) return;
+        const now = this.deps.now();
+        this.dismissal.dismiss(this.push ? glanceProcesses(this.push) : [], now);
         this.drag = null;
         // Said once a session: a second close in the same session already knows the way back.
         if (!this.dismissedTold) this.dismissedUntold = true;
         this.refresh();
         this.deps.dismissedChanged();
         return;
+      }
       case 'size': {
         const first = this.size == null;
         this.size = { width: Math.ceil(action.width), height: Math.ceil(action.height) };

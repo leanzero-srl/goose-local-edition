@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "채팅 · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "새 작업이 시작될 때까지 플로팅 창 닫기"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "알약 크기로 줄이기"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "새 작업이 시작될 때까지 플로팅 창을 숨겼습니다"
   },
   "engineGlance.expand": {
     "defaultMessage": "카드 전체 보기"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "이 카드 숨기기 — 사이드바 하단이나 설정 › 앱에서 다시 표시"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "여기서 닫으세요 — 새 작업이 시작되면 다시 나타납니다"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "확인"
@@ -2296,6 +2305,12 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "끔"
+  },
+  "engineGlanceSettings.desktopDescProcess": {
+    "defaultMessage": "다른 앱 위에 떠 있는 작은 창으로, 끌어다 놓은 모서리에 있습니다. 포커스를 가져가지 않으며 여기서 무언가를 열 때만 goose를 앞으로 가져옵니다. 닫기 버튼을 누르면 새 작업, 실행 또는 분할이 시작될 때까지 숨겨집니다."
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "닫았습니다 — 새 작업이 시작될 때까지 숨겨집니다."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "사이드바에"
@@ -5710,6 +5725,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "{requester} 분할의 랭크 {rank} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "다른 Mac 분할의 랭크 {rank} · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "{requester}을(를) 위해 레이어 {first}–{last} 처리 중 · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "다른 Mac을 위해 레이어 {first}–{last} 처리 중 · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} 분할의 랭크 {rank} · {model}"
@@ -11909,26 +11933,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "이번 세션 동안 떠 있는 창 닫기"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "여기서 닫으면 다시 불러올 때까지 숨겨집니다"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "이번 세션 동안 떠 있는 창을 숨겼습니다"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "설정 › 앱에서 다시 불러올 수 있으며, 거기서 끌 수도 있습니다."
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "메뉴 막대의 goose 아이콘이나 설정 › 앱에서 다시 불러올 수 있으며, 설정에서 끌 수도 있습니다."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "다른 앱 위에 떠 있는 작은 창으로, 끌어다 놓은 모서리에 자리합니다. 포커스를 가져가지 않으며, 여기서 무언가를 열 때만 goose를 앞으로 가져옵니다. 닫기 버튼을 누르면 이번 세션이 끝날 때까지 숨겨집니다."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "닫혀 있습니다 — 다시 불러올 때까지 숨겨집니다."
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "다시 표시"

@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "Trò chuyện · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Đóng cửa sổ nổi cho đến khi có việc mới bắt đầu"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Thu nhỏ thành viên thuốc"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Cửa sổ nổi đã ẩn cho đến khi có việc mới bắt đầu"
   },
   "engineGlance.expand": {
     "defaultMessage": "Hiện cả thẻ"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Ẩn thẻ này — đưa lại từ cuối thanh bên hoặc Cài đặt › Ứng dụng"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Đóng ở đây — nó sẽ trở lại khi có việc mới bắt đầu"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Đã hiểu"
@@ -2296,6 +2305,12 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Tắt"
+  },
+  "engineGlanceSettings.desktopDescProcess": {
+    "defaultMessage": "Một cửa sổ nhỏ nằm trên các ứng dụng khác, ở góc bạn kéo nó tới. Nó không bao giờ chiếm tiêu điểm và chỉ đưa goose lên trước khi bạn mở thứ gì đó từ nó. Nút đóng sẽ ẩn nó cho đến khi một công việc, lượt chạy hoặc phân chia mới bắt đầu."
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Bạn đã đóng nó — ẩn cho đến khi có việc mới bắt đầu."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Trong thanh bên"
@@ -5710,6 +5725,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Hạng {rank} của bản chia của {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Hạng {rank} trong phân chia của một Mac khác · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Đang phục vụ các lớp {first}–{last} cho {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Đang phục vụ các lớp {first}–{last} cho một Mac khác · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Hạng {rank} của bản chia của {requester} · {model}"
@@ -11909,26 +11933,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Đóng cửa sổ nổi trong phiên này"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Đóng ở đây cho đến khi bạn mở lại"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Đã ẩn cửa sổ nổi trong phiên này"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "Mở lại trong Cài đặt › Ứng dụng, nơi bạn cũng có thể tắt nó."
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "Mở lại từ biểu tượng goose trên thanh menu hoặc trong Cài đặt › Ứng dụng, nơi bạn cũng có thể tắt nó."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Một cửa sổ nhỏ nằm trên các ứng dụng khác, ở góc bạn kéo nó tới. Nó không bao giờ chiếm tiêu điểm và chỉ đưa goose lên trước khi bạn mở thứ gì đó từ nó. Nút đóng sẽ ẩn nó trong phần còn lại của phiên này."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Bạn đã đóng nó — ẩn cho đến khi bạn mở lại."
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Hiện lại"

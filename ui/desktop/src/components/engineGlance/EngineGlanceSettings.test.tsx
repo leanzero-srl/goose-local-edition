@@ -43,7 +43,7 @@ describe('EngineGlanceSettings — Q-426: the way back after the floating window
   it('closed this session: says so, and "Show it again" asks main to bring it back', () => {
     mount({ ...writing, desktopDismissed: true });
     expect(screen.getByTestId('engine-glance-desktop-dismissed').textContent).toContain(
-      'You closed it — hidden until you bring it back.'
+      'You closed it — hidden until something new starts.'
     );
     fireEvent.click(screen.getByTestId('engine-glance-desktop-show-again'));
     expect(showDesktop).toHaveBeenCalledOnce();
@@ -62,7 +62,7 @@ describe('EngineGlanceSettings — Q-426: the way back after the floating window
   it('the description says what the close does now', () => {
     mount(writing);
     expect(screen.getByTestId('engine-glance-settings').textContent).toContain(
-      'Its close button hides it for the rest of this session.'
+      'Its close button hides it until a new job, run or split starts.'
     );
   });
 });

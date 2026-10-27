@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Schwebendes Fenster schließen, bis etwas Neues startet"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Zur Pille verkleinern"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Schwebendes Fenster ausgeblendet, bis etwas Neues startet"
   },
   "engineGlance.expand": {
     "defaultMessage": "Ganze Karte zeigen"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Diese Karte ausblenden — zurückholen am Fuß der Seitenleiste oder unter Einstellungen › App"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Hier schließen – es kommt zurück, wenn etwas Neues startet"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Verstanden"
@@ -2296,6 +2305,12 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Aus"
+  },
+  "engineGlanceSettings.desktopDescProcess": {
+    "defaultMessage": "Ein kleines Fenster über deinen anderen Apps, in einer Ecke, in die du es ziehst. Es nimmt nie den Fokus und holt goose nur nach vorne, wenn du etwas daraus öffnest. Sein Schließen-Knopf blendet es aus, bis ein neuer Job, Lauf oder Split startet."
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Du hast es geschlossen – ausgeblendet, bis etwas Neues startet."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "In der Seitenleiste"
@@ -5710,6 +5725,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Rang {rank} von {requester}s Split · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Rang {rank} des Splits eines anderen Macs · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Bedient Schichten {first}–{last} für {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Bedient Schichten {first}–{last} für einen anderen Mac · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rang {rank} von {requester}s Split · {model}"
@@ -11909,26 +11933,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Schwebendes Fenster für diese Sitzung schließen"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Hier schließen, bis du es zurückholst"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Schwebendes Fenster für diese Sitzung ausgeblendet"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "Hol es unter Einstellungen › App zurück – dort kannst du es auch ausschalten."
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "Hol es über das goose-Symbol in der Menüleiste oder unter Einstellungen › App zurück – dort kannst du es auch ausschalten."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Ein kleines Fenster über deinen anderen Apps, in einer Ecke, in die du es ziehst. Es nimmt nie den Fokus und holt goose nur nach vorn, wenn du darin etwas öffnest. Sein Schließen-Knopf blendet es für den Rest dieser Sitzung aus."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Du hast es geschlossen – ausgeblendet, bis du es zurückholst."
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Wieder anzeigen"

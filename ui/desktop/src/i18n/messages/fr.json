@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Fermer la fenêtre flottante jusqu’au démarrage de quelque chose de nouveau"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Réduire en pastille"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Fenêtre flottante masquée jusqu’au démarrage de quelque chose de nouveau"
   },
   "engineGlance.expand": {
     "defaultMessage": "Afficher toute la carte"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Masquer cette carte — la retrouver au pied de la barre latérale ou dans Paramètres › Application"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Fermez-la ici — elle revient quand quelque chose de nouveau démarre"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Compris"
@@ -2296,6 +2305,12 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Désactivé"
+  },
+  "engineGlanceSettings.desktopDescProcess": {
+    "defaultMessage": "Une petite fenêtre au-dessus de vos autres apps, dans le coin où vous la déposez. Elle ne prend jamais le focus et n’amène goose au premier plan que si vous y ouvrez quelque chose. Son bouton de fermeture la masque jusqu’au démarrage d’une nouvelle tâche, exécution ou répartition."
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Vous l’avez fermée — masquée jusqu’au démarrage de quelque chose de nouveau."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Dans la barre latérale"
@@ -5710,6 +5725,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Rang {rank} de la répartition de {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Rang {rank} de la répartition d’un autre Mac · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Sert les couches {first}–{last} pour {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Sert les couches {first}–{last} pour un autre Mac · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rang {rank} de la répartition de {requester} · {model}"
@@ -11909,26 +11933,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Fermer la fenêtre flottante pour cette session"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Fermez-la ici jusqu’à ce que vous la rappeliez"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Fenêtre flottante masquée pour cette session"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "Rappelez-la depuis Paramètres › Application, où vous pouvez aussi la désactiver."
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "Rappelez-la depuis l’icône goose de la barre des menus ou depuis Paramètres › Application, où vous pouvez aussi la désactiver."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Une petite fenêtre au-dessus de vos autres apps, dans le coin où vous la faites glisser. Elle ne prend jamais le focus et n’amène goose au premier plan que si vous y ouvrez quelque chose. Son bouton de fermeture la masque pour le reste de cette session."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Vous l’avez fermée — masquée jusqu’à ce que vous la rappeliez."
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "L’afficher à nouveau"

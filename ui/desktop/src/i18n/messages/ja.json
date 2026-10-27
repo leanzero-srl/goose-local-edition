@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "チャット · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "新しい処理が始まるまでフローティングウィンドウを閉じる"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "ピルに縮小"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "新しい処理が始まるまでフローティングウィンドウを非表示にしました"
   },
   "engineGlance.expand": {
     "defaultMessage": "カード全体を表示"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "このカードを隠す — サイドバーの下部か 設定 › アプリ から戻せます"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "ここで閉じられます — 新しい処理が始まると戻ります"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "OK"
@@ -2296,6 +2305,12 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "オフ"
+  },
+  "engineGlanceSettings.desktopDescProcess": {
+    "defaultMessage": "ほかのアプリの上に表示される小さなウィンドウで、ドラッグした隅に置かれます。フォーカスを奪うことはなく、ここから何かを開いたときだけ goose を前面に出します。閉じるボタンを押すと、新しいジョブ、実行、または分割が始まるまで非表示になります。"
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "閉じました — 新しい処理が始まるまで非表示です。"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "サイドバー内"
@@ -5710,6 +5725,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "{requester} の分割のランク {rank} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "別の Mac の分割のランク {rank} · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "{requester} のためにレイヤー {first}–{last} を担当中 · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "別の Mac のためにレイヤー {first}–{last} を担当中 · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} の分割のランク {rank} · {model}"
@@ -11909,26 +11933,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "このセッションの間、フローティングウィンドウを閉じる"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "ここで閉じると、戻すまで表示されません"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "このセッションの間、フローティングウィンドウを隠しました"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "設定 › アプリ から再表示できます。そこでオフにすることもできます。"
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "メニューバーの goose アイコン、または 設定 › アプリ から再表示できます。設定ではオフにすることもできます。"
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "ほかのアプリの上に浮かぶ小さなウィンドウで、ドラッグした隅に置かれます。フォーカスを奪うことはなく、そこから何かを開いたときだけ goose を前面に出します。閉じるボタンを押すと、このセッションの残りの間は隠れます。"
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "閉じられています — 再表示するまで隠れたままです。"
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "再表示"

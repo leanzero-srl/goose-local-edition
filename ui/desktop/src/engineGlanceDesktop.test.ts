@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   EngineGlanceDesktop,
   GLANCE_MARGIN,
+  RAISE_PAIR_MS,
   isGlancePipAction,
   trayOffersGlanceBack,
   type GlanceDisplay,
@@ -11,6 +12,9 @@ import { ENGINE_GLANCE_CHANNEL, type GlancePrefs, type GlancePush } from './util
 import type { GooseWindowFacts, Rect } from './utils/engineGlanceRules';
 import { glancePush, runningSnapshot } from './utils/engineGlance.fixtures';
 import { GENERATING_STATUS, IDLE_STATUS } from './components/leanzero-swarm/mlxLiveStatus.fixtures';
+import { INITIAL_SNAPSHOT } from './utils/mlxEngineMonitor';
+import { toMlxDistributedReport } from './utils/mlxDistributedReport';
+import { FLASH_SERVING, HOSTING_RANK_1 } from './components/leanzero-swarm/mlxDistributed.fixtures';
 
 const MAIN: GlanceDisplay = { id: 1, workArea: { x: 0, y: 25, width: 1512, height: 920 } };
 const SIDE: GlanceDisplay = { id: 2, workArea: { x: 1512, y: 0, width: 1920, height: 1080 } };
@@ -81,6 +85,17 @@ function setup(opts: { inFront?: boolean; displays?: GlanceDisplay[] } = {}) {
   const told: string[] = [];
   const dismissedChanged = vi.fn();
   const coverage = { measure: vi.fn(), forget: vi.fn() };
+  // A clock the test moves, and the timers main would run on it.
+  const clock = { now: 1_000_000 };
+  const timers: { at: number; fn: () => void }[] = [];
+  const reverted: string[] = [];
+  const advance = (ms: number) => {
+    clock.now += ms;
+    for (const t of timers.splice(0).sort((a, b) => a.at - b.at)) {
+      if (t.at <= clock.now) t.fn();
+      else timers.push(t);
+    }
+  };
   const desktop = new EngineGlanceDesktop({
     port,
     platform: 'darwin',
@@ -103,8 +118,14 @@ function setup(opts: { inFront?: boolean; displays?: GlanceDisplay[] } = {}) {
       return true;
     },
     dismissedChanged,
+    now: () => clock.now,
+    later: (fn, ms) => timers.push({ at: clock.now + ms, fn }),
+    revertRaise: (id, kind) => reverted.push(`${id}:${kind}`),
   });
   return {
+    clock,
+    advance,
+    reverted,
     desktop,
     state,
     facts,
@@ -180,7 +201,7 @@ describe('EngineGlanceDesktop — the floating window’s life', () => {
     expect(state.visible).toBe(false);
   });
 
-  it('Q-426: closed — gone for the session: the next busy spell does NOT bring it back', () => {
+  it("Q-426: closed — the same work's next busy spell does NOT bring it back", () => {
     const { desktop, state } = setup();
     desktop.update(writing);
     desktop.handle({ type: 'size', width: 300, height: 180 });
@@ -581,5 +602,198 @@ describe('isGlancePipAction — what the window may ask', () => {
     expect(isGlancePipAction({ type: 'open-session', sessionId: '' })).toBe(false);
     expect(isGlancePipAction({ type: 'drag-move', screenX: Number.NaN, screenY: 1 })).toBe(false);
     expect(isGlancePipAction({ type: 'navigate', url: 'https://example.com' })).toBe(false);
+  });
+});
+
+/** Shown in the bottom-right of MAIN (setup's 300×180), with the pointer resting on it. */
+function upWithPointerOnIt(opts: Parameters<typeof setup>[0] = {}, push: GlancePush = writing) {
+  const t = setup(opts);
+  t.desktop.update(push);
+  t.desktop.handle({ type: 'size', width: 300, height: 180 });
+  expect(t.state.visible).toBe(true);
+  t.state.cursor = { x: t.state.bounds.x + 280, y: t.state.bounds.y + 12 };
+  return t;
+}
+
+describe('EngineGlanceDesktop — owner 2026-10-27: a REAL click on X or minimize never opens goose', () => {
+  // A real click activates goose (Electron's "panel" is not an NSPanel), AppKit makes goose's window
+  // key and brings it forward, and main hears that focus BEFORE the release reaches the X.
+  it('the press raises goose: the raise is put back, the window stays up, and the X then closes it', () => {
+    const t = upWithPointerOnIt();
+    t.desktop.handle({ type: 'press' });
+    t.facts.inFront = true;
+    t.desktop.gooseRaised(1, 'focus');
+    t.desktop.refresh();
+    expect(t.reverted).toEqual(['1:focus']);
+    expect(t.state.visible).toBe(true);
+    t.facts.inFront = false;
+    t.desktop.handle({ type: 'close' });
+    expect(t.state.exists).toBe(false);
+    expect(t.openEngine).not.toHaveBeenCalled();
+    // Goose is behind other apps again: the blur that follows never brings it back.
+    t.advance(5_000);
+    t.desktop.refresh();
+    t.desktop.update(writing);
+    expect(t.state.exists).toBe(false);
+  });
+
+  it('the raise lands before the press reaches main: paired all the same, never hidden in between', () => {
+    const t = upWithPointerOnIt();
+    t.facts.inFront = true;
+    t.desktop.gooseRaised(1, 'focus');
+    t.desktop.refresh();
+    expect(t.state.visible).toBe(true);
+    t.advance(120);
+    t.desktop.handle({ type: 'press' });
+    expect(t.reverted).toEqual(['1:focus']);
+    t.facts.inFront = false;
+    t.desktop.handle({ type: 'collapse', collapsed: true });
+    expect(t.state.visible).toBe(true);
+    expect(t.saved[t.saved.length - 1]?.desktopCollapsed).toBe(true);
+  });
+
+  it('a minimized goose window the press restored is minimized again', () => {
+    const t = upWithPointerOnIt();
+    t.desktop.handle({ type: 'press' });
+    t.desktop.gooseRaised(3, 'restore');
+    expect(t.reverted).toEqual(['3:restore']);
+  });
+
+  it('Cmd-Tab to goose with the pointer resting on the card (no press): not put back, and it hides', () => {
+    const t = upWithPointerOnIt();
+    t.facts.inFront = true;
+    t.desktop.gooseRaised(1, 'focus');
+    t.desktop.refresh();
+    t.advance(RAISE_PAIR_MS + 5);
+    expect(t.reverted).toEqual([]);
+    expect(t.state.visible).toBe(false);
+  });
+
+  it('the Open control raises goose on purpose: never put back', () => {
+    const t = upWithPointerOnIt();
+    t.desktop.handle({ type: 'press' });
+    t.desktop.handle({ type: 'open-engine' });
+    t.facts.inFront = true;
+    t.desktop.gooseRaised(1, 'focus');
+    expect(t.reverted).toEqual([]);
+    expect(t.openEngine).toHaveBeenCalledOnce();
+  });
+
+  it("goose came forward with the pointer elsewhere: not the click's doing", () => {
+    const t = upWithPointerOnIt();
+    t.desktop.handle({ type: 'press' });
+    t.state.cursor = { x: 10, y: 400 };
+    t.desktop.gooseRaised(1, 'focus');
+    expect(t.reverted).toEqual([]);
+  });
+
+  it('a goose window already in view before the click ("whenever the engine works") stays where it is', () => {
+    const t = setup({ inFront: false });
+    t.facts.windows = [
+      { id: 5, onScreen: true, focused: false, bounds: GOOSE_BOUNDS, visibleShare: null },
+    ];
+    t.desktop.update(withPrefs(writing, { desktop: 'busy' }));
+    t.desktop.handle({ type: 'size', width: 300, height: 180 });
+    t.state.cursor = { x: t.state.bounds.x + 5, y: t.state.bounds.y + 5 };
+    t.desktop.handle({ type: 'press' });
+    t.desktop.gooseRaised(5, 'focus');
+    expect(t.reverted).toEqual([]);
+  });
+});
+
+const turn = (id: string, startedAt: string) => ({
+  running: 1,
+  needsYou: [],
+  runningKeys: [`${id}@${startedAt}`],
+});
+
+describe('EngineGlanceDesktop — owner 2026-10-27: a close holds until a NEW process starts', () => {
+  it("closed during a turn: blur, focus-out and the same turn's busy spells never bring it back", () => {
+    const t = setup();
+    const during = { ...writing, sessions: turn('s1', '2026-10-27T10:00:00Z') };
+    t.desktop.update(during);
+    t.desktop.handle({ type: 'size', width: 300, height: 180 });
+    t.desktop.handle({ type: 'close' });
+    for (let i = 0; i < 5; i++) {
+      t.advance(60_000);
+      t.desktop.update({ ...idle, sessions: during.sessions });
+      t.desktop.refresh();
+      t.desktop.update(during);
+    }
+    expect(t.state.exists).toBe(false);
+    expect(t.desktop.isDismissed()).toBe(true);
+  });
+
+  it('a NEW turn starts (another chat, or the next run): it comes back, and Settings is told', () => {
+    const t = setup();
+    t.desktop.update({ ...writing, sessions: turn('s1', '2026-10-27T10:00:00Z') });
+    t.desktop.handle({ type: 'size', width: 300, height: 180 });
+    t.desktop.handle({ type: 'close' });
+    t.dismissedChanged.mockClear();
+    t.desktop.update({ ...writing, sessions: turn('s2', '2026-10-27T10:05:00Z') });
+    expect(t.desktop.isDismissed()).toBe(false);
+    expect(t.state.visible).toBe(true);
+    expect(t.dismissedChanged).toHaveBeenCalledOnce();
+  });
+
+  it('a split starts after the close: a new process, it comes back', () => {
+    const t = setup();
+    t.desktop.update({ ...writing, sessions: turn('s1', '2026-10-27T10:00:00Z') });
+    t.desktop.handle({ type: 'size', width: 300, height: 180 });
+    t.desktop.handle({ type: 'close' });
+    const split = glancePush(INITIAL_SNAPSHOT, {
+      distributed: { report: toMlxDistributedReport(FLASH_SERVING), ageMs: 0 },
+    });
+    t.desktop.update({ ...split, sessions: turn('s1', '2026-10-27T10:00:00Z') });
+    expect(t.desktop.isDismissed()).toBe(false);
+  });
+
+  it('negative control: the same turn and the same engine, minutes later, keep it closed', () => {
+    const t = setup();
+    const during = { ...writing, sessions: turn('s1', '2026-10-27T10:00:00Z') };
+    t.desktop.update(during);
+    t.desktop.handle({ type: 'size', width: 300, height: 180 });
+    t.desktop.handle({ type: 'close' });
+    t.advance(10 * 60_000);
+    t.desktop.update(during);
+    expect(t.desktop.isDismissed()).toBe(true);
+  });
+});
+
+describe('EngineGlanceDesktop — owner 2026-10-27: the Mac serving a rank shows it too', () => {
+  it("a rank of another Mac's split, idle between requests, floats on this Mac", () => {
+    const t = setup();
+    const peer = glancePush(INITIAL_SNAPSHOT, {
+      distributed: { report: toMlxDistributedReport(HOSTING_RANK_1), ageMs: 0 },
+    });
+    expect(peer.engine.busy).toBe(false);
+    t.desktop.update(peer);
+    t.desktop.handle({ type: 'size', width: 300, height: 180 });
+    expect(t.state.visible).toBe(true);
+  });
+
+  it('a rank launched here over ssh (no goosed report): from the process list, with its layers', () => {
+    const t = setup();
+    const peer = glancePush(INITIAL_SNAPSHOT, {
+      peerRanks: [
+        {
+          pid: 77,
+          rank: 1,
+          size: 2,
+          modelId: 'qwen4-flash',
+          backend: 'jaccl',
+          requester: 'workhorse',
+          layers: { first: 17, last: 47 },
+        },
+      ],
+    });
+    expect(peer.engine.engine).toMatchObject({
+      mode: 'hosting',
+      requester: 'workhorse',
+      layers: { first: 17, last: 47 },
+    });
+    t.desktop.update(peer);
+    t.desktop.handle({ type: 'size', width: 300, height: 180 });
+    expect(t.state.visible).toBe(true);
   });
 });

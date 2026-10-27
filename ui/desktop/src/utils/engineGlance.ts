@@ -33,6 +33,7 @@ import { routeContactLost, routePeerGone } from './routeContact';
 import { MLX_DISTRIBUTED_STALE_MS, snapshotPhase } from './mlxTray';
 import { isNodeSwap, swapStopsEngine, type NodeSwap } from './nodeSwap';
 import { isRunningRow } from './runningElsewhere';
+import type { PeerRankSeen } from './peerRank';
 
 /**
  * THE ENGINE GLANCE — the Engine tab's live state tile made small enough to carry everywhere: the
@@ -205,6 +206,11 @@ export interface GlanceSessions {
    */
   runningRows?: RunningSessionDto[];
   /**
+   * The merged push only: each listed turn in flight as `<sessionId>@<startedAt>` — which work a
+   * close of the desktop window holds against (engineGlanceRules.ts `glanceProcesses`).
+   */
+  runningKeys?: string[];
+  /**
    * A window's report only (never the merged push): the node its goosed says serves, read when the
    * glance changed (glanceStore.ts). Absent = this window has not read it.
    */
@@ -271,6 +277,11 @@ export interface EngineGlanceOptions {
   served: readonly GlanceServingReport[];
   /** The swap a window's loader reports (`swapOfReports`); null = none in progress. */
   swap?: NodeSwap | null;
+  /**
+   * The ranks main read on this Mac's process list that serve ANOTHER Mac's split (peerRankWatch.ts):
+   * a rank launched here over ssh, which this Mac's goosed never hears of, and the layers of any rank.
+   */
+  peerRanks?: readonly PeerRankSeen[];
 }
 
 type EngineParts = Omit<EngineGlance, 'servedBy'>;
@@ -527,25 +538,45 @@ function engineParts(snapshot: MlxEngineSnapshot, options: EngineGlanceOptions):
   const pair = measuredPairOf(snapshot.measured);
   const distributed = options.distributed;
   const stale = distributed != null && distributed.ageMs > MLX_DISTRIBUTED_STALE_MS;
-  const hosting = distributed?.report.mode === 'single' ? distributed.report.hosting : null;
+  const reported = distributed?.report.mode === 'single' ? distributed.report.hosting : null;
+  // A rank launched here over ssh is known only from the process list; a Link-hosted one is
+  // goosed's own report, and the process list adds the layers it runs.
+  const peer =
+    distributed?.report.mode === 'distributed'
+      ? null
+      : (options.peerRanks?.find((r) => reported == null || r.rank === reported.rank) ?? null);
+  const hosting =
+    reported ??
+    (peer
+      ? {
+          rank: peer.rank,
+          requester: peer.requester ?? '',
+          modelId: peer.modelId,
+          backend: peer.backend,
+          state: 'serving',
+          load: null,
+        }
+      : null);
+  const hostingStale = reported != null && stale;
 
   if (hosting) {
     const loading = hosting.state === 'loading';
     return glance({
       present: true,
-      phase: stale ? 'idle' : hostingPhase(hosting.state),
-      stage: stale ? 'stale' : loading ? 'loading' : 'hosting',
+      phase: hostingStale ? 'idle' : hostingPhase(hosting.state),
+      stage: hostingStale ? 'stale' : loading ? 'loading' : 'hosting',
       engine: {
         mode: 'hosting',
         rank: hosting.rank,
         requester: hosting.requester,
         modelId: hosting.modelId,
         backend: hosting.backend,
+        layers: peer?.layers ?? null,
       },
       modelId: hosting.modelId,
       hero: null,
       second: null,
-      progress: loading && !stale ? (hosting.load ?? 'indeterminate') : null,
+      progress: loading && !hostingStale ? (hosting.load ?? 'indeterminate') : null,
       readCache: null,
       waiting: null,
       inflight: null,
@@ -809,6 +840,8 @@ export function isGlanceSessions(value: unknown): value is GlanceSessions {
     (v.swap === undefined || v.swap === null || isNodeSwap(v.swap)) &&
     (v.runningRows === undefined ||
       (Array.isArray(v.runningRows) && v.runningRows.every(isRunningRow))) &&
+    (v.runningKeys === undefined ||
+      (Array.isArray(v.runningKeys) && v.runningKeys.every((k) => typeof k === 'string'))) &&
     typeof v.running === 'number' &&
     Number.isFinite(v.running) &&
     Array.isArray(v.needsYou) &&
@@ -834,16 +867,25 @@ export const NO_SESSIONS: GlanceSessions = { running: 0, needsYou: [] };
 export function mergeGlanceSessions(reports: Iterable<GlanceSessions>): GlanceSessions {
   let unlisted = 0;
   const runningIds = new Set<string>();
+  const runningKeys = new Set<string>();
   const needsYou = new Map<string, GlanceNeedsYou>();
   for (const r of reports) {
-    if (r.runningRows) for (const row of r.runningRows) runningIds.add(row.sessionId);
-    else unlisted += r.running;
+    if (r.runningRows) {
+      for (const row of r.runningRows) {
+        runningIds.add(row.sessionId);
+        runningKeys.add(`${row.sessionId}@${row.startedAt}`);
+      }
+    } else unlisted += r.running;
     for (const n of r.needsYou) {
       const key = `${n.sessionId}\n${n.question}`;
       if (!needsYou.has(key)) needsYou.set(key, n);
     }
   }
-  return { running: runningIds.size + unlisted, needsYou: [...needsYou.values()] };
+  return {
+    running: runningIds.size + unlisted,
+    needsYou: [...needsYou.values()],
+    ...(runningKeys.size > 0 ? { runningKeys: [...runningKeys].sort() } : {}),
+  };
 }
 
 export function isGlancePush(value: unknown): value is GlancePush {

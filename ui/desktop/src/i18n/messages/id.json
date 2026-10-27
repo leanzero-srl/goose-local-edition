@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Tutup jendela mengambang sampai ada yang baru dimulai"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Kecilkan jadi pil"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Jendela mengambang disembunyikan sampai ada yang baru dimulai"
   },
   "engineGlance.expand": {
     "defaultMessage": "Tampilkan kartu penuh"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Sembunyikan kartu ini — kembalikan dari bagian bawah bilah samping atau Pengaturan › Aplikasi"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Tutup di sini — jendela kembali saat ada yang baru dimulai"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Mengerti"
@@ -2296,6 +2305,12 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Mati"
+  },
+  "engineGlanceSettings.desktopDescProcess": {
+    "defaultMessage": "Jendela kecil di atas aplikasi lain, di sudut tempat Anda menyeretnya. Jendela ini tidak pernah mengambil fokus dan hanya membawa goose ke depan saat Anda membuka sesuatu darinya. Tombol tutupnya menyembunyikannya sampai pekerjaan, proses, atau pembagian baru dimulai."
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Anda menutupnya — disembunyikan sampai ada yang baru dimulai."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Di bilah samping"
@@ -5710,6 +5725,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Peringkat {rank} dari pembagian {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Peringkat {rank} dari pembagian Mac lain · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Melayani lapisan {first}–{last} untuk {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Melayani lapisan {first}–{last} untuk Mac lain · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Peringkat {rank} dari pembagian {requester} · {model}"
@@ -11909,26 +11933,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Tutup jendela mengambang untuk sesi ini"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Tutup di sini sampai Anda memunculkannya lagi"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Jendela mengambang disembunyikan untuk sesi ini"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "Munculkan lagi dari Pengaturan › Aplikasi, tempat Anda juga bisa mematikannya."
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "Munculkan lagi dari ikon goose di bilah menu atau dari Pengaturan › Aplikasi, tempat Anda juga bisa mematikannya."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Jendela kecil di atas aplikasi lain Anda, di sudut tempat Anda menyeretnya. Jendela ini tidak pernah mengambil fokus, dan hanya membawa goose ke depan saat Anda membuka sesuatu darinya. Tombol tutupnya menyembunyikannya selama sisa sesi ini."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Anda menutupnya — disembunyikan sampai Anda memunculkannya lagi."
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Tampilkan lagi"

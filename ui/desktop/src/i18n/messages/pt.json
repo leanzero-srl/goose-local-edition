@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Fechar a janela flutuante até algo novo começar"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Reduzir a pílula"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Janela flutuante oculta até algo novo começar"
   },
   "engineGlance.expand": {
     "defaultMessage": "Mostrar o cartão inteiro"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Ocultar este cartão — traga-o de volta pelo rodapé da barra lateral ou em Configurações › Aplicativo"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Feche-a aqui — ela volta quando algo novo começa"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Entendi"
@@ -2296,6 +2305,12 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Desligado"
+  },
+  "engineGlanceSettings.desktopDescProcess": {
+    "defaultMessage": "Uma janela pequena sobre seus outros apps, no canto para onde você a arrastar. Ela nunca toma o foco e só traz o goose para a frente quando você abre algo nela. O botão de fechar a oculta até um novo trabalho, execução ou divisão começar."
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Você a fechou — oculta até algo novo começar."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Na barra lateral"
@@ -5710,6 +5725,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Posição {rank} da divisão de {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Posição {rank} da divisão de outro Mac · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Servindo as camadas {first}–{last} para {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Servindo as camadas {first}–{last} para outro Mac · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Posição {rank} da divisão de {requester} · {model}"
@@ -11909,26 +11933,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Fechar a janela flutuante nesta sessão"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Feche aqui até trazê-la de volta"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Janela flutuante oculta nesta sessão"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "Traga-a de volta em Configurações › Aplicativo, onde também é possível desativá-la."
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "Traga-a de volta pelo ícone do goose na barra de menus ou em Configurações › Aplicativo, onde também é possível desativá-la."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Uma pequena janela sobre seus outros apps, no canto para onde você a arrastar. Ela nunca pega o foco e só traz o goose para a frente quando você abre algo nela. O botão de fechar a oculta pelo resto desta sessão."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Você a fechou — oculta até trazê-la de volta."
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Mostrar de novo"

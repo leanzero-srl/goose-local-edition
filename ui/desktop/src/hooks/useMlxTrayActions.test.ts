@@ -53,6 +53,7 @@ import {
   DistributedStopNotVerified,
   runMlxTrayAction,
   useMlxDistributedReporter,
+  IDLE_SPLIT_READ_MS,
 } from './useMlxTrayActions';
 
 describe('runMlxTrayAction — the tray’s Stop for a route to another Mac', () => {
@@ -277,6 +278,22 @@ describe('useMlxDistributedReporter — keeps main’s copy of the distributed e
     await waitFor(() => expect(distributedStatus).toHaveBeenCalledTimes(3));
     await new Promise((r) => setTimeout(r, 20));
     expect(distributedStatus).toHaveBeenCalledTimes(3);
+  });
+
+  it('owner 2026-10-27: a rank another Mac starts here later is seen with no tray open and no focus', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      distributedStatus.mockResolvedValue({ mode: 'single', hosting: null });
+      renderHook(() => useMlxDistributedReporter(true));
+      await waitFor(() => expect(distributedStatus).toHaveBeenCalledTimes(1));
+      distributedStatus.mockResolvedValue({ mode: 'single', hosting: { rank: 1 } });
+      vi.advanceTimersByTime(IDLE_SPLIT_READ_MS);
+      await waitFor(() => expect(distributedStatus).toHaveBeenCalledTimes(2));
+      // From then on the rank is WATCHED by the split-status store, not re-read by the idle clock.
+      await waitFor(() => expect(distributedStatus.mock.calls.length).toBeGreaterThan(2));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('without the capability nothing is read', async () => {

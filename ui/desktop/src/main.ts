@@ -31,11 +31,7 @@ import { billedCostRowField, type DeclaredPrices } from './benchBilledCost';
 import { benchPublishBilling, droppableAfterRefusal } from './benchPublishBilling';
 import { captureTokenUsage, type CachedCapture, type TokenCapture } from './benchTokenCapture';
 import { tokenUsageLine, type TokenUsage } from './benchTokenUsage';
-import {
-  publishSeriesPair,
-  seriesPublishPlan,
-  type PairCouplingFacts,
-} from './benchSeriesPublish';
+import { publishSeriesPair, seriesPublishPlan, type PairCouplingFacts } from './benchSeriesPublish';
 import {
   catalogDisplayName,
   benchRunRoute,
@@ -315,6 +311,8 @@ import {
 } from './engineGlanceDesktop';
 import { createGlanceWindowPort } from './engineGlanceWindow';
 import { gooseWindowFacts, trackOutOfSight } from './engineGlanceGooseWindows';
+import { PEER_RANK_SCAN_MS, PeerRankWatch } from './peerRankWatch';
+import { promises as dnsPromises } from 'node:dns';
 import { keepRepainted, repaintWindow } from './windowRepaint';
 import { GlanceCoverage, WINDOW_LIST_JXA } from './engineGlanceCoverage';
 import { TRAY_ACTION_ENGINES, workCutBy } from './utils/mlxInFlight';
@@ -2481,7 +2479,47 @@ const engineGlanceDesktop = new EngineGlanceDesktop({
   },
   // Settings › App offers it back and the tray grows its item: both read the republished glance.
   dismissedChanged: () => renderMlxTray(mlxMonitor.current()),
+  now: () => Date.now(),
+  later: (fn, ms) => {
+    setTimeout(fn, ms);
+  },
+  // A goose window a real click on the floating window brought forward (engineGlanceDesktop.ts):
+  // minimized again, or sent back behind the app the person is in.
+  revertRaise: (windowId, kind) => {
+    const win = BrowserWindow.fromId(windowId);
+    if (!win || win.isDestroyed()) return;
+    log.info(`engine glance: put back goose window ${windowId} its click raised (${kind})`);
+    if (kind === 'restore') win.minimize();
+    else win.blur();
+  },
 });
+// The ranks of ANOTHER Mac's split running here (peerRankWatch.ts): one the requester launched over
+// ssh is known only from the process list, and it must show on this Mac too (owner, 2026-10-27).
+const execText = (file: string, args: string[]) =>
+  new Promise<string>((resolve, reject) => {
+    execFile(file, args, { timeout: 4000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) =>
+      error ? reject(error) : resolve(stdout)
+    );
+  });
+const peerRankWatch = new PeerRankWatch({
+  listProcesses: () => execText('/bin/ps', ['-axww', '-o', 'pid=,ppid=,command=']),
+  processEnvironment: (pid) =>
+    execText('/bin/ps', ['-E', '-ww', '-o', 'command=', '-p', String(pid)]),
+  reverseLookup: async (address) => (await dnsPromises.reverse(address))[0] ?? null,
+  readFile: (file) => fs.readFile(file, 'utf8'),
+  ownPid: process.pid,
+  onChanged: (ranks) => {
+    log.info(
+      `peer ranks here: ${ranks.map((r) => `rank ${r.rank}/${r.size} ${r.modelId} for ${r.requester ?? 'Link'}${r.layers ? ` layers ${r.layers.first}-${r.layers.last}` : ''}`).join('; ') || 'none'}`
+    );
+    publishEngineGlance(mlxMonitor.current());
+  },
+  warn: (message) => log.warn(message),
+});
+if (process.platform === 'darwin') {
+  void peerRankWatch.scan();
+  setInterval(() => void peerRankWatch.scan(), PEER_RANK_SCAN_MS);
+}
 const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
   const push: GlancePush = {
     engine: buildEngineGlance(snapshot, {
@@ -2493,6 +2531,7 @@ const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
       served: servingReportsOf(glanceSessionsByWindow.values(), closedWindowServing),
       // The swap a window's node loader is making: the way it stopped is never "Failed" (Q-254).
       swap: swapOfReports(glanceSessionsByWindow.values()),
+      peerRanks: peerRankWatch.current(),
     }),
     sessions:
       glanceSessionsByWindow.size > 0
@@ -2538,21 +2577,36 @@ const refreshGlanceSoon = () => setTimeout(() => engineGlanceDesktop.refresh(), 
 app.on('before-quit', () => engineGlanceDesktop.suspendForQuit());
 // The evidence for windowRepaint.ts: a GPU or renderer process that goes away is named in main.log.
 app.on('child-process-gone', (_event, details) => {
-  log.warn(`child process gone: ${details.type} ${details.reason} exit=${details.exitCode}${details.name ? ` (${details.name})` : ''}`);
+  log.warn(
+    `child process gone: ${details.type} ${details.reason} exit=${details.exitCode}${details.name ? ` (${details.name})` : ''}`
+  );
 });
 app.on('render-process-gone', (_event, contents, details) => {
-  log.warn(`renderer gone: ${details.reason} exit=${details.exitCode} url=${contents.getURL().slice(0, 120)}`);
+  log.warn(
+    `renderer gone: ${details.reason} exit=${details.exitCode} url=${contents.getURL().slice(0, 120)}`
+  );
 });
-app.on('browser-window-focus', refreshGlanceSoon);
+// Told synchronously, before the deferred re-decision: a goose window a press on the floating
+// window brought forward is put back (engineGlanceDesktop.ts `gooseRaised`).
+app.on('browser-window-focus', (_event, win) => {
+  engineGlanceDesktop.gooseRaised(win.id, 'focus');
+  refreshGlanceSoon();
+});
 app.on('browser-window-blur', refreshGlanceSoon);
 app.on('browser-window-created', (_event, win) => {
   trackOutOfSight(win);
   // A page drawn only part of the way down is drawn again (windowRepaint.ts).
   keepRepainted(win);
   win.on('minimize', refreshGlanceSoon);
-  win.on('restore', refreshGlanceSoon);
+  win.on('restore', () => {
+    engineGlanceDesktop.gooseRaised(win.id, 'restore');
+    refreshGlanceSoon();
+  });
   win.on('hide', refreshGlanceSoon);
-  win.on('show', refreshGlanceSoon);
+  win.on('show', () => {
+    engineGlanceDesktop.gooseRaised(win.id, 'show');
+    refreshGlanceSoon();
+  });
 });
 
 // The engine-phase dot beside a tray state line, in the palette's exact hex (12pt @2x).
@@ -5882,7 +5936,10 @@ async function benchRunRouteOf(stored: Record<string, unknown>): Promise<BenchRu
 }
 
 /** The engine that RAN a build: stamped on its session row at launch (BenchSessionRow.engineSha256). */
-async function benchEngineShaFor(runKey: string | null, stored: Record<string, unknown>): Promise<string | null> {
+async function benchEngineShaFor(
+  runKey: string | null,
+  stored: Record<string, unknown>
+): Promise<string | null> {
   const rows = await readBenchSessionRows();
   const key =
     runKey ??
@@ -5912,7 +5969,8 @@ async function benchOperatorKey(): Promise<{ key: string | null; problem?: strin
   // A key IS saved but cannot be read (keychain locked, access denied, encryption unavailable): say so on the card
   // rather than publishing as a community entry without a word (final review 2026-10-18).
   try {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('keychain encryption is not available');
+    if (!safeStorage.isEncryptionAvailable())
+      throw new Error('keychain encryption is not available');
     const key = safeStorage.decryptString(sealed).trim();
     return key ? { key } : { key: null, problem: 'the saved operator key is empty' };
   } catch (error) {
@@ -5936,7 +5994,10 @@ ipcMain.handle('benchmark-operator-key-set', async (_event, key: unknown) => {
     return { ok: true, saved: false };
   }
   if (!safeStorage.isEncryptionAvailable())
-    return { ok: false, error: "This Mac's keychain encryption is not available, so the key cannot be stored safely." };
+    return {
+      ok: false,
+      error: "This Mac's keychain encryption is not available, so the key cannot be stored safely.",
+    };
   await fs.mkdir(BENCH_DIR, { recursive: true });
   await fs.writeFile(BENCH_OPERATOR_KEY_FILE(), safeStorage.encryptString(value), { mode: 0o600 });
   return { ok: true, saved: true };
@@ -5947,9 +6008,12 @@ let benchCatalogNames: { at: number; data: Array<{ id?: unknown; name?: unknown 
 async function benchModelDisplayName(model: string, provider: string): Promise<string | null> {
   if (!benchCatalogNames || Date.now() - benchCatalogNames.at > 3600_000) {
     try {
-      const res = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(8000) });
+      const res = await fetch('https://openrouter.ai/api/v1/models', {
+        signal: AbortSignal.timeout(8000),
+      });
       const body = (await res.json()) as { data?: unknown };
-      if (res.ok && Array.isArray(body.data)) benchCatalogNames = { at: Date.now(), data: body.data };
+      if (res.ok && Array.isArray(body.data))
+        benchCatalogNames = { at: Date.now(), data: body.data };
     } catch {
       // offline or refused: the title simply is not prefilled with a display name
     }
@@ -5969,7 +6033,11 @@ ipcMain.handle('benchmark-publish-suggestion', async (_event, key: string) => {
   if (!model) return null;
   const route = await benchRunRouteOf(stored);
   const displayName = await benchModelDisplayName(model, provider ?? '');
-  return { title: suggestedPublishTitle({ model, provider, route, displayName }), local: route === 'local', route };
+  return {
+    title: suggestedPublishTitle({ model, provider, route, displayName }),
+    local: route === 'local',
+    route,
+  };
 });
 
 type BenchPublishArgs = {
@@ -6408,10 +6476,12 @@ async function publishBenchRun(
       openRouterCredentials: benchOpenRouterCredentials,
       cache: benchTokenUsageCache,
     }
-  ).catch((error): TokenCapture => ({
-    usage: null,
-    problem: `token counts could not be recorded: ${error instanceof Error ? error.message : String(error)}`,
-  }));
+  ).catch(
+    (error): TokenCapture => ({
+      usage: null,
+      problem: `token counts could not be recorded: ${error instanceof Error ? error.message : String(error)}`,
+    })
+  );
   if (tokens.usage) payload.tokenUsage = tokens.usage;
   // The run-end bill was incomplete ONLY because records were missing, and the publish-time read found every one of
   // them with the run's own usage agreeing (benchTokenCapture): that read is the complete bill, so price and tokens on
@@ -7051,7 +7121,14 @@ async function scanInstalledApps(): Promise<{ name: string; bundleId: string | n
     new Promise<string | null>((resolve) => {
       execFile(
         '/usr/bin/plutil',
-        ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', path.join(app, 'Contents', 'Info.plist')],
+        [
+          '-extract',
+          'CFBundleIdentifier',
+          'raw',
+          '-o',
+          '-',
+          path.join(app, 'Contents', 'Info.plist'),
+        ],
         { timeout: 5_000 },
         (err, stdout) => resolve(err ? null : String(stdout).trim() || null)
       );

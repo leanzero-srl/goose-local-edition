@@ -20,13 +20,13 @@ const i18n = defineMessages({
   },
   desktop: { id: 'engineGlanceSettings.desktop', defaultMessage: 'Floating on the desktop' },
   desktopDesc: {
-    id: 'engineGlanceSettings.desktopDescSession',
+    id: 'engineGlanceSettings.desktopDescProcess',
     defaultMessage:
-      'A small window over your other apps, in a corner you drag it to. It never takes focus, and brings goose forward only when you open something from it. Its close button hides it for the rest of this session.',
+      'A small window over your other apps, in a corner you drag it to. It never takes focus, and brings goose forward only when you open something from it. Its close button hides it until a new job, run or split starts.',
   },
   dismissed: {
-    id: 'engineGlanceSettings.dismissed',
-    defaultMessage: 'You closed it — hidden until you bring it back.',
+    id: 'engineGlanceSettings.dismissedUntilNew',
+    defaultMessage: 'You closed it — hidden until something new starts.',
   },
   showAgain: { id: 'engineGlanceSettings.showAgain', defaultMessage: 'Show it again' },
   off: { id: 'engineGlanceSettings.desktop.off', defaultMessage: 'Off' },

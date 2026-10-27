@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Cerrar la ventana flotante hasta que empiece algo nuevo"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Reducir a una píldora"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Ventana flotante oculta hasta que empiece algo nuevo"
   },
   "engineGlance.expand": {
     "defaultMessage": "Mostrar la tarjeta completa"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Ocultar esta tarjeta — recupérala al pie de la barra lateral o en Ajustes › App"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Ciérrala aquí: vuelve cuando empieza algo nuevo"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Entendido"
@@ -2296,6 +2305,12 @@
   },
   "engineGlanceSettings.desktop.off": {
     "defaultMessage": "Apagado"
+  },
+  "engineGlanceSettings.desktopDescProcess": {
+    "defaultMessage": "Una ventana pequeña sobre tus otras apps, en la esquina a la que la arrastres. Nunca toma el foco y solo trae goose al frente cuando abres algo desde ella. Su botón de cerrar la oculta hasta que empiece un nuevo trabajo, ejecución o división."
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "La cerraste: oculta hasta que empiece algo nuevo."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "En la barra lateral"
@@ -5710,6 +5725,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Rango {rank} de la división de {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Rango {rank} de la división de otro Mac · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Sirviendo las capas {first}–{last} para {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Sirviendo las capas {first}–{last} para otro Mac · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rango {rank} de la división de {requester} · {model}"
@@ -11909,26 +11933,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Cerrar la ventana flotante durante esta sesión"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Ciérrala aquí hasta que la vuelvas a mostrar"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Ventana flotante oculta durante esta sesión"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "Vuelve a mostrarla desde Ajustes › App, donde también puedes desactivarla."
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "Vuelve a mostrarla desde el icono de goose en la barra de menús o desde Ajustes › App, donde también puedes desactivarla."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Una ventana pequeña sobre tus otras apps, en la esquina a la que la arrastres. Nunca toma el foco y solo trae goose al frente cuando abres algo desde ella. Su botón de cerrar la oculta durante el resto de esta sesión."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "La cerraste: oculta hasta que la vuelvas a mostrar."
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Mostrarla de nuevo"
