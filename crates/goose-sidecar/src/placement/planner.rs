@@ -120,9 +120,12 @@ pub struct ClusterInput {
     pub config_model_id: Option<String>,
 }
 
-/// What the fork's planner (`pipeline_qwen4 plan --json`) said for this model on these Macs.
+/// What a split planner said for this model on these Macs: the fork's (`pipeline_qwen4 plan
+/// --json`) for qwen4_exp, goose's own layer split ([`layer_split_fit`]) for mimo_v2.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PipelineFitInput {
+    /// Which planner answered, in the words the fit's detail names it by.
+    pub planner: String,
     pub fits: bool,
     pub context: Option<u64>,
     /// Per stage, in rank order: (bytes planned, budget).
@@ -649,13 +652,82 @@ fn tensor_fit(input: &PlanInput, facts: &TensorModelFacts, min_useful: u64) -> F
     }
 }
 
+/// The words naming goose's layer split planner in a fit's detail.
+pub const LAYER_SPLIT_PLANNER: &str = "goose's layer split";
+
+/// goose's own layer split (`Runner::MlxLmPipeline`, mimo_v2) on these Macs, planned exactly as
+/// preflight and the start plan it (`layer_split::plan_layer_split`: the config's reserve for this
+/// model type, the watchdog's WARN floor, the asked context else the config's, else the largest
+/// that fits) — so the Run it card's context is the one Run would get, never the aggregate
+/// all-layers-full-attention estimate (which read MiMo at 38k–78k while the split ran 257,536).
+/// `nodes` are in the config's rank order, each Mac's memory as the switch leaves it.
+pub fn layer_split_fit(
+    facts: &crate::distributed::layer_split::LayerSplitFacts,
+    config: &crate::distributed::DistributedConfig,
+    model_type: &str,
+    nodes: &[NodeInput],
+    context: Option<u64>,
+) -> Result<PipelineFitInput, String> {
+    use crate::distributed::layer_split::{plan_layer_split, SplitNode};
+    let mut split_nodes = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let memory = node
+            .memory
+            .as_ref()
+            .map_err(|e| format!("{LAYER_SPLIT_PLANNER}: {}: {e}", node.name))?;
+        let ceiling = memory.ceiling_bytes.as_ref().map_err(|e| {
+            format!(
+                "{LAYER_SPLIT_PLANNER}: {}: GPU ceiling unknown — {e}",
+                node.name
+            )
+        })?;
+        split_nodes.push(SplitNode {
+            name: node.name.clone(),
+            available: memory.available_after_switch(),
+            total: memory.total_bytes,
+            ceiling: *ceiling,
+        });
+    }
+    let (reserve, _) = config.plan_reserve(Some(model_type));
+    let (warn, _) = config.watchdog_ratios();
+    let split = plan_layer_split(
+        facts,
+        &split_nodes,
+        reserve,
+        warn,
+        context.or(config.context),
+    )
+    .map_err(|e| format!("{LAYER_SPLIT_PLANNER}: {e:#}"))?;
+    let layers: f64 = split
+        .plans
+        .iter()
+        .map(|p| (p.layer_end - p.layer_start) as f64)
+        .sum::<f64>()
+        .max(1.0);
+    Ok(PipelineFitInput {
+        planner: LAYER_SPLIT_PLANNER.to_string(),
+        fits: true,
+        context: Some(split.context),
+        stages: split
+            .plans
+            .iter()
+            .map(|p| (p.with_overhead_bytes, p.budget_bytes))
+            .collect(),
+        layer_shares: split
+            .plans
+            .iter()
+            .map(|p| (p.layer_end - p.layer_start) as f64 / layers)
+            .collect(),
+    })
+}
+
 fn pipeline_fit(
     input: &PlanInput,
     cluster: &ClusterInput,
     min_useful: u64,
 ) -> (Fit, Option<Vec<f64>>) {
     match input.pipeline {
-        Some(Err(reason)) => (unknown_fit(format!("the fork's planner: {reason}")), None),
+        Some(Err(reason)) => (unknown_fit(reason.clone()), None),
         Some(Ok(plan)) => {
             let status = match (plan.fits, plan.context) {
                 (true, Some(ctx)) if input.context.is_none_or(|w| ctx >= w) => FitStatus::Fits,
@@ -705,7 +777,8 @@ fn pipeline_fit(
                 after_stopping: after_stopping_if(relies, input, &all),
                 nodes,
                 detail: format!(
-                    "the fork's planner (pipeline_qwen4 plan) at {} slots: {}",
+                    "{} at {} slots: {}",
+                    plan.planner,
                     cluster.slots,
                     if plan.fits { "fits" } else { "does not fit" }
                 ),
@@ -762,7 +835,8 @@ fn pipeline_fit(
             let fit = Fit {
                 status,
                 context,
-                short_bytes: (status == FitStatus::Short).then(|| need.saturating_sub(total_budget)),
+                short_bytes: (status == FitStatus::Short)
+                    .then(|| need.saturating_sub(total_budget)),
                 short_node: None,
                 after_stopping: after_stopping_if(relies, input, &all),
                 nodes: input
@@ -777,9 +851,15 @@ fn pipeline_fit(
                     })
                     .collect(),
                 detail: format!(
-                    "estimate — the fork's planner is not provisioned on this Mac, so the split is \
-                     sized in aggregate: {} of weights + KV for {} slots against {} across the Macs \
-                     (its largest layer, {}, must fit one Mac); the planner decides at Start",
+                    "estimate — {}, so the split is sized in aggregate: {} of weights + KV for {} \
+                     slots against {} across the Macs (its largest layer, {}, must fit one Mac); \
+                     the planner decides at Start",
+                    match Runner::for_model_type(&input.model.model_type) {
+                        Ok(Runner::MlxLmPipeline) => format!(
+                            "no split is set up on this Mac for {LAYER_SPLIT_PLANNER} to plan"
+                        ),
+                        _ => "the fork's planner is not provisioned on this Mac".to_string(),
+                    },
                     gib(resident),
                     cluster.slots,
                     gib(total_budget),
@@ -1581,6 +1661,86 @@ mod tests {
         ]
     }
 
+    /// The 2026-10-27 live finding: MiMo's split card read "fits only at" 38k/49k/78k (the
+    /// aggregate all-layers-full-attention estimate) while preflight planned 181,504 and the split
+    /// ran 257,536. The layer split's fit is now the layer split's own plan: the same context,
+    /// stages and reserve preflight and the start get from `plan_layer_split`.
+    #[test]
+    fn a_layer_split_fit_is_the_layer_splits_own_plan() {
+        use crate::distributed::config::tests::two_mac_config;
+        use crate::distributed::layer_split::plan_layer_split;
+        use crate::distributed::layer_split::tests::{mimo_facts, nodes as mimo_nodes};
+        let facts = mimo_facts();
+        let split_nodes = mimo_nodes();
+        let inputs: Vec<NodeInput> = split_nodes
+            .iter()
+            .enumerate()
+            .map(|(rank, n)| NodeInput {
+                id: if rank == 0 {
+                    "local".into()
+                } else {
+                    n.name.clone()
+                },
+                name: n.name.clone(),
+                chip: Ok(chip("Apple M3 Ultra", 60)),
+                memory: Ok(NodeMemory {
+                    total_bytes: n.total,
+                    available_bytes: n.available,
+                    ceiling_bytes: Ok(n.ceiling),
+                    freed_by_switch: None,
+                }),
+                has_model: Ok(true),
+                remote_single: Ok(()),
+                split_refusal: None,
+            })
+            .collect();
+        let config = two_mac_config();
+        let (reserve, _) = config.plan_reserve(Some("mimo_v2"));
+        assert_eq!(reserve, 0.05);
+        let (warn, _) = config.watchdog_ratios();
+        let truth = plan_layer_split(&facts, &split_nodes, reserve, warn, None).unwrap();
+
+        let fit = layer_split_fit(&facts, &config, "mimo_v2", &inputs, None).unwrap();
+        assert_eq!(fit.planner, LAYER_SPLIT_PLANNER);
+        assert!(fit.fits);
+        assert_eq!(fit.context, Some(truth.context));
+        assert_eq!(
+            fit.stages,
+            truth
+                .plans
+                .iter()
+                .map(|p| (p.with_overhead_bytes, p.budget_bytes))
+                .collect::<Vec<_>>()
+        );
+        assert!((fit.layer_shares.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        assert_eq!(
+            fit.layer_shares[0],
+            f64::from(truth.layers[0]) / facts.layer_bytes.len() as f64
+        );
+
+        // An asked context is planned at that context, the config's when none is asked.
+        let asked = layer_split_fit(&facts, &config, "mimo_v2", &inputs, Some(32_768)).unwrap();
+        assert_eq!(asked.context, Some(32_768));
+        let mut pinned = config.clone();
+        pinned.context = Some(16_384);
+        let from_config = layer_split_fit(&facts, &pinned, "mimo_v2", &inputs, None).unwrap();
+        assert_eq!(from_config.context, Some(16_384));
+
+        // A refusal and an unmeasured Mac say which planner refused, never a made-up fit.
+        let refused = layer_split_fit(&facts, &config, "mimo_v2", &inputs, Some(4_000_000));
+        assert!(refused.unwrap_err().starts_with("goose's layer split: "));
+        let mut blind = inputs.clone();
+        if let Ok(m) = blind[1].memory.as_mut() {
+            m.ceiling_bytes = Err("sysctl unreadable".into());
+        }
+        let unmeasured = layer_split_fit(&facts, &config, "mimo_v2", &blind, None).unwrap_err();
+        assert!(
+            unmeasured.starts_with("goose's layer split: "),
+            "{unmeasured}"
+        );
+        assert!(unmeasured.contains("GPU ceiling unknown"), "{unmeasured}");
+    }
+
     fn kv(attention: u64, kv_heads: u64) -> Result<KvCacheFacts, String> {
         let bf16 = attention * 2 * kv_heads * 256 * 2;
         Ok(KvCacheFacts {
@@ -2030,6 +2190,7 @@ mod tests {
         // The fork's planner, when it ran, decides the fit instead of the aggregate estimate.
         let with_fork = Fixture {
             pipeline: Some(Ok(PipelineFitInput {
+                planner: "the fork's planner (pipeline_qwen4 plan)".to_string(),
                 fits: true,
                 context: Some(73_216),
                 stages: vec![(gib(61.5), gib(81.0)), (gib(42.7), gib(60.3))],
@@ -2111,6 +2272,7 @@ mod tests {
         // 27B frees on that Mac holds only once it stops.
         let forked = Fixture {
             pipeline: Some(Ok(PipelineFitInput {
+                planner: "the fork's planner (pipeline_qwen4 plan)".to_string(),
                 fits: true,
                 context: Some(65_536),
                 stages: vec![(gib(50.0), gib(58.0)), (gib(55.0), gib(56.0))],
