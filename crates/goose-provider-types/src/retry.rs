@@ -192,10 +192,14 @@ pub fn backoff_skipped() -> bool {
 /// Substrings marking a `RequestFailed` (4xx) as deterministically permanent:
 /// Anthropic rejects signed `thinking`/`redacted_thinking` blocks as immutable
 /// once a thinking model's config changes mid-conversation, and the identical
-/// payload is rebuilt on every retry — so retrying can never succeed.
+/// payload is rebuilt on every retry — so retrying can never succeed. A text-only engine
+/// (mlx_lm's server under the pipeline/tensor splits, Rapid-MLX) refuses an image part with
+/// 404 "Only 'text' content type is supported." for the same body every time; the OpenAI
+/// provider answers that refusal itself by re-sending the turn without the image.
 const PERMANENT_REQUEST_FAILURE_MARKERS: &[&str] = &[
     "blocks in the latest assistant message cannot be modified",
     "must remain as they were in the original response",
+    "Only 'text' content type is supported",
 ];
 
 fn is_permanent_request_failure(message: &str) -> bool {
@@ -434,6 +438,10 @@ mod tests {
         ));
         assert!(is_permanent_request_failure(
             "These blocks must remain as they were in the original response."
+        ));
+        assert!(is_permanent_request_failure(
+            "Resource not found (404) at http://127.0.0.1:8191/v1/chat/completions: \
+             Only 'text' content type is supported."
         ));
         assert!(!is_permanent_request_failure(
             "Bad request (400): model not found"
