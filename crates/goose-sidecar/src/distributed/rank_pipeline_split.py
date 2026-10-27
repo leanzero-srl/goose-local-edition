@@ -31,6 +31,48 @@
 
 
 
+def evict_file_cache(path):
+    """Drops `path`'s pages from the macOS file cache: msync(MS_INVALIDATE) over a shared
+    read-only mapping of the whole file (no root, no write). Measured 2026-10-27 on a 4.66 GB
+    MiMo shard: file-backed pages 28.94 -> 24.28 GB. Returns the bytes asked to drop (0 when
+    the file could not be mapped; the load goes on, only slower to free its cache)."""
+    import ctypes
+    import os
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.mmap.restype = ctypes.c_void_p
+    libc.mmap.argtypes = [
+        ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long,
+    ]
+    libc.msync.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+    libc.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        size = os.fstat(fd).st_size
+        if size == 0:
+            return 0
+        prot_read, map_shared, ms_invalidate = 0x1, 0x1, 0x2
+        addr = libc.mmap(None, size, prot_read, map_shared, fd, 0)
+        if addr in (None, ctypes.c_void_p(-1).value):
+            return 0
+        try:
+            return size if libc.msync(ctypes.c_void_p(addr), size, ms_invalidate) == 0 else 0
+        finally:
+            libc.munmap(ctypes.c_void_p(addr), size)
+    finally:
+        os.close(fd)
+
+
+def shard_groups(names, weight_map):
+    """The parameter names grouped by the checkpoint file that holds them, in file order; names
+    the index does not list come last as one group (evaluated, never evicted)."""
+    groups = {}
+    for name in names:
+        groups.setdefault(weight_map.get(name), []).append(name)
+    files = sorted(f for f in groups if f is not None)
+    return [(f, groups[f]) for f in files] + ([(None, groups[None])] if None in groups else [])
+
+
 def pipeline_load_turn(rank, size):
     """(barriers before, barriers after) this rank's load: the ranks load one at a time, rank 0
     first. Every rank joins `size - 1` CPU barriers around its load (plus mlx_lm's own one at
@@ -114,6 +156,8 @@ if spec.get("pipeline_split") is not None:
 
     pipeline_class.pipeline = pipeline_with_split
 
+    from pathlib import Path  # noqa: E402
+
     import mlx.core as mx  # noqa: E402
     import mlx_lm.server as pipeline_server  # noqa: E402
 
@@ -129,7 +173,40 @@ if spec.get("pipeline_split") is not None:
             {"rank": spec["rank"], "waited_seconds": round(time.monotonic() - waited, 1)},
         )
         started = time.monotonic()
-        loaded = original_sharded_load(*args, **kwargs)
+        model_dir = Path(args[0]) if args and Path(str(args[0])).is_dir() else None
+        weight_map = (
+            json.loads((model_dir / "model.safetensors.index.json").read_text())["weight_map"]
+            if model_dir is not None and (model_dir / "model.safetensors.index.json").exists()
+            else None
+        )
+        upstream_eval = mx.eval
+        evicted = {"files": 0, "bytes": 0}
+
+        def eval_shard_by_shard(*arrays):
+            # mlx_lm's sharded_load ends with ONE mx.eval(model.parameters()): every shard's
+            # pages sit in the file cache beside their copies until it returns, and on the
+            # workhorse (96 GB, a 68 GB stage) the kernel compressed the fresh weights instead
+            # (compressor 53 GB, swap +2.3 GB, 2026-10-27 12:28 with rank 0 loading alone).
+            # Each shard is evaluated and then dropped from the file cache.
+            if weight_map is None or len(arrays) != 1 or not isinstance(arrays[0], dict):
+                return upstream_eval(*arrays)
+            from mlx.utils import tree_flatten
+
+            flat = dict(tree_flatten(arrays[0]))
+            for name, names in shard_groups(list(flat), weight_map):
+                upstream_eval([flat[n] for n in names])
+                if name is not None:
+                    dropped = evict_file_cache(str(model_dir / name))
+                    evicted["files"] += 1 if dropped else 0
+                    evicted["bytes"] += dropped
+            return None
+
+        mx.eval = eval_shard_by_shard
+        try:
+            loaded = original_sharded_load(*args, **kwargs)
+        finally:
+            mx.eval = upstream_eval
+        emit("RANK_PIPELINE_FILE_CACHE", {"rank": spec["rank"], **evicted})
         for _ in range(after):
             mx.eval(mx.distributed.all_sum(mx.array(1.0), stream=mx.cpu))
         if not pipeline_applied:

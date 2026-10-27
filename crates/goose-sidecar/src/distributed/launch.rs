@@ -12184,6 +12184,36 @@ mod pipeline_launch_tests {
     }
 
     #[test]
+    fn a_pipeline_rank_evaluates_and_evicts_its_weights_shard_by_shard() {
+        let source = include_str!("rank_pipeline_split.py");
+        let start = source.find("def evict_file_cache").unwrap();
+        let end = source.find("def pipeline_load_turn").unwrap();
+        let check = format!(
+            "{}\n\
+             import tempfile, os\n\
+             wm = {{'a.w': 'm-2.safetensors', 'b.w': 'm-1.safetensors', 'c.w': 'm-2.safetensors'}}\n\
+             g = shard_groups(['a.w', 'b.w', 'c.w', 'extra'], wm)\n\
+             assert g == [('m-1.safetensors', ['b.w']), ('m-2.safetensors', ['a.w', 'c.w']), (None, ['extra'])], g\n\
+             with tempfile.NamedTemporaryFile(delete=False) as f: f.write(b'x' * 65536)\n\
+             assert evict_file_cache(f.name) == 65536\n\
+             os.unlink(f.name)\n\
+             print('ok')\n",
+            &source[start..end]
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(source.contains("RANK_PIPELINE_FILE_CACHE"));
+    }
+
+    #[test]
     fn the_pipeline_ranks_load_one_at_a_time_rank_zero_first() {
         let source = include_str!("rank_pipeline_split.py");
         let start = source.find("def pipeline_load_turn").unwrap();
