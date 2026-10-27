@@ -41,10 +41,15 @@ export function engineWayOf(
   return { kind: 'thisMac', modelId: localModelId };
 }
 
-/** The split's runner in the plan's words (goose `mlx_speed.rs` records it the same way). */
+/**
+ * The split's runner in the plan's words: goose-sidecar `Runner::placement_kind` (distributed
+ * config.rs), which `mlx_speed.rs` records runs under. Every runner there has its row here —
+ * goose's own layer split (`mlxLmPipeline`, mimo_v2) splits by layer range, so it is a pipeline.
+ */
 const RUNNER_KIND: Record<string, 'tensor' | 'pipeline'> = {
   mlxLmTensor: 'tensor',
   pipelineQwen4: 'pipeline',
+  mlxLmPipeline: 'pipeline',
 };
 
 function sameNodes(a: readonly string[], b: readonly string[]): boolean {
