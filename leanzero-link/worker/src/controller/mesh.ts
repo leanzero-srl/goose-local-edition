@@ -50,8 +50,8 @@ export class MeshService {
     const es = enrollments(state);
     for (const n of nodes.filter(n => usable(n, this.c.now()))) {
       const e = es.find(e => live(e, state, this.c.now()) && matches(e, n));
-      if (!e) fail(409, "update_required", "All existing mesh nodes must complete verified host enrollment");
-      if (e.role === "host" && !activatedHost(state, e, n)) fail(409, "update_required", "All mesh hosts must complete verified activation");
+      if (!e) fail(409, "update_required", "Update Goose Swarm on the Macs linked to this account, reconnect LeanZero Link on each Mac, then try again.");
+      if (e.role === "host" && !activatedHost(state, e, n)) fail(409, "update_required", "Update Goose Swarm on the Macs linked to this account, reconnect LeanZero Link on each Mac, then try again.");
     }
     if (state.legacy_mesh_mints && (state.legacy_mesh_mints.in_flight > 0 || state.legacy_mesh_mints.expires_at > this.c.now())) fail(409, "update_required", "Legacy host enrollment credentials must expire first");
   }
