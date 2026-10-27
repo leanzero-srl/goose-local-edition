@@ -127,3 +127,12 @@ Owner approved both the verified-offline admission change and the isolated cloud
 The isolated desktop is running again. Startup log `/tmp/goose-controller-live.log` records the development protocol-registration skip. The real quit check cleared the lease and preserved verified activation; restart registered a new runtime and renewed without the previous owner-in-use refusal. The same session `20261027_2` retained its transcript and answered “Session continued after restart.” The original benchmark PID remained running. This proves owner restart continuity, not phone-to-owner control.
 
 The legacy-host reauthentication repair is committed in `4e239f60f` with real provider reproducer `e74f69e66` and independent review. All151 Linklib cases including the three recovery matrices passed on Gabee. The later full-package run exposed an unrelated routing fixture reading live host resource pressure; `f304675ec` now injects explicit low/available memory and verifies both refusal and exactly-once forwarding. Clippy subsequently caught an oversized typed reconciliation error; correction and final gate are in progress. Do not install the migration repair into original hosts until that gate passes.
+
+
+### Final migration binary and live desktop update — 27 October 2026
+
+Job `laptop-20261027-101121-7893` on Gabee completed with exit0 at10:21 local on source `fa94ec3a2`: 349 Link tests passed, five existing ignores, all-target Link Clippy passed, and the Goose CLI built. The boxed error correction is `27dc41c11`; no lint suppression. Binary `/tmp/goose-controller-reauth-fixed`, SHA-256 `a1b0cd01dadc71585d50554af23ebb5cefe60a37d919de3a2f9c16aba6d63151`, was transferred with matching hash.
+
+The isolated desktop was gracefully quit and relaunched at10:25 with that binary, retaining its test profile. Actual backend PID37517 and child37713 use the new binary. Session `20261027_2` retained both earlier turns and answered the new prompt with “Updated desktop session ready.” The original Forge benchmark PID14579 remained running. This proves the final binary on a real retained desktop session, not legacy-host migration or remote delivery.
+
+Copy-only worker change `a431c33ce` passed16 targeted refusal tests and independent review, then deployed as workhorse `61ff60ed1b`. An actual iPad manual sync now shows: “Update Goose Swarm on the Macs linked to this account, reconnect LeanZero Link on each Mac, then try again.” Saved authentication remains intact; the account's four original legacy hosts remain the real admission prerequisite.

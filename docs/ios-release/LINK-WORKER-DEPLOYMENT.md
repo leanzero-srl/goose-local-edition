@@ -47,3 +47,8 @@ The owner explicitly approved implementation and tested deployment. Candidate `5
 Public smoke: health200 with unchanged capability flags; unauthenticated hosts401/no-store; Origin403/no-store. The running isolated desktop renewed normally and its previously confirmed enrollment gained the exact activation receipt through the live lease route. A real desktop quit then cleared its live lease while preserving that receipt; immediate restart obtained a current lease again. These observations came from read-only registry metadata and the actual test app. The original Forge benchmark stayed running.
 
 Verified sleeping hosts can now permit controller enrollment without advertising endpoints/capabilities or authorizing commands until leased. Unknown legacy nodes still require their own upgrade. Phone admission into the owner's mixed-version fleet remains unproved; no legacy nodes were deleted to bypass it.
+
+
+## Actionable compatibility refusal — 27 October 2026
+
+Candidate `a431c33ce` changes only two refusal messages and their exact-copy test. Sixteen focused route/adaptor cases passed with unchanged409/update_required and zero key mints; independent review passed. Baseline worker tree `88454eb21a0e5b2f54b76f8ed3b312b75e463ffb` matched the clean deployed subtree. Applied the two-file patch and committed `61ff60ed1b`, then restarted only the existing launch agent. Public `/v1/health` returned200 with unchanged flags, unauthenticated hosts401/no-store. Actual enrolled iPad manual sync displayed the new update/reconnect instructions. Credentials, provider records, authorization predicates and databases were not directly edited.
