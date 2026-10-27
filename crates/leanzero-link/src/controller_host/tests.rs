@@ -445,6 +445,7 @@ struct AuthorityFixture {
     confirmed: AtomicBool,
     outage: AtomicBool,
     revoked: AtomicBool,
+    recovery_response: Mutex<Option<Value>>,
     directory: PathBuf,
 }
 
@@ -475,6 +476,9 @@ impl wiremock::Respond for AuthorityFixture {
                 assert_eq!(request.headers.get("Authorization").unwrap(), "Bearer account-fixture");
                 assert_eq!(request.headers.get("X-Link-Host-Credential").unwrap(), "host-fixture-credential");
                 assert_eq!(body, json!({}));
+                if let Some(response) = self.recovery_response.lock().unwrap().as_ref() {
+                    return ResponseTemplate::new(200).set_body_json(response);
+                }
                 ResponseTemplate::new(200).set_body_json(json!({"account_id":self.account,"owner_node_id":owner(),"email":"owner@example.test","node_secret":"a".repeat(64)}))
             }
             "/v1/controller/hosts/bootstrap" => ResponseTemplate::new(200).set_body_json(json!({"account_id":self.account,"owner_node_id":owner()})),
@@ -538,6 +542,7 @@ async fn fixture() -> (
         confirmed: AtomicBool::new(false),
         outage: AtomicBool::new(false),
         revoked: AtomicBool::new(false),
+        recovery_response: Mutex::new(None),
         directory: directory.clone(),
     });
     let responder = authority.clone();
@@ -845,25 +850,42 @@ async fn recovery_rejects_wrong_account_owner_and_email_and_preserves_missing_se
             .as_object_mut()
             .unwrap()
             .extend(patch.as_object().unwrap().clone());
-        let guard = Mock::given(wiremock::matchers::path(
-            "/v1/controller/hosts/recover-node-secret",
-        ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response))
-        .with_priority(1)
-        .mount_as_scoped(&server)
-        .await;
-        assert!(host
+        // Wiremock 0.6.5 priority sorting invalidates scoped guard indices.
+        // One fixture responder makes each negative and its reset explicit.
+        *authority.recovery_response.lock().unwrap() = Some(response);
+        let error = host
             .login_secret(&path, "account-fixture", "owner@example.test")
             .await
-            .is_err());
+            .unwrap_err();
+        if patch.get("node_secret").is_some() {
+            assert!(matches!(error, LinkError::NoNodeSecret), "{error}");
+        } else {
+            assert!(
+                matches!(error, LinkError::ControllerHost(ref message) if message == "recovered secret belongs to another account or owner"),
+                "{error}"
+            );
+        }
         assert!(!secret_path(&path).exists());
-        drop(guard);
+        *authority.recovery_response.lock().unwrap() = None;
+        assert_eq!(
+            host.login_secret(&path, "account-fixture", "owner@example.test")
+                .await
+                .unwrap(),
+            "a".repeat(64)
+        );
     }
     authority.outage.store(true, Ordering::SeqCst);
-    assert!(host
+    let outage_error = host
         .login_secret(&path, "account-fixture", "owner@example.test")
         .await
-        .is_err());
+        .unwrap_err();
+    assert!(
+        matches!(
+            outage_error,
+            LinkError::Worker(crate::worker_client::WorkerError::Unexpected { status: 503, .. })
+        ),
+        "{outage_error}"
+    );
     assert!(!secret_path(&path).exists());
     assert_eq!(std::fs::read(&path).unwrap(), b"saved login must survive");
     authority.outage.store(false, Ordering::SeqCst);
