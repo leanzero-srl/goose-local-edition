@@ -405,7 +405,8 @@ pub fn plan_layer_split(
         .find(|(chunk, cached)| {
             best_split(facts, nodes, reserve_ratio, select_context, *chunk, *cached).1 >= 0
         })
-        .unwrap_or((KV_CACHE_STEP, PROMPT_CACHE_CONTEXTS));
+        // Nothing fits: the refusal names the smallest plan (smallest chunk, no cached context).
+        .unwrap_or((MIN_PREFILL_CHUNK, 0));
     let (split, min_spare, spares) = best_split(
         facts,
         nodes,
@@ -426,7 +427,7 @@ pub fn plan_layer_split(
                     node.name,
                     end - 1,
                     gb(facts
-                        .stage_need_cached(start, end, select_context, MIN_PREFILL_CHUNK, 0)
+                        .stage_need_cached(start, end, select_context, select_chunk, cached)
                         .total() as i128),
                     gb(node.budget(reserve_ratio) as i128),
                     gb(node.available as i128),

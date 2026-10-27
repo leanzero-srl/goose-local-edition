@@ -752,7 +752,8 @@ if prefill is not None:
 
     class PrefillPace:
         """GOOSE_RANK_PREFILL_PACE: the seconds this rank's prompt steps took, one line per
-        `PREFILL_PACE_STEPS` steps (the width reached, tokens read, seconds, MLX active/cache):
+        `PREFILL_PACE_STEPS` steps (the width reached, tokens read — each step reads mlx_lm's
+        whole slice in chunks of `chunk` — the last chunk, seconds, MLX active/cache):
         the 64k MiMo prompt fell from ~270 to ~80 tok/s past ~19k tokens (2026-10-27) and no rank
         log said where the time went."""
 
@@ -760,7 +761,8 @@ if prefill is not None:
             self.steps = self.tokens = 0
             self.seconds = 0.0
 
-        def step(self, width, tokens, began):
+        def step(self, width, tokens, chunk, began):
+            self.chunk = chunk
             self.steps += 1
             self.tokens += tokens
             self.seconds += time.perf_counter() - began
@@ -770,6 +772,7 @@ if prefill is not None:
                     {
                         "width": width,
                         "tokens": self.tokens,
+                        "chunk": self.chunk,
                         "seconds": round(self.seconds, 3),
                         "active": mx.get_active_memory(),
                         "cache": mx.get_cache_memory(),
@@ -801,7 +804,7 @@ if prefill is not None:
             self.prefill_step_size = chunk
             began = time.perf_counter()
             answer = upstream_prompt(self, tokens)
-            prefill_pace.step(width, min(chunk, max(len(t) for t in tokens)), began)
+            prefill_pace.step(width, max(len(t) for t in tokens), chunk, began)
             return answer
         return upstream_prompt(self, tokens)
 
