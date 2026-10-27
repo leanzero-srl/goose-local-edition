@@ -72,3 +72,5 @@ This installation is laptop-owned. Canonical source: `~/.claude/skills/ios-ipado
 2026-10-26: Added deployed retention verification after a Link audit distinguished one-hour rate windows from two-hour record TTL, observed cleanup from configured cleanup, and rotated-file age from an exact erasure promise.
 
 2026-10-27: A signed-in Xcode successfully exported through Organizer while the same installation’s CLI returned No Accounts. Added GUI verification and export-only recovery before asking the owner to reauthenticate.
+
+2026-10-27: Added companion-host migration procedure after an isolated new owner connected while legacy original hosts still blocked mobile admission. Preserving identity, work, permissions and signed bundles is part of the mobile rollout.

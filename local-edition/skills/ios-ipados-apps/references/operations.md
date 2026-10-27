@@ -8,6 +8,10 @@ Retain each release's commit, signed archive provenance, build number, dependenc
 
 A minimal compatibility record answers: which installed mobile versions can read/write each backend version; which capability is absent on older hosts; whether an old client is read-only; token/schema migration; deprecation date and recovery. Roll out additive backend support before clients need it. A mobile release does not force every user to update immediately.
 
+## Companion-host protocol upgrades
+
+For a mobile companion, inspect the versions actually running on every relevant host, including offline enrolled hosts. A replacement test profile does not migrate an existing device. Preserve each host's own identity, original session store and permission choices; prove active work is idle before a required restart. Update a signed desktop app as a whole, not by replacing an internal executable. Verify the real network provider retains the expected device identity across reauthentication; mocks cannot establish that. Separate durable verified identity from a short-lived online lease when designing offline behavior, and independently review any admission-policy change.
+
 ## Observe without collecting the user's work
 
 Use appropriate first-party diagnostics first: [Xcode crash reports](https://developer.apple.com/documentation/xcode/diagnosing-issues-using-crash-reports-and-device-logs), [MetricKit](https://developer.apple.com/documentation/metrickit), and [App Store Connect analytics](https://developer.apple.com/app-store-connect/analytics/). Verify what is available for the current OS, user sharing settings, app state and account permissions. Do not promise real-time or exhaustive telemetry; MetricKit reports are delivered on the platform's schedule and coverage varies.
