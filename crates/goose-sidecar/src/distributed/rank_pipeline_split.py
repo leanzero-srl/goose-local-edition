@@ -26,6 +26,21 @@
 #   rank's sum is the same integer; the spec's limits and prefill figures are in the same unit.
 #   The weights are >= 1, so the scaled count bounds the real bytes from above.
 
+
+
+def pipeline_load_turn(rank, size):
+    """(barriers before, barriers after) this rank's load: the ranks load one at a time, the last
+    rank first and rank 0 last. Every rank joins `size - 1` CPU barriers around its load (plus
+    mlx_lm's own one at the end of `sharded_load`), so barrier k completes when rank `size-1-k`
+    has loaded and lets rank `size-2-k` start. Why (2026-10-27): the mule's 100 GB came over
+    NFS from the workhorse's SSD while rank 0 loaded its 68 GB on the workhorse itself; the
+    workhorse's file cache filled with the mule's reads and the kernel compressed rank 0's fresh
+    weights instead (compressor 54 GB, swap +2.5 GB, memory pressure WARN for minutes) — twice
+    in a row the load had to be stopped. Loading rank 0 after the others leaves only clean file
+    pages to evict. The shared SSD is the bottleneck either way, so the turns cost little."""
+    return size - 1 - rank, rank
+
+
 if spec.get("pipeline_split") is not None:
     import inspect  # noqa: E402
 
@@ -100,8 +115,18 @@ if spec.get("pipeline_split") is not None:
     original_sharded_load = pipeline_server.sharded_load
 
     def sharded_load_with_barrier(*args, **kwargs):
+        before, after = pipeline_load_turn(spec["rank"], spec["size"])
+        waited = time.monotonic()
+        for _ in range(before):
+            mx.eval(mx.distributed.all_sum(mx.array(1.0), stream=mx.cpu))
+        emit(
+            "RANK_PIPELINE_LOAD_TURN",
+            {"rank": spec["rank"], "waited_seconds": round(time.monotonic() - waited, 1)},
+        )
         started = time.monotonic()
         loaded = original_sharded_load(*args, **kwargs)
+        for _ in range(after):
+            mx.eval(mx.distributed.all_sum(mx.array(1.0), stream=mx.cpu))
         if not pipeline_applied:
             raise SystemExit(
                 "goose rank pipeline: the load never split the model's layers (no pipeline group, "
