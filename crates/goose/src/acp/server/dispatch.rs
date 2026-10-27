@@ -390,7 +390,7 @@ impl HandleDispatchFrom<Client> for GooseAcpHandler {
                                 // browse answered after 42 s and Link status polls after 30 s.
                                 tokio::spawn(async move {
                                     let method = req.method.clone();
-                                    let sent = match agent.dispatch_custom_request(&req.method, req.params).await {
+                                    let sent = match Box::pin(agent.dispatch_custom_request(&req.method, req.params)).await {
                                         Ok(json) => responder.respond(json),
                                         Err(e) => responder.respond_with_error(e),
                                     };
