@@ -1,9 +1,11 @@
 import { constantTimeEqual } from "../lib/otp";
+import type { KVStore } from "../lib/deps";
+import { nodeSecretKey } from "../lib/nodeSecret";
 import { verifyJwt } from "../lib/jwt";
 import { AUTH_LEASE_SECONDS, HOST_LEASE_SECONDS, REFRESH_TTL_SECONDS, digest, randomSecret, seal, unseal, verifyAccess } from "./crypto";
 import { fail, splitCredential, assertAccountActive } from "./registry";
 import { ControllerService, deviceFrom, newAccount } from "./service";
-import type { AccountState, AuthorizationLease, HostState, ControllerScope, DeviceCredentials, DeviceRecord } from "./types";
+import type { AccountState, AuthorizationLease, HostState, MeshBinding, ControllerScope, DeviceCredentials, DeviceRecord } from "./types";
 import { DESKTOP_CONTROLLER_SCOPES } from "./types";
 
 export interface HostRegistration {
@@ -56,6 +58,30 @@ export class HostService {
       receipts[enrollmentId] = { owner_node_id: id, request_hash: requestHash, device_id: record.device_id, receipt: await seal(c.secret, `${key}.desktop.${enrollmentId}`, credentials) };
       return { state: state!, result: credentials };
     });
+  }
+
+  async recoverNodeSecret(accountToken: string, credential: string, kv: KVStore): Promise<{ account_id: string; owner_node_id: string; email: string; node_secret: string }> {
+    const c = this.controller;
+    const verified = await verifyJwt(c.secret, accountToken, Math.floor(c.now() / 1000));
+    if (!verified.ok) fail(401, "invalid_credential", "A current host account credential is required");
+    const { key, id } = splitCredential(credential, "h1");
+    if (key !== await digest(verified.claims.sub)) fail(403, "wrong_account", "Host and account credentials do not match");
+    const hash = await digest(credential);
+    // Read inside the CAS operation: a deletion/suspension racing the KV read
+    // invalidates this snapshot, so the retry must recheck authority before returning.
+    const result = await c.registry.update(key, async state => {
+      if (verified.claims.exp <= Math.floor(c.now() / 1000)) fail(401, "invalid_credential", "Account credential expired");
+      if (state?.legacy_revoked_before !== undefined && verified.claims.iat <= state.legacy_revoked_before) fail(401, "account_credential_revoked", "Account credential was revoked by deletion");
+      checkedHost(state, id, hash);
+      if (state!.email !== verified.claims.sub) fail(403, "wrong_account", "Account registry does not match credential");
+      const secret = await kv.get(nodeSecretKey(state!.email));
+      if (verified.claims.exp <= Math.floor(c.now() / 1000)) fail(401, "invalid_credential", "Account credential expired");
+      if (secret === null) fail(409, "node_secret_missing", "Existing account secret is unavailable; sign in again");
+      if (!/^[0-9a-f]{64}$/.test(secret)) fail(409, "node_secret_corrupt", "Existing account secret is invalid");
+      return { state: state!, result: { account_id: state!.account_id, owner_node_id: id, email: state!.email, node_secret: secret } };
+    });
+    if (verified.claims.exp <= Math.floor(c.now() / 1000)) fail(401, "invalid_credential", "Account credential expired");
+    return result;
   }
 
   async bootstrap(credential: string): Promise<{ account_id: string; owner_node_id: string }> {
@@ -127,21 +153,32 @@ export class HostService {
     });
   }
 
-  async lease(credential: string, req: LeaseRequest, providerExpiresAt: number | null = null): Promise<{ lease_id: string; lease_expires_at: string; host_revision: number }> {
+  async lease(credential: string, req: LeaseRequest, providerExpiresAt: number | null = null, verifiedEnrollment?: { enrollment_id: string; binding: MeshBinding }): Promise<{ lease_id: string; lease_expires_at: string; host_revision: number }> {
     const { key, id } = splitCredential(credential, "h1");
     if (id !== req.owner_node_id) fail(403, "wrong_owner", "Credential belongs to another owner");
     const hash = await digest(credential); const c = this.controller;
-    return c.registry.update(key, state => {
+    const result = await c.registry.update(key, state => {
+      if (providerExpiresAt !== null && providerExpiresAt <= c.now()) fail(403, "host_mesh_unverified", "Provider binding expired before activation");
       const h = checkedHost(state, id, hash);
       if (h.lease && h.lease.expires_at > c.now() && h.lease.runtime_id !== req.runtime_id) fail(409, "owner_identity_in_use", "Another runtime owns the active host lease");
       if (h.generation !== null && h.generation !== req.store_generation) fail(409, "generation_changed", "Store generation changed; explicit owner recovery is required");
       if (req.catalog_revision < h.catalog_high_water) fail(409, "store_rollback", "Catalog is older than the registered high-water mark");
+      if (verifiedEnrollment) {
+        const e = state!.mesh_enrollments?.[verifiedEnrollment.enrollment_id];
+        const b = verifiedEnrollment.binding;
+        if (!e || e.role !== "host" || e.subject_id !== id || e.status !== "confirmed" || !e.binding || e.binding.node_id !== b.node_id || e.binding.node_key !== b.node_key || e.binding.user_id !== b.user_id || e.binding.key_id !== b.key_id || req.mesh_node_key !== b.node_key) fail(403, "host_mesh_unverified", "Provider-attested enrollment changed before activation");
+        // This receipt belongs to one provider identity, never to a host generation.
+        // Re-enrollment cannot inherit a prior node's successful activation.
+        e.activated_binding = { ...b };
+      }
       h.generation = req.store_generation; h.catalog_high_water = req.catalog_revision;
       h.registration_pending = false;
       const same = h.lease?.runtime_id === req.runtime_id && h.lease.expires_at > c.now();
       h.lease = { runtime_id: req.runtime_id, lease_id: same ? h.lease!.lease_id : crypto.randomUUID(), renewed_at: c.now(), expires_at: Math.min(c.now() + HOST_LEASE_SECONDS * 1000, providerExpiresAt ?? Infinity), store_generation: req.store_generation, catalog_revision: req.catalog_revision, mesh_node_key: req.mesh_node_key, capabilities: req.capabilities ?? [] };
       return { state: state!, result: { lease_id: h.lease.lease_id, lease_expires_at: new Date(h.lease.expires_at).toISOString(), host_revision: h.revision } };
     });
+    if (Date.parse(result.lease_expires_at) <= c.now()) fail(403, "host_lease_expired", "Host lease expired before delivery");
+    return result;
   }
 
   async recover(credential: string, token: string, req: {

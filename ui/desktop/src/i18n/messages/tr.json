@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "Sohbet · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Yeni bir şey başlayana kadar yüzen pencereyi kapat"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Hapa küçült"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Yüzen pencere yeni bir şey başlayana kadar gizlendi"
   },
   "engineGlance.expand": {
     "defaultMessage": "Kartın tamamını göster"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Bu kartı gizle — kenar çubuğunun altından veya Ayarlar › Uygulama bölümünden geri getir"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Buradan kapatın — yeni bir şey başladığında geri gelir"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Anladım"
@@ -2285,17 +2294,26 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "Motorun canlı kartının küçük hali: neyi okuyor ya da yazıyor, ne hızda ve hangi sohbete hizmet ediyor. Motoru açmak için tıklayın."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Masaüstünde yüzen"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "goose arka plandayken"
+  },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "goose simge durumuna küçültüldüğünde veya arka plandayken yüzen bir etkinlik hapı göster"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "İşaretleyene kadar kapalı. Diğer uygulamalarınızın üzerinde, sürüklediğiniz köşede küçük bir hap. goose'u yalnızca ⤢ düğmesi açar; sürüklemek onu yalnızca taşır, ✕ ise yeni bir iş, çalıştırma veya bölme başlayana kadar gizler."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Ne zaman yüzer"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "goose küçültüldüğünde hap göster"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Motor her çalıştığında"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Kapalı"
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Kapattınız — yeni bir şey başlayana kadar gizli."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Kenar çubuğunda"
@@ -5710,6 +5728,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "{requester} bölmesinin {rank}. sırası · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Başka bir Mac'in bölmesinin {rank}. sırası · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "{requester} için {first}–{last} katmanlarını sunuyor · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Başka bir Mac için {first}–{last} katmanlarını sunuyor · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} bölmesinin {rank}. sırası · {model}"
@@ -11909,26 +11936,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Yüzen pencereyi bu oturum boyunca kapat"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Buradan kapatın, geri getirene kadar kapalı kalır"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Yüzen pencere bu oturum boyunca gizlendi"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "Ayarlar › Uygulama bölümünden geri getirin; orada kapatabilirsiniz de."
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "Menü çubuğundaki goose simgesinden ya da Ayarlar › Uygulama bölümünden geri getirin; orada kapatabilirsiniz de."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Diğer uygulamalarınızın üzerinde, sürüklediğiniz köşede duran küçük bir pencere. Asla odağı almaz ve goose’u yalnızca ondan bir şey açtığınızda öne getirir. Kapatma düğmesi onu bu oturumun geri kalanında gizler."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Kapattınız — geri getirene kadar gizli."
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Yeniden göster"

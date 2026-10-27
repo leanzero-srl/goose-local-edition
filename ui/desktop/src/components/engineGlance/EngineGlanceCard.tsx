@@ -9,7 +9,6 @@ import {
 import { createPortal } from 'react-dom';
 import type { FormingStatus } from '@aaif/goose-sdk';
 import {
-  AppWindow,
   ArrowDownRight,
   ArrowUpRight,
   BookOpen,
@@ -52,6 +51,7 @@ import {
 import { backgroundWorkFor, backgroundWorkLabel } from '../sessionActivity/backgroundWorkText';
 import { activeRowName, needsYouCountLabel, questionGist } from '../sessionActivity/needsYouWords';
 import { FormingPanel } from '../forming/FormingPanel';
+import { DRAG_SLOP_PX } from './useGlanceDrag';
 import { swappingText } from '../chatServedBy/loaderText';
 
 /**
@@ -136,12 +136,12 @@ const i18n = defineMessages({
   collapse: { id: 'engineGlance.collapse', defaultMessage: 'Shrink to a pill' },
   expand: { id: 'engineGlance.expand', defaultMessage: 'Show the whole card' },
   close: {
-    id: 'engineGlance.close',
-    defaultMessage: 'Close the floating window for this session',
+    id: 'engineGlance.closeUntilNew',
+    defaultMessage: 'Close the floating window until something new starts',
   },
   hintClose: {
-    id: 'engineGlance.hintClose',
-    defaultMessage: 'Close it here until you bring it back',
+    id: 'engineGlance.hintCloseUntilNew',
+    defaultMessage: 'Close it here — it comes back when something new starts',
   },
   hintDismiss: { id: 'engineGlance.hintDismiss', defaultMessage: 'Got it' },
   hide: {
@@ -381,6 +381,9 @@ function Control({
   /** The control opens something under it: its state, read out. */
   expanded?: boolean;
 }) {
+  // A press that travelled is a drag that started on the control, not a click on it: its release
+  // does nothing (owner, 2026-10-27: dragging the floating window "will still open the full window").
+  const down = useRef<{ x: number; y: number } | null>(null);
   return (
     <button
       type="button"
@@ -388,9 +391,15 @@ function Control({
       aria-label={label}
       aria-expanded={expanded}
       title={label}
-      onPointerDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        down.current = { x: e.screenX, y: e.screenY };
+      }}
       onClick={(e) => {
         e.stopPropagation();
+        const from = down.current;
+        down.current = null;
+        if (from && Math.hypot(e.screenX - from.x, e.screenY - from.y) >= DRAG_SLOP_PX) return;
         onClick();
       }}
       className={CONTROL}
@@ -822,9 +831,11 @@ function GlanceFace(props: EngineGlanceCardProps) {
       className={cx('absolute inset-0 z-0 cursor-pointer', RADIUS.card, FOCUS)}
     />
   );
+  // ⤢ — on the pill and on the card — is the one control that brings goose forward (owner,
+  // 2026-10-27); the body only drags, the X only closes.
   const openControl = desktop && (
     <Control testId="engine-glance-open" label={openLabel} onClick={open}>
-      <AppWindow />
+      <Maximize2 />
     </Control>
   );
   const closeControl = props.onClose && (
@@ -880,12 +891,13 @@ function GlanceFace(props: EngineGlanceCardProps) {
           )}
         </span>
         <span className="relative z-10 flex items-center">
+          {openControl}
           <Control
             testId="engine-glance-expand"
             label={intl.formatMessage(i18n.expand)}
             onClick={() => props.onCollapsedChange(false)}
           >
-            <Maximize2 />
+            <ChevronUp />
           </Control>
           {closeControl}
         </span>

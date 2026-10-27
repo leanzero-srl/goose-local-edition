@@ -21,6 +21,10 @@ function matches(e: MeshEnrollment, node: ProviderNode): boolean {
   const b = e.binding;
   return b !== null && b.node_id === node.id && b.node_key === node.node_key && b.user_id === node.user_id && b.key_id === node.key_id;
 }
+function activatedHost(state: AccountState, e: MeshEnrollment, n: ProviderNode): boolean {
+  const h = state.hosts[e.subject_id]; const activated = e.activated_binding;
+  return e.role === "host" && e.status === "confirmed" && matches(e, n) && !!h?.controller_port && !!h.tls_spki_sha256 && !h.suspended && !h.registration_pending && activated !== undefined && activated.node_id === n.id && activated.node_key === n.node_key && activated.user_id === n.user_id && activated.key_id === n.key_id;
+}
 export class MeshService {
   readonly provider: MeshProvider;
   constructor(private readonly c: ControllerService, private readonly deps: Deps) { this.provider = new MeshProvider(deps); }
@@ -46,11 +50,8 @@ export class MeshService {
     const es = enrollments(state);
     for (const n of nodes.filter(n => usable(n, this.c.now()))) {
       const e = es.find(e => live(e, state, this.c.now()) && matches(e, n));
-      if (!e) fail(409, "update_required", "All existing mesh nodes must complete verified host enrollment");
-      if (e.role === "host") {
-        const h = state.hosts[e.subject_id];
-        if (!h?.controller_port || !h.tls_spki_sha256 || !h.lease || h.lease.expires_at <= this.c.now() || h.lease.mesh_node_key !== n.node_key) fail(409, "update_required", "All mesh hosts must hold compatible current leases");
-      }
+      if (!e) fail(409, "update_required", "Update Goose Swarm on the Macs linked to this account, reconnect LeanZero Link on each Mac, then try again.");
+      if (e.role === "host" && !activatedHost(state, e, n)) fail(409, "update_required", "Update Goose Swarm on the Macs linked to this account, reconnect LeanZero Link on each Mac, then try again.");
     }
     if (state.legacy_mesh_mints && (state.legacy_mesh_mints.in_flight > 0 || state.legacy_mesh_mints.expires_at > this.c.now())) fail(409, "update_required", "Legacy host enrollment credentials must expire first");
   }
@@ -134,7 +135,7 @@ export class MeshService {
       return { state: current, result };
     });
   }
-  async requireHost(token: string, expectedKey?: string): Promise<{ actor: Actor; state: AccountState; nodes: ProviderNode[]; node: ProviderNode }> {
+  async requireHost(token: string, expectedKey?: string): Promise<{ actor: Actor; state: AccountState; nodes: ProviderNode[]; node: ProviderNode; enrollment_id: string }> {
     const actor = await this.actor(token, "host");
     const before = this.check(actor, await this.c.registry.read(actor.key));
     const { nodes } = await this.provider.nodes(before.email);
@@ -142,7 +143,7 @@ export class MeshService {
     const e = enrollments(state).find(e => e.role === "host" && e.subject_id === actor.id && e.status === "confirmed");
     const n = e && nodes.find(n => matches(e, n) && usable(n, this.c.now()));
     if (!n || (expectedKey !== undefined && expectedKey !== n.node_key)) fail(403, "host_mesh_unverified", "Host has no current provider-verified mesh binding");
-    return { actor, state, nodes, node: n };
+    return { actor, state, nodes, node: n, enrollment_id: e!.enrollment_id };
   }
   async peers(token: string): Promise<RegisteredPeers> {
     const { actor, nodes } = await this.requireHost(token);
@@ -192,8 +193,8 @@ export class MeshService {
       const e = es.find(e => e.role === "host" && e.subject_id === h.owner_node_id && e.status === "confirmed");
       const n = e && nodes.find(n => matches(e, n) && usable(n, this.c.now()));
       const leased = h.lease !== null && h.lease.expires_at > this.c.now();
-      const compatible = n !== undefined && h.controller_port != null && h.tls_spki_sha256 !== null && h.lease?.mesh_node_key === n.node_key;
-      const online = compatible && leased && n.online && n.ips.length > 0;
+      const compatible = e !== undefined && n !== undefined && activatedHost(auth.state, e, n);
+      const online = compatible && leased && h.lease?.mesh_node_key === n.node_key && n.online && n.ips.length > 0;
       return { owner_node_id: h.owner_node_id, name: h.host_name, device_role: "host", protocol_version: h.protocol_version, availability: !compatible ? "update_required" : online ? "online" : "offline", registration_state: compatible ? "verified" : "awaiting_mesh_binding", last_seen_at: h.lease?.renewed_at !== undefined ? new Date(h.lease.renewed_at).toISOString() : null, endpoints: online ? n.ips.map(ip => ({ url: "https://" + (ip.includes(":") ? "[" + ip + "]" : ip) + ":" + h.controller_port, tls_spki_sha256: h.tls_spki_sha256 })) : [], capabilities: online ? [...(h.lease?.capabilities ?? [])] : [] };
     }) };
   }

@@ -87,7 +87,7 @@ describe('EngineGlanceDesktopRoot — Q-224/Q-426: the one-time hint', () => {
   it('never seen: shown; main marking it seen as the window appears does not take it away', () => {
     mount(writing);
     expect(screen.getByTestId('engine-glance-hint').textContent).toContain(
-      'Close it here until you bring it back'
+      'Close it here — it comes back when something new starts'
     );
     pushFromMain(withPrefs(writing, { desktopHintSeen: true }));
     expect(screen.getByTestId('engine-glance-hint')).toBeTruthy();

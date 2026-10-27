@@ -317,7 +317,7 @@ for (const backend of ["node-sqlite", "cloudflare-worker-durable-object"] as con
       expect(await (await f.post("/hosts/withdraw", { runtime_id: f.runtime_id }, f.reg.host_credential)).json()).toEqual({ withdrawn: true });
       expect((await f.get("/hosts/bootstrap", f.reg.host_credential)).status).toBe(200);
       const offline = await f.get("/hosts", f.phone.access_token);
-      expect(await offline.json()).toMatchObject({ hosts: [{ availability: "update_required", endpoints: [] }] });
+      expect(await offline.json()).toMatchObject({ hosts: [{ availability: "offline", registration_state: "verified", endpoints: [], capabilities: [] }] });
       expect((await f.post("/hosts/lease", { ...host.leaseRequest, runtime_id: crypto.randomUUID() }, f.reg.host_credential)).status).toBe(200);
     });
   });

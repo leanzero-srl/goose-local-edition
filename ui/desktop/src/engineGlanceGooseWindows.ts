@@ -20,6 +20,7 @@ import type { GooseWindowFacts, Rect } from './utils/engineGlanceRules';
 
 /** The BrowserWindow surface this reads — Electron-free, so it is tested as data. */
 export interface GooseWindowLike {
+  readonly id: number;
   on(event: 'hide' | 'show', listener: () => void): unknown;
   isDestroyed(): boolean;
   isVisible(): boolean;
@@ -49,5 +50,6 @@ export function gooseWindowFacts(
       focused: w === focused,
       bounds: w.getBounds(),
       visibleShare: visibleShareOf(w.getMediaSourceId()),
+      id: w.id,
     }));
 }

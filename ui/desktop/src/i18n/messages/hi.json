@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "चैट · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "कुछ नया शुरू होने तक फ़्लोटिंग विंडो बंद करें"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "गोली जितना छोटा करें"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "कुछ नया शुरू होने तक फ़्लोटिंग विंडो छिपी है"
   },
   "engineGlance.expand": {
     "defaultMessage": "पूरा कार्ड दिखाएँ"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "यह कार्ड छिपाएँ — साइडबार के नीचे से या Settings › ऐप से वापस लाएँ"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "यहाँ बंद करें — कुछ नया शुरू होने पर यह लौट आती है"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "समझ गया"
@@ -2285,17 +2294,26 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "इंजन का लाइव कार्ड, छोटे रूप में: यह क्या पढ़ या लिख रहा है, कितनी तेज़ी से, और किस चैट को सेवा दे रहा है। इंजन खोलने के लिए क्लिक करें।"
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "डेस्कटॉप पर तैरता हुआ"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "जब goose पृष्ठभूमि में हो"
+  },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "goose के छोटा (मिनिमाइज़) या बैकग्राउंड में होने पर एक तैरती गतिविधि पिल दिखाएँ"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "जब तक आप इसे टिक न करें, बंद। आपके दूसरे ऐप्स के ऊपर एक छोटी पिल, उस कोने में जहाँ आप उसे खींचें। केवल उसका ⤢ बटन goose खोलता है; खींचने से वह बस खिसकती है, और उसका ✕ उसे तब तक छिपाता है जब तक कोई नया जॉब, रन या स्प्लिट शुरू न हो।"
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "यह कब तैरे"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "goose मिनिमाइज़ होने पर पिल तैराएँ"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "जब भी इंजन काम करे"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "बंद"
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "आपने इसे बंद किया — कुछ नया शुरू होने तक छिपी है।"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "साइडबार में"
@@ -5710,6 +5728,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "{requester} के विभाजन की रैंक {rank} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "दूसरे Mac के स्प्लिट की रैंक {rank} · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "{requester} के लिए लेयर {first}–{last} चला रहा है · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "दूसरे Mac के लिए लेयर {first}–{last} चला रहा है · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} के विभाजन की रैंक {rank} · {model}"
@@ -11909,26 +11936,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "इस सत्र के लिए फ़्लोटिंग विंडो बंद करें"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "इसे यहाँ से बंद करें, जब तक आप इसे वापस न लाएँ"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "फ़्लोटिंग विंडो इस सत्र के लिए छिपाई गई"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "इसे Settings › ऐप से वापस लाएँ, जहाँ आप इसे बंद भी कर सकते हैं।"
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "इसे मेनू बार में goose आइकन से या Settings › ऐप से वापस लाएँ, जहाँ आप इसे बंद भी कर सकते हैं।"
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "आपके दूसरे ऐप्स के ऊपर एक छोटी विंडो, उस कोने में जहाँ आप इसे खींचकर रखें। यह कभी फ़ोकस नहीं लेती, और goose को तभी आगे लाती है जब आप इससे कुछ खोलते हैं। इसका बंद करने का बटन इसे इस सत्र के बाकी समय के लिए छिपा देता है।"
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "आपने इसे बंद किया — जब तक आप इसे वापस न लाएँ, छिपी रहेगी।"
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "फिर से दिखाएँ"

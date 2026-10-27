@@ -28,6 +28,18 @@ const i18n = defineMessages({
     id: 'mlxMode.hostingNoBackend',
     defaultMessage: "Rank {rank} of {requester}'s split · {model}",
   },
+  hostingLayers: {
+    id: 'mlxMode.hostingLayers',
+    defaultMessage: 'Serving layers {first}–{last} for {requester} · {model}',
+  },
+  hostingLayersAnother: {
+    id: 'mlxMode.hostingLayersAnother',
+    defaultMessage: 'Serving layers {first}–{last} for another Mac · {model}',
+  },
+  hostingAnother: {
+    id: 'mlxMode.hostingAnother',
+    defaultMessage: "Rank {rank} of another Mac's split · {model}",
+  },
   overThunderbolt: { id: 'mlxMode.overThunderbolt', defaultMessage: 'over Thunderbolt' },
   overNetwork: { id: 'mlxMode.overNetwork', defaultMessage: 'over the network' },
 });
@@ -82,6 +94,17 @@ export function formatMlxMode(
       requester: summary.requester,
       model: modelShortName(summary.modelId),
     };
+    // The part this Mac plays, said as the owner put it: "serving layers 17-47 for workhorse".
+    const layers = summary.layers;
+    const named = summary.requester !== '';
+    if (layers) {
+      return intl.formatMessage(named ? i18n.hostingLayers : i18n.hostingLayersAnother, {
+        ...values,
+        first: layers.first,
+        last: layers.last,
+      });
+    }
+    if (!named) return intl.formatMessage(i18n.hostingAnother, values);
     return backend
       ? intl.formatMessage(i18n.hosting, { ...values, backend })
       : intl.formatMessage(i18n.hostingNoBackend, values);

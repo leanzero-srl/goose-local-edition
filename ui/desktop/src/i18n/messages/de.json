@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Schwebendes Fenster schließen, bis etwas Neues startet"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Zur Pille verkleinern"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Schwebendes Fenster ausgeblendet, bis etwas Neues startet"
   },
   "engineGlance.expand": {
     "defaultMessage": "Ganze Karte zeigen"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Diese Karte ausblenden — zurückholen am Fuß der Seitenleiste oder unter Einstellungen › App"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Hier schließen – es kommt zurück, wenn etwas Neues startet"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Verstanden"
@@ -2285,17 +2294,26 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "Die Live-Karte der Engine im Kleinen: was sie liest oder schreibt, wie schnell und welchen Chat sie bedient. Ein Klick öffnet die Engine."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Schwebend auf dem Schreibtisch"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Während goose im Hintergrund ist"
+  },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Eine schwebende Aktivitätspille zeigen, wenn goose minimiert oder im Hintergrund ist"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Aus, bis du es ankreuzt. Eine kleine Pille über deinen anderen Apps, in einer Ecke, in die du sie ziehst. Nur ihre Schaltfläche ⤢ öffnet goose; Ziehen verschiebt sie nur, und ihr ✕ blendet sie aus, bis ein neuer Job, Lauf oder Split startet."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Wann sie schwebt"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Pille schweben lassen, wenn goose minimiert ist"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Immer wenn die Engine arbeitet"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Aus"
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Du hast es geschlossen – ausgeblendet, bis etwas Neues startet."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "In der Seitenleiste"
@@ -5710,6 +5728,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Rang {rank} von {requester}s Split · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Rang {rank} des Splits eines anderen Macs · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Bedient Schichten {first}–{last} für {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Bedient Schichten {first}–{last} für einen anderen Mac · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rang {rank} von {requester}s Split · {model}"
@@ -11909,26 +11936,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Schwebendes Fenster für diese Sitzung schließen"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Hier schließen, bis du es zurückholst"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Schwebendes Fenster für diese Sitzung ausgeblendet"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "Hol es unter Einstellungen › App zurück – dort kannst du es auch ausschalten."
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "Hol es über das goose-Symbol in der Menüleiste oder unter Einstellungen › App zurück – dort kannst du es auch ausschalten."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Ein kleines Fenster über deinen anderen Apps, in einer Ecke, in die du es ziehst. Es nimmt nie den Fokus und holt goose nur nach vorn, wenn du darin etwas öffnest. Sein Schließen-Knopf blendet es für den Rest dieser Sitzung aus."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Du hast es geschlossen – ausgeblendet, bis du es zurückholst."
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Wieder anzeigen"

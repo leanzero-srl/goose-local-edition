@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Fechar a janela flutuante até algo novo começar"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Reduzir a pílula"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Janela flutuante oculta até algo novo começar"
   },
   "engineGlance.expand": {
     "defaultMessage": "Mostrar o cartão inteiro"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Ocultar este cartão — traga-o de volta pelo rodapé da barra lateral ou em Configurações › Aplicativo"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Feche-a aqui — ela volta quando algo novo começa"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Entendi"
@@ -2285,17 +2294,26 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "O cartão ao vivo do motor, em pequeno: o que lê ou escreve, a que velocidade e que chat atende. Clique para abrir o motor."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Flutuando na área de trabalho"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Enquanto o goose está em segundo plano"
+  },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Mostrar uma pílula flutuante de atividade quando o goose estiver minimizado ou em segundo plano"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Desligado até você marcar. Uma pequena pílula sobre seus outros apps, no canto para onde você a arrastar. Só o botão ⤢ abre o goose; arrastar apenas a move, e o ✕ a oculta até começar um novo trabalho, execução ou divisão."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Quando flutua"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Mostrar uma pílula flutuante quando o goose estiver minimizado"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Sempre que o motor trabalha"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Desligado"
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Você a fechou — oculta até algo novo começar."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Na barra lateral"
@@ -5710,6 +5728,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Posição {rank} da divisão de {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Posição {rank} da divisão de outro Mac · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Servindo as camadas {first}–{last} para {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Servindo as camadas {first}–{last} para outro Mac · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Posição {rank} da divisão de {requester} · {model}"
@@ -11909,26 +11936,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Fechar a janela flutuante nesta sessão"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Feche aqui até trazê-la de volta"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Janela flutuante oculta nesta sessão"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "Traga-a de volta em Configurações › Aplicativo, onde também é possível desativá-la."
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "Traga-a de volta pelo ícone do goose na barra de menus ou em Configurações › Aplicativo, onde também é possível desativá-la."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Uma pequena janela sobre seus outros apps, no canto para onde você a arrastar. Ela nunca pega o foco e só traz o goose para a frente quando você abre algo nela. O botão de fechar a oculta pelo resto desta sessão."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Você a fechou — oculta até trazê-la de volta."
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Mostrar de novo"

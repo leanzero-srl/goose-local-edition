@@ -2120,8 +2120,14 @@
   "engineGlance.chat": {
     "defaultMessage": "Sembang · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Tutup tetingkap terapung sehingga sesuatu yang baharu bermula"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Kecilkan menjadi pil"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Tetingkap terapung disembunyikan sehingga sesuatu yang baharu bermula"
   },
   "engineGlance.expand": {
     "defaultMessage": "Tunjukkan kad penuh"
@@ -2137,6 +2143,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Sembunyikan kad ini — kembalikan dari bahagian bawah bar sisi atau Tetapan › Aplikasi"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Tutup di sini — ia kembali apabila sesuatu yang baharu bermula"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Faham"
@@ -2285,17 +2294,26 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "Kad langsung Enjin, versi kecil: apa yang dibaca atau ditulis, berapa pantas, dan sembang mana yang dilayan. Klik untuk membuka Enjin."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Terapung di desktop"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Semasa goose di latar belakang"
+  },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Tunjukkan pil aktiviti terapung apabila goose diminimumkan atau di latar belakang"
+  },
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Mati melainkan anda menandakannya. Pil kecil di atas aplikasi lain, di sudut tempat anda menyeretnya. Hanya butang ⤢ membuka goose; menyeret hanya mengalihkannya, dan ✕ menyembunyikannya sehingga kerja, larian atau pecahan baharu bermula."
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Bila ia terapung"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Apungkan pil apabila goose diminimumkan"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Setiap kali enjin bekerja"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Mati"
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Anda menutupnya — disembunyikan sehingga sesuatu yang baharu bermula."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Di bar sisi"
@@ -5710,6 +5728,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Kedudukan {rank} pembahagian {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Kedudukan {rank} pembahagian Mac lain · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Melayan lapisan {first}–{last} untuk {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Melayan lapisan {first}–{last} untuk Mac lain · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Kedudukan {rank} pembahagian {requester} · {model}"
@@ -11909,26 +11936,11 @@
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Tutup tetingkap terapung untuk sesi ini"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Tutup di sini sehingga anda memaparkannya semula"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Tetingkap terapung disembunyikan untuk sesi ini"
-  },
   "engineGlance.dismissed.way": {
     "defaultMessage": "Paparkan semula dari Tetapan › Aplikasi, tempat anda juga boleh mematikannya."
   },
   "engineGlance.dismissed.wayTray": {
     "defaultMessage": "Paparkan semula dari ikon goose di bar menu atau dari Tetapan › Aplikasi, tempat anda juga boleh mematikannya."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Tetingkap kecil di atas aplikasi lain anda, di sudut tempat anda menyeretnya. Ia tidak pernah mengambil fokus, dan hanya membawa goose ke hadapan apabila anda membuka sesuatu daripadanya. Butang tutupnya menyembunyikannya untuk baki sesi ini."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Anda telah menutupnya — tersembunyi sehingga anda memaparkannya semula."
   },
   "engineGlanceSettings.showAgain": {
     "defaultMessage": "Paparkan semula"
