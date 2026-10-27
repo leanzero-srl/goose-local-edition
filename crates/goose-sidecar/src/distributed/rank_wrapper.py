@@ -750,6 +750,39 @@ if prefill is not None:
     upstream_split = mlx_generate.PromptProcessingBatch.split
     overruns = {"reported": False}
 
+    class PrefillPace:
+        """GOOSE_RANK_PREFILL_PACE: the seconds this rank's prompt steps took, one line per
+        `PREFILL_PACE_STEPS` steps (the width reached, tokens read, seconds, MLX active/cache):
+        the 64k MiMo prompt fell from ~270 to ~80 tok/s past ~19k tokens (2026-10-27) and no rank
+        log said where the time went."""
+
+        def __init__(self):
+            self.steps = self.tokens = 0
+            self.seconds = 0.0
+
+        def step(self, width, tokens, began):
+            self.steps += 1
+            self.tokens += tokens
+            self.seconds += time.perf_counter() - began
+            if self.steps % PREFILL_PACE_STEPS == 0:
+                emit(
+                    "RANK_PREFILL_PACE",
+                    {
+                        "width": width,
+                        "tokens": self.tokens,
+                        "seconds": round(self.seconds, 3),
+                        "active": mx.get_active_memory(),
+                        "cache": mx.get_cache_memory(),
+                    },
+                )
+                self.tokens = 0
+                self.seconds = 0.0
+
+    # The steps one pace line sums: an algorithm constant (16 x the 256-token chunk = one line per
+    # ~4k tokens, ~90 lines for a 350k prompt).
+    PREFILL_PACE_STEPS = 16
+    prefill_pace = PrefillPace()
+
     def prompt(self, tokens):
         # One step of the prompt batch: `tokens` holds each row's next slice (at most mlx_lm's
         # step). Its chunk is what the plan's workspace affords this many rows at the width the
@@ -766,6 +799,10 @@ if prefill is not None:
                     {"rows": rows, "width": width, "chunk": chunk, "over_bytes": over},
                 )
             self.prefill_step_size = chunk
+            began = time.perf_counter()
+            answer = upstream_prompt(self, tokens)
+            prefill_pace.step(width, min(chunk, max(len(t) for t in tokens)), began)
+            return answer
         return upstream_prompt(self, tokens)
 
     def split(self, indices):

@@ -314,12 +314,13 @@ fn fitting_reserve(
     nodes: &[SplitNode],
     from: f64,
     context: u64,
+    chunk: u64,
 ) -> Option<(f64, Vec<usize>, Vec<i128>)> {
     // ratio: the search's resolution, 0.1% of a node's RAM.
     let step = 0.001;
     let mut ratio = (from / step).floor() * step;
     while ratio >= 0.0 {
-        let (split, min, spares) = best_split(facts, nodes, ratio, context, KV_CACHE_STEP);
+        let (split, min, spares) = best_split(facts, nodes, ratio, context, chunk);
         if min >= 0 {
             return Some((ratio, split, spares));
         }
@@ -373,21 +374,28 @@ pub fn plan_layer_split(
         );
     }
     let select_context = context.unwrap_or(KV_CACHE_STEP).max(1);
+    // A requested context that no split fits with a KV-step chunk may still fit with a smaller
+    // one: the scores workspace is chunk x width x pair, so halving the chunk halves the largest
+    // term at a long context (MiMo at 360k: ~23.7 GB at 256 tokens, ~5.9 GB at 64).
+    let select_chunk = prefill_chunk_candidates()
+        .find(|chunk| best_split(facts, nodes, reserve_ratio, select_context, *chunk).1 >= 0)
+        .unwrap_or(KV_CACHE_STEP);
     let (split, min_spare, spares) =
-        best_split(facts, nodes, reserve_ratio, select_context, KV_CACHE_STEP);
+        best_split(facts, nodes, reserve_ratio, select_context, select_chunk);
     if min_spare < 0 {
-        let per_node =
-            nodes
-                .iter()
-                .zip(ranges(&split))
-                .zip(&spares)
-                .map(|((node, (start, end)), spare)| {
-                    format!(
+        let per_node = nodes
+            .iter()
+            .zip(ranges(&split))
+            .zip(&spares)
+            .map(|((node, (start, end)), spare)| {
+                format!(
                     "{} layers {start}-{} need {} against budget {} (available {} − {:.1}% of {} \
                      RAM, GPU ceiling {}), spare {}",
                     node.name,
                     end - 1,
-                    gb(facts.stage_need(start, end, select_context, KV_CACHE_STEP).total() as i128),
+                    gb(facts
+                        .stage_need(start, end, select_context, MIN_PREFILL_CHUNK)
+                        .total() as i128),
                     gb(node.budget(reserve_ratio) as i128),
                     gb(node.available as i128),
                     reserve_ratio * 100.0,
@@ -395,10 +403,10 @@ pub fn plan_layer_split(
                     gb(node.ceiling as i128),
                     gb(*spare),
                 )
-                })
-                .collect::<Vec<_>>()
-                .join("; ");
-        let found = fitting_reserve(facts, nodes, reserve_ratio, select_context);
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        let found = fitting_reserve(facts, nodes, reserve_ratio, select_context, select_chunk);
         // ratio: the search steps by 0.1% of RAM, so the named reserve is rounded to that step.
         let settable = found
             .as_ref()
@@ -475,12 +483,20 @@ pub fn plan_layer_split(
         })
         .min()
         .unwrap_or(TENSOR_PREFILL_STEP)
-        .min(TENSOR_PREFILL_STEP)
-        / KV_CACHE_STEP
-        * KV_CACHE_STEP;
+        .min(TENSOR_PREFILL_STEP);
+    let chunk = prefill_chunk_candidates()
+        .find(|c| *c <= chunk)
+        .map(|c| {
+            if c == KV_CACHE_STEP {
+                chunk / KV_CACHE_STEP * KV_CACHE_STEP
+            } else {
+                c
+            }
+        })
+        .unwrap_or(0);
     ensure!(
-        chunk >= KV_CACHE_STEP,
-        "context {planned_context} leaves a rank no room for a {KV_CACHE_STEP}-token prefill chunk"
+        chunk >= MIN_PREFILL_CHUNK,
+        "context {planned_context} leaves a rank no room for a {MIN_PREFILL_CHUNK}-token prefill chunk"
     );
 
     let needs: Vec<StageNeed> = stages
@@ -504,8 +520,13 @@ pub fn plan_layer_split(
         .map(|n| n.workspace)
         .min()
         .unwrap_or(0);
+    // The largest chunk a step takes is the tensor runner's: the rank shrinks each step to the
+    // workspace at the width it reaches (rank_prefill.py `prefill_chunk`), so a prompt shorter
+    // than the planned context reads in larger chunks inside the same scores bound. Measured
+    // 2026-10-27 on MiMo's first 6 layers (scratchpad mimo10/mini.py, 32k tokens): 256-token
+    // chunks 16.2 s, 1,024-token 11.7 s, 64-token 19.8 s.
     let prefill = TensorPrefill {
-        step: chunk,
+        step: TENSOR_PREFILL_STEP.max(chunk),
         workspace_bytes: workspace,
         pair_bytes: facts.pair_bytes,
         kv_bytes_per_token: kv_per_token,
@@ -528,7 +549,7 @@ pub fn plan_layer_split(
                 state_bytes: need.state,
                 workspace_bytes: need.workspace,
                 prefill: Some(prefill),
-                prefill_step: chunk,
+                prefill_step: prefill.step,
                 prompt_cache_bytes: need.prompt_cache,
                 prompt_cache_entries: (need.state + need.prompt_cache) / smallest_entry,
                 planned_bytes: need.resident(),
@@ -563,6 +584,18 @@ pub fn plan_layer_split(
         reserve_ratio,
         reason,
     })
+}
+
+/// The smallest prefill chunk the planner hands a rank: a quarter KV step. Below it the MoE
+/// matmuls run on so few tokens that a 350k prompt would take hours (64-token chunks read MiMo's
+/// first 6 layers at 0.83x the 256-token rate, measured 2026-10-27).
+pub const MIN_PREFILL_CHUNK: u64 = KV_CACHE_STEP / 4;
+
+/// The chunks the planner tries, largest first: the KV step, then halvings to
+/// `MIN_PREFILL_CHUNK`.
+fn prefill_chunk_candidates() -> impl Iterator<Item = u64> {
+    std::iter::successors(Some(KV_CACHE_STEP), |c| Some(c / 2))
+        .take_while(|c| *c >= MIN_PREFILL_CHUNK)
 }
 
 /// The largest context (a multiple of the KV step, at most `max_position`) the stage fits in
@@ -713,6 +746,50 @@ pub(crate) mod tests {
         assert_eq!(split.plans[0].prefill, split.plans[1].prefill);
         // rank 1 holds 5 full-attention layers (0, 5, 11, 17, 23), rank 0 four.
         assert_eq!(split.plans[0].prefill.unwrap().kv_bytes_per_token, 5 * 2560);
+    }
+
+    #[test]
+    fn a_context_past_the_kv_step_chunk_plans_with_a_smaller_chunk() {
+        let warn = super::super::WATCHDOG_WARN_RESERVE_RATIO;
+        let facts = mimo_facts();
+        let nodes = nodes();
+        let past = (60_672..)
+            .step_by(KV_CACHE_STEP as usize)
+            .find(|c| best_split(&facts, &nodes, warn, *c, KV_CACHE_STEP).1 < 0)
+            .unwrap();
+        assert!(best_split(&facts, &nodes, warn, past, MIN_PREFILL_CHUNK).1 >= 0);
+        let split = plan_layer_split(&facts, &nodes, warn, warn, Some(past)).unwrap();
+        assert_eq!(split.context, past);
+        assert!(
+            split.chunk >= MIN_PREFILL_CHUNK && split.chunk < KV_CACHE_STEP,
+            "{}",
+            split.chunk
+        );
+        assert!(split.chunk.is_power_of_two());
+        assert!(split.plans.iter().all(|p| p.fits));
+        let prefill = split.plans[0].prefill.unwrap();
+        // The largest step stays the tensor runner's; the workspace bounds it at each width.
+        assert_eq!(prefill.step, TENSOR_PREFILL_STEP);
+        assert_eq!(split.plans[0].prefill_step, TENSOR_PREFILL_STEP);
+        let width = past.div_ceil(KV_CACHE_STEP) * KV_CACHE_STEP;
+        assert_eq!(
+            prefill.workspace_bytes,
+            split.chunk * width * facts.pair_bytes
+        );
+        assert!(
+            split.reason.contains(&format!("{}-token", split.chunk)),
+            "{}",
+            split.reason
+        );
+    }
+
+    #[test]
+    fn a_context_no_chunk_fits_refuses_at_the_smallest_chunk() {
+        let warn = super::super::WATCHDOG_WARN_RESERVE_RATIO;
+        let err = plan_layer_split(&mimo_facts(), &nodes(), warn, warn, Some(1_000_000))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("no layer split fits"), "{err}");
     }
 
     #[test]
