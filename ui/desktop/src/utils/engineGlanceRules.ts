@@ -1,4 +1,4 @@
-import type { GlanceCorner, GlancePush } from './engineGlance';
+import { desktopFloatOn, type GlanceCorner, type GlancePush } from './engineGlance';
 
 /**
  * WHEN and WHERE the engine glance shows — pure, so every rule is tested as data and main and the
@@ -6,8 +6,9 @@ import type { GlanceCorner, GlancePush } from './engineGlance';
  *
  * What the research said about floating status (macOS Picture in Picture, Spotify's miniplayer,
  * Discord/OBS overlays), and what these rules do about it:
- *  - an always-on-top window people did not ask for is the #1 complaint → the desktop window appears
- *    only while something is LIVE, and by default only while no goose window is on screen (the
+ *  - an always-on-top window people did not ask for is the #1 complaint → the desktop window is
+ *    OPT-IN (owner, 2026-10-27: "only if I choose a tick in the main UI", `desktopFloatOn`), and
+ *    even then appears only while something is LIVE, and by default only while no goose window is on screen (the
  *    sidebar card already shows it wherever goose can be seen — Q-226: "not the active app" put it
  *    over goose's own window on a second display);
  *  - it covers what you are working on → it sits in a screen corner, collapses to a pill, and closing
@@ -48,9 +49,8 @@ export interface DesktopFacts {
 }
 
 export function desktopGlanceVisible(push: GlancePush, facts: DesktopFacts): boolean {
-  const mode = push.prefs.desktop;
-  if (mode === 'off' || facts.dismissed || !glanceLive(push)) return false;
-  return mode === 'busy' || !facts.gooseOnScreen;
+  if (!desktopFloatOn(push.prefs) || facts.dismissed || !glanceLive(push)) return false;
+  return push.prefs.desktop === 'busy' || !facts.gooseOnScreen;
 }
 
 /**
@@ -139,7 +139,7 @@ export function coverageWanted(
   windows: readonly GooseWindowFacts[]
 ): boolean {
   if (platform !== 'darwin' || push == null) return false;
-  if (push.prefs.desktop === 'off' || dismissed || !glanceLive(push)) return false;
+  if (!desktopFloatOn(push.prefs) || dismissed || !glanceLive(push)) return false;
   if (windows.some((w) => w.focused)) return false;
   return windows.some((w) => w.onScreen);
 }

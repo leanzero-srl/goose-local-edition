@@ -2,7 +2,12 @@ import { defineMessages, useIntl } from '../../i18n';
 import { Switch } from '../ui/switch';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Button, Segmented } from '../lz';
-import { DEFAULT_GLANCE_PREFS, type GlanceDesktopMode } from '../../utils/engineGlance';
+import {
+  DEFAULT_GLANCE_PREFS,
+  desktopFloatOn,
+  withDesktopOptIn,
+  type GlanceDesktopMode,
+} from '../../utils/engineGlance';
 import { setGlancePrefs, showDesktopGlanceAgain, useEngineGlance } from './glanceStore';
 
 const i18n = defineMessages({
@@ -18,18 +23,21 @@ const i18n = defineMessages({
     defaultMessage:
       'At the foot of the sidebar, under your sessions. Hide it from the card itself; it comes back from the row it leaves in its place, or from here.',
   },
-  desktop: { id: 'engineGlanceSettings.desktop', defaultMessage: 'Floating on the desktop' },
-  desktopDesc: {
-    id: 'engineGlanceSettings.desktopDescProcess',
-    defaultMessage:
-      'A small window over your other apps, in a corner you drag it to. It never takes focus, and brings goose forward only when you open something from it. Its close button hides it until a new job, run or split starts.',
+  optIn: {
+    id: 'engineGlanceSettings.desktopOptIn',
+    defaultMessage: 'Show a floating activity pill when goose is minimized or in the background',
   },
+  desktopDesc: {
+    id: 'engineGlanceSettings.desktopDescOptIn',
+    defaultMessage:
+      'Off unless you tick it. A small pill over your other apps, in a corner you drag it to. Only its ⤢ button opens goose; dragging just moves it, and its ✕ hides it until a new job, run or split starts.',
+  },
+  when: { id: 'engineGlanceSettings.desktopWhen', defaultMessage: 'When it floats' },
   dismissed: {
     id: 'engineGlanceSettings.dismissedUntilNew',
     defaultMessage: 'You closed it — hidden until something new starts.',
   },
   showAgain: { id: 'engineGlanceSettings.showAgain', defaultMessage: 'Show it again' },
-  off: { id: 'engineGlanceSettings.desktop.off', defaultMessage: 'Off' },
   away: {
     id: 'engineGlanceSettings.desktop.away',
     defaultMessage: 'While goose is in the background',
@@ -45,8 +53,9 @@ export function EngineGlanceSettings() {
   const intl = useIntl();
   const push = useEngineGlance();
   const prefs = push?.prefs ?? DEFAULT_GLANCE_PREFS;
+  const floatOn = desktopFloatOn(prefs);
+  // Ticked = opted in; the mode then says when (Off is the tick itself).
   const options: { value: GlanceDesktopMode; label: string; testId: string }[] = [
-    { value: 'off', label: intl.formatMessage(i18n.off), testId: 'engine-glance-desktop-off' },
     { value: 'away', label: intl.formatMessage(i18n.away), testId: 'engine-glance-desktop-away' },
     { value: 'busy', label: intl.formatMessage(i18n.busy), testId: 'engine-glance-desktop-busy' },
   ];
@@ -73,21 +82,33 @@ export function EngineGlanceSettings() {
           />
         </div>
         <div className="flex flex-col gap-2">
-          <div>
-            <h3 className="text-text-primary text-xs">{intl.formatMessage(i18n.desktop)}</h3>
-            <p className="text-xs text-text-secondary max-w-md mt-[2px]">
-              {intl.formatMessage(i18n.desktopDesc)}
-            </p>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h3 className="text-text-primary text-xs">{intl.formatMessage(i18n.optIn)}</h3>
+              <p className="text-xs text-text-secondary max-w-md mt-[2px]">
+                {intl.formatMessage(i18n.desktopDesc)}
+              </p>
+            </div>
+            <Switch
+              data-testid="engine-glance-desktop-optin"
+              aria-label={intl.formatMessage(i18n.optIn)}
+              checked={floatOn}
+              disabled={!push}
+              onCheckedChange={(on: boolean) => void setGlancePrefs(withDesktopOptIn(prefs, on))}
+              variant="mono"
+            />
           </div>
-          <Segmented
-            aria-label={intl.formatMessage(i18n.desktop)}
-            options={options}
-            value={prefs.desktop}
-            disabled={!push}
-            onChange={(desktop) => void setGlancePrefs({ ...prefs, desktop })}
-            className="self-start"
-          />
-          {push?.desktopDismissed && prefs.desktop !== 'off' && (
+          {floatOn && (
+            <Segmented
+              aria-label={intl.formatMessage(i18n.when)}
+              options={options}
+              value={prefs.desktop}
+              disabled={!push}
+              onChange={(desktop) => void setGlancePrefs({ ...prefs, desktop })}
+              className="self-start"
+            />
+          )}
+          {push?.desktopDismissed && floatOn && (
             <div
               data-testid="engine-glance-desktop-dismissed"
               className="flex flex-wrap items-center gap-3"

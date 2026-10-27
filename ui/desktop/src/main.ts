@@ -293,6 +293,7 @@ import {
   glancePrefsOf,
   isGlancePrefs,
   isGlanceSessions,
+  desktopFloatOn,
   mergeGlanceSessions,
   servingKeptOf,
   servingReportsOf,
@@ -2431,6 +2432,9 @@ const glanceCoverage = new GlanceCoverage({
   onChanged: () => engineGlanceDesktop.refresh(),
   warn: (message) => log.warn(message),
 });
+// goose as the active app, for the floating window's X (engineGlanceDesktop.ts `appActivation`).
+let gooseAppActive = false;
+let gooseAppActiveSince = Number.NEGATIVE_INFINITY;
 const engineGlanceDesktop = new EngineGlanceDesktop({
   port: createGlanceWindowPort({
     url: () => {
@@ -2483,14 +2487,14 @@ const engineGlanceDesktop = new EngineGlanceDesktop({
   later: (fn, ms) => {
     setTimeout(fn, ms);
   },
-  // A goose window a real click on the floating window brought forward (engineGlanceDesktop.ts):
-  // minimized again, or sent back behind the app the person is in.
-  revertRaise: (windowId, kind) => {
-    const win = BrowserWindow.fromId(windowId);
-    if (!win || win.isDestroyed()) return;
-    log.info(`engine glance: put back goose window ${windowId} its click raised (${kind})`);
-    if (kind === 'restore') win.minimize();
-    else win.blur();
+  // goose as the active app (engineGlanceDesktop.ts `close`): a press that activated goose is told
+  // from one that found it active already.
+  appActivation: () => ({ active: gooseAppActive, since: gooseAppActiveSince }),
+  // The X's press activated goose and no goose window was in view: the macOS Hide puts the app the
+  // person was in back in front, exactly as before the click (engineGlanceDesktop.ts).
+  hideApp: () => {
+    log.info('engine glance: closed from its X; goose hidden again, the press had activated it');
+    app.hide();
   },
 });
 // The ranks of ANOTHER Mac's split running here (peerRankWatch.ts): one the requester launched over
@@ -2553,9 +2557,11 @@ const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
   engineGlanceDesktop.update(push);
 };
 const saveGlancePrefs = (next: GlancePrefs) => {
-  // A floating mode picked in Settings › App is the person asking for the window: a close earlier
-  // this session no longer holds it back (Q-426).
-  const modeChanged = next.desktop !== currentGlancePrefs().desktop;
+  // Ticking the opt-in, or a floating mode picked in Settings › App, is the person asking for the
+  // window: a close earlier this session no longer holds it back (Q-426). Unticked, nothing floats.
+  const before = currentGlancePrefs();
+  const modeChanged =
+    desktopFloatOn(next) && (!desktopFloatOn(before) || next.desktop !== before.desktop);
   glancePrefs = next;
   updateSettings((s) => {
     s.engineGlance = next;
@@ -2586,10 +2592,19 @@ app.on('render-process-gone', (_event, contents, details) => {
     `renderer gone: ${details.reason} exit=${details.exitCode} url=${contents.getURL().slice(0, 120)}`
   );
 });
-// Told synchronously, before the deferred re-decision: a goose window a press on the floating
-// window brought forward is put back (engineGlanceDesktop.ts `gooseRaised`).
+app.on('did-become-active', () => {
+  gooseAppActive = true;
+  gooseAppActiveSince = Date.now();
+});
+app.on('did-resign-active', () => {
+  gooseAppActive = false;
+});
 app.on('browser-window-focus', (_event, win) => {
-  engineGlanceDesktop.gooseRaised(win.id, 'focus');
+  // The live click check's evidence: a goose window that came forward right after a press on the
+  // floating window that opened nothing means the focusable-panel fix did not hold on this macOS.
+  if (engineGlanceDesktop.raisedByPress()) {
+    log.warn(`engine glance: goose window ${win.id} came forward right after a press on the glance`);
+  }
   refreshGlanceSoon();
 });
 app.on('browser-window-blur', refreshGlanceSoon);
@@ -2598,15 +2613,9 @@ app.on('browser-window-created', (_event, win) => {
   // A page drawn only part of the way down is drawn again (windowRepaint.ts).
   keepRepainted(win);
   win.on('minimize', refreshGlanceSoon);
-  win.on('restore', () => {
-    engineGlanceDesktop.gooseRaised(win.id, 'restore');
-    refreshGlanceSoon();
-  });
+  win.on('restore', refreshGlanceSoon);
   win.on('hide', refreshGlanceSoon);
-  win.on('show', () => {
-    engineGlanceDesktop.gooseRaised(win.id, 'show');
-    refreshGlanceSoon();
-  });
+  win.on('show', refreshGlanceSoon);
 });
 
 // The engine-phase dot beside a tray state line, in the palette's exact hex (12pt @2x).

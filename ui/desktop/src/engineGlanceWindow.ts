@@ -9,13 +9,18 @@ import type { GlanceDisplay, GlanceWindowPort } from './engineGlanceDesktop';
  * action window, the quit guards, theme broadcasts) that must never pick the glance as "the goose
  * window". A BaseWindow cannot be picked by any of them.
  *
- * macOS: `type: 'panel'` adds NSWindowStyleMaskNonactivatingPanel — clicking it never activates goose
- * or takes focus from the app you are in — and lets it float over full-screen apps on every Space;
- * `focusable: false` keeps it from ever becoming the key window; `acceptFirstMouse` makes the first
- * click reach the card (it is never active, so every click is a first click); level `floating` keeps
- * it above normal windows and BELOW the Dock, menus and system alerts; `hiddenInMissionControl` keeps
- * Mission Control's overview clean. No vibrancy: a translucent blur is a faded fill, and the card is
- * a solid engine-phase colour.
+ * macOS: `type: 'panel'` lets it float over full-screen apps on every Space (its
+ * NSWindowStyleMaskNonactivatingPanel is NOT honoured — ElectronNSPanel is no NSPanel — so a click on
+ * it does activate goose; engineGlanceDesktop.ts). It is FOCUSABLE on macOS, on purpose: a window
+ * that cannot become key (`focusable: false`) makes AppKit give the key status the click's
+ * activation needs to goose's main window, and that ordered the main window front on every press of
+ * the X, the Open control or a drag (owner, 2026-10-27). Clicked, the glance itself becomes key and
+ * nothing else moves; shown, it stays inactive (`showInactive`), so it never takes focus by
+ * appearing. Elsewhere `focusable: false` as before (a toolbar window there activates nothing).
+ * `acceptFirstMouse` makes the first click reach the card; level `floating` keeps it above normal
+ * windows and BELOW the Dock, menus and system alerts; `hiddenInMissionControl` keeps Mission
+ * Control's overview clean. No vibrancy: a translucent blur is a faded fill, and the card is a solid
+ * engine-phase colour.
  */
 
 export interface GlanceWindowOptions {
@@ -57,7 +62,7 @@ export function createGlanceWindowPort(options: GlanceWindowOptions): GlanceWind
         fullscreenable: false,
         closable: true,
         skipTaskbar: true,
-        focusable: false,
+        focusable: mac,
         acceptFirstMouse: true,
         hiddenInMissionControl: true,
         // The card draws its own rounded corners; the window around it is clear, and macOS casts

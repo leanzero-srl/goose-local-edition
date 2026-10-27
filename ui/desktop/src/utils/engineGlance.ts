@@ -237,6 +237,14 @@ export interface GlancePrefs {
    * (the default); or whenever something is live.
    */
   desktop: GlanceDesktopMode;
+  /**
+   * The person ticked "Show a floating activity pill when goose is minimized or in the background"
+   * (Settings › App, or the tick under the sidebar card). OFF until they do (owner, 2026-10-27: "This
+   * should only show up if I choose a tick in the main UI"): a stored `desktop: 'away'` from a build
+   * that floated by default is not a choice, so this separate field gates it and old stores read it
+   * as false.
+   */
+  desktopOptIn: boolean;
   /** The desktop window shows as a pill (stage + rate) instead of the card. */
   desktopCollapsed: boolean;
   /** Where the desktop window sits: a corner of a display, by the display's id. */
@@ -248,12 +256,27 @@ export interface GlancePrefs {
   desktopHintSeen: boolean;
 }
 
+/**
+ * The desktop window may float at all: the person opted in AND picked a floating mode. Every rule
+ * that asks "is the floating window on" asks this, never `desktop` alone.
+ */
+export function desktopFloatOn(prefs: GlancePrefs): boolean {
+  return prefs.desktopOptIn && prefs.desktop !== 'off';
+}
+
+/** The opt-in ticked or unticked: ticked on a stored 'off' floats while goose is in the background. */
+export function withDesktopOptIn(prefs: GlancePrefs, on: boolean): GlancePrefs {
+  if (!on) return { ...prefs, desktopOptIn: false };
+  return { ...prefs, desktopOptIn: true, desktop: prefs.desktop === 'off' ? 'away' : prefs.desktop };
+}
+
 /** The corner the desktop window takes before the person drags it anywhere. */
 export const DEFAULT_GLANCE_CORNER: GlanceCorner = 'bottom-right';
 
 export const DEFAULT_GLANCE_PREFS: GlancePrefs = {
   inApp: true,
   desktop: 'away',
+  desktopOptIn: false,
   desktopCollapsed: false,
   desktopPlace: null,
   desktopHintSeen: false,
@@ -788,6 +811,7 @@ export function isGlancePrefs(value: unknown): value is GlancePrefs {
     typeof v.inApp === 'boolean' &&
     typeof v.desktop === 'string' &&
     DESKTOP_MODES.has(v.desktop) &&
+    typeof v.desktopOptIn === 'boolean' &&
     typeof v.desktopCollapsed === 'boolean' &&
     typeof v.desktopHintSeen === 'boolean' &&
     (place === null ||
