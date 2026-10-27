@@ -43,3 +43,7 @@ Backend 97116 remains alive; read-only Xcode production account-list count remai
 ## Third blocked audit
 
 The following continuation rechecked authoritative state: Xcode account discovery still reports zero production entries; CUA explicitly reports the Mac is locked and cannot unlock it; backend 97116 remains alive. The prior continuation completed the bounded deployment audit, but the same access/enrollment blockers have now persisted across three consecutive goal turns. No safe independent release work remains identified within the current evidence; the goal is marked blocked pending owner return/external-state change, not complete. No OTP requested or profile reset. Resume at the numbered steps above after normal unlock.
+
+## Morning signing resolution — 27 October 2026
+
+Owner returned; Xcode visibly signed in. CLI retry still failed No Accounts, but Organizer local Export succeeded using existing cloud-managed distribution signing without another login. Final package `/tmp/GooseRemote 2026-10-27 08-20-27/GooseRemote.ipa` verified against final archive/dSYM, signatures, profile, entitlements, manifests and native markers. See docs/ios-release/README.md for hashes. Signing and Mac-lock blockers are cleared; legacy-host enrollment and other real-path/release gaps remain. No app record/upload/submission. Do not ask the owner to sign in again based on the CLI failure or preferences-list count.

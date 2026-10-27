@@ -48,3 +48,7 @@ Use [TestFlight](https://developer.apple.com/testflight/) with representative iP
 If rejected, read the exact message, reproduce on the submitted build, compare the cited current rule, then correct or appeal with concrete evidence. Never hide functionality from review, add unannounced capabilities after approval, or misrepresent a remote service as local-only.
 
 Use the [support operations procedure](operations.md) for rollout and incidents. Release notes describe the user-visible result; omit internal security-sensitive implementation details. Keep submission credentials, support accounts and API keys outside skills and source control.
+
+### CLI account discovery can disagree with Xcode
+
+When `xcodebuild -exportArchive` reports `No Accounts`, inspect the actual Xcode Apple Accounts/team before asking for reauthentication. A legacy preferences key count is not authoritative sign-in evidence. If the GUI sees the team, try the existing archive through Organizer with Custom → App Store Connect → Export, skipping app-record creation when it is not authorized. Verify the exported app/framework signatures, profile, entitlements and archive/dSYM UUID match. Successful GUI export isolates a CLI-context discrepancy; it does not prove why the CLI failed or justify signing out, revoking certificates or rotating credentials.

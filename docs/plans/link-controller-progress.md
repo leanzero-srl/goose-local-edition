@@ -93,3 +93,7 @@ Current release work is blocked on owner/external state: normal Mac unlock for U
 ### Overnight deployment facts, 26 October 2026 21:13 UTC
 
 Bounded read-only service audit recorded in `docs/ios-release/DEPLOYED-RETENTION-AUDIT.md`: live capability flags, configured Sanity, KV sweep evidence, loaded daily rotation with successful last exit, and explicit backup/provider-history limits. Corrected rate-window versus record-TTL wording and verified existing public policy/contact destinations; mobile policy content still needs publication before release. Confirmed company choice is no longer listed as unknown. Shared iOS support skill and versioned snapshot now distinguish deployed cleanup from source defaults and exact erasure promises. Current desktop process remains alive; Xcode production account discovery still returns zero. No new login, service mutation, build or publication.
+
+## Morning signing resolution — 27 October 2026
+
+Owner returned; Xcode visibly signed in. CLI retry still failed No Accounts, but Organizer local Export succeeded using existing cloud-managed distribution signing without another login. Final package `/tmp/GooseRemote 2026-10-27 08-20-27/GooseRemote.ipa` verified against final archive/dSYM, signatures, profile, entitlements, manifests and native markers. See docs/ios-release/README.md for hashes. Signing and Mac-lock blockers are cleared; legacy-host enrollment and other real-path/release gaps remain. No app record/upload/submission. Do not ask the owner to sign in again based on the CLI failure or preferences-list count.
