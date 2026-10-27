@@ -12,6 +12,8 @@
 # - a logged CPU-stream barrier after the load (GOOSE_RANK_PIPELINE_LOADED / _BARRIER): the ranks
 #   finish loading minutes apart (the mule reads ~100 GB over NFS); mlx_lm 0.31.3's sharded_load
 #   already ends with one, and this one makes a stall at that point readable in the rank log.
+# - the sampling seed (the first collective after the barrier) on the CPU stream: on the GPU
+#   stream rank 1's Metal watchdog killed it on two loads in a row (2026-10-27).
 # - one rank-invariant prompt-cache byte count (`pipeline_cache_weights`): every rank runs its own
 #   prompt cache over the same requests and must evict alike (a rank that reuses a different
 #   prefix runs a different number of prefill steps, and the hidden states it sends no longer
@@ -84,7 +86,29 @@ if spec.get("pipeline_split") is not None:
         )
         mx.eval(mx.distributed.all_sum(mx.array(1.0), stream=mx.cpu))
         emit("RANK_PIPELINE_BARRIER", {"rank": spec["rank"]})
+        seed_on_cpu.append(True)
         return loaded
+
+    # The generation thread's first collective after the load is mlx_lm's sampling seed
+    # (server.py `_generate`: all_sum(mx.random.state[0]) on the default GPU stream). Measured
+    # 2026-10-27 on the workhorse + mule split: both ranks passed the CPU barrier within 20 ms,
+    # entered that all_sum, and rank 1's Metal command buffer died 6-10 s later ("GPU Timeout
+    # Error", kIOGPUCommandBufferCallbackErrorTimeout) on two loads in a row. The seed runs on the
+    # CPU stream, which has no GPU watchdog, exactly like the barrier; every later collective
+    # (the shares, the hidden states) is untouched.
+    original_all_sum = mx.distributed.all_sum
+    seed_on_cpu = []
+
+    def all_sum_seed_on_cpu(x, *args, **kwargs):
+        if seed_on_cpu and kwargs.get("stream") is None:
+            seed_on_cpu.clear()
+            kwargs["stream"] = mx.cpu
+            out = original_all_sum(x, *args, **kwargs)
+            emit("RANK_PIPELINE_SEED", {"rank": spec["rank"], "stream": "cpu"})
+            return out
+        return original_all_sum(x, *args, **kwargs)
+
+    mx.distributed.all_sum = all_sum_seed_on_cpu
 
     pipeline_server.sharded_load = sharded_load_with_barrier
 
