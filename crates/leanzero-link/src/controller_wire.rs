@@ -157,6 +157,15 @@ pub struct HostBootstrap {
     pub owner_node_id: Uuid,
 }
 
+// Deliberately no Debug: the account compute secret must not enter diagnostics.
+#[derive(Deserialize)]
+pub struct RecoveredHostSecret {
+    pub account_id: Uuid,
+    pub owner_node_id: Uuid,
+    pub email: String,
+    pub node_secret: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostEnrollmentStatus {

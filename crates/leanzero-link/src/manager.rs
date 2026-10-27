@@ -2215,10 +2215,8 @@ impl Core {
         let mut host = None;
         let mut host_context = None;
         let (node_token, login_server, legacy_key) = if let Some(factory) = &seams.controller_host {
-            // A host upgrades through its dedicated authority path. Missing local secret
-            // requires the existing host OTP flow, before any daemon or listener starts.
-            let secret =
-                crate::controller_host::login_secret(&self.identity.path()?, &identity.email)?;
+            // Register using this host's own saved account login. Recovery requires both
+            // that login and its host credential, before any mesh daemon starts.
             let prepared = crate::controller_host::PreparedHost::prepare(
                 factory.clone(),
                 self.worker.clone(),
@@ -2227,6 +2225,28 @@ impl Core {
                 &node_hostname,
             )
             .await?;
+            let secret = prepared
+                .login_secret(&self.identity.path()?, &identity.token, &identity.email)
+                .await?;
+            {
+                // Logout first changes intent under this same lock. Never recreate its
+                // deleted secret when a recovery response arrives after that decision.
+                let inner = self.inner.lock().await;
+                if inner.last_connect != generation
+                    || !matches!(&inner.auth, AuthState::Connecting { email } if email == &identity.email)
+                    || !matches!(&inner.intent, Ok(record) if record.intent == LinkIntent::Connected)
+                    || !self.identity.load()?.is_some_and(|saved| {
+                        saved.email == identity.email && saved.token == identity.token
+                    })
+                {
+                    return Err(LinkError::ConnectCancelled.into());
+                }
+                crate::controller_host::remember_login_secret(
+                    &self.identity.path()?,
+                    &identity.email,
+                    &secret,
+                )?;
+            }
             let context = prepared.mesh_context().await?;
             let login = context.login_server.clone();
             host = Some(prepared);

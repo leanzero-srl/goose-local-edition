@@ -401,6 +401,21 @@ impl WorkerClient {
         })
     }
 
+    pub async fn recover_host_node_secret(
+        &self,
+        account_token: &str,
+        host_credential: &str,
+    ) -> Result<crate::controller_wire::RecoveredHostSecret, WorkerError> {
+        self.controller_request(
+            reqwest::Method::POST,
+            "/v1/controller/hosts/recover-node-secret",
+            account_token,
+            Some(host_credential),
+            Some(&serde_json::json!({})),
+        )
+        .await
+    }
+
     pub async fn register_controller_host(
         &self,
         account_token: &str,

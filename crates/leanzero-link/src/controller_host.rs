@@ -415,6 +415,35 @@ impl PreparedHost {
         })
     }
 
+    pub(crate) async fn login_secret(
+        &self,
+        identity_path: &Path,
+        account_token: &str,
+        email: &str,
+    ) -> Result<String, LinkError> {
+        match login_secret(identity_path, email) {
+            Ok(secret) => return Ok(secret),
+            Err(LinkError::NoNodeSecret) => {}
+            Err(error) => return Err(error),
+        }
+        let recovered = self
+            .worker
+            .recover_host_node_secret(account_token, &self.credentials.host_credential)
+            .await?;
+        if recovered.account_id != self.account.account_id
+            || recovered.owner_node_id != self.owner.owner_node_id
+            || recovered.email != email
+        {
+            return Err(LinkError::ControllerHost(
+                "recovered secret belongs to another account or owner".into(),
+            ));
+        }
+        if !valid_secret(&recovered.node_secret) {
+            return Err(LinkError::NoNodeSecret);
+        }
+        Ok(recovered.node_secret)
+    }
+
     pub(crate) async fn mesh_context(&self) -> Result<HostMeshContext, LinkError> {
         let context = self
             .worker

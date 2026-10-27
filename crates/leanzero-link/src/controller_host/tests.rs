@@ -471,6 +471,12 @@ impl wiremock::Respond for AuthorityFixture {
                 assert_eq!(body["tls_spki_sha256"].as_str().unwrap().len(), 64);
                 ResponseTemplate::new(200).set_body_json(json!({"host_credential":"host-fixture-credential","host_revision":1}))
             }
+            "/v1/controller/hosts/recover-node-secret" => {
+                assert_eq!(request.headers.get("Authorization").unwrap(), "Bearer account-fixture");
+                assert_eq!(request.headers.get("X-Link-Host-Credential").unwrap(), "host-fixture-credential");
+                assert_eq!(body, json!({}));
+                ResponseTemplate::new(200).set_body_json(json!({"account_id":self.account,"owner_node_id":owner(),"email":"owner@example.test","node_secret":"a".repeat(64)}))
+            }
             "/v1/controller/hosts/bootstrap" => ResponseTemplate::new(200).set_body_json(json!({"account_id":self.account,"owner_node_id":owner()})),
             "/v1/controller/hosts/mesh/context" => {
                 let e = *self.enrollment.lock().unwrap();
@@ -601,7 +607,7 @@ impl crate::manager::MeshFactory for MeshFactory {
 }
 
 #[tokio::test]
-async fn manager_uses_host_path_from_verified_login_through_disconnect_reconnect_and_logout() {
+async fn manager_upgrades_saved_login_through_disconnect_reconnect_and_logout() {
     use crate::{
         control::ControlConfig,
         identity::{Identity, IdentityStore},
@@ -641,20 +647,16 @@ async fn manager_uses_host_path_from_verified_login_through_disconnect_reconnect
     )
     .unwrap()
     .with_controller_host(factory.clone());
-    assert!(matches!(
-        manager.connect().await,
-        Err(LinkError::NoNodeSecret)
-    ));
-    assert_eq!(mesh_factory.started.load(Ordering::SeqCst), 0);
-    manager
-        .verify("owner@example.test", "123456")
-        .await
-        .unwrap();
+    assert!(!secret_path(&identity_path).exists());
+    let saved_identity = std::fs::read(&identity_path).unwrap();
+    manager.connect().await.unwrap();
+    assert_eq!(std::fs::read(&identity_path).unwrap(), saved_identity);
+    let saved_owner = std::fs::read(factory.directory.join("owner.json")).unwrap();
+    let saved_tls = std::fs::read(factory.directory.join("tls.json")).unwrap();
     assert_eq!(
         login_secret(&identity_path, "owner@example.test").unwrap(),
         "a".repeat(64)
     );
-    manager.connect().await.unwrap();
     assert!(matches!(
         manager.status().await.auth,
         AuthState::Connected { .. }
@@ -674,6 +676,32 @@ async fn manager_uses_host_path_from_verified_login_through_disconnect_reconnect
     manager.connect().await.unwrap();
     assert_eq!(mesh.reauth.load(Ordering::SeqCst), 1);
     assert_eq!(mesh.resume.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        std::fs::read(factory.directory.join("owner.json")).unwrap(),
+        saved_owner
+    );
+    assert_eq!(
+        std::fs::read(factory.directory.join("tls.json")).unwrap(),
+        saved_tls
+    );
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.url.path() == "/v1/controller/hosts/recover-node-secret")
+            .count(),
+        1
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.url.path() == "/v1/controller/hosts/mesh/join-key")
+            .count(),
+        1
+    );
+    assert!(!requests
+        .iter()
+        .any(|r| r.url.path().starts_with("/v1/auth/")));
     manager.logout(false).await.unwrap();
     assert_eq!(manager.status().await.auth, AuthState::LoggedOut);
     assert!(authority.revoked.load(Ordering::SeqCst));
@@ -687,6 +715,77 @@ async fn manager_uses_host_path_from_verified_login_through_disconnect_reconnect
         .unwrap()
         .iter()
         .all(|request| request.url.path() != "/v1/mesh/join-key"));
+}
+
+#[tokio::test]
+async fn delayed_recovery_cannot_recreate_secret_after_logout() {
+    use crate::{
+        control::ControlConfig,
+        identity::{Identity, IdentityStore},
+        manager::{AuthState, LinkManager, LinkManagerConfig},
+        mesh::MeshConfig,
+    };
+    let (dir, server, authority, factory, mesh) = fixture().await;
+    let identity_path = dir.path().join("identity.json");
+    IdentityStore::new(&identity_path)
+        .save(&Identity::new("owner@example.test", "account-fixture"))
+        .unwrap();
+    let mut config = MeshConfig::new(
+        "fixture-daemon".into(),
+        "fixture-cli".into(),
+        "fixture-host".into(),
+    )
+    .unwrap();
+    config.state_dir = dir.path().join("mesh");
+    config.socket_path = config.state_dir.join("fixture.sock");
+    let mut control = ControlConfig::new(String::new(), None);
+    control.port = 0;
+    control.jobs.root = dir.path().join("jobs");
+    control.jobs.heavy_lock = dir.path().join("heavy.lock");
+    let mesh_factory = Arc::new(MeshFactory {
+        mesh: mesh.clone(),
+        started: AtomicUsize::new(0),
+    });
+    let manager = LinkManager::with_mesh_factory(
+        LinkManagerConfig {
+            worker_base_url: server.uri(),
+            identity_path: identity_path.clone(),
+            mesh: config,
+            control,
+        },
+        Arc::new(Source),
+        mesh_factory.clone(),
+    )
+    .unwrap()
+    .with_controller_host(factory.clone());
+    let manager = Arc::new(manager);
+    let entered = Arc::new(AtomicBool::new(false));
+    let arrived = entered.clone();
+    let response_authority = authority.clone();
+    Mock::given(path("/v1/controller/hosts/recover-node-secret"))
+        .respond_with(move |request: &wiremock::Request| {
+            arrived.store(true, Ordering::SeqCst);
+            wiremock::Respond::respond(response_authority.as_ref(), request)
+                .set_delay(Duration::from_millis(400))
+        })
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let connecting = manager.clone();
+    let pending = tokio::spawn(async move { connecting.connect().await });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !entered.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    manager.logout(false).await.unwrap();
+    assert!(pending.await.unwrap().is_err());
+    assert_eq!(manager.status().await.auth, AuthState::LoggedOut);
+    assert!(!identity_path.exists());
+    assert!(!secret_path(&identity_path).exists());
+    assert_eq!(mesh_factory.started.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -718,6 +817,66 @@ fn host_sign_in_secret_is_private_account_bound_and_corruption_is_loud() {
     }
     std::fs::write(secret_path(&path), "corrupt").unwrap();
     assert!(login_secret(&path, "owner@example.test").is_err());
+    assert_eq!(std::fs::read(secret_path(&path)).unwrap(), b"corrupt");
+}
+
+#[tokio::test]
+async fn recovery_rejects_wrong_account_owner_and_email_and_preserves_missing_secret_on_outage() {
+    let (dir, server, authority, factory, _mesh) = fixture().await;
+    let host = PreparedHost::prepare(
+        factory,
+        WorkerClient::new(server.uri()).unwrap(),
+        "account-fixture",
+        "owner@example.test",
+        "fixture-host",
+    )
+    .await
+    .unwrap();
+    let path = dir.path().join("identity.json");
+    std::fs::write(&path, b"saved login must survive").unwrap();
+    for patch in [
+        json!({"account_id":Uuid::new_v4()}),
+        json!({"owner_node_id":Uuid::new_v4()}),
+        json!({"email":"another@example.test"}),
+        json!({"node_secret":"corrupt"}),
+    ] {
+        let mut response = json!({"account_id":authority.account,"owner_node_id":host.owner.owner_node_id,"email":"owner@example.test","node_secret":"a".repeat(64)});
+        response
+            .as_object_mut()
+            .unwrap()
+            .extend(patch.as_object().unwrap().clone());
+        let guard = Mock::given(wiremock::matchers::path(
+            "/v1/controller/hosts/recover-node-secret",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .with_priority(1)
+        .mount_as_scoped(&server)
+        .await;
+        assert!(host
+            .login_secret(&path, "account-fixture", "owner@example.test")
+            .await
+            .is_err());
+        assert!(!secret_path(&path).exists());
+        drop(guard);
+    }
+    authority.outage.store(true, Ordering::SeqCst);
+    assert!(host
+        .login_secret(&path, "account-fixture", "owner@example.test")
+        .await
+        .is_err());
+    assert!(!secret_path(&path).exists());
+    assert_eq!(std::fs::read(&path).unwrap(), b"saved login must survive");
+    authority.outage.store(false, Ordering::SeqCst);
+    host.login_secret(&path, "account-fixture", "owner@example.test")
+        .await
+        .unwrap();
+    let before = server.received_requests().await.unwrap().len();
+    std::fs::write(secret_path(&path), b"corrupt").unwrap();
+    assert!(host
+        .login_secret(&path, "account-fixture", "owner@example.test")
+        .await
+        .is_err());
+    assert_eq!(server.received_requests().await.unwrap().len(), before);
     assert_eq!(std::fs::read(secret_path(&path)).unwrap(), b"corrupt");
 }
 
