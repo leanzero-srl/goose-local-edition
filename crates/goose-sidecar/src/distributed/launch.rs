@@ -12255,6 +12255,44 @@ mod pipeline_launch_tests {
         );
     }
 
+    /// 2026-10-28 (session 13): rank 0's media queue prepared every request it took without
+    /// waiting twice — its own get_nowait wrapped Queue.get_nowait, which is `self.get(block=False)`,
+    /// i.e. the already-wrapped get.
+    #[test]
+    fn the_media_queue_prepares_each_request_once() {
+        let source = include_str!("rank_media.py");
+        let start = source.find("    class MediaRequests(MediaQueue):").unwrap();
+        let end = source.find("    original_rg_init").unwrap();
+        let class: String = source[start..end]
+            .lines()
+            .map(|l| l.strip_prefix("    ").unwrap_or(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let check = format!(
+            "from queue import Queue as MediaQueue\n\
+             prepared = []\n\
+             def media_prepare(item):\n\
+             \x20   prepared.append(item)\n\
+             \x20   return item\n\
+             {class}\n\
+             q = MediaRequests()\n\
+             q.put('a'); q.put('b')\n\
+             assert q.get_nowait() == 'a' and q.get(timeout=1) == 'b'\n\
+             assert prepared == ['a', 'b'], prepared\n\
+             print('ok')\n"
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
     /// 2026-10-28: the MOPD omni build indexes `language_model.model.*`; mlx_lm's sharded_load
     /// looked parameters up as `model.*` and refused it on both ranks.
     #[test]

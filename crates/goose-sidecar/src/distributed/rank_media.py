@@ -130,11 +130,10 @@ if media_wanted(spec["model_dir"]):
     class MediaRequests(MediaQueue):
         """Rank 0's request queue: each request is prepared as the generation loop takes it."""
 
+        # Only `get`: Queue.get_nowait is `self.get(block=False)`, so it already comes through here
+        # (an own get_nowait prepared every request twice).
         def get(self, *args, **kwargs):
             return media_prepare(super().get(*args, **kwargs))
-
-        def get_nowait(self):
-            return media_prepare(super().get_nowait())
 
     original_rg_init = media_server.ResponseGenerator.__init__
 
