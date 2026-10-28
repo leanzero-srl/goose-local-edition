@@ -240,3 +240,93 @@ describe('the shared store keeps the old hooks’ truth rules', () => {
     }
   });
 });
+
+/**
+ * The owner's Engine panel sat on "Checking" for hours (3.0.132): one engine-status read never
+ * resolved, `tick()` skipped every later tick while it was "in flight", and no watcher ever saw a
+ * second state. Every read now has a time limit.
+ */
+describe('a read goose never answers', () => {
+  it('fails in words after its limit, and the next tick reads again', async () => {
+    let asked = 0;
+    const poll = createSharedPoll<string>(
+      () => {
+        asked += 1;
+        // The first read hangs forever; the ones after it answer.
+        return asked === 1 ? new Promise<string>(() => undefined) : Promise.resolve('answered');
+      },
+      { what: 'the engine status' }
+    );
+    let snap: ReturnType<typeof poll.snapshot> | null = null;
+    function Watch() {
+      snap = useSharedPoll(poll, { intervalMs: 2000 });
+      return null;
+    }
+    render(<Watch />);
+    await advance(0);
+    expect(asked).toBe(1);
+    // Inside the limit (3 ticks, at least 10 s) the read is still awaited: no second read stacked.
+    await advance(9_000);
+    expect(asked).toBe(1);
+    expect(snap!.reads).toBe(0);
+    // At the limit the read FAILS — a visible error, never an endless "Checking".
+    await advance(1_000);
+    expect(snap!.failed).toBe(true);
+    expect(snap!.value).toBeNull();
+    expect(String((snap!.error as Error).message)).toBe(
+      'goose did not answer the engine status in 10 s; reading it again'
+    );
+    // The in-flight slot is free again: the next tick reads, and its answer lands.
+    await advance(2_000);
+    expect(asked).toBe(2);
+    expect(snap!.failed).toBe(false);
+    expect(snap!.value).toBe('answered');
+  });
+
+  it('a late answer of a read that ran out of time is dropped', async () => {
+    let resolveLate: (v: string) => void = () => undefined;
+    let asked = 0;
+    const poll = createSharedPoll<string>(() => {
+      asked += 1;
+      if (asked === 1)
+        return new Promise<string>((r) => {
+          resolveLate = r;
+        });
+      return new Promise<string>(() => undefined);
+    });
+    let snap: ReturnType<typeof poll.snapshot> | null = null;
+    function Watch() {
+      snap = useSharedPoll(poll, { intervalMs: 60_000 });
+      return null;
+    }
+    render(<Watch />);
+    await advance(0);
+    // 3 x 60 s: a slow cadence gets a proportionally longer limit.
+    await advance(180_000);
+    expect(snap!.failed).toBe(true);
+    const failedReads = snap!.reads;
+    await act(async () => {
+      resolveLate('stale');
+    });
+    expect(snap!.value).toBeNull();
+    expect(snap!.reads).toBe(failedReads);
+  });
+
+  it('every store the app runs carries the bound (engine status, split status)', async () => {
+    engineStatus.mockReset().mockReturnValue(new Promise(() => undefined));
+    distributedStatus.mockReset().mockReturnValue(new Promise(() => undefined));
+    let engine: ReturnType<typeof useMlxEngineStatusPoll> | null = null;
+    let split: ReturnType<typeof useMlxDistributedStatus> | null = null;
+    function Watch() {
+      engine = useMlxEngineStatusPoll(true, 2000);
+      split = useMlxDistributedStatus(true);
+      return null;
+    }
+    const view = render(<Watch />);
+    await advance(0);
+    await advance(15_000);
+    expect(engine!.error).toContain('goose did not answer the engine status in 10 s');
+    expect(split!.error).toContain('goose did not answer the split’s status in 10 s');
+    view.unmount();
+  });
+});

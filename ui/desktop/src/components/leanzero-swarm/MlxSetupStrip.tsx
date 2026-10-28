@@ -16,6 +16,7 @@ const i18n = defineMessages({
   step2: { id: 'mlxSetup.step2', defaultMessage: 'Models' },
   step2Done: { id: 'mlxSetup.step2Done', defaultMessage: '{count} on your Macs' },
   step2Next: { id: 'mlxSetup.step2Next', defaultMessage: 'Get a model' },
+  step2Reading: { id: 'mlxSetup.step2Reading', defaultMessage: 'Reading your Macs…' },
   step3: { id: 'mlxSetup.step3', defaultMessage: 'Run it' },
   step3Done: { id: 'mlxSetup.step3Done', defaultMessage: '{model} running' },
   step3Next: { id: 'mlxSetup.step3Next', defaultMessage: 'Run a model' },
@@ -39,7 +40,8 @@ export interface SetupFacts {
   /** Macs Link reports reachable, this one included. */
   macsOnline: number;
   /** What the Models tab counts (`matrixRowCount`) — the strip and the tab badge never disagree. */
-  models: number;
+  /** `null` while no Mac's models folder has been read yet (never shown as 0). */
+  models: number | null;
   /** The model a way serves right now (single, remote single or split); null = nothing answers. */
   running: string | null;
   /** Node definitions (`nodes/read`); null = not read yet, so nothing is claimed. */
@@ -91,7 +93,7 @@ const STEP_TONE: Record<SetupStepState, Tone> = { done: 'ok', next: 'accent', la
 export function setupSteps(facts: SetupFacts): SetupStep[] {
   const done = [
     !facts.linkAvailable || facts.linkConnected,
-    facts.models > 0,
+    facts.models != null && facts.models > 0,
     facts.running != null,
     facts.nodes != null && facts.nodes > 0 && facts.runningHasNode !== false,
   ];
@@ -132,6 +134,7 @@ export function MlxSetupStrip({
             })
           : intl.formatMessage(i18n.step1Next);
       case 2:
+        if (facts.models == null) return intl.formatMessage(i18n.step2Reading);
         return done
           ? intl.formatMessage(i18n.step2Done, { count: facts.models })
           : intl.formatMessage(i18n.step2Next);

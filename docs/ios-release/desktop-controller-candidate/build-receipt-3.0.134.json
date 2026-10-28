@@ -1,0 +1,70 @@
+{
+  "source_tree": "c86a0b3313848a80995cd52e04bb4b06f780f6c9",
+  "base_source_tree": "8972b0a5423517fc3c9621816b92faf71568cf76",
+  "parent_commits": [
+    "1a7ba6df83",
+    "96e85f21ad"
+  ],
+  "source_archive_sha256": "ee66f5334b2f6d933a9238f347e11147bf8555ce58c3a86511479cb715641d5a",
+  "source_delta_sha256": "8b367e86fecb91852fe63b0c1e427a1986d0f9b36ce73a31f79401f6e5519bb3",
+  "host": "gabee",
+  "stage": "/tmp/goose-controller-merged-c86a0b33",
+  "original_job": {
+    "id": "laptop-20261028-201650-d684",
+    "exit": 101,
+    "failure": "Workspace Clippy native cpp-httplib compilation selected OpenSSL 4.1.0; X509_get_subject_name const-pointer mismatch"
+  },
+  "resume_job": {
+    "id": "laptop-20261028-203350-4b90",
+    "exit": 0,
+    "ended_utc": "2026-10-28T18:52:43Z",
+    "environment_fix": "Existing OpenSSL 3.6.2 selected via OPENSSL_DIR, OPENSSL_ROOT_DIR, PKG_CONFIG_PATH and scoped CMake OpenSSL cache reconfiguration; no product source edits"
+  },
+  "gates": {
+    "cargo_fmt": "pass",
+    "core_integration": {
+      "passed": 39,
+      "ignored": 1
+    },
+    "catalog_query_plan": {
+      "passed": 1
+    },
+    "link_all": {
+      "passed": 358,
+      "ignored": 5
+    },
+    "workspace_all_targets_clippy": "pass",
+    "cli_build": "pass",
+    "schema_sdk": "pass",
+    "schema_sdk_changed_files": [],
+    "desktop_typecheck_eslint_i18n": "pass",
+    "locale_count": 15,
+    "locale_message_count": 4115,
+    "desktop_full_vitest": {
+      "files_passed": 567,
+      "tests_passed": 5343,
+      "tests_skipped": 3
+    },
+    "full_desktop_package": "pass",
+    "i18n_source_diff_bytes": 0
+  },
+  "app_version": "3.0.134",
+  "cli_sha256": "5ba611eee51ee68160c4161f7236ab3e173f0fda0e844b55e8fca9bd64bc7586",
+  "unsigned_archive_sha256": "ce361f66af6158fd8b9c89adee5c9d103562546ec94f5efa63a08dcdaafb1895",
+  "archive_on_gabee": "/tmp/goose-controller-merged-c86a0b33/Goose-Swarm-unsigned.zip",
+  "archive_on_laptop": "/tmp/goose-controller-merged-c86a0b33-unsigned.zip",
+  "installed": false,
+  "launched": false,
+  "developer_id_signed": false,
+  "notarized": false,
+  "packager_ad_hoc_signatures": "Normal package hook rewrites Electron Mach-O UUIDs and applies ad-hoc signatures; no Developer ID signing or Apple upload",
+  "original_gabee_preserved": {
+    "app_pid": 65131,
+    "backend_pid": 65170,
+    "installed_cli_sha256": "38ba50802a44bbba744893273bb51ad083fbb3fd97fa1de798346f91b6eda3cc"
+  },
+  "scripts": {
+    "/tmp/goose-controller-merged-gabee-job.sh": "23e49cedd50ac78e3024858519d40957ffe5afcf7639bb2ef7d3730947b0fd52",
+    "/tmp/goose-controller-merged-gabee-resume.sh": "e78168f487f878c21b330143cd2f1bc41542527a6c62e11442e3165c884c08cb"
+  }
+}

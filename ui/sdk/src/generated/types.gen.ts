@@ -3021,11 +3021,17 @@ export type MlxEngineStatusDto = {
      * While `state` is "stopped": what left it stopped, since this goose started — `owner` (this
      * Mac's owner unmounted it) · `linkedMac` (a linked Mac unmounted it over LeanZero Link) ·
      * `notStarted` (no Unmount since this goose started: nothing has run the engine since its
-     * launch — what an app relaunch leaves). Absent in every other state, and from a goose
-     * before it. A Link peer whose chat route this engine served re-mounts it only on
-     * `notStarted`.
+     * launch — what an app relaunch leaves) · `outside` (something outside goose stopped the
+     * engine: a SIGTERM or SIGINT no goose path sent — a stop, not a failure; `stoppedOutside`
+     * says what ended). Absent in every other state, and from a goose before it. A Link peer
+     * whose chat route this engine served re-mounts it only on `notStarted`.
      */
     stoppedBy?: string | null;
+    /**
+     * When `stoppedBy` is `outside`: which engine process ended and how, in one neutral
+     * sentence. Absent otherwise.
+     */
+    stoppedOutside?: string | null;
     /**
      * What this Mac's owner last started serving here and did not stop — what this goose's own
      * launch restores (`mlxEngine/servingIntent`). Absent when nothing is recorded (and from a

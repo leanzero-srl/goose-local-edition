@@ -65,12 +65,20 @@ pub fn validate_model_id(id: &str) -> Result<()> {
     Ok(())
 }
 
+/// One API client for the process: a browse page fans out one tree listing per hit, and a
+/// fresh client per call paid a new DNS + TCP + TLS handshake for every one of them.
+/// `reqwest::Client` is a cheap `Arc` handle over one shared connection pool.
 fn api_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = reqwest::Client::builder()
         .user_agent("goose-sidecar")
         .timeout(Duration::from_secs(30))
         .build()
-        .context("building HuggingFace API client")
+        .context("building HuggingFace API client")?;
+    Ok(CLIENT.get_or_init(|| client).clone())
 }
 
 fn download_client() -> Result<reqwest::Client> {
@@ -473,20 +481,82 @@ pub async fn browse_mlx_models(params: &BrowseParams, token: Option<&str>) -> Re
             }
         })
         .collect();
-    let mut sizes = tokio::task::JoinSet::new();
-    for (index, hit) in hits.iter().enumerate() {
-        let id = hit.id.clone();
-        let token = token.map(str::to_owned);
-        sizes.spawn(async move {
-            let files = repo_files(&id, token.as_deref()).await?;
-            Ok::<_, anyhow::Error>((index, files.iter().map(|f| f.size).sum()))
-        });
-    }
-    while let Some(result) = sizes.join_next().await {
-        let (index, bytes) = result.context("model size task failed")??;
-        hits[index].size_bytes_estimate = Some(bytes);
-    }
+    let token = token.map(str::to_owned);
+    fill_sizes(
+        &mut hits,
+        move |id| {
+            let token = token.clone();
+            async move {
+                let files = repo_files(&id, token.as_deref()).await?;
+                Ok(files.iter().map(|f| f.size).sum())
+            }
+        },
+        SIZE_LOOKUP_TIMEOUT,
+    )
+    .await;
     Ok(BrowsePage { hits, next_cursor })
+}
+
+/// Upper bound on one hit's size lookup (a recursive tree listing). The lookups run in
+/// parallel, so this is also the most a slow repo can add to a browse page.
+const SIZE_LOOKUP_TIMEOUT: Duration = Duration::from_secs(4);
+/// A repo's download size only changes when the repo does: cached per (id, lastModified).
+const SIZE_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+const SIZE_CACHE_MAX: usize = 4096;
+
+type SizeCache = HashMap<(String, String), (Instant, u64)>;
+fn size_cache() -> &'static Mutex<SizeCache> {
+    static CACHE: std::sync::OnceLock<Mutex<SizeCache>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Fill `size_bytes_estimate` for every hit: cached sizes first, the rest looked up in
+/// parallel, each bounded by `per_repo`. A lookup that fails or times out leaves that one
+/// hit's size `None` (the table shows "—") instead of failing or holding the whole page:
+/// before 2026-10-27 one bad repo turned the page into "Browse failed" and the slowest
+/// listing set the page's latency.
+async fn fill_sizes<F, Fut>(hits: &mut [BrowseHit], lookup: F, per_repo: Duration)
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<u64>> + Send + 'static,
+{
+    let mut lookups = tokio::task::JoinSet::new();
+    {
+        let cache = size_cache().lock().unwrap_or_else(|e| e.into_inner());
+        for (index, hit) in hits.iter_mut().enumerate() {
+            let key = (
+                hit.id.clone(),
+                hit.last_modified.clone().unwrap_or_default(),
+            );
+            if let Some((at, bytes)) = cache.get(&key) {
+                if at.elapsed() < SIZE_CACHE_TTL {
+                    hit.size_bytes_estimate = Some(*bytes);
+                    continue;
+                }
+            }
+            let fut = lookup(hit.id.clone());
+            lookups.spawn(async move { (index, key, tokio::time::timeout(per_repo, fut).await) });
+        }
+    }
+    while let Some(joined) = lookups.join_next().await {
+        let Ok((index, key, outcome)) = joined else {
+            continue;
+        };
+        match outcome {
+            Ok(Ok(bytes)) => {
+                hits[index].size_bytes_estimate = Some(bytes);
+                let mut cache = size_cache().lock().unwrap_or_else(|e| e.into_inner());
+                if cache.len() >= SIZE_CACHE_MAX {
+                    cache.clear();
+                }
+                cache.insert(key, (Instant::now(), bytes));
+            }
+            Ok(Err(e)) => {
+                tracing::debug!(repo = %key.0, error = %format!("{e:#}"), "browse size lookup failed")
+            }
+            Err(_) => tracing::debug!(repo = %key.0, "browse size lookup timed out"),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1500,6 +1570,25 @@ pub fn list_local_models(models_dir: &Path) -> Result<Vec<LocalModel>> {
     Ok(models)
 }
 
+/// One model of `models_dir`, assessed alone — what `list_local_models` would report for
+/// `id`, without walking every other model. `mlxEngine/status` asks this for the selected
+/// model on every poll; walking all of them (every file stat'ed, every index parsed, over
+/// the NFS-linked SSD on Gabee) is what held the desktop's ACP requests for seconds.
+pub fn local_model(models_dir: &Path, id: &str) -> Result<Option<LocalModel>> {
+    validate_model_id(id)?;
+    let dir = models_dir.join(id);
+    if !dir.is_dir() || !dir.join("config.json").is_file() {
+        return Ok(None);
+    }
+    let assessment = assess_model_dir(&dir);
+    Ok(Some(LocalModel {
+        id: id.to_string(),
+        size_bytes: assessment.size_bytes,
+        complete: assessment.missing_files == 0,
+        missing_files: assessment.missing_files,
+    }))
+}
+
 struct ModelDirAssessment {
     size_bytes: u64,
     missing_files: u32,
@@ -1510,6 +1599,33 @@ const SAFETENSORS_INDEX: &str = "model.safetensors.index.json";
 #[derive(Deserialize)]
 struct SafetensorsIndex {
     weight_map: HashMap<String, String>,
+}
+
+/// The shard file names a safetensors index names, memoised per index file by (len, mtime):
+/// the indexes of the models on one Mac are megabytes of JSON (2.8 MB for 14 models on
+/// Gabee), and the status/models/placement polls re-parsed all of them several times a second.
+/// `Err` = the index could not be read (absent), `Ok(None)` = read but unparsable.
+fn index_shards(path: &Path) -> std::io::Result<Option<Arc<HashSet<String>>>> {
+    type Memo = HashMap<PathBuf, (u64, Option<SystemTime>, Option<Arc<HashSet<String>>>)>;
+    static MEMO: std::sync::OnceLock<Mutex<Memo>> = std::sync::OnceLock::new();
+    let memo = MEMO.get_or_init(|| Mutex::new(HashMap::new()));
+    let meta = std::fs::metadata(path)?;
+    let stamp = (meta.len(), meta.modified().ok());
+    if let Some((len, mtime, shards)) = memo.lock().unwrap_or_else(|e| e.into_inner()).get(path) {
+        if (*len, *mtime) == stamp && stamp.1.is_some() {
+            return Ok(shards.clone());
+        }
+    }
+    let bytes = std::fs::read(path)?;
+    let shards = serde_json::from_slice::<SafetensorsIndex>(&bytes)
+        .ok()
+        .map(|index| Arc::new(index.weight_map.into_values().collect::<HashSet<String>>()));
+    let mut memo = memo.lock().unwrap_or_else(|e| e.into_inner());
+    if memo.len() >= 1024 {
+        memo.clear();
+    }
+    memo.insert(path.to_path_buf(), (stamp.0, stamp.1, shards.clone()));
+    Ok(shards)
 }
 
 fn assess_model_dir(dir: &Path) -> ModelDirAssessment {
@@ -1540,28 +1656,25 @@ fn assess_model_dir(dir: &Path) -> ModelDirAssessment {
         }
     }
 
-    let missing_files = match std::fs::read(dir.join(SAFETENSORS_INDEX)) {
-        Ok(bytes) => match serde_json::from_slice::<SafetensorsIndex>(&bytes) {
-            Ok(index) => {
-                let shards: HashSet<&String> = index.weight_map.values().collect();
-                let missing: HashSet<&str> = shards
-                    .iter()
-                    .filter(|s| !matches!(files.get(s.as_str()), Some(size) if *size > 0))
-                    .map(|s| s.as_str())
-                    .collect();
-                let stray_parts = parts
-                    .iter()
-                    .filter(|p| {
-                        p.strip_suffix(".part")
-                            .is_none_or(|target| !missing.contains(target))
-                    })
-                    .count();
-                (missing.len() + stray_parts) as u32
-            }
-            // An unreadable index (e.g. itself a truncated download) cannot prove any
-            // shard present: the index is the one provably broken file.
-            Err(_) => 1 + parts.len() as u32,
-        },
+    let missing_files = match index_shards(&dir.join(SAFETENSORS_INDEX)) {
+        Ok(Some(shards)) => {
+            let missing: HashSet<&str> = shards
+                .iter()
+                .filter(|s| !matches!(files.get(s.as_str()), Some(size) if *size > 0))
+                .map(|s| s.as_str())
+                .collect();
+            let stray_parts = parts
+                .iter()
+                .filter(|p| {
+                    p.strip_suffix(".part")
+                        .is_none_or(|target| !missing.contains(target))
+                })
+                .count();
+            (missing.len() + stray_parts) as u32
+        }
+        // An unreadable index (e.g. itself a truncated download) cannot prove any
+        // shard present: the index is the one provably broken file.
+        Ok(None) => 1 + parts.len() as u32,
         Err(_) => {
             let has_safetensors = files.keys().any(|f| f.ends_with(".safetensors"));
             parts.len() as u32 + if has_safetensors { 0 } else { 1 }
@@ -1627,6 +1740,185 @@ fn lists_a_real_model(models_dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- 2026-10-27: browse sizes are bounded, best-effort and cached; one model assessed alone.
+
+    fn hit(id: &str, last_modified: &str) -> BrowseHit {
+        BrowseHit {
+            id: id.to_string(),
+            author: id.split('/').next().unwrap().to_string(),
+            downloads: 0,
+            likes: 0,
+            created_at: None,
+            last_modified: Some(last_modified.to_string()),
+            tags: vec![],
+            quant: None,
+            arch: None,
+            size_bytes_estimate: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn fill_sizes_bounds_a_hung_lookup_and_survives_a_failed_one() {
+        let mut hits = vec![
+            hit("t-bound/ok", "a"),
+            hit("t-bound/hung", "a"),
+            hit("t-bound/broken", "a"),
+        ];
+        let started = Instant::now();
+        fill_sizes(
+            &mut hits,
+            |id| async move {
+                match id.as_str() {
+                    "t-bound/ok" => Ok(42),
+                    "t-bound/hung" => {
+                        tokio::time::sleep(Duration::from_secs(60)).await;
+                        Ok(1)
+                    }
+                    _ => bail!("HTTP 500"),
+                }
+            },
+            Duration::from_millis(300),
+        )
+        .await;
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "page held {:?}",
+            started.elapsed()
+        );
+        assert_eq!(hits[0].size_bytes_estimate, Some(42));
+        assert_eq!(
+            hits[1].size_bytes_estimate, None,
+            "a hung lookup leaves its size empty"
+        );
+        assert_eq!(
+            hits[2].size_bytes_estimate, None,
+            "a failed lookup leaves its size empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn fill_sizes_waits_for_a_slow_lookup_inside_the_bound() {
+        // Control for the test above: the same slow lookup, inside the bound, IS filled — so
+        // the empty size there comes from the bound, not from the lookup never answering.
+        let mut hits = vec![hit("t-control/slow", "a")];
+        fill_sizes(
+            &mut hits,
+            |_| async {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                Ok(7)
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+        assert_eq!(hits[0].size_bytes_estimate, Some(7));
+    }
+
+    #[tokio::test]
+    async fn fill_sizes_runs_lookups_in_parallel() {
+        let mut hits: Vec<BrowseHit> = (0..10).map(|i| hit(&format!("t-par/m{i}"), "a")).collect();
+        let started = Instant::now();
+        fill_sizes(
+            &mut hits,
+            |_| async {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                Ok(1)
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+        // Ten 300 ms lookups one after another would take 3 s.
+        assert!(
+            started.elapsed() < Duration::from_millis(1500),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert!(hits.iter().all(|h| h.size_bytes_estimate == Some(1)));
+    }
+
+    #[tokio::test]
+    async fn fill_sizes_caches_per_repo_version() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let lookup = |calls: Arc<std::sync::atomic::AtomicUsize>| {
+            move |_id: String| {
+                let calls = calls.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(5)
+                }
+            }
+        };
+        let mut first = vec![hit("t-cache/m", "v1")];
+        fill_sizes(&mut first, lookup(calls.clone()), Duration::from_secs(5)).await;
+        let mut again = vec![hit("t-cache/m", "v1")];
+        fill_sizes(&mut again, lookup(calls.clone()), Duration::from_secs(5)).await;
+        assert_eq!(again[0].size_bytes_estimate, Some(5));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "same repo version: served from cache"
+        );
+        let mut changed = vec![hit("t-cache/m", "v2")];
+        fill_sizes(&mut changed, lookup(calls.clone()), Duration::from_secs(5)).await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "a changed repo is looked up again"
+        );
+    }
+
+    #[test]
+    fn local_model_matches_the_listing_and_ignores_the_other_models() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        for (id, shards) in [
+            ("pub/a", &["a-1.safetensors", "a-2.safetensors"][..]),
+            ("pub/b", &["b-1.safetensors"][..]),
+        ] {
+            let dir = root.join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("config.json"), "{}").unwrap();
+            let map: serde_json::Map<String, serde_json::Value> = shards
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (format!("w{i}"), serde_json::Value::from(*s)))
+                .collect();
+            std::fs::write(
+                dir.join(SAFETENSORS_INDEX),
+                serde_json::json!({ "weight_map": map }).to_string(),
+            )
+            .unwrap();
+            std::fs::write(dir.join(shards[0]), b"xx").unwrap();
+        }
+        let listed = list_local_models(root).unwrap();
+        for m in &listed {
+            let alone = local_model(root, &m.id).unwrap().unwrap();
+            assert_eq!(
+                (alone.size_bytes, alone.missing_files, alone.complete),
+                (m.size_bytes, m.missing_files, m.complete),
+                "{}",
+                m.id
+            );
+        }
+        assert_eq!(
+            local_model(root, "pub/a").unwrap().unwrap().missing_files,
+            1
+        );
+        assert!(local_model(root, "pub/absent").unwrap().is_none());
+        // The memoised index follows the file: completing the shard set is seen at once.
+        std::fs::write(root.join("pub/a/a-2.safetensors"), b"yy").unwrap();
+        assert!(local_model(root, "pub/a").unwrap().unwrap().complete);
+        // ...and so does a rewritten index (a different len) naming a new missing shard.
+        std::fs::write(
+            root.join("pub/a").join(SAFETENSORS_INDEX),
+            serde_json::json!({ "weight_map": { "w0": "a-1.safetensors", "w1": "a-2.safetensors", "w2": "a-3.safetensors" } }).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            local_model(root, "pub/a").unwrap().unwrap().missing_files,
+            1
+        );
+    }
 
     fn make_model(root: &Path, id: &str, files: &[(&str, usize)]) {
         let dir = root.join(id);

@@ -7606,7 +7606,14 @@
             "string",
             "null"
           ],
-          "description": "While `state` is \"stopped\": what left it stopped, since this goose started — `owner` (this\nMac's owner unmounted it) · `linkedMac` (a linked Mac unmounted it over LeanZero Link) ·\n`notStarted` (no Unmount since this goose started: nothing has run the engine since its\nlaunch — what an app relaunch leaves). Absent in every other state, and from a goose\nbefore it. A Link peer whose chat route this engine served re-mounts it only on\n`notStarted`."
+          "description": "While `state` is \"stopped\": what left it stopped, since this goose started — `owner` (this\nMac's owner unmounted it) · `linkedMac` (a linked Mac unmounted it over LeanZero Link) ·\n`notStarted` (no Unmount since this goose started: nothing has run the engine since its\nlaunch — what an app relaunch leaves) · `outside` (something outside goose stopped the\nengine: a SIGTERM or SIGINT no goose path sent — a stop, not a failure; `stoppedOutside`\nsays what ended). Absent in every other state, and from a goose before it. A Link peer\nwhose chat route this engine served re-mounts it only on `notStarted`."
+        },
+        "stoppedOutside": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "When `stoppedBy` is `outside`: which engine process ended and how, in one neutral\nsentence. Absent otherwise."
         },
         "servingIntent": {
           "anyOf": [

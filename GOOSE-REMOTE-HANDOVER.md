@@ -7,7 +7,7 @@ Original handover27October2026; resumed by owner28October2026. **Work active aga
 The owner requested this handover and a pause on27October, then explicitly resumed this work and its goal on28October. Automatic continuation `finish-goose-remote-testing` is **ACTIVE** again. The operational resume record is the current source of progress. Running benchmarks remain protected by the idle-only upgrade approval.
 
 Worktree: `/Users/mihaiperdum/.codex/worktrees/link-controller-plan/goose`.
-Branch: `codex/link-controller-plan`. The feature has **not been merged into main**. Do not assume a later checkout contains it. All task changes are committed; the intentionally untracked `ui/desktop/bundled-mcps` is a development symlink into the installed app, not source. Never package through it.
+Branch: `codex/link-controller-plan`. The feature has **not been merged into main**. Do not assume a later checkout contains it. The3.0.134 source reconciliation is currently in progress; the intentionally untracked `ui/desktop/bundled-mcps` is a development symlink into the installed app, not source. Never package through it.
 
 Read [the operational resume record](docs/plans/link-controller-resume.md) for exact artifacts, hashes, local helper paths, host identities and next actions. Read [the progress ledger](docs/plans/link-controller-progress.md) for evidence and historical corrections. Later dated receipts supersede earlier blocked states.
 
@@ -15,7 +15,11 @@ Read [the operational resume record](docs/plans/link-controller-resume.md) for e
 
 Desktop and iPhone/iPad must view sessions started on any linked Mac and send messages or nudges. Execution stays on its original Mac. Distinguish chats, Agent Work, shell/jobs and benchmarks from inference capacity. Mobile also manages remote Hugging Face downloads, nodes/providers and resources, supports multiple controller-only devices excluded from compute, and offers explicit manual fleet sync. Preserve desktop iconography, motion and themes with native mobile layouts. Prepare truthful SEO/App Store marketing and post-launch support.
 
-## What is already delivered and proved
+## Historical delivered proof — 27 October
+
+**Current28October change:** laptop and Gabee now run3.0.134 without the controller feature. A merge of origin/main96e85f21ad into this feature branch and a full new desktop build are in progress. Never downgrade them to the old3.0.132 candidate. Gabee returns controller/catalog method-not-found; ordinary Link remains connected. See the dated hold receipt and operational resume.
+
+## Previously proved
 
 - Native SwiftUI app and desktop/Link protocol implementation exist. Native package1.0.0/build1 is distribution-signed; desktop3.0.132 candidate is signed, Apple-notarized and independently verified. Signing is resolved.
 - Original laptop and Gabee are upgraded and connected. A real command from Gabee's desktop controller facade reached an isolated laptop session, and the actual desktop displayed the expected assistant reply. This is two-Mac proof, not native-phone proof.
@@ -25,7 +29,7 @@ Desktop and iPhone/iPad must view sessions started on any linked Mac and send me
 
 ## What remains
 
-1. Upgrade original workhorse and workmule **only when genuinely idle**, then verify enrollment, retained history/configuration, exact provider binding and restart. Read [host-upgrade procedure and receipts](docs/plans/link-controller-host-upgrade.md). Their current legacy hosts prevent iPad admission. Also align Gabee to the final catalog-corrected candidate when idle.
+1. Finish reconciliation with3.0.134, required gates, and a newly built/signed desktop candidate. Then upgrade original workhorse and workmule **only when genuinely idle**, then verify enrollment, retained history/configuration, exact provider binding and restart. Read [host-upgrade procedure and receipts](docs/plans/link-controller-host-upgrade.md). Their current legacy hosts prevent iPad admission. Also align laptop/Gabee to the newly reconciled candidate when idle.
 2. Prove the real iPad-to-Mac journeys: session history, send/nudge and actual response, command receipt/recovery, manual sync, resources, remote downloads/provider/node controls and controller exclusion. Preserve saved simulator authentication; never uninstall/reset to get a pass. Fixture/API success is not native UI proof.
 3. Complete physical-device network/lifecycle/accessibility qualification and remaining review/privacy/export/support/marketing requirements in [release preparation](docs/ios-release/README.md) and [launch plan](docs/ios-release/LAUNCH-PLAN.md). No physical device was detected at last check.
 4. Reconcile latest main, complete relevant final gates and independent review, then merge only with accurate final scope and existing release authority. Do not say the feature is merged or released until verified.

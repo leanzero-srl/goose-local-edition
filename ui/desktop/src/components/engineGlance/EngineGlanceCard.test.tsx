@@ -295,7 +295,7 @@ describe('EngineGlanceCard — Q-426: the desktop X closes it, at once', () => {
       const onClose = vi.fn();
       const props = renderCard(writing, { variant: 'desktop', collapsed, onClose });
       const x = screen.getByTestId('engine-glance-close');
-      expect(x.getAttribute('aria-label')).toBe('Close the floating window for this session');
+      expect(x.getAttribute('aria-label')).toBe('Close the floating window until something new starts');
       expect(x.hasAttribute('aria-expanded')).toBe(false);
       fireEvent.click(x);
       expect(onClose).toHaveBeenCalledOnce();
@@ -341,7 +341,7 @@ describe('EngineGlanceCard — Q-426: the desktop X closes it, at once', () => {
       onDismissHint,
     });
     const hint = screen.getByTestId('engine-glance-hint');
-    expect(hint.textContent).toBe('Close it here until you bring it backGot it');
+    expect(hint.textContent).toBe('Close it here — it comes back when something new startsGot it');
     fireEvent.click(screen.getByTestId('engine-glance-hint-dismiss'));
     expect(onDismissHint).toHaveBeenCalledOnce();
   });

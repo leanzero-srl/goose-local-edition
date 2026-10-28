@@ -2392,6 +2392,7 @@ impl Core {
                     mesh.clone(),
                     registry.clone(),
                     mesh_ip.clone(),
+                    peer_port,
                     control.resource_sampler(),
                 )
                 .await

@@ -10,8 +10,9 @@ import { createSharedPoll, useSharedPoll } from './sharedStatusPoll';
  * Mac used to run three timers on it. Every read also lands in `latestMlxDistributedStatus` (inside
  * `mlxDistributedStatus`), which the passive readers follow.
  */
-export const distributedStatusPoll = createSharedPoll<MlxDistributedStatus>(() =>
-  mlxDistributedStatus()
+export const distributedStatusPoll = createSharedPoll<MlxDistributedStatus>(
+  () => mlxDistributedStatus(),
+  { what: 'the split’s status' }
 );
 
 /**

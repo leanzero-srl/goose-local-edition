@@ -169,6 +169,9 @@ export async function runMlxTrayAction(action: MlxTrayRendererAction): Promise<v
  * into "stale" in the menu instead of being shown as live — and the watch keeps going while the
  * last good read said the run owns the Mac.
  */
+/** How often a window reads the split status while no run owns this Mac. */
+export const IDLE_SPLIT_READ_MS = 10_000;
+
 export function useMlxDistributedReporter(enabled: boolean): void {
   useEffect(() => {
     if (!enabled) return undefined;
@@ -206,6 +209,12 @@ export function useMlxDistributedReporter(enabled: boolean): void {
       }
     };
     void read();
+    // A rank another Mac starts here over Link begins with no tray open and no goose window in
+    // focus: a slow read while nothing is watched is how this Mac learns it serves one, so its
+    // floating window shows the part it plays (owner, 2026-10-27).
+    const idle = setInterval(() => {
+      if (!unwatch) void read();
+    }, IDLE_SPLIT_READ_MS);
     const onWake = () => void read();
     window.electron.on('mlx-distributed-wake', onWake);
     // Another window may have started a run while this one was in the background.
@@ -217,6 +226,7 @@ export function useMlxDistributedReporter(enabled: boolean): void {
     });
     return () => {
       disposed = true;
+      clearInterval(idle);
       unwatch?.();
       unwatch = null;
       unsubscribe();

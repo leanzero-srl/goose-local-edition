@@ -2,7 +2,14 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Gauge } from 'lucide-react';
 import { EngineGlanceCard, StageIcon, glanceHeadline } from './EngineGlanceCard';
-import { setGlancePrefs, useEngineGlance } from './glanceStore';
+import {
+  dismissGlanceFailure,
+  glanceFailureKey,
+  setGlancePrefs,
+  useDismissedGlanceFailure,
+  useEngineGlance,
+  withoutDismissedFailure,
+} from './glanceStore';
 import { dockRestorable, dockShown } from '../../utils/engineGlanceRules';
 import { nodeHref } from '../../utils/navigationUtils';
 import { defineMessages, useIntl } from '../../i18n';
@@ -12,7 +19,8 @@ import {
   useListedNamesVersion,
 } from '../sessionActivity/sessionActivityStore';
 import { useFormingOf } from '../forming/formingStore';
-import { FOCUS, MOTION, PHASE_FILL, RADIUS, ROW, SURFACE, WEIGHT, cx } from '../lz';
+import { Checkbox, FOCUS, MOTION, PHASE_FILL, RADIUS, ROW, SURFACE, WEIGHT, cx } from '../lz';
+import { desktopFloatOn, withDesktopOptIn } from '../../utils/engineGlance';
 
 /**
  * The engine glance inside a goose window: the card at the FOOT of the sidebar, between the
@@ -24,6 +32,10 @@ import { FOCUS, MOTION, PHASE_FILL, RADIUS, ROW, SURFACE, WEIGHT, cx } from '../
 
 const i18n = defineMessages({
   restore: { id: 'engineGlance.restore', defaultMessage: 'Show the engine card' },
+  floatTick: {
+    id: 'engineGlance.floatTick',
+    defaultMessage: 'Float a pill when goose is minimized',
+  },
   restoreTitle: {
     id: 'engineGlance.restoreTitle',
     defaultMessage: 'The engine card is hidden. Show it again at the foot of the sidebar.',
@@ -50,7 +62,11 @@ function useOpeners() {
 
 /** The docked card, or — hidden by the person — the one row that brings it back. */
 export function EngineGlanceDockSlot() {
-  const push = useEngineGlance();
+  const intl = useIntl();
+  const live = useEngineGlance();
+  const dismissed = useDismissedGlanceFailure();
+  // A failure the person dismissed stays off the card until its words change (glanceStore).
+  const push = live && withoutDismissedFailure(live, dismissed);
   useListedNamesVersion();
   const [expanded, setExpanded] = useState(false);
   const { openEngine, openSession, openNode } = useOpeners();
@@ -72,8 +88,21 @@ export function EngineGlanceDockSlot() {
         onToggleExpanded={() => setExpanded((v) => !v)}
         onCollapsedChange={() => undefined}
         onHide={() => void setGlancePrefs({ ...push.prefs, inApp: false })}
+        onDismissFailure={() => {
+          const key = glanceFailureKey(push.engine);
+          if (key != null) dismissGlanceFailure(key);
+        }}
         forming={forming}
         chatName={listedTitleOf}
+      />
+      {/* The opt-in, right where the engine is watched (owner, 2026-10-27: the floating pill shows
+          "only if I choose a tick in the main UI when minimizing"). Settings › App has the same. */}
+      <Checkbox
+        testId="engine-glance-float-tick"
+        className="mt-2 px-1"
+        checked={desktopFloatOn(push.prefs)}
+        onChange={(on) => void setGlancePrefs(withDesktopOptIn(push.prefs, on))}
+        label={<span className="text-lz-meta">{intl.formatMessage(i18n.floatTick)}</span>}
       />
     </div>
   );

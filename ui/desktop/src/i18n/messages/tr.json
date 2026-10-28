@@ -389,6 +389,9 @@
   "benchmarkSection.askAbout": {
     "defaultMessage": "Bu çalıştırma hakkında bir AI oturumu başlat"
   },
+  "benchmarkSection.build": {
+    "defaultMessage": "Derleme {index}"
+  },
   "benchmarkSection.cannotDeleteNoId": {
     "defaultMessage": "Bu oturumun henüz bir çalıştırma kimliği yok — başlatmadan birkaç an sonra görünür"
   },
@@ -430,6 +433,9 @@
   },
   "benchmarkSection.title": {
     "defaultMessage": "Benchmark"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 derleme"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Uzantı Güncellendi"
@@ -1286,6 +1292,9 @@
   "confirmCloseRun.body": {
     "defaultMessage": "Bu pencereyi kapatmak çalıştırmayı durdurur: pencerenin arka ucu serbest bırakılır ve altındaki swarm motoruna çıkış sinyali gönderilir."
   },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "Yanıtlamaya devam et"
+  },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "Çalışmaya devam et"
   },
@@ -1295,17 +1304,17 @@
   "confirmCloseRun.stopAndClose": {
     "defaultMessage": "Çalıştırmayı durdur ve kapat"
   },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "Yanıtı durdur ve kapat"
+  },
   "confirmCloseRun.stopping": {
     "defaultMessage": "Çalıştırma durduruluyor…"
   },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "Yanıt durduruluyor…"
+  },
   "confirmCloseRun.title": {
     "defaultMessage": "Bu pencerede bir swarm çalıştırması canlı"
-  },
-  "confirmCloseRun.warning": {
-    "defaultMessage": "Uyarı"
-  },
-  "confirmCloseRun.turnTitle": {
-    "defaultMessage": "Bu penceredeki bir sohbet hâlâ yanıt veriyor"
   },
   "confirmCloseRun.turnBody": {
     "defaultMessage": "Bu pencereyi kapatmak yanıtı durdurur: sohbet bu pencereden gönderildi ve yanıtı olduğu yerde biter."
@@ -1313,14 +1322,11 @@
   "confirmCloseRun.turnLine": {
     "defaultMessage": "Sohbet: {name}"
   },
-  "confirmCloseRun.keepAnswering": {
-    "defaultMessage": "Yanıtlamaya devam et"
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "Bu penceredeki bir sohbet hâlâ yanıt veriyor"
   },
-  "confirmCloseRun.stopAnswerAndClose": {
-    "defaultMessage": "Yanıtı durdur ve kapat"
-  },
-  "confirmCloseRun.stoppingAnswer": {
-    "defaultMessage": "Yanıt durduruluyor…"
+  "confirmCloseRun.warning": {
+    "defaultMessage": "Uyarı"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Hayır"
@@ -1463,8 +1469,104 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} token bağlam. Bu sohbetin son turunu yanıtlayan düğüm bağlam penceresini bildirmedi."
   },
-  "controller.work.refreshLog": {
-    "defaultMessage": "Günlüğü yenile"
+  "controller.catalog.archived": {
+    "defaultMessage": "Arşivlenmiş oturumları dahil et"
+  },
+  "controller.catalog.count": {
+    "defaultMessage": "{count} oturum"
+  },
+  "controller.catalog.detail": {
+    "defaultMessage": "Geçmişi açın, isteklere yanıt verin ve işi yürüten Mac'teki çalışmayı yönlendirin."
+  },
+  "controller.catalog.empty": {
+    "defaultMessage": "Uyumlu ve kullanılabilir bağlı Mac yok."
+  },
+  "controller.catalog.loading": {
+    "defaultMessage": "Bağlı Mac'lerinize bağlanılıyor…"
+  },
+  "controller.catalog.noSessions": {
+    "defaultMessage": "Bu Mac'te eşleşen oturum yok."
+  },
+  "controller.catalog.offline": {
+    "defaultMessage": "Çevrimdışı"
+  },
+  "controller.catalog.online": {
+    "defaultMessage": "Çevrimiçi"
+  },
+  "controller.catalog.owner": {
+    "defaultMessage": "Sorumlu Mac: {name}"
+  },
+  "controller.catalog.search": {
+    "defaultMessage": "Bağlı oturumlarda ara"
+  },
+  "controller.catalog.signIn": {
+    "defaultMessage": "Mac'lerinizi burada görmek için Ayarlar'da LeanZero Link'e giriş yapın."
+  },
+  "controller.catalog.stale": {
+    "defaultMessage": "Kaydedilmiş durum — yeniden bağlanılıyor"
+  },
+  "controller.catalog.sync": {
+    "defaultMessage": "Oturumları eşitle"
+  },
+  "controller.catalog.title": {
+    "defaultMessage": "Mac'lerinizdeki oturumlar"
+  },
+  "controller.catalog.updateRequired": {
+    "defaultMessage": "Goose güncellemesi gerekli"
+  },
+  "controller.input.answer": {
+    "defaultMessage": "Yanıtınız"
+  },
+  "controller.input.choose": {
+    "defaultMessage": "Bir değer seçin"
+  },
+  "controller.input.no": {
+    "defaultMessage": "Hayır"
+  },
+  "controller.input.unsupported": {
+    "defaultMessage": "Bu isteğe burada yanıt verilemez. Sorumlu Mac'te açın."
+  },
+  "controller.input.yes": {
+    "defaultMessage": "Evet"
+  },
+  "controller.receipt.accepted": {
+    "defaultMessage": "Sorumlu Mac tarafından kabul edildi"
+  },
+  "controller.receipt.delivered": {
+    "defaultMessage": "İletildi"
+  },
+  "controller.receipt.dispatching": {
+    "defaultMessage": "Sorumlu Mac bu komutu iletiyor"
+  },
+  "controller.receipt.outcomeUnknown": {
+    "defaultMessage": "Sorumlu Mac sonucu doğrulayamıyor. Başka bir komut denemeden önce oturumu kontrol edin."
+  },
+  "controller.receipt.rejected": {
+    "defaultMessage": "Sorumlu Mac tarafından reddedildi"
+  },
+  "controller.receipt.waiting": {
+    "defaultMessage": "Sonraki tur için sıraya alındı"
+  },
+  "controller.work.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "controller.work.back": {
+    "defaultMessage": "Tüm bağlı oturumlar"
+  },
+  "controller.work.check": {
+    "defaultMessage": "Alındı onayını kontrol et"
+  },
+  "controller.work.content": {
+    "defaultMessage": "Mesaj ayrıntıları"
+  },
+  "controller.work.deleted": {
+    "defaultMessage": "Bu çalışma silindi veya sorumlu Mac artık paylaşmıyor."
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "Önceki çıktı görüntülenirken otomatik günlük yenileme duraklatılır."
+  },
+  "controller.work.load": {
+    "defaultMessage": "Sorumlu Mac'ten yükleniyor…"
   },
   "controller.work.loadOlder": {
     "defaultMessage": "Önceki çıktıyı yükle"
@@ -1472,11 +1574,59 @@
   "controller.work.loadingOlder": {
     "defaultMessage": "Önceki çıktı yükleniyor…"
   },
-  "controller.work.historyPaused": {
-    "defaultMessage": "Önceki çıktı görüntülenirken otomatik günlük yenileme duraklatılır."
+  "controller.work.message": {
+    "defaultMessage": "{name} üzerindeki bu oturuma mesaj"
+  },
+  "controller.work.noMessages": {
+    "defaultMessage": "Henüz görünür mesaj yok."
   },
   "controller.work.noOutput": {
     "defaultMessage": "Henüz günlük çıktısı yok."
+  },
+  "controller.work.note": {
+    "defaultMessage": "Not ekle"
+  },
+  "controller.work.owner": {
+    "defaultMessage": "{name} üzerinde çalışıyor"
+  },
+  "controller.work.pause": {
+    "defaultMessage": "Duraklat"
+  },
+  "controller.work.queue": {
+    "defaultMessage": "Sonraki mesajı sıraya al"
+  },
+  "controller.work.refreshLog": {
+    "defaultMessage": "Günlüğü yenile"
+  },
+  "controller.work.reload": {
+    "defaultMessage": "Sorumlu Mac'in durumunu yeniden yükle"
+  },
+  "controller.work.resume": {
+    "defaultMessage": "Sürdür"
+  },
+  "controller.work.retry": {
+    "defaultMessage": "Aynı komutu yeniden dene"
+  },
+  "controller.work.send": {
+    "defaultMessage": "Gönder"
+  },
+  "controller.work.steer": {
+    "defaultMessage": "Geçerli çalışmayı yönlendir"
+  },
+  "controller.work.stop": {
+    "defaultMessage": "Geçerli çalışmayı durdur"
+  },
+  "controller.work.tick": {
+    "defaultMessage": "Bir döngü çalıştır"
+  },
+  "controller.work.unavailable": {
+    "defaultMessage": "Sorumlu Mac kullanılamıyor. Kaydedilmiş içerik güncel olmayabilir; kontroller devre dışı."
+  },
+  "controller.work.uncertain": {
+    "defaultMessage": "Alındı onayı gelmedi. Onayı kontrol edin veya aynı komutu yeniden deneyin."
+  },
+  "controller.work.user": {
+    "defaultMessage": "Siz"
   },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Konuşma Sınırları"
@@ -2135,11 +2285,29 @@
   "engineGlance.chat": {
     "defaultMessage": "Sohbet · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Yeni bir şey başlayana kadar yüzen pencereyi kapat"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Hapa küçült"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Bu hatayı kapat — yalnızca motor yeniden başarısız olursa geri gelir"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Yüzen pencere yeni bir şey başlayana kadar gizlendi"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "Ayarlar › Uygulama bölümünden geri getirin; orada kapatabilirsiniz de."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "Menü çubuğundaki goose simgesinden ya da Ayarlar › Uygulama bölümünden geri getirin; orada kapatabilirsiniz de."
+  },
   "engineGlance.expand": {
     "defaultMessage": "Kartın tamamını göster"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "goose küçültüldüğünde hap göster"
   },
   "engineGlance.forming": {
     "defaultMessage": "Ne yazıyor · {count, plural, one {# araç çağrısı} other {# araç çağrısı}}"
@@ -2152,6 +2320,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Bu kartı gizle — kenar çubuğunun altından veya Ayarlar › Uygulama bölümünden geri getir"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Buradan kapatın — yeni bir şey başladığında geri gelir"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Anladım"
@@ -2300,23 +2471,32 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "Motorun canlı kartının küçük hali: neyi okuyor ya da yazıyor, ne hızda ve hangi sohbete hizmet ediyor. Motoru açmak için tıklayın."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Masaüstünde yüzen"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "goose arka plandayken"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Motor her çalıştığında"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Kapalı"
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "İşaretleyene kadar kapalı. Diğer uygulamalarınızın üzerinde, sürüklediğiniz köşede küçük bir hap. goose'u yalnızca ⤢ düğmesi açar; sürüklemek onu yalnızca taşır, ✕ ise yeni bir iş, çalıştırma veya bölme başlayana kadar gizler."
+  },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "goose simge durumuna küçültüldüğünde veya arka plandayken yüzen bir etkinlik hapı göster"
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Ne zaman yüzer"
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Kapattınız — yeni bir şey başlayana kadar gizli."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Kenar çubuğunda"
   },
   "engineGlanceSettings.inAppDesc": {
     "defaultMessage": "Kenar çubuğunun altında, oturumlarınızın altında. Kartın kendisinden gizleyin; yerinde bıraktığı satırdan veya buradan geri gelir."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "Yeniden göster"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "Bir bakışta motor"
@@ -2624,6 +2804,117 @@
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "Başka bir yerde çalışan bir goose sunucusuna bağlanın (uygulamanın yeniden başlatılmasını gerektirir)"
   },
+  "forgeSeries.between": {
+    "defaultMessage": "Derleme 1 tamamlandı. Derleme 2 hazırlanıyor."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Derleme {index} / 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "Derleme başına {calls} çağrı"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Etkin derlemeyi durdurur ve sonraki derlemenin başlamasını engeller. Tamamlanan puanlar ve kanıtlar korunur; iptal hiçbir şey yayımlamaz."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "İki derlemeli bu karşılaştırma testini iptal etmek istiyor musunuz?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "İki derlemelik sıra iptal edildi"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "İki derlemelik sıra iptal edildi."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "İki derleme kontrol ediliyor…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "İptal edildi"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Tamamlanmadı"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "İki derleme tamamlandı."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Kalan derlemeyi yayımla"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "İki derlemelik sıra tamamlanmadı"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "İki derlemelik sıra tamamlanmadı."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Her iki derleme de tamamlandı"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "İki derleme tamamlanmadan uygulama kapandı. Kaydedilen kanıtlar korunur."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Bu uygulamada tek bir Çalıştır işlemi iki bağımsız derleme başlatır. İlk derleme puanlandıktan sonra ikincisi başlar; her biri kendi kanıtlarını saklar."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "leanzero.net üzerinde yayımlandı"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Yerel medyan {median} · aralık {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Yayımlama yanıtı yok"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Henüz puanlanmış derleme yok."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Derleme {index} / 2 hazırlanıyor"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Tek bir puanlanmış derleme geçici sonuçtur. İki derlemelik medyan mevcut değildir."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "2 derlemeyi yayımla"
+  },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Derlemeleri ayrı ayrı yayımla"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Yayın başlığı"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Derleme {index} / 2 yayımlanıyor…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "Başlamayı bekliyor"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "2 derlemeyi çalıştır"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Derleme {index} / 2 çalışıyor"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Puanlandı"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "Uygulama aynı model, görev ve ayarlarla iki yeni derlemeyi sırayla çalıştırır. Her biri kendi puanını ve kanıtlarını saklar."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Başlamadı"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "İki bağımsız derleme"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "İki derlemenin kaydedilen kanıtları okunamadı. Tekil derlemeler kullanılabilir durumda."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Derleme {index} kanıtlarını aç"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "Yayımlama için tamamlanmış, karşılaştırılabilir iki derleme ve bunların özgün kanıtları gerekir."
+  },
   "formingPanel.callChars": {
     "defaultMessage": "{chars} karakter"
   },
@@ -2765,6 +3056,9 @@
   "freeMemory.nuclearTotal": {
     "defaultMessage": "İşaretli: <b>{gb} GB</b>"
   },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Yalnızca {mac} üzerinde"
+  },
   "freeMemory.protectedChip": {
     "defaultMessage": "Korumalı"
   },
@@ -2785,9 +3079,6 @@
   },
   "freeMemory.remoteQuitOff": {
     "defaultMessage": "{mac}, diğer Mac’lerin uygulamalarını kapatmasına veya model sunucularını boşaltmasına izin vermiyor; bu yüzden buradan yalnızca goose’un kendi belleği boşaltılabilir. İzin vermek için {mac} üzerinde goose’u açın, Ayarlar › Uygulama bölümüne gidin ve “Bağlı Mac’lerin bu Mac’teki uygulamaları kapatmasına izin ver” seçeneğini açın. Ya da uygulamaları doğrudan {mac} üzerinde kapatın."
-  },
-  "freeMemory.onlyThere": {
-    "defaultMessage": "Yalnızca {mac} üzerinde"
   },
   "freeMemory.title": {
     "defaultMessage": "{mac} üzerinde bellek boşalt"
@@ -4310,14 +4601,14 @@
   "macLoad.policy": {
     "defaultMessage": "Biri bu Mac’i kullanırken"
   },
-  "macLoad.policyHint": {
-    "defaultMessage": "Meşgul ölçülerek belirlenir: tabanın üstündeki bellek, boş ağır iş yuvaları, çekirdek başına yük. Klavyedeki biri yalnızca eşitliği bozar."
-  },
   "macLoad.policy.allow": {
     "defaultMessage": "İşleri al"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "İşleri reddet"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "Meşgul ölçülerek belirlenir: tabanın üstündeki bellek, boş ağır iş yuvaları, çekirdek başına yük. Klavyedeki biri yalnızca eşitliği bozar."
   },
   "macLoad.queueNoTry": {
     "defaultMessage": "Henüz hiçbir Mac’e sunulmadı: önündeki bir iş bekliyor."
@@ -4345,6 +4636,27 @@
   },
   "macLoad.state": {
     "defaultMessage": "Durum"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "İptal ediliyor…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Bekliyor, sırada #{position}"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "İşlerim nerede çalışır"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Önce benim Mac’im"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Önce diğer Mac’ler"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Yeri varsa bu Mac’te, yoksa en çok yeri olan diğer Mac’te çalışır, o da yoksa sırada bekler."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "En çok yeri olan diğer Mac’te, yoksa bu Mac’te çalışır, o da yoksa sırada bekler. Bu Mac’i boş tutar."
   },
   "macLoad.title": {
     "defaultMessage": "Yük"
@@ -5648,6 +5960,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Motor ayarları okunamadı."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Yeniden oku"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Durdur"
   },
@@ -5728,6 +6043,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "{requester} bölmesinin {rank}. sırası · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Başka bir Mac'in bölmesinin {rank}. sırası · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "{requester} için {first}–{last} katmanlarını sunuyor · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Başka bir Mac için {first}–{last} katmanlarını sunuyor · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} bölmesinin {rank}. sırası · {model}"
@@ -5962,6 +6286,9 @@
   },
   "mlxSetup.step2Next": {
     "defaultMessage": "Bir model edinin"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Mac'leriniz okunuyor…"
   },
   "mlxSetup.step3": {
     "defaultMessage": "Çalıştır"
@@ -6224,6 +6551,9 @@
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Durduruldu"
   },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "goose dışında durduruldu"
+  },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Erişilemiyor"
   },
@@ -6380,6 +6710,9 @@
   "modelCustomFields.above": {
     "defaultMessage": "En yüksek değer {max}."
   },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Özel alanlar: kabul ettiği ayarları görmek için bir model kimliği seçin."
+  },
   "modelCustomFields.below": {
     "defaultMessage": "En düşük değer {min}."
   },
@@ -6397,6 +6730,9 @@
   },
   "modelCustomFields.modelDefault": {
     "defaultMessage": "Model varsayılanı ({value})"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Özel alanlar: {provider}, “{model}” için hiçbir alan bildirmiyor; bu yüzden sağlayıcının varsayılanlarıyla çalışır."
   },
   "modelCustomFields.notANumber": {
     "defaultMessage": "Bir sayı girin."
@@ -6935,6 +7271,9 @@
   "myMacs.reconnecting": {
     "defaultMessage": "Yeniden bağlanıyor… (bu Mac’in goose’u ile bağlantı koptu)"
   },
+  "myMacs.runJob": {
+    "defaultMessage": "İş çalıştır…"
+  },
   "myMacs.saveFailed": {
     "defaultMessage": "Anahtar kaydedilmedi"
   },
@@ -6949,6 +7288,9 @@
   },
   "myMacs.title": {
     "defaultMessage": "Mac’lerim"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "{seconds} sn önce güncellendi"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -6989,30 +7331,6 @@
   "needsYouCard.closeNotice": {
     "defaultMessage": "Bu bildirimi kapat"
   },
-  "needsYouCard.queued": {
-    "defaultMessage": "Sırada · bu tur bitince yanıtlar"
-  },
-  "needsYouCard.queuedChip": {
-    "defaultMessage": "Sırada"
-  },
-  "needsYouCard.sending": {
-    "defaultMessage": "Yanıtın gönderiliyor…"
-  },
-  "needsYouCard.stack": {
-    "defaultMessage": "{count, plural, one {Sana ihtiyaç var · # soru} other {Sana ihtiyaç var · # soru}}"
-  },
-  "needsYouCard.stackQueued": {
-    "defaultMessage": "{count} sırada"
-  },
-  "needsYouCard.unsentAnswer": {
-    "defaultMessage": "Yanıtın: {answer}"
-  },
-  "needsYouCard.unsentClosed": {
-    "defaultMessage": "Gönderilmedi — sıradaki yanıtın gidemeden bu soru kapatıldı."
-  },
-  "needsYouCard.unsentFailed": {
-    "defaultMessage": "Gönderilmedi — sıradaki yanıtın kaydedilemedi: {error}"
-  },
   "needsYouCard.dismiss": {
     "defaultMessage": "Kapat"
   },
@@ -7031,11 +7349,35 @@
   "needsYouCard.position": {
     "defaultMessage": "{index} / {total}"
   },
+  "needsYouCard.queued": {
+    "defaultMessage": "Sırada · bu tur bitince yanıtlar"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "Sırada"
+  },
   "needsYouCard.recommended": {
     "defaultMessage": "Önerilen"
   },
+  "needsYouCard.sending": {
+    "defaultMessage": "Yanıtın gönderiliyor…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, one {Sana ihtiyaç var · # soru} other {Sana ihtiyaç var · # soru}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} sırada"
+  },
   "needsYouCard.title": {
     "defaultMessage": "Sana ihtiyaç var"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Yanıtın: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Gönderilmedi — sıradaki yanıtın gidemeden bu soru kapatıldı."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Gönderilmedi — sıradaki yanıtın kaydedilemedi: {error}"
   },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX motorunun kayıtlı modeli {served} sunuyor; bu düğüm {wanted} istiyor. Modeli Providers’ta seçin."
@@ -9635,6 +9977,72 @@
   "responseStyle.detailedLabel": {
     "defaultMessage": "Detaylı"
   },
+  "runJob.best": {
+    "defaultMessage": "En iyi Mac"
+  },
+  "runJob.close": {
+    "defaultMessage": "Kapat"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Komut} other {İstem}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Ağır iş"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Bir Mac, yuvaları ve belleği kaç ağır işe (derleme, işleme, eğitim) yetiyorsa o kadarını çalıştırır."
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (kullanımda)"
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "bu Mac’te işler kapalı"
+  },
+  "runJob.kind": {
+    "defaultMessage": "Tür"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "İstem"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Kabuk komutu"
+  },
+  "runJob.mem": {
+    "defaultMessage": "Gereken bellek (GB, isteğe bağlı)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Şu anda hiçbir Mac bu işi alamıyor."
+  },
+  "runJob.none": {
+    "defaultMessage": "Şu anda Mac’lerinizin hiçbiri iş almıyor. İşleri çalıştıracak Mac’te “Diğer Mac’lerin gönderdiği işleri çalıştır” anahtarını açın."
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Şu an en iyi: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Gönderilmedi: {reason}"
+  },
+  "runJob.submit": {
+    "defaultMessage": "İşi çalıştır"
+  },
+  "runJob.target": {
+    "defaultMessage": "Çalıştırılacak yer"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Süre sınırı (saniye, isteğe bağlı)"
+  },
+  "runJob.title": {
+    "defaultMessage": "İşi şurada çalıştır…"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Şu anda hiçbir Mac’te yer yok. Çalıştırırsanız bu Mac’te sırada bekler ve yeri olan ilk Mac’te başlar."
+  },
   "scheduleDetailView.actions": {
     "defaultMessage": "Eylemler"
   },
@@ -10339,6 +10747,12 @@
   },
   "sessions.saving": {
     "defaultMessage": "Kaydediliyor..."
+  },
+  "sessions.scope.linked": {
+    "defaultMessage": "Bağlı Mac'ler"
+  },
+  "sessions.scope.local": {
+    "defaultMessage": "Bu Mac"
   },
   "sessions.search.noResults": {
     "defaultMessage": "Eşleşen oturum bulunamadı"
@@ -11741,29 +12155,29 @@
   "unansweredPrompt.appClosed": {
     "defaultMessage": "Tur yanıtsız bitti — goose çalışırken uygulama kapanmış olabilir."
   },
-  "unansweredPrompt.failed": {
-    "defaultMessage": "Tur bir yanıttan önce başarısız oldu."
-  },
-  "unansweredPrompt.failedWithReason": {
-    "defaultMessage": "Tur bir yanıttan önce başarısız oldu: {reason}"
-  },
-  "unansweredPrompt.resend": {
-    "defaultMessage": "Yeniden gönder"
-  },
-  "unansweredPrompt.title": {
-    "defaultMessage": "goose buna yanıt vermeden durdu"
-  },
   "unansweredPrompt.continue": {
     "defaultMessage": "Devam et"
   },
   "unansweredPrompt.continueMessage": {
     "defaultMessage": "Kaldığın yerden devam et."
   },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "Tur bir yanıttan önce başarısız oldu."
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "Tur bir yanıttan önce başarısız oldu: {reason}"
+  },
   "unansweredPrompt.midway": {
     "defaultMessage": "goose yarı yolda durdu"
   },
   "unansweredPrompt.midwayAppClosed": {
     "defaultMessage": "goose yarı yolda durdu — çalışırken uygulama kapandı"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "Yeniden gönder"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose buna yanıt vermeden durdu"
   },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "İptal"
@@ -11929,395 +12343,5 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
-  },
-  "engineGlance.close": {
-    "defaultMessage": "Yüzen pencereyi bu oturum boyunca kapat"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Buradan kapatın, geri getirene kadar kapalı kalır"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Yüzen pencere bu oturum boyunca gizlendi"
-  },
-  "engineGlance.dismissed.way": {
-    "defaultMessage": "Ayarlar › Uygulama bölümünden geri getirin; orada kapatabilirsiniz de."
-  },
-  "engineGlance.dismissed.wayTray": {
-    "defaultMessage": "Menü çubuğundaki goose simgesinden ya da Ayarlar › Uygulama bölümünden geri getirin; orada kapatabilirsiniz de."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Diğer uygulamalarınızın üzerinde, sürüklediğiniz köşede duran küçük bir pencere. Asla odağı almaz ve goose’u yalnızca ondan bir şey açtığınızda öne getirir. Kapatma düğmesi onu bu oturumun geri kalanında gizler."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Kapattınız — geri getirene kadar gizli."
-  },
-  "engineGlanceSettings.showAgain": {
-    "defaultMessage": "Yeniden göster"
-  },
-  "benchmarkSection.build": {
-    "defaultMessage": "Derleme {index}"
-  },
-  "benchmarkSection.twoBuilds": {
-    "defaultMessage": "2 derleme"
-  },
-  "forgeSeries.between": {
-    "defaultMessage": "Derleme 1 tamamlandı. Derleme 2 hazırlanıyor."
-  },
-  "forgeSeries.build": {
-    "defaultMessage": "Derleme {index} / 2"
-  },
-  "forgeSeries.callBudget": {
-    "defaultMessage": "Derleme başına {calls} çağrı"
-  },
-  "forgeSeries.cancelDetail": {
-    "defaultMessage": "Etkin derlemeyi durdurur ve sonraki derlemenin başlamasını engeller. Tamamlanan puanlar ve kanıtlar korunur; iptal hiçbir şey yayımlamaz."
-  },
-  "forgeSeries.cancelTitle": {
-    "defaultMessage": "İki derlemeli bu karşılaştırma testini iptal etmek istiyor musunuz?"
-  },
-  "forgeSeries.cancelled": {
-    "defaultMessage": "İki derlemelik sıra iptal edildi"
-  },
-  "forgeSeries.cancelledStatus": {
-    "defaultMessage": "İki derlemelik sıra iptal edildi."
-  },
-  "forgeSeries.checking": {
-    "defaultMessage": "İki derleme kontrol ediliyor…"
-  },
-  "forgeSeries.childCancelled": {
-    "defaultMessage": "İptal edildi"
-  },
-  "forgeSeries.childFailed": {
-    "defaultMessage": "Tamamlanmadı"
-  },
-  "forgeSeries.completeStatus": {
-    "defaultMessage": "İki derleme tamamlandı."
-  },
-  "forgeSeries.continuePublish": {
-    "defaultMessage": "Kalan derlemeyi yayımla"
-  },
-  "forgeSeries.failed": {
-    "defaultMessage": "İki derlemelik sıra tamamlanmadı"
-  },
-  "forgeSeries.failedStatus": {
-    "defaultMessage": "İki derlemelik sıra tamamlanmadı."
-  },
-  "forgeSeries.finished": {
-    "defaultMessage": "Her iki derleme de tamamlandı"
-  },
-  "forgeSeries.interrupted": {
-    "defaultMessage": "İki derleme tamamlanmadan uygulama kapandı. Kaydedilen kanıtlar korunur."
-  },
-  "forgeSeries.intro": {
-    "defaultMessage": "Bu uygulamada tek bir Çalıştır işlemi iki bağımsız derleme başlatır. İlk derleme puanlandıktan sonra ikincisi başlar; her biri kendi kanıtlarını saklar."
-  },
-  "forgeSeries.live": {
-    "defaultMessage": "leanzero.net üzerinde yayımlandı"
-  },
-  "forgeSeries.median": {
-    "defaultMessage": "Yerel medyan {median} · aralık {min}–{max}"
-  },
-  "forgeSeries.noResponse": {
-    "defaultMessage": "Yayımlama yanıtı yok"
-  },
-  "forgeSeries.noScore": {
-    "defaultMessage": "Henüz puanlanmış derleme yok."
-  },
-  "forgeSeries.preparing": {
-    "defaultMessage": "Derleme {index} / 2 hazırlanıyor"
-  },
-  "forgeSeries.provisional": {
-    "defaultMessage": "Tek bir puanlanmış derleme geçici sonuçtur. İki derlemelik medyan mevcut değildir."
-  },
-  "forgeSeries.publish": {
-    "defaultMessage": "2 derlemeyi yayımla"
-  },
-  "forgeSeries.publishSeparately": {
-    "defaultMessage": "Derlemeleri ayrı ayrı yayımla"
-  },
-  "forgeSeries.publishTitle": {
-    "defaultMessage": "Yayın başlığı"
-  },
-  "forgeSeries.publishing": {
-    "defaultMessage": "Derleme {index} / 2 yayımlanıyor…"
-  },
-  "forgeSeries.queued": {
-    "defaultMessage": "Başlamayı bekliyor"
-  },
-  "forgeSeries.run": {
-    "defaultMessage": "2 derlemeyi çalıştır"
-  },
-  "forgeSeries.running": {
-    "defaultMessage": "Derleme {index} / 2 çalışıyor"
-  },
-  "forgeSeries.scored": {
-    "defaultMessage": "Puanlandı"
-  },
-  "forgeSeries.settings": {
-    "defaultMessage": "Uygulama aynı model, görev ve ayarlarla iki yeni derlemeyi sırayla çalıştırır. Her biri kendi puanını ve kanıtlarını saklar."
-  },
-  "forgeSeries.skipped": {
-    "defaultMessage": "Başlamadı"
-  },
-  "forgeSeries.title": {
-    "defaultMessage": "İki bağımsız derleme"
-  },
-  "forgeSeries.unreadable": {
-    "defaultMessage": "İki derlemenin kaydedilen kanıtları okunamadı. Tekil derlemeler kullanılabilir durumda."
-  },
-  "forgeSeries.view": {
-    "defaultMessage": "Derleme {index} kanıtlarını aç"
-  },
-  "forgeSeries.waitingPublish": {
-    "defaultMessage": "Yayımlama için tamamlanmış, karşılaştırılabilir iki derleme ve bunların özgün kanıtları gerekir."
-  },
-  "modelCustomFields.awaitingModel": {
-    "defaultMessage": "Özel alanlar: kabul ettiği ayarları görmek için bir model kimliği seçin."
-  },
-  "modelCustomFields.noFields": {
-    "defaultMessage": "Özel alanlar: {provider}, “{model}” için hiçbir alan bildirmiyor; bu yüzden sağlayıcının varsayılanlarıyla çalışır."
-  },
-  "macLoad.stateCancelling": {
-    "defaultMessage": "İptal ediliyor…"
-  },
-  "macLoad.stateWaiting": {
-    "defaultMessage": "Bekliyor, sırada #{position}"
-  },
-  "macLoad.strategy": {
-    "defaultMessage": "İşlerim nerede çalışır"
-  },
-  "macLoad.strategy.localFirst": {
-    "defaultMessage": "Önce benim Mac’im"
-  },
-  "macLoad.strategy.selfish": {
-    "defaultMessage": "Önce diğer Mac’ler"
-  },
-  "macLoad.strategyHint.localFirst": {
-    "defaultMessage": "Yeri varsa bu Mac’te, yoksa en çok yeri olan diğer Mac’te çalışır, o da yoksa sırada bekler."
-  },
-  "macLoad.strategyHint.selfish": {
-    "defaultMessage": "En çok yeri olan diğer Mac’te, yoksa bu Mac’te çalışır, o da yoksa sırada bekler. Bu Mac’i boş tutar."
-  },
-  "myMacs.runJob": {
-    "defaultMessage": "İş çalıştır…"
-  },
-  "runJob.title": {
-    "defaultMessage": "İşi şurada çalıştır…"
-  },
-  "runJob.willQueue": {
-    "defaultMessage": "Şu anda hiçbir Mac’te yer yok. Çalıştırırsanız bu Mac’te sırada bekler ve yeri olan ilk Mac’te başlar."
-  },
-  "runJob.target": {
-    "defaultMessage": "Çalıştırılacak yer"
-  },
-  "runJob.best": {
-    "defaultMessage": "En iyi Mac"
-  },
-  "runJob.ranking": {
-    "defaultMessage": "Şu an en iyi: {macs}"
-  },
-  "runJob.refusal": {
-    "defaultMessage": "{mac}: {reason}"
-  },
-  "runJob.verdictLine": {
-    "defaultMessage": "{mac}: {verdict}"
-  },
-  "runJob.inUse": {
-    "defaultMessage": "{name} (kullanımda)"
-  },
-  "runJob.noPlace": {
-    "defaultMessage": "Şu anda hiçbir Mac bu işi alamıyor."
-  },
-  "runJob.none": {
-    "defaultMessage": "Şu anda Mac’lerinizin hiçbiri iş almıyor. İşleri çalıştıracak Mac’te “Diğer Mac’lerin gönderdiği işleri çalıştır” anahtarını açın."
-  },
-  "runJob.jobsOff": {
-    "defaultMessage": "bu Mac’te işler kapalı"
-  },
-  "runJob.kind": {
-    "defaultMessage": "Tür"
-  },
-  "runJob.kindShell": {
-    "defaultMessage": "Kabuk komutu"
-  },
-  "runJob.kindPrompt": {
-    "defaultMessage": "İstem"
-  },
-  "runJob.command": {
-    "defaultMessage": "{kind, select, shell {Komut} other {İstem}}"
-  },
-  "runJob.heavy": {
-    "defaultMessage": "Ağır iş"
-  },
-  "runJob.heavyHint": {
-    "defaultMessage": "Bir Mac, yuvaları ve belleği kaç ağır işe (derleme, işleme, eğitim) yetiyorsa o kadarını çalıştırır."
-  },
-  "runJob.mem": {
-    "defaultMessage": "Gereken bellek (GB, isteğe bağlı)"
-  },
-  "runJob.timeout": {
-    "defaultMessage": "Süre sınırı (saniye, isteğe bağlı)"
-  },
-  "runJob.submit": {
-    "defaultMessage": "İşi çalıştır"
-  },
-  "runJob.close": {
-    "defaultMessage": "Kapat"
-  },
-  "runJob.refused": {
-    "defaultMessage": "Gönderilmedi: {reason}"
-  },
-  "myMacs.updatedAgo": {
-    "defaultMessage": "{seconds} sn önce güncellendi"
-  },
-  "controller.catalog.archived": {
-    "defaultMessage": "Arşivlenmiş oturumları dahil et"
-  },
-  "controller.catalog.count": {
-    "defaultMessage": "{count} oturum"
-  },
-  "controller.catalog.detail": {
-    "defaultMessage": "Geçmişi açın, isteklere yanıt verin ve işi yürüten Mac'teki çalışmayı yönlendirin."
-  },
-  "controller.catalog.empty": {
-    "defaultMessage": "Uyumlu ve kullanılabilir bağlı Mac yok."
-  },
-  "controller.catalog.loading": {
-    "defaultMessage": "Bağlı Mac'lerinize bağlanılıyor…"
-  },
-  "controller.catalog.noSessions": {
-    "defaultMessage": "Bu Mac'te eşleşen oturum yok."
-  },
-  "controller.catalog.offline": {
-    "defaultMessage": "Çevrimdışı"
-  },
-  "controller.catalog.online": {
-    "defaultMessage": "Çevrimiçi"
-  },
-  "controller.catalog.owner": {
-    "defaultMessage": "Sorumlu Mac: {name}"
-  },
-  "controller.catalog.search": {
-    "defaultMessage": "Bağlı oturumlarda ara"
-  },
-  "controller.catalog.signIn": {
-    "defaultMessage": "Mac'lerinizi burada görmek için Ayarlar'da LeanZero Link'e giriş yapın."
-  },
-  "controller.catalog.stale": {
-    "defaultMessage": "Kaydedilmiş durum — yeniden bağlanılıyor"
-  },
-  "controller.catalog.sync": {
-    "defaultMessage": "Oturumları eşitle"
-  },
-  "controller.catalog.title": {
-    "defaultMessage": "Mac'lerinizdeki oturumlar"
-  },
-  "controller.catalog.updateRequired": {
-    "defaultMessage": "Goose güncellemesi gerekli"
-  },
-  "controller.input.answer": {
-    "defaultMessage": "Yanıtınız"
-  },
-  "controller.input.choose": {
-    "defaultMessage": "Bir değer seçin"
-  },
-  "controller.input.no": {
-    "defaultMessage": "Hayır"
-  },
-  "controller.input.unsupported": {
-    "defaultMessage": "Bu isteğe burada yanıt verilemez. Sorumlu Mac'te açın."
-  },
-  "controller.input.yes": {
-    "defaultMessage": "Evet"
-  },
-  "controller.receipt.accepted": {
-    "defaultMessage": "Sorumlu Mac tarafından kabul edildi"
-  },
-  "controller.receipt.delivered": {
-    "defaultMessage": "İletildi"
-  },
-  "controller.receipt.dispatching": {
-    "defaultMessage": "Sorumlu Mac bu komutu iletiyor"
-  },
-  "controller.receipt.outcomeUnknown": {
-    "defaultMessage": "Sorumlu Mac sonucu doğrulayamıyor. Başka bir komut denemeden önce oturumu kontrol edin."
-  },
-  "controller.receipt.rejected": {
-    "defaultMessage": "Sorumlu Mac tarafından reddedildi"
-  },
-  "controller.receipt.waiting": {
-    "defaultMessage": "Sonraki tur için sıraya alındı"
-  },
-  "controller.work.assistant": {
-    "defaultMessage": "Goose"
-  },
-  "controller.work.back": {
-    "defaultMessage": "Tüm bağlı oturumlar"
-  },
-  "controller.work.check": {
-    "defaultMessage": "Alındı onayını kontrol et"
-  },
-  "controller.work.content": {
-    "defaultMessage": "Mesaj ayrıntıları"
-  },
-  "controller.work.deleted": {
-    "defaultMessage": "Bu çalışma silindi veya sorumlu Mac artık paylaşmıyor."
-  },
-  "controller.work.load": {
-    "defaultMessage": "Sorumlu Mac'ten yükleniyor…"
-  },
-  "controller.work.message": {
-    "defaultMessage": "{name} üzerindeki bu oturuma mesaj"
-  },
-  "controller.work.noMessages": {
-    "defaultMessage": "Henüz görünür mesaj yok."
-  },
-  "controller.work.note": {
-    "defaultMessage": "Not ekle"
-  },
-  "controller.work.owner": {
-    "defaultMessage": "{name} üzerinde çalışıyor"
-  },
-  "controller.work.pause": {
-    "defaultMessage": "Duraklat"
-  },
-  "controller.work.queue": {
-    "defaultMessage": "Sonraki mesajı sıraya al"
-  },
-  "controller.work.reload": {
-    "defaultMessage": "Sorumlu Mac'in durumunu yeniden yükle"
-  },
-  "controller.work.resume": {
-    "defaultMessage": "Sürdür"
-  },
-  "controller.work.retry": {
-    "defaultMessage": "Aynı komutu yeniden dene"
-  },
-  "controller.work.send": {
-    "defaultMessage": "Gönder"
-  },
-  "controller.work.steer": {
-    "defaultMessage": "Geçerli çalışmayı yönlendir"
-  },
-  "controller.work.stop": {
-    "defaultMessage": "Geçerli çalışmayı durdur"
-  },
-  "controller.work.tick": {
-    "defaultMessage": "Bir döngü çalıştır"
-  },
-  "controller.work.unavailable": {
-    "defaultMessage": "Sorumlu Mac kullanılamıyor. Kaydedilmiş içerik güncel olmayabilir; kontroller devre dışı."
-  },
-  "controller.work.uncertain": {
-    "defaultMessage": "Alındı onayı gelmedi. Onayı kontrol edin veya aynı komutu yeniden deneyin."
-  },
-  "controller.work.user": {
-    "defaultMessage": "Siz"
-  },
-  "sessions.scope.linked": {
-    "defaultMessage": "Bağlı Mac'ler"
-  },
-  "sessions.scope.local": {
-    "defaultMessage": "Bu Mac"
   }
 }

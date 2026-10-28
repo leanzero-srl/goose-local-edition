@@ -8,7 +8,7 @@ import { useGlanceDrag } from './useGlanceDrag';
  * sized to its content (main fits the window to what this reports), moved by dragging its body and
  * snapped to a corner by main on release. It never navigates: every click is an action main runs.
  * Only the opening ones (the Open control, the chat line, the needs-you strip) bring a goose window
- * forward; the X closes it for the session and raises nothing (Q-426).
+ * forward; the X closes it until a new process starts and raises nothing (Q-426).
  */
 export function EngineGlanceDesktopRoot() {
   const push = useEngineGlance();
@@ -49,7 +49,15 @@ export function EngineGlanceDesktopRoot() {
 
   if (!push) return null;
   return (
-    <div ref={root} data-testid="engine-glance-desktop" className="inline-block w-max align-top">
+    <div
+      ref={root}
+      data-testid="engine-glance-desktop"
+      className="inline-block w-max align-top"
+      // Every press, before the control's own action: a real click activates goose (Electron's
+      // panel is not an NSPanel), and main pairs this press with the goose window that came forward
+      // to put it back (engineGlanceDesktop.ts).
+      onPointerDownCapture={() => glancePipAction({ type: 'press' })}
+    >
       <EngineGlanceCard
         push={push}
         variant="desktop"

@@ -380,10 +380,11 @@ describe('buildEngineGlance — which request the card leads with (Q-218)', () =
 });
 
 describe('the glance prefs and sessions', () => {
-  it('defaults: in the sidebar, and on the desktop only while goose is in the background', () => {
+  it('defaults: in the sidebar; NOT on the desktop until the person ticks it (owner, 2026-10-27)', () => {
     expect(DEFAULT_GLANCE_PREFS).toEqual({
       inApp: true,
       desktop: 'away',
+      desktopOptIn: false,
       desktopCollapsed: false,
       desktopPlace: null,
       desktopHintSeen: false,

@@ -6,10 +6,12 @@ import type { MlxEngineStatus } from '../acp/mlx-engine';
 const mockNodes = vi.fn();
 const mockStatus = vi.fn();
 const mockLive = vi.fn();
+const mockLinkStatus = vi.fn();
 
 vi.mock('../acp/leanzero-link', async (importActual) => ({
   ...(await importActual<typeof import('../acp/leanzero-link')>()),
   leanzeroLinkNodes: (...a: unknown[]) => mockNodes(...a),
+  leanzeroLinkStatus: (...a: unknown[]) => mockLinkStatus(...a),
 }));
 vi.mock('../acp/mlx-engine', async (importActual) => ({
   ...(await importActual<typeof import('../acp/mlx-engine')>()),
@@ -30,7 +32,17 @@ vi.mock('../components/leanzero-swarm/mlxLiveStats', async (importActual) => ({
   readMlxLiveStatus: (...a: unknown[]) => mockLive(...a),
 }));
 
-import { readMacsTrayReport } from './useLinkTrayReporter';
+import React from 'react';
+import { act, renderHook } from '@testing-library/react';
+import { LINK_CHANGED_EVENT } from '../acp/leanzero-link';
+import { IntlTestWrapper } from '../i18n/test-utils';
+import {
+  LINK_TRAY_POLL_MS,
+  LINK_TRAY_SETTLING_POLL_MS,
+  linkTrayReadDelayMs,
+  readMacsTrayReport,
+  useLinkTrayReporter,
+} from './useLinkTrayReporter';
 import { parseMlxLiveStatus } from '../components/leanzero-swarm/mlxLiveStats';
 
 const intl = createIntl({ locale: 'en', defaultLocale: 'en', messages: {} });
@@ -171,5 +183,47 @@ describe('the tray reads every Mac the way My Macs does', () => {
     } as unknown as LinkState);
     expect(report).toBeNull();
     expect(mockNodes).not.toHaveBeenCalled();
+  });
+});
+
+describe('tray reads after a Connect from any screen', () => {
+  it('keeps the settling cadence for a while after a change, then the steady one', () => {
+    expect(linkTrayReadDelayMs(false, 1000, 0)).toBe(LINK_TRAY_POLL_MS);
+    expect(linkTrayReadDelayMs(false, 1000, 5000)).toBe(LINK_TRAY_SETTLING_POLL_MS);
+    expect(linkTrayReadDelayMs(true, 9000, 0)).toBe(LINK_TRAY_SETTLING_POLL_MS);
+  });
+
+  it('a Link-changed event (the Link tab Connect) reads at once and again within 3 s', async () => {
+    vi.useFakeTimers();
+    try {
+      const electron = { on: vi.fn(), off: vi.fn(), macsReport: vi.fn() };
+      (window as unknown as { electron: unknown }).electron = electron;
+      // A settled, connected state: without the event the next read is 30 s away.
+      mockLinkStatus.mockResolvedValue({ auth: { state: 'connected' } });
+      mockNodes.mockResolvedValue({ self: node({ node_id: 'self-node' }), peers: [] });
+      mockStatus.mockResolvedValue(null);
+      const wrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(IntlTestWrapper, null, children);
+      const { unmount } = renderHook(() => useLinkTrayReporter(true), { wrapper });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      const afterMount = mockLinkStatus.mock.calls.length;
+      expect(afterMount).toBe(1);
+
+      await act(async () => {
+        window.dispatchEvent(new Event(LINK_CHANGED_EVENT));
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(mockLinkStatus.mock.calls.length).toBe(afterMount + 1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(LINK_TRAY_SETTLING_POLL_MS);
+      });
+      expect(mockLinkStatus.mock.calls.length).toBe(afterMount + 2);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

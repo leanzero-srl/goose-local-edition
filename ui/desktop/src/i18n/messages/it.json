@@ -389,6 +389,9 @@
   "benchmarkSection.askAbout": {
     "defaultMessage": "Avvia una sessione IA su questa esecuzione"
   },
+  "benchmarkSection.build": {
+    "defaultMessage": "Build {index}"
+  },
   "benchmarkSection.cannotDeleteNoId": {
     "defaultMessage": "Questa sessione non ha ancora un id di esecuzione — compare pochi istanti dopo l'avvio"
   },
@@ -430,6 +433,9 @@
   },
   "benchmarkSection.title": {
     "defaultMessage": "Benchmark"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 build"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Estensione aggiornata"
@@ -1286,6 +1292,9 @@
   "confirmCloseRun.body": {
     "defaultMessage": "Chiudendo questa finestra l'esecuzione si ferma: il backend della finestra viene rilasciato e al motore swarm sottostante viene segnalato di uscire."
   },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "Continua a rispondere"
+  },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "Continua a eseguire"
   },
@@ -1295,17 +1304,17 @@
   "confirmCloseRun.stopAndClose": {
     "defaultMessage": "Ferma l'esecuzione e chiudi"
   },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "Ferma la risposta e chiudi"
+  },
   "confirmCloseRun.stopping": {
     "defaultMessage": "Arresto dell'esecuzione…"
   },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "Arresto della risposta…"
+  },
   "confirmCloseRun.title": {
     "defaultMessage": "In questa finestra è attiva un'esecuzione swarm"
-  },
-  "confirmCloseRun.warning": {
-    "defaultMessage": "Attenzione"
-  },
-  "confirmCloseRun.turnTitle": {
-    "defaultMessage": "Una chat in questa finestra sta ancora rispondendo"
   },
   "confirmCloseRun.turnBody": {
     "defaultMessage": "Chiudendo questa finestra la risposta si ferma: la chat è stata inviata da questa finestra e la sua risposta finisce dove si trova."
@@ -1313,14 +1322,11 @@
   "confirmCloseRun.turnLine": {
     "defaultMessage": "Chat: {name}"
   },
-  "confirmCloseRun.keepAnswering": {
-    "defaultMessage": "Continua a rispondere"
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "Una chat in questa finestra sta ancora rispondendo"
   },
-  "confirmCloseRun.stopAnswerAndClose": {
-    "defaultMessage": "Ferma la risposta e chiudi"
-  },
-  "confirmCloseRun.stoppingAnswer": {
-    "defaultMessage": "Arresto della risposta…"
+  "confirmCloseRun.warning": {
+    "defaultMessage": "Attenzione"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "No"
@@ -1463,8 +1469,104 @@
   "contextWindowIndicator.windowUnknownTitle": {
     "defaultMessage": "{context} token di contesto. Il nodo che ha risposto all’ultimo turno di questa chat non ha indicato la sua finestra di contesto."
   },
-  "controller.work.refreshLog": {
-    "defaultMessage": "Aggiorna registro"
+  "controller.catalog.archived": {
+    "defaultMessage": "Includi sessioni archiviate"
+  },
+  "controller.catalog.count": {
+    "defaultMessage": "{count, plural, one {# sessione} other {# sessioni}}"
+  },
+  "controller.catalog.detail": {
+    "defaultMessage": "Apri la cronologia, rispondi alle richieste e guida il lavoro sul Mac che lo esegue."
+  },
+  "controller.catalog.empty": {
+    "defaultMessage": "Nessun Mac collegato compatibile disponibile."
+  },
+  "controller.catalog.loading": {
+    "defaultMessage": "Connessione ai tuoi Mac collegati…"
+  },
+  "controller.catalog.noSessions": {
+    "defaultMessage": "Nessuna sessione corrispondente su questo Mac."
+  },
+  "controller.catalog.offline": {
+    "defaultMessage": "Offline"
+  },
+  "controller.catalog.online": {
+    "defaultMessage": "Online"
+  },
+  "controller.catalog.owner": {
+    "defaultMessage": "Mac responsabile: {name}"
+  },
+  "controller.catalog.search": {
+    "defaultMessage": "Cerca sessioni collegate"
+  },
+  "controller.catalog.signIn": {
+    "defaultMessage": "Accedi a LeanZero Link nelle impostazioni per vedere qui i tuoi Mac."
+  },
+  "controller.catalog.stale": {
+    "defaultMessage": "Stato salvato — riconnessione"
+  },
+  "controller.catalog.sync": {
+    "defaultMessage": "Sincronizza sessioni"
+  },
+  "controller.catalog.title": {
+    "defaultMessage": "Sessioni sui tuoi Mac"
+  },
+  "controller.catalog.updateRequired": {
+    "defaultMessage": "Aggiornamento di Goose necessario"
+  },
+  "controller.input.answer": {
+    "defaultMessage": "La tua risposta"
+  },
+  "controller.input.choose": {
+    "defaultMessage": "Scegli un valore"
+  },
+  "controller.input.no": {
+    "defaultMessage": "No"
+  },
+  "controller.input.unsupported": {
+    "defaultMessage": "Non puoi rispondere a questa richiesta qui. Aprila sul Mac responsabile."
+  },
+  "controller.input.yes": {
+    "defaultMessage": "Sì"
+  },
+  "controller.receipt.accepted": {
+    "defaultMessage": "Accettato dal Mac responsabile"
+  },
+  "controller.receipt.delivered": {
+    "defaultMessage": "Consegnato"
+  },
+  "controller.receipt.dispatching": {
+    "defaultMessage": "Il Mac responsabile sta consegnando questo comando"
+  },
+  "controller.receipt.outcomeUnknown": {
+    "defaultMessage": "Il Mac responsabile non può confermare l’esito. Controlla la sessione prima di tentare un altro comando."
+  },
+  "controller.receipt.rejected": {
+    "defaultMessage": "Rifiutato dal Mac responsabile"
+  },
+  "controller.receipt.waiting": {
+    "defaultMessage": "In coda per il prossimo turno"
+  },
+  "controller.work.assistant": {
+    "defaultMessage": "Goose"
+  },
+  "controller.work.back": {
+    "defaultMessage": "Tutte le sessioni collegate"
+  },
+  "controller.work.check": {
+    "defaultMessage": "Controlla conferma"
+  },
+  "controller.work.content": {
+    "defaultMessage": "Dettagli del messaggio"
+  },
+  "controller.work.deleted": {
+    "defaultMessage": "Questo lavoro è stato eliminato o non è più condiviso dal Mac responsabile."
+  },
+  "controller.work.historyPaused": {
+    "defaultMessage": "L’aggiornamento automatico del registro è sospeso durante la visualizzazione dell’output precedente."
+  },
+  "controller.work.load": {
+    "defaultMessage": "Caricamento dal Mac responsabile…"
   },
   "controller.work.loadOlder": {
     "defaultMessage": "Carica output precedente"
@@ -1472,11 +1574,59 @@
   "controller.work.loadingOlder": {
     "defaultMessage": "Caricamento output precedente…"
   },
-  "controller.work.historyPaused": {
-    "defaultMessage": "L’aggiornamento automatico del registro è sospeso durante la visualizzazione dell’output precedente."
+  "controller.work.message": {
+    "defaultMessage": "Messaggio per questa sessione su {name}"
+  },
+  "controller.work.noMessages": {
+    "defaultMessage": "Nessun messaggio visibile per ora."
   },
   "controller.work.noOutput": {
     "defaultMessage": "Nessun output nel registro per ora."
+  },
+  "controller.work.note": {
+    "defaultMessage": "Aggiungi nota"
+  },
+  "controller.work.owner": {
+    "defaultMessage": "In esecuzione su {name}"
+  },
+  "controller.work.pause": {
+    "defaultMessage": "Pausa"
+  },
+  "controller.work.queue": {
+    "defaultMessage": "Accoda il prossimo messaggio"
+  },
+  "controller.work.refreshLog": {
+    "defaultMessage": "Aggiorna registro"
+  },
+  "controller.work.reload": {
+    "defaultMessage": "Ricarica stato del Mac responsabile"
+  },
+  "controller.work.resume": {
+    "defaultMessage": "Riprendi"
+  },
+  "controller.work.retry": {
+    "defaultMessage": "Riprova lo stesso comando"
+  },
+  "controller.work.send": {
+    "defaultMessage": "Invia"
+  },
+  "controller.work.steer": {
+    "defaultMessage": "Guida l’esecuzione corrente"
+  },
+  "controller.work.stop": {
+    "defaultMessage": "Ferma l’esecuzione corrente"
+  },
+  "controller.work.tick": {
+    "defaultMessage": "Esegui un ciclo"
+  },
+  "controller.work.unavailable": {
+    "defaultMessage": "Il Mac responsabile non è disponibile. I contenuti salvati potrebbero essere obsoleti; i controlli sono disabilitati."
+  },
+  "controller.work.uncertain": {
+    "defaultMessage": "Conferma non ricevuta. Controllala o riprova questo stesso comando."
+  },
+  "controller.work.user": {
+    "defaultMessage": "Tu"
   },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Limiti della conversazione"
@@ -2135,11 +2285,29 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Chiudi la finestra mobile finché non parte qualcosa di nuovo"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Riduci a pillola"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Ignora questo errore: ricompare solo se il motore si guasta di nuovo"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Finestra mobile nascosta finché non parte qualcosa di nuovo"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "Riportala da Impostazioni › App, dove puoi anche disattivarla."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "Riportala dall’icona di goose nella barra dei menu o da Impostazioni › App, dove puoi anche disattivarla."
+  },
   "engineGlance.expand": {
     "defaultMessage": "Mostra la scheda intera"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Mostra una pillola fluttuante quando goose è ridotto a icona"
   },
   "engineGlance.forming": {
     "defaultMessage": "Cosa sta scrivendo · {count, plural, one {# chiamata a strumento} other {# chiamate a strumenti}}"
@@ -2152,6 +2320,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Nascondi questa scheda — riportala dal fondo della barra laterale o da Impostazioni › App"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Chiudila qui: torna quando parte qualcosa di nuovo"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Capito"
@@ -2300,23 +2471,32 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "La scheda live del motore, in piccolo: cosa legge o scrive, quanto veloce e quale chat serve. Fai clic per aprire il motore."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Mobile sulla scrivania"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Mentre goose è in background"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Ogni volta che il motore lavora"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Spento"
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Disattivato finché non lo spunti. Una piccola pillola sopra le altre app, nell’angolo in cui la trascini. Solo il suo pulsante ⤢ apre goose; trascinarla la sposta soltanto, e la sua ✕ la nasconde finché non parte un nuovo lavoro, esecuzione o suddivisione."
+  },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Mostra una pillola di attività fluttuante quando goose è ridotto a icona o in background"
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Quando fluttua"
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "L’hai chiusa: nascosta finché non parte qualcosa di nuovo."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Nella barra laterale"
   },
   "engineGlanceSettings.inAppDesc": {
     "defaultMessage": "In fondo alla barra laterale, sotto le tue sessioni. Nascondila dalla scheda stessa; torna dalla riga che lascia al suo posto, o da qui."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "Mostrala di nuovo"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "Il motore a colpo d’occhio"
@@ -2624,6 +2804,117 @@
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "Connettiti a un server goose in esecuzione altrove (richiede il riavvio dell'app)"
   },
+  "forgeSeries.between": {
+    "defaultMessage": "Il build 1 è completo. Preparazione del build 2."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Build {index} di 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls} chiamate per build"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Interrompe il build attivo e impedisce l’avvio del successivo. I punteggi e le prove completati restano salvati; l’annullamento non pubblica nulla."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "Annullare questo benchmark di due build?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "La sequenza di due build è stata annullata"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Sequenza di due build annullata."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "Verifica dei due build…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Annullato"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Non completato"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Due build completati."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Pubblica il build rimanente"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "La sequenza di due build non è stata completata"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "La sequenza di due build non è stata completata."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Entrambi i build sono completi"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "L’app si è chiusa prima del completamento dei due build. Le prove salvate sono conservate."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Una sola azione Esegui avvia due build indipendenti in questa app. Il secondo parte dopo la valutazione del primo; ognuno conserva le proprie prove."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Pubblicato su leanzero.net"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Mediana locale {median} · intervallo {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Nessuna risposta alla pubblicazione"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Nessun build valutato è ancora disponibile."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Preparazione del build {index} di 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Un solo build valutato è provvisorio. La mediana di due build non è disponibile."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "Pubblica 2 build"
+  },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Pubblica le build separatamente"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Titolo della pubblicazione"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Pubblicazione del build {index} di 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "In attesa dell’avvio"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "Esegui 2 build"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Il build {index} di 2 è in esecuzione"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Valutato"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "L’app esegue due nuovi build in sequenza con gli stessi modello, attività e impostazioni. Ognuno conserva il proprio punteggio e le prove."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Non avviato"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Due build indipendenti"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "Impossibile leggere le prove salvate dei due build. I singoli build restano disponibili."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Apri le prove del build {index}"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "La pubblicazione richiede due build completi e confrontabili con le rispettive prove native."
+  },
   "formingPanel.callChars": {
     "defaultMessage": "{chars} caratteri"
   },
@@ -2765,6 +3056,9 @@
   "freeMemory.nuclearTotal": {
     "defaultMessage": "Spuntato: <b>{gb} GB</b>"
   },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Solo su {mac}"
+  },
   "freeMemory.protectedChip": {
     "defaultMessage": "Protetto"
   },
@@ -2785,9 +3079,6 @@
   },
   "freeMemory.remoteQuitOff": {
     "defaultMessage": "{mac} non permette ad altri Mac di chiudere le sue app o scaricare i suoi server di modelli, quindi da qui si può liberare solo la memoria di goose. Per consentirlo, apri goose su {mac}, vai in Impostazioni › App e attiva “Consenti ai Mac collegati di chiudere app su questo Mac”. Oppure chiudile direttamente su {mac}."
-  },
-  "freeMemory.onlyThere": {
-    "defaultMessage": "Solo su {mac}"
   },
   "freeMemory.title": {
     "defaultMessage": "Libera memoria su {mac}"
@@ -4310,14 +4601,14 @@
   "macLoad.policy": {
     "defaultMessage": "Mentre qualcuno usa questo Mac"
   },
-  "macLoad.policyHint": {
-    "defaultMessage": "Occupato significa misurato: memoria sopra la soglia, slot pesanti liberi, carico per core. Qualcuno alla tastiera decide solo a parità."
-  },
   "macLoad.policy.allow": {
     "defaultMessage": "Accetta job"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Rifiuta job"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "Occupato significa misurato: memoria sopra la soglia, slot pesanti liberi, carico per core. Qualcuno alla tastiera decide solo a parità."
   },
   "macLoad.queueNoTry": {
     "defaultMessage": "Non ancora offerto a nessun Mac: un job prima di questo è in attesa."
@@ -4345,6 +4636,27 @@
   },
   "macLoad.state": {
     "defaultMessage": "Stato"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "Annullamento…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "In attesa, n. {position} in coda"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Dove girano i miei job"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Prima il mio Mac"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Prima gli altri Mac"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Gira su questo Mac se ha spazio, altrimenti sull’altro Mac con più spazio, altrimenti attende in coda."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "Gira sull’altro Mac con più spazio, altrimenti su questo Mac, altrimenti attende in coda. Lascia libero questo Mac."
   },
   "macLoad.title": {
     "defaultMessage": "Carico"
@@ -5648,6 +5960,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Impossibile leggere le impostazioni del motore."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Rileggi"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Arresta"
   },
@@ -5728,6 +6043,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Rango {rank} della suddivisione di {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Rango {rank} della suddivisione di un altro Mac · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Serve i livelli {first}–{last} per {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Serve i livelli {first}–{last} per un altro Mac · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rango {rank} della suddivisione di {requester} · {model}"
@@ -5962,6 +6286,9 @@
   },
   "mlxSetup.step2Next": {
     "defaultMessage": "Ottieni un modello"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Lettura dei tuoi Mac…"
   },
   "mlxSetup.step3": {
     "defaultMessage": "Esegui"
@@ -6224,6 +6551,9 @@
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Arrestato"
   },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Arrestato fuori da goose"
+  },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Non raggiungibile"
   },
@@ -6380,6 +6710,9 @@
   "modelCustomFields.above": {
     "defaultMessage": "Il valore massimo è {max}."
   },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Campi personalizzati: scegli un ID modello per vedere le impostazioni che accetta."
+  },
   "modelCustomFields.below": {
     "defaultMessage": "Il valore minimo è {min}."
   },
@@ -6397,6 +6730,9 @@
   },
   "modelCustomFields.modelDefault": {
     "defaultMessage": "Predefinito del modello ({value})"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Campi personalizzati: {provider} non ne dichiara nessuno per «{model}», quindi funziona con i valori predefiniti del provider."
   },
   "modelCustomFields.notANumber": {
     "defaultMessage": "Inserisci un numero."
@@ -6935,6 +7271,9 @@
   "myMacs.reconnecting": {
     "defaultMessage": "Ricollegamento… (perso il contatto con il goose di questo Mac)"
   },
+  "myMacs.runJob": {
+    "defaultMessage": "Esegui un job…"
+  },
   "myMacs.saveFailed": {
     "defaultMessage": "L’interruttore non è stato salvato"
   },
@@ -6949,6 +7288,9 @@
   },
   "myMacs.title": {
     "defaultMessage": "I miei Mac"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "aggiornato {seconds} s fa"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -6989,30 +7331,6 @@
   "needsYouCard.closeNotice": {
     "defaultMessage": "Chiudi questo avviso"
   },
-  "needsYouCard.queued": {
-    "defaultMessage": "In coda · risponde quando questo turno finisce"
-  },
-  "needsYouCard.queuedChip": {
-    "defaultMessage": "In coda"
-  },
-  "needsYouCard.sending": {
-    "defaultMessage": "Invio della tua risposta…"
-  },
-  "needsYouCard.stack": {
-    "defaultMessage": "{count, plural, one {Ha bisogno di te · # domanda} other {Ha bisogno di te · # domande}}"
-  },
-  "needsYouCard.stackQueued": {
-    "defaultMessage": "{count} in coda"
-  },
-  "needsYouCard.unsentAnswer": {
-    "defaultMessage": "La tua risposta: {answer}"
-  },
-  "needsYouCard.unsentClosed": {
-    "defaultMessage": "Non inviata — questa domanda è stata chiusa prima che la tua risposta in coda potesse partire."
-  },
-  "needsYouCard.unsentFailed": {
-    "defaultMessage": "Non inviata — non è stato possibile salvare la tua risposta in coda: {error}"
-  },
   "needsYouCard.dismiss": {
     "defaultMessage": "Ignora"
   },
@@ -7031,11 +7349,35 @@
   "needsYouCard.position": {
     "defaultMessage": "{index} di {total}"
   },
+  "needsYouCard.queued": {
+    "defaultMessage": "In coda · risponde quando questo turno finisce"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "In coda"
+  },
   "needsYouCard.recommended": {
     "defaultMessage": "Consigliata"
   },
+  "needsYouCard.sending": {
+    "defaultMessage": "Invio della tua risposta…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, one {Ha bisogno di te · # domanda} other {Ha bisogno di te · # domande}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} in coda"
+  },
   "needsYouCard.title": {
     "defaultMessage": "Ha bisogno di te"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "La tua risposta: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Non inviata — questa domanda è stata chiusa prima che la tua risposta in coda potesse partire."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Non inviata — non è stato possibile salvare la tua risposta in coda: {error}"
   },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Il modello salvato del motore MLX serve {served}; questo nodo vuole {wanted}. Scegli il modello in Providers."
@@ -9635,6 +9977,72 @@
   "responseStyle.detailedLabel": {
     "defaultMessage": "Dettagliato"
   },
+  "runJob.best": {
+    "defaultMessage": "Mac migliore"
+  },
+  "runJob.close": {
+    "defaultMessage": "Chiudi"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Comando} other {Prompt}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Job pesante"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Un Mac esegue tanti job pesanti (build, rendering, addestramento) quanti ne consentono i suoi slot e la sua memoria."
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (in uso)"
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "i job sono disattivati su questo Mac"
+  },
+  "runJob.kind": {
+    "defaultMessage": "Tipo"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "Prompt"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Comando shell"
+  },
+  "runJob.mem": {
+    "defaultMessage": "Memoria necessaria (GB, facoltativo)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Nessun Mac può accettare questo job ora."
+  },
+  "runJob.none": {
+    "defaultMessage": "Nessuno dei tuoi Mac accetta job ora. Accendi «Esegui i job inviati da altri Mac» sul Mac che deve eseguirli."
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Migliori ora: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Non inviato: {reason}"
+  },
+  "runJob.submit": {
+    "defaultMessage": "Esegui job"
+  },
+  "runJob.target": {
+    "defaultMessage": "Esegui su"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Limite di tempo (secondi, facoltativo)"
+  },
+  "runJob.title": {
+    "defaultMessage": "Esegui un job su…"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Ora nessun Mac ha spazio. Se lo avvii, attende in coda su questo Mac e parte sul primo Mac che ha spazio."
+  },
   "scheduleDetailView.actions": {
     "defaultMessage": "Azioni"
   },
@@ -10339,6 +10747,12 @@
   },
   "sessions.saving": {
     "defaultMessage": "Salvataggio in corso..."
+  },
+  "sessions.scope.linked": {
+    "defaultMessage": "Mac collegati"
+  },
+  "sessions.scope.local": {
+    "defaultMessage": "Questo Mac"
   },
   "sessions.search.noResults": {
     "defaultMessage": "Nessuna sessione corrispondente trovata"
@@ -11741,29 +12155,29 @@
   "unansweredPrompt.appClosed": {
     "defaultMessage": "Il turno è terminato senza risposta — forse l’app si è chiusa mentre goose lavorava."
   },
-  "unansweredPrompt.failed": {
-    "defaultMessage": "Il turno non è riuscito prima di una risposta."
-  },
-  "unansweredPrompt.failedWithReason": {
-    "defaultMessage": "Il turno non è riuscito prima di una risposta: {reason}"
-  },
-  "unansweredPrompt.resend": {
-    "defaultMessage": "Invia di nuovo"
-  },
-  "unansweredPrompt.title": {
-    "defaultMessage": "goose si è fermato prima di rispondere a questo"
-  },
   "unansweredPrompt.continue": {
     "defaultMessage": "Continua"
   },
   "unansweredPrompt.continueMessage": {
     "defaultMessage": "Continua da dove eri rimasto."
   },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "Il turno non è riuscito prima di una risposta."
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "Il turno non è riuscito prima di una risposta: {reason}"
+  },
   "unansweredPrompt.midway": {
     "defaultMessage": "goose si è fermato a metà"
   },
   "unansweredPrompt.midwayAppClosed": {
     "defaultMessage": "goose si è fermato a metà — l’app si è chiusa mentre lavorava"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "Invia di nuovo"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose si è fermato prima di rispondere a questo"
   },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Annulla"
@@ -11929,395 +12343,5 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
-  },
-  "engineGlance.close": {
-    "defaultMessage": "Chiudi la finestra mobile per questa sessione"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Chiudila qui finché non la riporti"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Finestra mobile nascosta per questa sessione"
-  },
-  "engineGlance.dismissed.way": {
-    "defaultMessage": "Riportala da Impostazioni › App, dove puoi anche disattivarla."
-  },
-  "engineGlance.dismissed.wayTray": {
-    "defaultMessage": "Riportala dall’icona di goose nella barra dei menu o da Impostazioni › App, dove puoi anche disattivarla."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Una piccola finestra sopra le altre app, nell’angolo in cui la trascini. Non prende mai il focus e porta goose in primo piano solo quando apri qualcosa da lì. Il pulsante di chiusura la nasconde per il resto di questa sessione."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "L’hai chiusa: nascosta finché non la riporti."
-  },
-  "engineGlanceSettings.showAgain": {
-    "defaultMessage": "Mostrala di nuovo"
-  },
-  "benchmarkSection.build": {
-    "defaultMessage": "Build {index}"
-  },
-  "benchmarkSection.twoBuilds": {
-    "defaultMessage": "2 build"
-  },
-  "forgeSeries.between": {
-    "defaultMessage": "Il build 1 è completo. Preparazione del build 2."
-  },
-  "forgeSeries.build": {
-    "defaultMessage": "Build {index} di 2"
-  },
-  "forgeSeries.callBudget": {
-    "defaultMessage": "{calls} chiamate per build"
-  },
-  "forgeSeries.cancelDetail": {
-    "defaultMessage": "Interrompe il build attivo e impedisce l’avvio del successivo. I punteggi e le prove completati restano salvati; l’annullamento non pubblica nulla."
-  },
-  "forgeSeries.cancelTitle": {
-    "defaultMessage": "Annullare questo benchmark di due build?"
-  },
-  "forgeSeries.cancelled": {
-    "defaultMessage": "La sequenza di due build è stata annullata"
-  },
-  "forgeSeries.cancelledStatus": {
-    "defaultMessage": "Sequenza di due build annullata."
-  },
-  "forgeSeries.checking": {
-    "defaultMessage": "Verifica dei due build…"
-  },
-  "forgeSeries.childCancelled": {
-    "defaultMessage": "Annullato"
-  },
-  "forgeSeries.childFailed": {
-    "defaultMessage": "Non completato"
-  },
-  "forgeSeries.completeStatus": {
-    "defaultMessage": "Due build completati."
-  },
-  "forgeSeries.continuePublish": {
-    "defaultMessage": "Pubblica il build rimanente"
-  },
-  "forgeSeries.failed": {
-    "defaultMessage": "La sequenza di due build non è stata completata"
-  },
-  "forgeSeries.failedStatus": {
-    "defaultMessage": "La sequenza di due build non è stata completata."
-  },
-  "forgeSeries.finished": {
-    "defaultMessage": "Entrambi i build sono completi"
-  },
-  "forgeSeries.interrupted": {
-    "defaultMessage": "L’app si è chiusa prima del completamento dei due build. Le prove salvate sono conservate."
-  },
-  "forgeSeries.intro": {
-    "defaultMessage": "Una sola azione Esegui avvia due build indipendenti in questa app. Il secondo parte dopo la valutazione del primo; ognuno conserva le proprie prove."
-  },
-  "forgeSeries.live": {
-    "defaultMessage": "Pubblicato su leanzero.net"
-  },
-  "forgeSeries.median": {
-    "defaultMessage": "Mediana locale {median} · intervallo {min}–{max}"
-  },
-  "forgeSeries.noResponse": {
-    "defaultMessage": "Nessuna risposta alla pubblicazione"
-  },
-  "forgeSeries.noScore": {
-    "defaultMessage": "Nessun build valutato è ancora disponibile."
-  },
-  "forgeSeries.preparing": {
-    "defaultMessage": "Preparazione del build {index} di 2"
-  },
-  "forgeSeries.provisional": {
-    "defaultMessage": "Un solo build valutato è provvisorio. La mediana di due build non è disponibile."
-  },
-  "forgeSeries.publish": {
-    "defaultMessage": "Pubblica 2 build"
-  },
-  "forgeSeries.publishSeparately": {
-    "defaultMessage": "Pubblica le build separatamente"
-  },
-  "forgeSeries.publishTitle": {
-    "defaultMessage": "Titolo della pubblicazione"
-  },
-  "forgeSeries.publishing": {
-    "defaultMessage": "Pubblicazione del build {index} di 2…"
-  },
-  "forgeSeries.queued": {
-    "defaultMessage": "In attesa dell’avvio"
-  },
-  "forgeSeries.run": {
-    "defaultMessage": "Esegui 2 build"
-  },
-  "forgeSeries.running": {
-    "defaultMessage": "Il build {index} di 2 è in esecuzione"
-  },
-  "forgeSeries.scored": {
-    "defaultMessage": "Valutato"
-  },
-  "forgeSeries.settings": {
-    "defaultMessage": "L’app esegue due nuovi build in sequenza con gli stessi modello, attività e impostazioni. Ognuno conserva il proprio punteggio e le prove."
-  },
-  "forgeSeries.skipped": {
-    "defaultMessage": "Non avviato"
-  },
-  "forgeSeries.title": {
-    "defaultMessage": "Due build indipendenti"
-  },
-  "forgeSeries.unreadable": {
-    "defaultMessage": "Impossibile leggere le prove salvate dei due build. I singoli build restano disponibili."
-  },
-  "forgeSeries.view": {
-    "defaultMessage": "Apri le prove del build {index}"
-  },
-  "forgeSeries.waitingPublish": {
-    "defaultMessage": "La pubblicazione richiede due build completi e confrontabili con le rispettive prove native."
-  },
-  "modelCustomFields.awaitingModel": {
-    "defaultMessage": "Campi personalizzati: scegli un ID modello per vedere le impostazioni che accetta."
-  },
-  "modelCustomFields.noFields": {
-    "defaultMessage": "Campi personalizzati: {provider} non ne dichiara nessuno per «{model}», quindi funziona con i valori predefiniti del provider."
-  },
-  "macLoad.stateCancelling": {
-    "defaultMessage": "Annullamento…"
-  },
-  "macLoad.stateWaiting": {
-    "defaultMessage": "In attesa, n. {position} in coda"
-  },
-  "macLoad.strategy": {
-    "defaultMessage": "Dove girano i miei job"
-  },
-  "macLoad.strategy.localFirst": {
-    "defaultMessage": "Prima il mio Mac"
-  },
-  "macLoad.strategy.selfish": {
-    "defaultMessage": "Prima gli altri Mac"
-  },
-  "macLoad.strategyHint.localFirst": {
-    "defaultMessage": "Gira su questo Mac se ha spazio, altrimenti sull’altro Mac con più spazio, altrimenti attende in coda."
-  },
-  "macLoad.strategyHint.selfish": {
-    "defaultMessage": "Gira sull’altro Mac con più spazio, altrimenti su questo Mac, altrimenti attende in coda. Lascia libero questo Mac."
-  },
-  "myMacs.runJob": {
-    "defaultMessage": "Esegui un job…"
-  },
-  "runJob.title": {
-    "defaultMessage": "Esegui un job su…"
-  },
-  "runJob.willQueue": {
-    "defaultMessage": "Ora nessun Mac ha spazio. Se lo avvii, attende in coda su questo Mac e parte sul primo Mac che ha spazio."
-  },
-  "runJob.target": {
-    "defaultMessage": "Esegui su"
-  },
-  "runJob.best": {
-    "defaultMessage": "Mac migliore"
-  },
-  "runJob.ranking": {
-    "defaultMessage": "Migliori ora: {macs}"
-  },
-  "runJob.refusal": {
-    "defaultMessage": "{mac}: {reason}"
-  },
-  "runJob.verdictLine": {
-    "defaultMessage": "{mac}: {verdict}"
-  },
-  "runJob.inUse": {
-    "defaultMessage": "{name} (in uso)"
-  },
-  "runJob.noPlace": {
-    "defaultMessage": "Nessun Mac può accettare questo job ora."
-  },
-  "runJob.none": {
-    "defaultMessage": "Nessuno dei tuoi Mac accetta job ora. Accendi «Esegui i job inviati da altri Mac» sul Mac che deve eseguirli."
-  },
-  "runJob.jobsOff": {
-    "defaultMessage": "i job sono disattivati su questo Mac"
-  },
-  "runJob.kind": {
-    "defaultMessage": "Tipo"
-  },
-  "runJob.kindShell": {
-    "defaultMessage": "Comando shell"
-  },
-  "runJob.kindPrompt": {
-    "defaultMessage": "Prompt"
-  },
-  "runJob.command": {
-    "defaultMessage": "{kind, select, shell {Comando} other {Prompt}}"
-  },
-  "runJob.heavy": {
-    "defaultMessage": "Job pesante"
-  },
-  "runJob.heavyHint": {
-    "defaultMessage": "Un Mac esegue tanti job pesanti (build, rendering, addestramento) quanti ne consentono i suoi slot e la sua memoria."
-  },
-  "runJob.mem": {
-    "defaultMessage": "Memoria necessaria (GB, facoltativo)"
-  },
-  "runJob.timeout": {
-    "defaultMessage": "Limite di tempo (secondi, facoltativo)"
-  },
-  "runJob.submit": {
-    "defaultMessage": "Esegui job"
-  },
-  "runJob.close": {
-    "defaultMessage": "Chiudi"
-  },
-  "runJob.refused": {
-    "defaultMessage": "Non inviato: {reason}"
-  },
-  "myMacs.updatedAgo": {
-    "defaultMessage": "aggiornato {seconds} s fa"
-  },
-  "controller.catalog.archived": {
-    "defaultMessage": "Includi sessioni archiviate"
-  },
-  "controller.catalog.count": {
-    "defaultMessage": "{count, plural, one {# sessione} other {# sessioni}}"
-  },
-  "controller.catalog.detail": {
-    "defaultMessage": "Apri la cronologia, rispondi alle richieste e guida il lavoro sul Mac che lo esegue."
-  },
-  "controller.catalog.empty": {
-    "defaultMessage": "Nessun Mac collegato compatibile disponibile."
-  },
-  "controller.catalog.loading": {
-    "defaultMessage": "Connessione ai tuoi Mac collegati…"
-  },
-  "controller.catalog.noSessions": {
-    "defaultMessage": "Nessuna sessione corrispondente su questo Mac."
-  },
-  "controller.catalog.offline": {
-    "defaultMessage": "Offline"
-  },
-  "controller.catalog.online": {
-    "defaultMessage": "Online"
-  },
-  "controller.catalog.owner": {
-    "defaultMessage": "Mac responsabile: {name}"
-  },
-  "controller.catalog.search": {
-    "defaultMessage": "Cerca sessioni collegate"
-  },
-  "controller.catalog.signIn": {
-    "defaultMessage": "Accedi a LeanZero Link nelle impostazioni per vedere qui i tuoi Mac."
-  },
-  "controller.catalog.stale": {
-    "defaultMessage": "Stato salvato — riconnessione"
-  },
-  "controller.catalog.sync": {
-    "defaultMessage": "Sincronizza sessioni"
-  },
-  "controller.catalog.title": {
-    "defaultMessage": "Sessioni sui tuoi Mac"
-  },
-  "controller.catalog.updateRequired": {
-    "defaultMessage": "Aggiornamento di Goose necessario"
-  },
-  "controller.input.answer": {
-    "defaultMessage": "La tua risposta"
-  },
-  "controller.input.choose": {
-    "defaultMessage": "Scegli un valore"
-  },
-  "controller.input.no": {
-    "defaultMessage": "No"
-  },
-  "controller.input.unsupported": {
-    "defaultMessage": "Non puoi rispondere a questa richiesta qui. Aprila sul Mac responsabile."
-  },
-  "controller.input.yes": {
-    "defaultMessage": "Sì"
-  },
-  "controller.receipt.accepted": {
-    "defaultMessage": "Accettato dal Mac responsabile"
-  },
-  "controller.receipt.delivered": {
-    "defaultMessage": "Consegnato"
-  },
-  "controller.receipt.dispatching": {
-    "defaultMessage": "Il Mac responsabile sta consegnando questo comando"
-  },
-  "controller.receipt.outcomeUnknown": {
-    "defaultMessage": "Il Mac responsabile non può confermare l’esito. Controlla la sessione prima di tentare un altro comando."
-  },
-  "controller.receipt.rejected": {
-    "defaultMessage": "Rifiutato dal Mac responsabile"
-  },
-  "controller.receipt.waiting": {
-    "defaultMessage": "In coda per il prossimo turno"
-  },
-  "controller.work.assistant": {
-    "defaultMessage": "Goose"
-  },
-  "controller.work.back": {
-    "defaultMessage": "Tutte le sessioni collegate"
-  },
-  "controller.work.check": {
-    "defaultMessage": "Controlla conferma"
-  },
-  "controller.work.content": {
-    "defaultMessage": "Dettagli del messaggio"
-  },
-  "controller.work.deleted": {
-    "defaultMessage": "Questo lavoro è stato eliminato o non è più condiviso dal Mac responsabile."
-  },
-  "controller.work.load": {
-    "defaultMessage": "Caricamento dal Mac responsabile…"
-  },
-  "controller.work.message": {
-    "defaultMessage": "Messaggio per questa sessione su {name}"
-  },
-  "controller.work.noMessages": {
-    "defaultMessage": "Nessun messaggio visibile per ora."
-  },
-  "controller.work.note": {
-    "defaultMessage": "Aggiungi nota"
-  },
-  "controller.work.owner": {
-    "defaultMessage": "In esecuzione su {name}"
-  },
-  "controller.work.pause": {
-    "defaultMessage": "Pausa"
-  },
-  "controller.work.queue": {
-    "defaultMessage": "Accoda il prossimo messaggio"
-  },
-  "controller.work.reload": {
-    "defaultMessage": "Ricarica stato del Mac responsabile"
-  },
-  "controller.work.resume": {
-    "defaultMessage": "Riprendi"
-  },
-  "controller.work.retry": {
-    "defaultMessage": "Riprova lo stesso comando"
-  },
-  "controller.work.send": {
-    "defaultMessage": "Invia"
-  },
-  "controller.work.steer": {
-    "defaultMessage": "Guida l’esecuzione corrente"
-  },
-  "controller.work.stop": {
-    "defaultMessage": "Ferma l’esecuzione corrente"
-  },
-  "controller.work.tick": {
-    "defaultMessage": "Esegui un ciclo"
-  },
-  "controller.work.unavailable": {
-    "defaultMessage": "Il Mac responsabile non è disponibile. I contenuti salvati potrebbero essere obsoleti; i controlli sono disabilitati."
-  },
-  "controller.work.uncertain": {
-    "defaultMessage": "Conferma non ricevuta. Controllala o riprova questo stesso comando."
-  },
-  "controller.work.user": {
-    "defaultMessage": "Tu"
-  },
-  "sessions.scope.linked": {
-    "defaultMessage": "Mac collegati"
-  },
-  "sessions.scope.local": {
-    "defaultMessage": "Questo Mac"
   }
 }

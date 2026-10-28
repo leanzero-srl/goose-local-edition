@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     controller_auth::{AuthenticatedDevice, DispatchAuthorization},
-    mesh::{BackendState, MeshError, MeshStatus},
+    mesh::{BackendState, MeshError, MeshPeer, MeshStatus},
     peer_dial::MeshProxy,
     pubsub::PubSub,
     state::PeerRegistryConfig,
@@ -50,7 +50,13 @@ mod quit_lifecycle {
         .await
         .unwrap();
         let handle = host
-            .activate(mesh, registry(), "100.64.0.1".into(), resources())
+            .activate(
+                mesh,
+                registry(),
+                "100.64.0.1".into(),
+                crate::control::DEFAULT_CONTROL_PORT,
+                resources(),
+            )
             .await
             .unwrap();
         assert!(authority.runtime.lock().unwrap().is_some());
@@ -397,6 +403,7 @@ impl ControllerHostFactory for Factory {
 
 struct FakeMesh {
     key: Mutex<Option<String>>,
+    peers: Mutex<Vec<MeshPeer>>,
     reauth: AtomicUsize,
     resume: AtomicUsize,
 }
@@ -422,7 +429,7 @@ impl Mesh for FakeMesh {
             self_hostname: Some("fixture-host".into()),
             backend_state: BackendState::Running,
             online: true,
-            peers: vec![],
+            peers: self.peers.lock().unwrap().clone(),
         })
     }
     async fn peer_proxy(&self) -> Result<MeshProxy, MeshError> {
@@ -447,6 +454,7 @@ struct AuthorityFixture {
     revoked: AtomicBool,
     recovery_response: Mutex<Option<Value>>,
     confirmation_response: Mutex<Option<(u16, Value)>>,
+    peer_snapshot: Mutex<Option<Value>>,
     directory: PathBuf,
 }
 
@@ -514,7 +522,7 @@ impl wiremock::Respond for AuthorityFixture {
                 self.highwater.store(revision,Ordering::SeqCst); *runtime = Some(id);
                 ResponseTemplate::new(200).set_body_json(json!({"lease_id":self.lease,"lease_expires_at":Utc::now()+chrono::Duration::seconds(90),"host_revision":1}))
             }
-            "/v1/controller/hosts/peers" => ResponseTemplate::new(200).set_body_json(json!({"protocol_version":1,"lease_seconds":30,"revision":2,"peers":[{"mesh_node_key":format!("nodekey:{}","a".repeat(64)),"role":"host","owner_node_id":owner()},{"mesh_node_key":format!("nodekey:{}","b".repeat(64)),"role":"controller","owner_node_id":null}]})),
+            "/v1/controller/hosts/peers" => ResponseTemplate::new(200).set_body_json(self.peer_snapshot.lock().unwrap().clone().unwrap_or_else(|| json!({"protocol_version":1,"lease_seconds":30,"revision":2,"peers":[{"mesh_node_key":format!("nodekey:{}","a".repeat(64)),"role":"host","owner_node_id":owner()},{"mesh_node_key":format!("nodekey:{}","b".repeat(64)),"role":"controller","owner_node_id":null}]}))),
             "/v1/controller/introspect" => {
                 if self.revoked.load(Ordering::SeqCst) || body["token"] != "device-fixture-token" { return ResponseTemplate::new(200).set_body_json(json!({"active":false})); }
                 ResponseTemplate::new(200).set_body_json(json!({"active":true,"account_id":self.account,"device_id":Uuid::new_v4(),"device_revision":1,"role":"controller","owner_node_id":owner(),"scopes":["catalog.read"],"token_expires_at":Utc::now()+chrono::Duration::hours(1),"lease_seconds":30,"host_revision":1,"store_generation":self.generation,"host_lease_id":self.lease}))
@@ -550,6 +558,7 @@ async fn fixture() -> (
         revoked: AtomicBool::new(false),
         recovery_response: Mutex::new(None),
         confirmation_response: Mutex::new(None),
+        peer_snapshot: Mutex::new(None),
         directory: directory.clone(),
     });
     let responder = authority.clone();
@@ -566,6 +575,7 @@ async fn fixture() -> (
     });
     let mesh = Arc::new(FakeMesh {
         key: Mutex::new(Some(format!("nodekey:{}", "f".repeat(64)))),
+        peers: Mutex::new(Vec::new()),
         reauth: AtomicUsize::new(0),
         resume: AtomicUsize::new(0),
     });
@@ -931,6 +941,100 @@ async fn recovery_rejects_wrong_account_owner_and_email_and_preserves_missing_se
 }
 
 #[tokio::test]
+async fn authority_renewal_admits_an_existing_mesh_host_without_a_mesh_change() {
+    let (_dir, server, authority, factory, mesh) = fixture().await;
+    let peer_key = format!("nodekey:{}", "c".repeat(64));
+    let phone_key = format!("nodekey:{}", "b".repeat(64));
+    *mesh.peers.lock().unwrap() = vec![
+        MeshPeer {
+            mesh_node_key: Some(peer_key.clone()),
+            hostname: "late-host".into(),
+            ip: Some("100.64.0.2".into()),
+            online: true,
+            last_seen: None,
+        },
+        MeshPeer {
+            mesh_node_key: Some(phone_key.clone()),
+            hostname: "phone".into(),
+            ip: Some("100.64.0.3".into()),
+            online: true,
+            last_seen: None,
+        },
+    ];
+    let host = PreparedHost::prepare(
+        factory.clone(),
+        WorkerClient::new(server.uri()).unwrap(),
+        "account-fixture",
+        "owner@example.test",
+        "fixture-host",
+    )
+    .await
+    .unwrap();
+    host.enroll(
+        mesh.as_ref(),
+        host.mesh_context().await.unwrap(),
+        "fixture-host",
+    )
+    .await
+    .unwrap();
+    let original_mesh = mesh.status().await.unwrap();
+    let original_credentials =
+        std::fs::read(factory.directory.join("host-credential.json")).unwrap();
+    let peer_port = crate::control::DEFAULT_CONTROL_PORT + 1;
+    assert_ne!(peer_port, host.tls.local_addr.port());
+    let registry = registry();
+    let handle = host
+        .activate(
+            mesh.clone(),
+            registry.clone(),
+            "100.64.0.1".into(),
+            peer_port,
+            resources(),
+        )
+        .await
+        .unwrap();
+    // The mesh already sees both peers, but neither has an authoritative host role yet.
+    assert!(registry.peer_nodes().is_empty());
+    assert!(registry.compute_peer_nodes().is_empty());
+    *authority.peer_snapshot.lock().unwrap() = Some(json!({
+        "protocol_version": 1,
+        "lease_seconds": 30,
+        "revision": 3,
+        "peers": [
+            {"mesh_node_key": peer_key, "role": "host", "owner_node_id": Uuid::new_v4()},
+            {"mesh_node_key": phone_key, "role": "controller", "owner_node_id": null}
+        ]
+    }));
+
+    // Exercise activate's actual renewal task; no direct registry reconciliation here.
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while registry.peer_node("late-host").is_none() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("authority renewal must admit the already observed host");
+    assert!(handle.error().is_none(), "{:?}", handle.error());
+    assert_eq!(mesh.status().await.unwrap(), original_mesh);
+    assert_eq!(registry.peer_nodes().len(), 1);
+    assert_eq!(registry.compute_peer_nodes().len(), 1);
+    assert!(registry.require_compute_peer("late-host").is_ok());
+    assert_eq!(
+        registry.peer_base_url("late-host"),
+        Some(format!("http://100.64.0.2:{peer_port}"))
+    );
+    assert!(registry.peer_node("phone").is_none());
+    assert!(registry.require_compute_peer("phone").is_err());
+    assert_eq!(mesh.reauth.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        std::fs::read(factory.directory.join("host-credential.json")).unwrap(),
+        original_credentials
+    );
+    handle.shutdown(false).await.unwrap();
+    registry.shutdown();
+}
+
+#[tokio::test]
 async fn actual_tls_opens_after_enrollment_and_lease_then_fails_closed_and_recovers() {
     let (_dir, server, authority, factory, mesh) = fixture().await;
     let worker = WorkerClient::new(server.uri()).unwrap();
@@ -975,7 +1079,13 @@ async fn actual_tls_opens_after_enrollment_and_lease_then_fails_closed_and_recov
     .unwrap();
     assert_eq!(mesh.reauth.load(Ordering::SeqCst), 1);
     let handle = host
-        .activate(mesh.clone(), registry(), "100.64.0.1".into(), resources())
+        .activate(
+            mesh.clone(),
+            registry(),
+            "100.64.0.1".into(),
+            crate::control::DEFAULT_CONTROL_PORT,
+            resources(),
+        )
         .await
         .unwrap();
     let response = client
@@ -1268,7 +1378,13 @@ mod ambiguous_host_enrollment {
         assert_eq!(requests(&calls, "/mesh/confirm"), 1);
         assert_eq!(requests(&calls, "/lease"), 0);
         let handle = host
-            .activate(mesh, registry(), "100.64.0.1".into(), resources())
+            .activate(
+                mesh,
+                registry(),
+                "100.64.0.1".into(),
+                crate::control::DEFAULT_CONTROL_PORT,
+                resources(),
+            )
             .await
             .unwrap();
         assert!(authority.runtime.lock().unwrap().is_some());

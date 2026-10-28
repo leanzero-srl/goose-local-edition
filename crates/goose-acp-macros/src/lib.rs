@@ -80,7 +80,6 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     // Box route futures so unrelated handlers do not inflate the dispatcher stack frame.
-    // Desktop ACP runs on Tokio workers with their default stack size.
     let arms: Vec<_> = routes
         .iter()
         .map(|route| {

@@ -618,6 +618,7 @@ impl PreparedHost {
         mesh: Arc<dyn Mesh>,
         registry: PeerRegistry,
         mesh_ip: String,
+        peer_port: u16,
         resources: HostResourceSampler,
     ) -> Result<ControllerHostHandle, LinkError> {
         registry.peer_authority_unavailable();
@@ -655,8 +656,14 @@ impl PreparedHost {
             backend: backend.clone(),
         });
         save_json(&self.directory.join("runtime.json"), &self.runtime_id)?;
-        self.renew(mesh.as_ref(), &registry, backend.clone(), authority.clone())
-            .await?;
+        self.renew(
+            mesh.as_ref(),
+            &registry,
+            peer_port,
+            backend.clone(),
+            authority.clone(),
+        )
+        .await?;
         let gate = self.gate.clone();
         let error = Arc::new(RwLock::new(None));
         let task_error = error.clone();
@@ -680,6 +687,7 @@ impl PreparedHost {
                         result = self.renew(
                         mesh.as_ref(),
                         &task_registry,
+                        peer_port,
                         backend.clone(),
                         authority.clone(),
                         ) => result,
@@ -713,6 +721,7 @@ impl PreparedHost {
         &self,
         mesh: &dyn Mesh,
         registry: &PeerRegistry,
+        peer_port: u16,
         backend: Arc<dyn ControllerBackend>,
         authority: Arc<dyn ControllerAuthority>,
     ) -> Result<(), LinkError> {
@@ -763,6 +772,8 @@ impl PreparedHost {
             authority,
         })?;
         registry.set_peer_admission(admission);
+        // A role may become authoritative without any change to the mesh peer tuple.
+        registry.set_mesh_peers(&status.peers, peer_port);
         *self.gate.write().expect("controller gate poisoned") = Some(RouteLease {
             router,
             receiver,

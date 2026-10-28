@@ -61,7 +61,7 @@ describe('useGlanceDismissedNotice — Q-426: closed for the session, said once,
     expect(toastSuccess).not.toHaveBeenCalled();
     mainSays({ tray: true });
     expect(toastSuccess).toHaveBeenCalledOnce();
-    expect(toasted().title).toBe('Floating window hidden for this session');
+    expect(toasted().title).toBe('Floating window hidden until something new starts');
     expect(toasted().msg).toBe(
       'Bring it back from the goose icon in the menu bar or Settings › App, where you can also turn it off.'
     );
