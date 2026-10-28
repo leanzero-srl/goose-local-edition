@@ -28,6 +28,30 @@ media_enabled = False
 media_capabilities = []
 
 
+def wrap_chat_template(tokenizer, after):
+    """Route `tokenizer.apply_chat_template` through `after(out, tokenized)`. Set on the object
+    itself: mlx_lm's TokenizerWrapper forwards every attribute it is given to the HF tokenizer, and
+    its own apply_chat_template calls the HF tokenizer's, so a forwarded wrapper called itself
+    until "maximum recursion depth exceeded" (2026-10-28, the first omni load's readiness
+    request). `tokenized` honours the callee's own default: the server passes no `tokenize`, the
+    TokenizerWrapper's default is True and HF's is False."""
+    import inspect
+
+    original_apply = tokenizer.apply_chat_template
+    try:
+        param = inspect.signature(original_apply).parameters.get("tokenize")
+        default = bool(param.default) if param is not None and param.default is not inspect.Parameter.empty else False
+    except (TypeError, ValueError):
+        default = False
+
+    def apply_chat_template(*args, **kwargs):
+        out = original_apply(*args, **kwargs)
+        return after(out, bool(kwargs.get("tokenize", default)))
+
+    object.__setattr__(tokenizer, "apply_chat_template", apply_chat_template)
+    return tokenizer
+
+
 def media_wanted(model_dir):
     if os.environ.get("GOOSE_MIMO_MEDIA", "1") == "0":
         return False
@@ -147,15 +171,13 @@ if media_wanted(spec["model_dir"]):
     def media_tokenizer(tokenizer):
         """Every apply_chat_template that returns tokens expands the media placeholders of the
         request whose messages were just processed (first render: every item must appear)."""
-        original_apply = tokenizer.apply_chat_template
 
-        def apply_chat_template(*args, **kwargs):
-            out = original_apply(*args, **kwargs)
+        def expand(out, tokenized):
             manifest = media_current["manifest"]
             if (
                 manifest is None
                 or media_current["thread"] != threading.get_ident()
-                or not kwargs.get("tokenize", False)
+                or not tokenized
                 or not isinstance(out, list)
             ):
                 return out
@@ -164,8 +186,7 @@ if media_wanted(spec["model_dir"]):
                 out, manifest, media_vocab_size(), require_all=media_current["calls"] == 1
             )
 
-        tokenizer.apply_chat_template = apply_chat_template
-        return tokenizer
+        return wrap_chat_template(tokenizer, expand)
 
     original_media_load_tokenizer = media_utils.load_tokenizer
 

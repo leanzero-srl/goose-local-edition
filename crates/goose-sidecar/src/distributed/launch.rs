@@ -12215,6 +12215,46 @@ mod pipeline_launch_tests {
         assert!(source.contains("RANK_PIPELINE_FILE_CACHE"));
     }
 
+    /// 2026-10-28: the first omni load answered its readiness request "maximum recursion depth
+    /// exceeded": the media wrapper was set THROUGH mlx_lm's TokenizerWrapper, which forwards it
+    /// to the HF tokenizer its own apply_chat_template calls. And the server passes no
+    /// `tokenize`, so a wrapper reading HF's default never expanded a single image.
+    #[test]
+    fn the_media_template_wrapper_sits_on_the_wrapper_and_honours_its_tokenize_default() {
+        let source = include_str!("rank_media.py");
+        let start = source.find("def wrap_chat_template").unwrap();
+        let end = source.find("def media_wanted").unwrap();
+        let check = format!(
+            "{}\n\
+             class HF:\n\
+             \x20   def apply_chat_template(self, m, tokenize=False, **k):\n\
+             \x20       return [1, 2] if tokenize else 'text'\n\
+             class Wrapper:\n\
+             \x20   def __init__(self): object.__setattr__(self, '_tokenizer', HF())\n\
+             \x20   def apply_chat_template(self, m, tokenize=True, **k):\n\
+             \x20       return self._tokenizer.apply_chat_template(m, tokenize=tokenize, **k)\n\
+             \x20   def __getattr__(self, a): return getattr(self._tokenizer, a)\n\
+             \x20   def __setattr__(self, a, v): setattr(self._tokenizer, a, v)\n\
+             seen = []\n\
+             t = wrap_chat_template(Wrapper(), lambda out, tok: seen.append(tok) or out)\n\
+             assert t.apply_chat_template([], add_generation_prompt=True) == [1, 2]\n\
+             assert t.apply_chat_template([], tokenize=False) == 'text'\n\
+             assert seen == [True, False], seen\n\
+             print('ok')\n",
+            &source[start..end]
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
     /// 2026-10-28: the MOPD omni build indexes `language_model.model.*`; mlx_lm's sharded_load
     /// looked parameters up as `model.*` and refused it on both ranks.
     #[test]
