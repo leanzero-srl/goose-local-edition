@@ -1017,3 +1017,5 @@ async fn preflight_blocks_prompts_and_dropped_callback_never_reports_delivered()
         .is_empty());
     setup.finish(false).await.unwrap();
 }
+
+mod stream_revision;

@@ -2,6 +2,7 @@
 
 pub mod adapters;
 pub mod backend;
+mod command_revision;
 mod commands;
 mod cursors;
 mod inputs;

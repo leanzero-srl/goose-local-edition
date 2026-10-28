@@ -1,4 +1,7 @@
-use super::{conflict, unavailable, unsupported, InputAnswer, OwnerRunRegistry};
+use super::{
+    command_revision::check_revision, conflict, unavailable, unsupported, InputAnswer,
+    OwnerRunRegistry,
+};
 use crate::conversation::message::Message;
 use agent_client_protocol::schema::v1::{ContentBlock, PromptRequest, SessionId, TextContent};
 use leanzero_link::controller::ControllerError;
@@ -122,12 +125,7 @@ impl OwnerRunRegistry {
                 "only chat commands have an owner execution adapter",
             ));
         }
-        if u64::try_from(revision).ok() != Some(command.expected_revision) {
-            return Err(conflict(
-                "stale_revision",
-                "work changed; refresh before issuing this command",
-            ));
-        }
+        check_revision(&mut tx, &command, revision).await?;
         let active = runs.get(&session_id).map(|run| run.run_id.as_str());
         let expected = command.expected_run_id.map(|run| run.to_string());
         if active != expected.as_deref() || persisted_run.as_deref() != active {
@@ -385,13 +383,15 @@ impl OwnerRunRegistry {
             )
             .await
             .map_err(unavailable)?;
-        if completed_run.is_none()
-            && u64::try_from(record.revision).ok() != Some(command.expected_revision)
-        {
-            return Err(conflict(
-                "stale_revision",
-                "work changed after acceptance and before dispatch",
-            ));
+        if completed_run.is_none() {
+            let mut connection = self
+                .pool()
+                .await
+                .map_err(unavailable)?
+                .acquire()
+                .await
+                .map_err(unavailable)?;
+            check_revision(&mut connection, command, record.revision).await?;
         }
         let active = runs
             .get(&record.local_locator)
