@@ -2,6 +2,10 @@
 
 ## Authority
 
+28 October, latest direct owner instruction: upgrade Mihai's and Gabriela's MacBooks because Goose is idle there; if it all works well, merge the feature with main. Focus this rollout on the two laptops; do not interrupt either Studio. Both authenticated original ACP profiles showed zero running/waiting/background/looping sessions at21:11UTC. The feature merge into main is now explicitly authorized conditional on successful integration checks. Main was freshly checked at96e85f21ad (unchanged). Apple-upload rejection remains a separate unresolved boundary; the new owner messages did not explicitly approve that transmission.
+
+Local signature validation has been waiting behind unrelated laptop load. The already-signed artifact can be validated on Gabee using public certificates without copying signing keys. Signing agent is tasked to cancel only our queued7be7, preserve metadata while transferring the signed app and baseline, run equivalent local-only validation/ZIP preparation through node-dispatch on Gabee, and return the exact hash-pinned ZIP. Do not create a duplicate local validator. No Apple upload before explicit artifact approval. Release agent prepares Gabee original-profile snapshots only; root owns laptop snapshots/upgrade.
+
 Owner explicitly resumed this work and its goal on 28 October 2026. The unattended mandate and recorded action approvals apply again. Original four Mac upgrades approved WHEN IDLE, preserving data/settings, no benchmark interruption. Apple desktop notarization approved and complete. No permission re-ask for these actions. Organization seller LEANZERO S.R.L. required before publication. No App Store record, upload or submission yet. Do not weaken enrollment, delete nodes, copy credentials between profiles or consume old OTP codes.
 
 ## Current state — 28 October 2026, 18:04 UTC
