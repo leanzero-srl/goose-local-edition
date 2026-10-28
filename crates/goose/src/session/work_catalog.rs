@@ -9,6 +9,7 @@
 mod external;
 pub(crate) use external::create_objects as create_external_objects;
 pub use external::ExternalWork;
+pub(crate) use external::VERIFIED_LOG_APPEND;
 
 use anyhow::{bail, Result};
 use sqlx::{Pool, Sqlite, Transaction};

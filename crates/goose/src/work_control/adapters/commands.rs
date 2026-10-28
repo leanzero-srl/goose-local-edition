@@ -1,7 +1,7 @@
 use super::{agent_alive, error, read_json_optional, WorkAdapters};
 use crate::{
     session::work_catalog::{CatalogRecord, WorkCatalog},
-    work_control::{conflict, OwnerRunRegistry},
+    work_control::{command_revision::check_revision, conflict, OwnerRunRegistry},
 };
 use leanzero_link::{
     controller::ControllerError,
@@ -46,11 +46,9 @@ impl WorkAdapters {
             )
             .await
             .map_err(error)?;
-        if record.revision as u64 != command.expected_revision {
-            return Err(conflict(
-                "stale_revision",
-                "work changed; refresh before issuing this command",
-            ));
+        {
+            let mut connection = pool.acquire().await.map_err(error)?;
+            check_revision(&mut connection, &command, record.revision).await?;
         }
         if record.current_run_id.as_deref()
             != command.expected_run_id.map(|id| id.to_string()).as_deref()

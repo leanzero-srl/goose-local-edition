@@ -320,9 +320,8 @@ impl GooseControllerBackend {
                 .map_err(|_| ControllerError::unavailable("invalid catalog timestamp"))?
                 .with_timezone(&Utc),
             last_event: Some(EventPreview {
-                kind: record.event_kind.clone(),
-                text: record
-                    .event_kind
+                kind: wire_event_kind(&record.event_kind).into(),
+                text: wire_event_kind(&record.event_kind)
                     .replace('_', " ")
                     .chars()
                     .take(256)
@@ -597,7 +596,7 @@ impl GooseControllerBackend {
                 device,
                 work,
                 &record,
-                &event.event_kind,
+                wire_event_kind(&event.event_kind),
                 json!({"entry": self.entry(&record)?}),
             )?)),
         }
@@ -1427,5 +1426,13 @@ fn store_error(error: anyhow::Error) -> ControllerError {
         Some(CatalogError::WorkNotFound) => not_found(),
         Some(CatalogError::InvalidCursor | CatalogError::InvalidPageSize) => invalid_cursor(),
         None => ControllerError::unavailable("controller catalog read failed"),
+    }
+}
+
+fn wire_event_kind(kind: &str) -> &str {
+    if kind == work_catalog::VERIFIED_LOG_APPEND {
+        "log_updated"
+    } else {
+        kind
     }
 }

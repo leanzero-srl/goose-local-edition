@@ -26,6 +26,10 @@ use uuid::Uuid;
 #[path = "controller_external/benchmark.rs"]
 mod benchmark;
 
+#[cfg(unix)]
+#[path = "controller_external/shell.rs"]
+mod shell;
+
 struct Authority(AuthorizationLease);
 #[async_trait]
 impl ControllerAuthority for Authority {
@@ -103,7 +107,7 @@ async fn real_agent_inbox_has_idempotent_command_and_waits_for_consumption() {
     .unwrap();
     std::fs::write(runtime.join("state.json"),json!({"title":"Real desk","status":"waiting","run_id":"desk-run","updated_at":"2026-10-26T10:00:00Z"}).to_string()).unwrap();
     std::fs::write(runtime.join("lock"), std::process::id().to_string()).unwrap();
-    let original_log = format!("{}LATEST_VISIBLE_TAIL", "OLDER_ONLY_LINE\n".repeat(20000));
+    let mut original_log = format!("{}LATEST_VISIBLE_TAIL", "OLDER_ONLY_LINE\n".repeat(20000));
     std::fs::write(runtime.join("engine.log"), &original_log).unwrap();
     let sessions = Arc::new(SessionManager::new(root.path().join("profile")));
     let catalog = sessions.work_catalog().await.unwrap();
@@ -148,6 +152,17 @@ async fn real_agent_inbox_has_idempotent_command_and_waits_for_consumption() {
         .unwrap()
         .entries
         .remove(0);
+    {
+        use std::io::Write;
+        let appended = "\nCONTROL_RACE_LATEST_VISIBLE_TAIL";
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(runtime.join("engine.log"))
+            .unwrap()
+            .write_all(appended.as_bytes())
+            .unwrap();
+        original_log.push_str(appended);
+    }
     let command = WorkCommand {
         command_id: Uuid::new_v4(),
         work: entry.work,
@@ -200,6 +215,15 @@ async fn real_agent_inbox_has_idempotent_command_and_waits_for_consumption() {
     );
     let mut stale = command;
     stale.command_id = Uuid::new_v4();
+    stale.expected_revision = backend
+        .catalog(&device, None)
+        .await
+        .unwrap()
+        .entries
+        .into_iter()
+        .find(|e| e.work == stale.work)
+        .unwrap()
+        .revision;
     stale.expected_run_id = Some(Uuid::new_v4());
     assert_eq!(
         backend
@@ -325,6 +349,28 @@ async fn real_agent_inbox_has_idempotent_command_and_waits_for_consumption() {
             .contains("NEW_VISIBLE_OUTPUT"),
         "metadata must not broadcast log text"
     );
+    assert!(!serde_json::to_string(&changed)
+        .unwrap()
+        .contains("verified_log_append"));
+    let public_catalog = backend.catalog(&device, None).await.unwrap();
+    assert!(!serde_json::to_string(&public_catalog)
+        .unwrap()
+        .contains("verified_log_append"));
+    let public_snapshot = backend
+        .snapshot(&device, &receipt.work, generation)
+        .await
+        .unwrap();
+    assert_eq!(
+        public_snapshot.entry.last_event.as_ref().unwrap().kind,
+        "log_updated"
+    );
+    assert_eq!(
+        public_snapshot.entry.last_event.as_ref().unwrap().text,
+        "log updated"
+    );
+    assert!(!serde_json::to_string(&public_snapshot)
+        .unwrap()
+        .contains("verified_log_append"));
     let after_append = catalog.watermark().await.unwrap();
     assert!(after_append.revision > before_append.revision);
     adapters.refresh(&catalog).await.unwrap();

@@ -3,6 +3,8 @@ use anyhow::{ensure, Result};
 use sqlx::{Sqlite, Transaction};
 use uuid::Uuid;
 
+pub(crate) const VERIFIED_LOG_APPEND: &str = "verified_log_append";
+
 #[derive(Debug, Clone)]
 pub struct ExternalWork {
     pub kind: String,
@@ -53,13 +55,17 @@ impl WorkCatalog {
         Ok(())
     }
 
-    /// Metadata changes alone advance the shared journal. Re-reading an unchanged job is read-only.
+    /// Metadata or log progress advances the journal; unchanged refreshes remain read-only.
     pub async fn upsert_external(&self, work: &ExternalWork) -> Result<CatalogRecord> {
         ensure!(
             matches!(work.kind.as_str(), "agent_work" | "benchmark" | "shell_job"),
             "unsupported external work kind"
         );
         ensure!(!work.locator.is_empty(), "external work needs a locator");
+        ensure!(
+            work.event_kind != VERIFIED_LOG_APPEND,
+            "log append provenance is reserved for the catalog writer"
+        );
         ensure!(
             matches!(
                 work.state.as_str(),
@@ -151,13 +157,22 @@ impl WorkCatalog {
             tx.commit().await?;
             return Ok(previous.expect("previous record compared"));
         }
+        let pure_output = comparable.as_ref() == Some(&record)
+            && progress
+                .as_ref()
+                .is_some_and(|(old, _, _)| old.zip(log_bytes).is_some_and(|(old, new)| new > old));
         if previous.is_some()
             && log_bytes.is_some()
             && progress
                 .as_ref()
                 .is_some_and(|(bytes, _, _)| *bytes != log_bytes)
         {
-            record.event_kind = "log_updated".into();
+            record.event_kind = if pure_output {
+                VERIFIED_LOG_APPEND
+            } else {
+                "log_updated"
+            }
+            .into();
             record.updated_at = chrono::Utc::now().to_rfc3339();
         }
         sqlx::query("UPDATE controller_store SET revision=revision+1 WHERE singleton=1")

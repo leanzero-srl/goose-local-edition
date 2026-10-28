@@ -16,6 +16,7 @@ struct DesktopState {
     checkpoint_delivered: Option<String>,
     requests: Vec<Value>,
     checkpoint_serial: usize,
+    log_bytes: u64,
     invalid_log_source: bool,
     invalid_receipt_cursor: bool,
 }
@@ -32,7 +33,7 @@ impl DesktopState {
                     "logActivityStartedAt":self.activity}],
                 "active":if self.active {json!({"runId":"original-run","startedAt":LAUNCH,
                     "activityStartedAt":self.activity,"noteSupported":self.activity.is_none(),
-                    "phase":"build","logBytes":200000})} else {Value::Null}
+                    "phase":"build","logBytes":self.log_bytes})} else {Value::Null}
             }),
             "benchmark.command" => {
                 self.checkpoint_serial += 1;
@@ -102,6 +103,7 @@ impl Fixture {
             checkpoint_delivered: None,
             requests: Vec::new(),
             checkpoint_serial: 0,
+            log_bytes: 200000,
             invalid_log_source: false,
             invalid_receipt_cursor: false,
         }));
@@ -406,4 +408,44 @@ async fn benchmark_receipts_follow_exact_checkpoint_and_device_scoped_scan_offse
     assert!(receipts
         .iter()
         .all(|r| r["params"]["activity_started_at"].is_null()));
+}
+
+#[tokio::test]
+async fn benchmark_note_and_stop_survive_log_growth_during_admission() {
+    let fixture = Fixture::new().await;
+    for action in [
+        ActionPayload::Note {
+            text: "Observe the real checkpoint".into(),
+        },
+        ActionPayload::Stop {},
+    ] {
+        let entry = fixture.entry().await;
+        fixture.state.lock().unwrap().log_bytes += 10;
+        let cmd = WorkCommand {
+            command_id: Uuid::new_v4(),
+            work: entry.work,
+            expected_store_generation: fixture.generation,
+            expected_revision: entry.revision,
+            expected_run_id: entry.current_run_id,
+            action,
+        };
+        let receipt = fixture
+            .backend
+            .accept_command(&fixture.device, cmd, fixture.dispatch.clone())
+            .await
+            .unwrap();
+        assert!(matches!(receipt.state, CommandState::Waiting));
+        assert!(receipt.checkpoint_id.is_some());
+    }
+    assert_eq!(
+        fixture
+            .state
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .filter(|r| r["method"] == "benchmark.command")
+            .count(),
+        2
+    );
 }

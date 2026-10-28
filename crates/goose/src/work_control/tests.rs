@@ -1019,3 +1019,5 @@ async fn preflight_blocks_prompts_and_dropped_callback_never_reports_delivered()
 }
 
 mod stream_revision;
+
+mod external_revision;
