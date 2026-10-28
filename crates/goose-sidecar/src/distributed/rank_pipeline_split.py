@@ -319,8 +319,10 @@ if spec.get("pipeline_split") is not None:
         def pipe_traced(name, fn):
             def traced(x, *args, **kwargs):
                 pipe_trace_seq[0] += 1
+                # mlx_lm also passes plain Python numbers (`all_sum(0)`, `all_sum(data.size)`).
                 pipe_trace.write(
-                    f"{pipe_trace_seq[0]} {time.time():.3f} {name} {tuple(x.shape)} {x.dtype} "
+                    f"{pipe_trace_seq[0]} {time.time():.3f} {name} "
+                    f"{tuple(getattr(x, 'shape', ()))} {getattr(x, 'dtype', type(x).__name__)} "
                     f"{threading.current_thread().name}\n"
                 )
                 return fn(x, *args, **kwargs)
