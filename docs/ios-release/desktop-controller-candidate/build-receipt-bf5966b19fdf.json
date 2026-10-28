@@ -1,0 +1,60 @@
+{
+  "source_commit": "bf5966b19fdf4835b8feadcbe95b2951c7f3498b",
+  "source_tree": "67c316961e92ade0f6f10a156beeb0972f34993d",
+  "app_version": "3.0.134",
+  "build_job": {
+    "id": "laptop-20261029-002647-2562",
+    "host": "gabee",
+    "status": "done",
+    "exit": 0,
+    "started": "2026-10-29T00:26:48+0200",
+    "ended": "2026-10-29T00:28:47+0200"
+  },
+  "owner_gates": {
+    "id": "laptop-20261029-002450-f27e",
+    "host": "gabee",
+    "status": "done",
+    "exit": 0,
+    "started": "2026-10-29T00:24:51+0200",
+    "ended": "2026-10-29T00:25:42+0200"
+  },
+  "work_control_tests": {
+    "passed": 20,
+    "job": "laptop-20261029-002224-9dcc",
+    "subsequent_fixture_import_fix_only": true
+  },
+  "controller_external_tests": 8,
+  "controller_catalog_tests": 11,
+  "workspace_clippy": "--workspace --all-targets -- -D warnings PASS",
+  "client_validation": {
+    "commit": "501394485d",
+    "controller_client_tests": 7,
+    "targeted_ui_tests": 9,
+    "full_ui_tests": 5347,
+    "skipped": 3,
+    "full_ui_gate_job": "laptop-20261029-000143-87ee"
+  },
+  "reopened_ui_validation": {
+    "commit": "70a40d48f5",
+    "targeted_tests": 21,
+    "lint": "PASS"
+  },
+  "unsigned_archive": "/tmp/goose-controller-steer-bf5966b19fdf/Goose-Swarm-unsigned.zip",
+  "unsigned_archive_sha256": "28b13239fd482303019fb7046a5edf9821b2aeb820f2141dd4fd21d5d1af2b93",
+  "unsigned_archive_bytes": 457686364,
+  "cli_sha256": "5885afff41ac2d273f8212688000ebbc733b09ebcd22e34c89d10b1d3f4039d5",
+  "package_script_sha256": "54977a4e059e9e3dc730cfd165ee8ca2580739e1ae0d30cafc8b6ff035b8bd10",
+  "runtime_manifest_sha256": "2abf2847ff1fe6b5c91afbb490569af420960fbeb98adccf57ad5edeffb34853",
+  "runtime_manifest_files": 4332,
+  "runtime_manifest_verified_before_and_after_package": true,
+  "generated_tracked_source_changes": [],
+  "runtime_binary_sha256": {
+    "tailscale": "8b05e3d0b886e7dd7b90a600a1bed04992a8781678e1e6cac786f0e9c62ab97e",
+    "tailscaled": "c3e023743784b49c3dd97a894b4305d653c09a2506670821721d641041040e25"
+  },
+  "created_at": "2026-10-28T22:29:38.077071+00:00",
+  "signed": false,
+  "notarized": false,
+  "uploaded": false,
+  "installed": false
+}
