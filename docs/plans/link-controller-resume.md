@@ -1,5 +1,13 @@
 # Goose Remote continuation — resumed by owner, 28 October 2026
 
+## Active-steering defect under repair — 28 October 2026, 21:53 UTC
+
+Ordinary Gabee-to-laptop continuation is proven on the original profiles with an explicit OpenRouter cloud node; actual laptop UI showed “Gabee remote continuation confirmed.” Active-steer test then exposed a real pre-admission race: fresh snapshot revision73471/run2e95d091-140c-4b49-aefb-94fbe784bf69, command6d1f0c2d-d1f0-4006-bd40-309cbd2455d2, owner HTTP409 stale_revision at21:50:51.866082, receipt404 and no steer in final history. No resend. Desktop immutable outbox prevents replacing that stale command revision; current retry would resend the rejected revision. Do not merge or claim active control passes.
+
+Worker desktop_steer_recovery owns minimal native-parity repair in controller client/hook/tests: only typed definitive non-admission may clear the local unaccepted entry, refresh the snapshot and retain the draft for explicit reviewed retry. Never alter unknown/accepted IDs or weaken owner run/generation/admission rules. merge_adversary independently reviews. Investigate stream revision cadence and prove an actual active steer after repair, not merely improved error copy. Build/check only changed scope plus required gates via node-dispatch on Gabee; laptop busy and Studios protected. No local inference.
+
+The outstanding Apple approval question names the OLD ZIP3d124c48…197c1b. Owner was told to hold it because the fix changes the payload. Do NOT upload that old artifact or apply an answer to a different artifact. Finish corrected package and exact receipt before any new upload approval. CI main push would schedule heavy work on protected Studios; branch protections have no required checks, but do not disable existing CI or seize a benchmark gap. Preserve conditional main merge until integration passes and safe CI placement is available.
+
 ## Recovery and cloud test — 28 October 2026, 21:45 UTC
 
 Both original hosts recovered successfully through authenticated hosts/release then normal Connect (laptop actual UI Retry). Exact mismatch was only the provider pre-auth key reference: laptop307→321, Gabee319→324; node/user/key/IP otherwise unchanged before recovery. Current provider/confirmed/activated bindings match exactly with fresh leases; same owner, node ID, machine key and IP, rotated node public key as normal. Clean restarts passed: laptop backend190, Gabee73537. Both catalog syncs now fresh: laptop557 entries including newly created disposable test, Gabee55. Other inactive/legacy owners remain unavailable; do not call them both Studios without attribution.
