@@ -1,6 +1,6 @@
 # Goose Remote continuation
 
-Updated 28 October 2026, 22:14 UTC (29 October local). This current summary supersedes historical statuses below in git history and older receipts.
+Updated 28 October 2026, 22:26 UTC (29 October local). This current summary supersedes historical statuses below in git history and older receipts.
 
 ## Authority and non-negotiable constraints
 
@@ -34,19 +34,20 @@ Committed fixes (NOT yet packaged/installed):
 - `501394485d`: desktop clears only definitive pinned-owner typed409stale_revision unaccepted outbox entry, persists removal before reporting, refreshes snapshot/preserves current draft/requires explicit new action. Unknown/accepted IDs immutable. Gates7Rustclient+9targetUI+changedcratebuild/Clippy+lint+fullUI5347pass3skip. Fullsuite mirror issue was ignored package-time src/swarm-bench; final clean-layout suite passed and mirror restored.
 - `46eb0bcd2d`: chat Steer/Stop shared revision helper keeps exact fast path, otherwise requires anchors and only same-run partial events with all control metadata unchanged. Used at admission and dispatch. Original73471 still rejects; refreshed73477 tolerates subsequent chunks. Gates17owner incl7new+11catalog+workspacealltargetsClippy pass (joba9c5). Independentreview+real historicalSQL proof pass.
 
-**Current uncommitted work; do not package yet:**
-- `release_reconcile` owns external agent/benchmark/shell sibling race. Log growth advances external revisions; oldlog_updated marker is ambiguous because it can overwrite semantic changes. Implement new internal pure-append marker only when complete normalized source metadata matches and known bytes strictly grow, then guarded stale revision bridging. Old ambiguous events remain strict. Preserve existing publiclog_updated frame/preview mapping. Fixtures only, no live Studio commands. Paths external catalog writer, sharedrevisionhelper, adapterscommands, backendmapping andtests.
-- `desktop_steer_recovery` owns restored-pending UI gap: retry after reopening has emptycomposer; stale refusal removes pending payload while claiming draft retained. First prove via failing test, then retain/recover rejected text without overwriting existing different draft, cross-work/generation bleed, automatic resend or fake owner receipts. Hook/view/tests only.
-- `merge_adversary` independently reviews both. `gabee_final_candidate` is idle with packaging preparation until final source/gates. Use followup_task to resume completed agents; send_message alone does not trigger them.
-- Shared index is shared too: commit `--only` exact owned paths. A mixed commit was safely split; current commits above are scoped, no content lost.
+**Final external correction awaiting gates; do not package yet:**
+- `70a40d48f5`: reopened pending-command retry now restores refused text only into an empty composer, preserves a different draft and unsupported payload, and clears recovery across work/generation changes. Confirmed failing regression first; 21 target UI tests plus full UI lint passed (job8d54). Independent review PASS. Files copied to warm Gabee source; worker released ownership.
+- External agent/benchmark/shell correction is ten uncommitted files, exact manifest `/tmp/goose-external-revision-hashes.json`. Reserved internal `verified_log_append` only when full normalized prior source metadata matches and both known byte lengths strictly grow. Shared admission/dispatch helper requires exact work/run/anchors and every intervening row proven pure append. Historical ambiguouslog_updated, semantic changes, truncation and unknown lengths remain strict. Public preview and wire frames normalize marker to existinglog_updated; no protocol change.
+- Independent adversary PASS on external source, all three adapter fixture paths and SQL positive/negative cases. This is a preventive sibling fix with adapter fixtures, not live benchmark control proof. Final tests/Clippy running on Gabee as `laptop-20261029-002224-9dcc`: work_control, controller_external, controller_catalog, workspacealltargetsClippy. Do not duplicate.
+- `gabee_final_candidate` owns warm source and gates, then packaging once root commits exact ten paths. `release_reconcile` preparing final one-command cloud steering procedure without model calls; root drives actual UI. Signed-only script independent review PASS, unexecuted until corrected artifact exists.
+- Shared index is shared too: commit `--only` exact owned paths. Do not commit intentional untracked ui/desktop/bundled-mcps symlink.
 
 ## Build and package continuation
 
-Warm Gabee source `/tmp/goose-controller-merged-c86a0b33/source`; target `/Users/mihaiperdum/Projects/goose-controller-test-build/target`; real UI dependencies and copied MCP resources already present. Do not create another target/dependency tree; local disk was37GiB free. Exact environment and remaining commands: `/tmp/goose-controller-steer-packaging-prep.md`.
+Warm Gabee source `/tmp/goose-controller-merged-c86a0b33/source`; target `/Users/mihaiperdum/Projects/goose-controller-test-build/target`; real UI dependencies and copied MCP resources already present. Do not create another target/dependency tree; local disk now29GiB free (37 was a prior observation, NOT a required floor; measured15GiB build guard with expected incremental outputs below6GiB). Exact environment and remaining commands: `/tmp/goose-controller-steer-packaging-prep.md`.
 
 All heavy work via node-dispatch. Last completed owner gate `laptop-20261029-000501-a9c5`; previousclient finalUI `laptop-20261029-000143-87ee`. Do not repeat passed client tests for unchanged files. New UI changes require relevant checks; new Rust external changes require affected tests and final workspaceClippy. Coordinate one owner of warm source before copying/building. Freeze and hash final tree, incrementally build CLI, then FULL normal desktop pnpm package. Its internal SDK/i18n steps are normal; no separate ACP schema regeneration without schema changes.
 
-Full new bundle must be signed and validated. Private signing keys remain laptop-only; no Apple upload in sign-only job. Prepared `/tmp/goose-controller-corrected-sign-only.cjs` is unexecuted and needs review/pinning to actual new artifact. Narrow metadata validator permits only real signature attrs; roundtrip provenance exception applies only root/symlinks with bytes/modes/targets/otherattrs exact. Do not rerun old691checks or re-sign oldartifact.
+Full new bundle must be signed and validated. Private signing keys remain laptop-only; no Apple upload in sign-only job. Prepared `/tmp/goose-controller-corrected-sign-only.cjs` is independently reviewed PASS and unexecuted; still pin it to actual new artifact. Narrow metadata validator permits only real signature attrs; roundtrip provenance exception applies only root/symlinks with bytes/modes/targets/otherattrs exact. Do not rerun old691checks or re-sign oldartifact.
 
 Superseded signed ZIP retained as evidence at `/tmp/goose-controller-full-signed-c86a0b33/Goose-Swarm-Apple-submission.zip`, SHA3d124c48fb915f624a7bed4743082d3fbe490671e5be2e48c2a4909c17197c1b; validationreceiptc7723a86. Not submitted to Apple. Historical132 artifacts must never replace current apps.
 
@@ -56,7 +57,7 @@ After corrected package: freshidle checks, wholeapp swaps preserving currentdata
 
 Feature branch `codex/link-controller-plan`; main NOT merged/pushed. origin/main freshly checked96e85f21ad; feature includes it via58e4bd3fc3, so fast-forward possible after final acceptance. Canonical checkout has unrelated dirty skill file; do not reset/check it out. No required branchchecks, but active main-push CI schedules6heavy selfhostedStudio jobs; runnerActionsidle does NOT mean modelidle, and nice10 is not memory protection. No existing guard/delay. Do not disable CI, stop runners or seize benchmark gaps. Publish testedfeature branch if appropriate; ordinary nonforce mainpush only when it cannot interrupt protected runs. Canary/docs workflows disabled manually; no public release requested by this merge.
 
-Last22UTC node-probe: laptop4heavy slots occupied; workhorse Gauntlet35229 active with16%memoryfree; workmulehold98515 has95.7GB inference memory/activeCPU; Gabeeavailable. Re-probe AND inspect real campaign state before Studio upgrade or main CI. Neither Studio is upgraded by this task.
+Last22:25UTC node-probe: laptop3/4heavy slots,33.3GB above memory floor; workhorse Gauntlet35229 active with17%memoryfree; workmulehold98515 has95.8GB inference memory/activeCPU; Gabee1/4heavy runningourfinalgates. Re-probe AND inspect real campaign state before Studio upgrade or main CI. Neither Studio is upgraded by this task.
 
 ## Native and marketplace work remaining
 
