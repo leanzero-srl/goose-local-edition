@@ -1,0 +1,76 @@
+{
+  "sourceCommit": "bf5966b19fdf4835b8feadcbe95b2951c7f3498b",
+  "sourceTree": "67c316961e92ade0f6f10a156beeb0972f34993d",
+  "buildReceiptSha256": "0af22991ea79d15b287b9079d581f98f6df1f0ddbcc8c03945a443a6eea7f70a",
+  "inputArchiveSha256": "28b13239fd482303019fb7046a5edf9821b2aeb820f2141dd4fd21d5d1af2b93",
+  "inputCliSha256": "5885afff41ac2d273f8212688000ebbc733b09ebcd22e34c89d10b1d3f4039d5",
+  "signedCliSha256": "349b242b64a4a48072fbbfcecda0c9a9a2c32fef5639ae6c045003b34d7bee6f",
+  "appVersion": "3.0.134",
+  "app": "/tmp/goose-controller-corrected-signed-bf5966b19fdf/Goose Swarm.app",
+  "team": "ZZ8MTZ6NRZ",
+  "signedFingerprintSha256": "fa9036a7c5a3626e0dbe695c7b9130ff0118f385427bba3517a3f00ad06904fa",
+  "signingScriptSha256": "dd66810687a4955b7432a275743d76d673a6f35ce77ec81c40126e2e9bfae30f",
+  "signedAt": "2026-10-28T22:58:09.776Z",
+  "signedArchive": "/tmp/goose-controller-corrected-signed-bf5966b19fdf/Goose-Swarm-signed.zip",
+  "signedArchiveSha256": "8261f27b92581b9d26c8b12bdb7e8a1f938228cb7f730a4d8f7d76f5df3b873e",
+  "archiveStrictSignatureVerified": true,
+  "signatures": {
+    "resources": 662,
+    "machO": 29,
+    "app": true,
+    "team": "ZZ8MTZ6NRZ"
+  },
+  "negativeControls": {
+    "positiveResource": "Contents/Frameworks/Electron Framework.framework/Versions/A/Resources/MainMenu.nib",
+    "rejected": [
+      "resourceBytes",
+      "extraAttribute",
+      "changedMode",
+      "priorAttributeChanged",
+      "missingPath"
+    ]
+  },
+  "cliEquivalence": {
+    "original": {
+      "vmSize": 166887424,
+      "fieldOffset": 1952,
+      "fileOffset": 298631168,
+      "fileSize": 163273372
+    },
+    "signed": {
+      "vmSize": 164200448,
+      "fieldOffset": 1952,
+      "fileOffset": 298631168,
+      "fileSize": 163273372
+    },
+    "equivalentSha256": "1a5c3c7ce8736743ba6b7cce1a9f5e4864eaea3263219234106eaa8b9514595d",
+    "byteLength": 461904540
+  },
+  "mainEquivalence": {
+    "original": {
+      "vmSize": 16384,
+      "fieldOffset": 600,
+      "fileOffset": 32768,
+      "fileSize": 772
+    },
+    "signed": {
+      "vmSize": 32768,
+      "fieldOffset": 600,
+      "fileOffset": 32768,
+      "fileSize": 772
+    },
+    "equivalentSha256": "f80839e46cf391f5891577a3fb269db6396cdd87b8a082d57f16b32173157ce4",
+    "byteLength": 33540
+  },
+  "notarized": false,
+  "uploaded": false,
+  "installed": false,
+  "signingJob": {
+    "id": "laptop-20261029-003113-df5a",
+    "exit": 0,
+    "ended": "2026-10-28T22:59:16Z"
+  },
+  "fullReceiptPath": "/tmp/goose-controller-corrected-signed-bf5966b19fdf/receipt.json",
+  "fullReceiptSha256": "0ecf05a4e59b4dda8941f01b069fb58340c0c7a926833f9fdde965541126844b",
+  "archiveProvenanceOnlyDropCount": 0
+}

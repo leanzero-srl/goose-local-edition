@@ -1,6 +1,6 @@
 # Goose Remote continuation
 
-Updated 28 October 2026, 22:32 UTC (29 October local). This current summary supersedes historical statuses below in git history and older receipts.
+Updated 28 October 2026, 23:06 UTC (29 October local). This current summary supersedes historical statuses below in git history and older receipts.
 
 ## Authority and non-negotiable constraints
 
@@ -30,18 +30,19 @@ Active test then sent a cloud-only120-line list request. Gabee attempted steer6d
 
 **Primary trace matters:** rev73471→73476 included message_upsert/session_changed as prompt persisted, so original request MUST still reject. Then135partial rows73477..73611 changed no catalog metadata exceptrevision/event_kind. Exact new SQL against real read-only DB gives73471→73477/73611=false,73477→73478/73611=true. Receipt `/tmp/goose-active-steer-real-trace.json`.
 
-Committed fixes (NOT yet packaged/installed):
+Committed fixes (packaged and signed; installation pending below):
 - `501394485d`: desktop clears only definitive pinned-owner typed409stale_revision unaccepted outbox entry, persists removal before reporting, refreshes snapshot/preserves current draft/requires explicit new action. Unknown/accepted IDs immutable. Gates7Rustclient+9targetUI+changedcratebuild/Clippy+lint+fullUI5347pass3skip. Fullsuite mirror issue was ignored package-time src/swarm-bench; final clean-layout suite passed and mirror restored.
 - `46eb0bcd2d`: chat Steer/Stop shared revision helper keeps exact fast path, otherwise requires anchors and only same-run partial events with all control metadata unchanged. Used at admission and dispatch. Original73471 still rejects; refreshed73477 tolerates subsequent chunks. Gates17owner incl7new+11catalog+workspacealltargetsClippy pass (joba9c5). Independentreview+real historicalSQL proof pass.
 
-## Final corrected package built; one signing job queued
+## Final corrected package built and signed; upgrades in progress
 
 - `70a40d48f5`: reopened pending-command recovery, confirmed failing regression then21targetUItests+lint PASS; independent review PASS.
 - `bf5966b19fdf4835b8feadcbe95b2951c7f3498b`, tree `67c316961e92ade0f6f10a156beeb0972f34993d`: external agent/benchmark/shell correction. Reserved `verified_log_append` is emitted only when complete normalized source metadata matches and known bytes strictly grow; shared admission/dispatch proof requires anchored same-work/same-run pure output. Historical ambiguouslog_updated/semanticchanges/truncation/unknown stay strict. Wire preview/frame remainlog_updated. Preventive sibling fix; no live benchmark commands.
 - Final gates:20work_control PASS job9dcc; shell fixture private import corrected, then8external+11catalog+workspacealltargetsClippy PASS job `laptop-20261029-002450-f27e`. No unchanged20test rerun. Independent source/SQL/adversarial review PASS.
 - Full CLI+normal Electronpackage job `laptop-20261029-002647-2562` PASS.4332tracked build inputs matched before/after; no tracked generated changes. Corrected unsigned CLI `5885afff41ac2d273f8212688000ebbc733b09ebcd22e34c89d10b1d3f4039d5`.
 - Corrected unsigned ZIP exists on laptop AND Gabee at `/tmp/goose-controller-steer-bf5966b19fdf/Goose-Swarm-unsigned.zip`, SHA `28b13239fd482303019fb7046a5edf9821b2aeb820f2141dd4fd21d5d1af2b93`,457686364bytes. Buildreceipt adjacent SHA `0af22991ea79d15b287b9079d581f98f6df1f0ddbcc8c03945a443a6eea7f70a`; durable copy `docs/ios-release/desktop-controller-candidate/build-receipt-bf5966b19fdf.json`.
-- **ONE local sign-only job queued** `laptop-20261029-003113-df5a`, unified execsession57445, waitcap1800s, waiting behind laptop4/4heavy slots and low memory. Do not duplicate/re-sign. Node-run will place normally when8GBheadroom+slot exists. Check queue/job and `/tmp/goose-controller-corrected-signed-bf5966b19fdf/receipt.json` before actions. If queue expires, record that explicitly; do not mistake it for signing failure or permission rejection.
+- **Signing COMPLETEPASS** job `laptop-20261029-003113-df5a`, exit0, ended22:59:16UTC. Stage `/tmp/goose-controller-corrected-signed-bf5966b19fdf`; fullreceipt SHA `0ecf05a4e59b4dda8941f01b069fb58340c0c7a926833f9fdde965541126844b`. SignedCLI `349b242b64a4a48072fbbfcecda0c9a9a2c32fef5639ae6c045003b34d7bee6f`. SignedZIP `Goose-Swarm-signed.zip` SHA `8261f27b92581b9d26c8b12bdb7e8a1f938228cb7f730a4d8f7d76f5df3b873e`. Strict wholeapp/archive team validation,29MachO+662resource signatures, CLI/main code equivalence and5negativecontrols PASS. Fullfingerprint SHA `fa9036a7c5a3626e0dbe695c7b9130ff0118f385427bba3517a3f00ad06904fa`. Durable summary `signed-receipt-bf5966b19fdf.json`. Do not re-sign/retest.
+- **ONE laptop whole-app upgrade queued** `laptop-20261029-010501-ff7d`, unifiedsession26238, waitcap1800s, requires4GBheadroom+normalheavy slot. Exact reviewed installer/receipt/sourcefingerprint, currentapp156/backend190/owner83b81dd1... supplied; installer revalidates identities and refuses activity. No duplicate job. Worker `gabee_final_candidate` owns signedZIP/receipt/fingerprint transfer, independent hash check, Gabee idle upgrade and saved-login verification. No inference in either installer.
 - Exact reviewed sign command: `NODE_PATH=/Users/mihaiperdum/.codex/worktrees/link-controller-plan/goose/ui/node_modules node /tmp/goose-controller-corrected-sign-only.cjs /tmp/goose-controller-steer-bf5966b19fdf/build-receipt.json /tmp/goose-controller-steer-bf5966b19fdf/Goose-Swarm-unsigned.zip /tmp/goose-controller-corrected-signed-bf5966b19fdf`. NO Apple upload/notary/install. Normal heavy job, privatekey stayslaptop. Signscript+metadata validator independent review PASS. Freshstage only; don't reset a partial stage blindly.
 - Old3d124c48ZIP remains superseded and not uploaded. No new Apple question until corrected signed artifact verified.
 
@@ -51,7 +52,7 @@ Prepared `/tmp/goose-install-corrected-controller.py` takes RECEIPT SOURCE_APP S
 
 Final cloud test helpers prepared, independently reviewed, UNEXECUTED: `/tmp/goose-gabee-cloud-steer-final-once.py` and `/tmp/goose-gabee-cloud-steer-final-result.py`; procedure `/tmp/goose-controller-final-cloud-steer-procedure.md`. First observe actual output in originalUI with explicit cloudroute, then one fresh anchored snapshot/one durableUUID/one command; no implicitretry. Preserve new private finalreceipt; result onlyreads exactreceipt/history. Delivered+unique message+assistant response+actualUI required. Earlier refusal must remainfailed.
 
-**Mac UI locked** at22:25UTC. CUA cannot unlock; ownerasked once asynchronously to unlock. Continue non-UI work; do not claim finalUIproof or bypasslock. No response yet. Currentprocesses still laptop156/190, Gabee73528/73537; laptopfreshcatalog557entries/noactive also after runidcheck. Correctedcandidate is NOT installed yet.
+**Mac UI locked** at22:25UTC. CUA cannot unlock; ownerasked once asynchronously to unlock. Continue non-UI work; do not claim finalUIproof or bypasslock. No response yet. At23:04UTC laptopprocesses still156/190, Gabeeprior73528/73537; correctedcandidate installs are queued/in progress, not yet claimed complete.
 
 WarmGabee source `/tmp/goose-controller-merged-c86a0b33/source`, target `/Users/mihaiperdum/Projects/goose-controller-test-build/target`; maintain until completed. Disk29GiB beforefinalbuild;37 was priorobservation, notfloor.15GiB guarded buildfloor. No reason to repeatpassedtests or duplicatebuilds. Sharedindex: exact `--only` commits; intentionaluntracked bundled-mcps symlink nevercommit.
 
@@ -59,7 +60,7 @@ WarmGabee source `/tmp/goose-controller-merged-c86a0b33/source`, target `/Users/
 
 Feature branch `codex/link-controller-plan`; main NOT merged/pushed. origin/main freshly checked96e85f21ad; feature includes it via58e4bd3fc3, so fast-forward possible after final acceptance. Canonical checkout has unrelated dirty skill file; do not reset/check it out. No required branchchecks, but active main-push CI schedules6heavy selfhostedStudio jobs; runnerActionsidle does NOT mean modelidle, and nice10 is not memory protection. No existing guard/delay. Do not disable CI, stop runners or seize benchmark gaps. Publish testedfeature branch if appropriate; ordinary nonforce mainpush only when it cannot interrupt protected runs. Canary/docs workflows disabled manually; no public release requested by this merge.
 
-Last22:25UTC node-probe: laptop3/4heavy slots,33.3GB above memory floor; workhorse Gauntlet35229 active with17%memoryfree; workmulehold98515 has95.8GB inference memory/activeCPU; Gabee1/4heavy runningourfinalgates. Re-probe AND inspect real campaign state before Studio upgrade or main CI. Neither Studio is upgraded by this task.
+Last23:04UTC node-probe: laptop4/4heavy slots (nightlimit), memory41%free/26.9GBabovefloor; workhorse Gauntlet35229 active with16%memoryfree/GPU84%; workmulehold98515 has95.8GB inference memory/activeCPU; Gabee0heavy42.2GBabovefloor beforeourupgrade. Re-probe AND inspect real campaign state before Studio upgrade or main CI. Neither Studio is upgraded by this task.
 
 ## Native and marketplace work remaining
 
