@@ -1,6 +1,6 @@
 # Gabee signed local upgrade — 28 October 2026
 
-Status at 21:43 UTC: the complete signed controller candidate launches normally, saved-login Link connects, the controller is ready, and a second clean restart reconnects automatically. Original history, configuration, owner/account identity and personal Tailscale identity are preserved. The initial exact-binding refusal was recovered through authenticated host release and the normal Connect action. Cross-Mac catalog sync is proven; the parent lane owns visible interaction and cloud-only session-command verification. No local model was loaded.
+Status at 21:43 UTC: the complete signed controller candidate launches normally, saved-login Link connects, the controller is ready, and a second clean restart reconnects automatically. Original history, configuration, owner/account identity and personal Tailscale identity are preserved. The initial exact-binding refusal was recovered through authenticated host release and the normal Connect action. Cross-Mac catalog sync is proven; the parent lane owns visible interaction and cloud-only session-command verification. No local model was loaded. The Gabee controller has also completed one exact cloud-only continuation on the new disposable laptop test.
 
 ## Artifact and installation
 
@@ -37,3 +37,11 @@ After another fresh idle check, app 67588 and all owned children exited. Normal 
 Supported controller sync at 21:41:42 returned Gabee's 55 catalog entries fresh with no error. The laptop's 556 cached entries were initially stale during its parallel recovery. After both MacBooks completed clean restarts, the repeated Gabee sync at 21:43:05 returned the laptop's 557 entries fresh with no error and Gabee's 55 entries fresh with no error. Two unchanged Studio owners remained stale with no registered mesh endpoint. The parent lane owns cross-Mac visible catalog and cloud-only session-command proof after both hosts are ready. This lane has issued no session command or model request. Both previous whole-app rollback copies remain intact.
 
 Read-only inspection of all 16 existing Gabee sessions found no explicitly cloud-bound disposable test: two local t12 sessions and fourteen provider/model-null sessions. None was continued. The parent lane will use a new explicitly cloud-bound test for remote continuation.
+
+## Cloud-only remote continuation
+
+The parent created disposable laptop session `20261028_1` through its actual UI and explicitly selected the existing cloud route `swarm` / `node:deepseek-v4-1-flash-openrouter`. Gabee independently opened the public chat work `c787fd2d-0909-4f49-9e85-bd48a684f020` and verified the unique full baseline prompt, the exact reply `Cloud controller test ready.`, idle state and no pending run before sending.
+
+Gabee persisted command `b793cd28-af41-4bba-9f29-d79b30156716` locally before its single transmission through supported `controller/command`. It was accepted at 21:46:00 UTC and delivered at 21:46:12. The final shared history contains exactly the baseline user/assistant pair plus the single remote user message and exact assistant reply `Gabee remote continuation confirmed.`; no tool content appears, and the work returned to idle. The private local snapshot's `cloud-continuation-command.json` holds the command, delivered receipt and final history. No command retry or duplicate was sent.
+
+A reverse-direction new Gabee test was not created: supported provider inventory shows Anthropic/OpenRouter unconfigured, no swarm device config exists, and the nominally configured OpenAI provider points to `http://127.0.0.1:8090`. That is not proof of a cloud route. No old session or global provider default was changed to manufacture one. The parent owns any further cloud routing decision and actual UI confirmation.
