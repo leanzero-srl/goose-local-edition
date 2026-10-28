@@ -244,9 +244,11 @@ pub struct DistributedConfig {
     /// admission on a plan that fits) and below the shared default (it only ever loosens).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_reserve_ratio: Option<f64>,
-    /// GB the layer split's plan leaves free under each Mac's GPU ceiling (the owner's rule for
-    /// long-context runs, 2026-10-27: "at least ~8 GB under the Metal limit"): the ceiling the
-    /// budget is capped at is the measured one less this. `None` = the measured ceiling.
+    /// GB the layer split's plan leaves free under each Mac's GPU ceiling: the ceiling the budget
+    /// is capped at is the measured one less this. `None` = the measured ceiling. Not an owner
+    /// rule (corrected 2026-10-28): the 8 GB used in the 2026-10-27 MiMo runs was a test margin,
+    /// and stacked on the reserve (`plan_reserve_ratio` / the shared one) it counted the same
+    /// safety twice; the 256k MiMo split runs with 0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu_headroom_gb: Option<f64>,
     /// Per-node `gpu_headroom_gb` by node name, over the config-wide one. Why (2026-10-27): the
