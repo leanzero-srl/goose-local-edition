@@ -10744,6 +10744,7 @@ print("ok")
                 include_str!("rank_stream_watch.py"),
                 include_str!("rank_xml_guard.py"),
                 include_str!("rank_admission.py"),
+                include_str!("rank_media.py"),
                 include_str!("rank_pipeline_split.py"),
                 include_str!("rank_wrapper.py")
             )

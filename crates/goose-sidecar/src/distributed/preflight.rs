@@ -495,12 +495,14 @@ pub(crate) fn node_probe_script(
         sh_quote(&node.python),
         sh_quote(&load_lock_probe())
     ));
-    if runner == Some(Runner::PipelineQwen4) {
+    if matches!(runner, Some(Runner::PipelineQwen4 | Runner::MlxLmPipeline)) {
         if let Some(python) = &node.pipeline_python {
-            add(format!(
-                "echo; echo @@pipeline; {} -m {PIPELINE_MODULE} --help 2>&1 | /usr/bin/head -3",
-                sh_quote(python)
-            ));
+            if runner == Some(Runner::PipelineQwen4) {
+                add(format!(
+                    "echo; echo @@pipeline; {} -m {PIPELINE_MODULE} --help 2>&1 | /usr/bin/head -3",
+                    sh_quote(python)
+                ));
+            }
             add(format!(
                 "echo; echo @@pipelineenv; {} -c {} 2>&1 | /usr/bin/tail -1",
                 sh_quote(python),
@@ -1021,12 +1023,20 @@ fn read_answer(
              interpreter (its vendored mlx_lm architectures)",
         ));
     }
-    if runner == Some(Runner::MlxLmPipeline) && node.pipeline_python.is_none() {
-        answer.checks.push(Check::fail(
-            "pipeline",
-            "no pipeline_python: the mlx_lm pipeline rank (mimo_v2) runs the Rapid-MLX fork's \
-             interpreter (its vendored mlx_lm architectures)",
-        ));
+    // The layer split's ranks import the fork env too (its vendored mimo_v2 and media code), so
+    // the one runner-env rule judges it: a goose-managed env on an earlier pin FAILs and Run
+    // rebuilds it. Without this a pin bump never reached the mlx_lm pipeline (2026-10-28: the
+    // MOPD omni load ran the 07126f051 env against the 1e5d581d1 pin and died on its layout).
+    if runner == Some(Runner::MlxLmPipeline) {
+        if let Some(python) = &node.pipeline_python {
+            answer.checks.extend(runner_env_check(
+                "pipelinePython",
+                python,
+                &EnvSpec::pipeline(),
+                sections.get("pipelineenv").map(|t| last_line(t)),
+                home,
+            ));
+        }
     }
     if runner == Some(Runner::PipelineQwen4) {
         answer.checks.extend(pipeline_runner_checks(
@@ -2284,6 +2294,58 @@ pub(crate) mod tests {
         let mut node = two_mac_config().nodes.remove(0);
         node.pipeline_python = Some(python.to_string());
         node
+    }
+
+    /// 2026-10-28: the MiMo layer split (mlx_lm pipeline) started on a fork env built at
+    /// 07126f051 while goose pinned 1e5d581d1; nothing proved that env, so Run never rebuilt it and
+    /// both ranks died on the omni checkpoint's layout. The layer split is now judged by the same
+    /// runner-env rule as the qwen4_exp pipeline.
+    #[test]
+    fn the_layer_split_proves_its_fork_env_and_a_stale_one_fails_for_run_to_rebuild() {
+        let home = "/Users/me";
+        let spec = EnvSpec::pipeline();
+        let mut config = two_mac_config();
+        config.nodes[0].pipeline_python = Some(spec.python(home));
+        let script = node_probe_script(&config, Some(Runner::MlxLmPipeline), 0);
+        assert!(script.contains("@@pipelineenv"), "{script}");
+        assert!(!script.contains("@@pipeline;"), "{script}");
+
+        let probed = |env_line: &str| ExecOutput {
+            status: Some(0),
+            stdout: format!("@@self\n7\n@@home\n{home}\n@@pipelineenv\n{env_line}\n@@end\n"),
+            stderr: String::new(),
+        };
+        let stale = read_answer(
+            &config,
+            Some(Runner::MlxLmPipeline),
+            0,
+            Ok(probed(
+                "0.32.2 0.31.3 07126f05117ac14dc5048371dc010f8196688a19",
+            )),
+            None,
+        );
+        let fork = stale
+            .checks
+            .iter()
+            .find(|c| {
+                c.id == "runnerEnv" && c.env.as_ref().is_some_and(|e| e.field == "pipelinePython")
+            })
+            .expect("the layer split's fork env is judged");
+        assert_eq!(fork.verdict, CheckVerdict::Fail);
+        assert!(fork.env.as_ref().unwrap().managed);
+
+        let pinned = read_answer(
+            &config,
+            Some(Runner::MlxLmPipeline),
+            0,
+            Ok(probed(&spec.expect)),
+            None,
+        );
+        assert!(!pinned
+            .checks
+            .iter()
+            .any(|c| c.id == "runnerEnv"
+                && c.env.as_ref().is_some_and(|e| e.field == "pipelinePython")));
     }
 
     #[test]
