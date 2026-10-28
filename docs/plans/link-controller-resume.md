@@ -1,5 +1,13 @@
 # Goose Remote continuation — resumed by owner, 28 October 2026
 
+## Corrected steering source and sibling scope — 28 October 2026, 22:10 UTC
+
+Client/UI recovery committed501394485d:7Rustcontroller-client tests,9targetedUI,changed-cratebuild/Clippy,desktoplint andfullUI5347pass/3skip. Chat owner proof committed46eb0bcd2d:17controltests including7new,11catalogtests andworkspaceClippy pass (a9c5); independentreview and exact SQL against originalhistoricaljournal pass. Both source changes still need a rebuilt installed-app live Steer proof.
+
+Primary trace clarifies the first refusal:73471→73476 included message_upsert/session_changed while the initial prompt persisted, so that original command MUSTstillreject. Client recovery repairs that refusal. Refreshed snapshot73477 through135partial rows ending73611 changes no catalog field exceptrevision/event_kind; the reviewed ownerhelper permits this same-run output-only interval. Do not claim the ownerhelper alone would accept the initial73471command.
+
+Final sibling review found agent_work, benchmark and shell_job log growth also advances external catalog revisions. Existinglog_updated is ambiguous (can overwrite concurrent semanticchange), so it cannot be trusted for a stale-command exception. release_reconcile now owns a new internal pure-log-append marker emitted only on complete normalized metadata equality and known strictbytegrowth, plus guarded externalrevision checks and unchangedpubliclog_updated mapping. merge_adversary reviews; packaging held until this patch and affectedtests/finalClippy pass. No running Studio benchmark is touched; fixture tests only. Do not repeat passedclient/UItests. WarmGabee source andjobs in /tmp/goose-controller-steer-packaging-prep.md. Last completedsourcepin46eb is NOTfinalcandidate.
+
 ## Active-steering defect under repair — 28 October 2026, 21:53 UTC
 
 Ordinary Gabee-to-laptop continuation is proven on the original profiles with an explicit OpenRouter cloud node; actual laptop UI showed “Gabee remote continuation confirmed.” Active-steer test then exposed a real pre-admission race: fresh snapshot revision73471/run2e95d091-140c-4b49-aefb-94fbe784bf69, command6d1f0c2d-d1f0-4006-bd40-309cbd2455d2, owner HTTP409 stale_revision at21:50:51.866082, receipt404 and no steer in final history. No resend. Desktop immutable outbox prevents replacing that stale command revision; current retry would resend the rejected revision. Do not merge or claim active control passes.
