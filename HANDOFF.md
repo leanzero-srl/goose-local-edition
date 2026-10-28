@@ -613,3 +613,59 @@ split (mimo10/go.sh) when node-probe shows no voice jobs; 5 live tests: text san
 table screenshot with a known cell, colour A/B, then a Gauntlet sb-7.2 run (Session 11 OPEN 1-6 still apply).
 CLEANUP: /Volumes/AI-workhorse/scratch/mimo-vision-parity (1.7 GB encoder copy for parity) - delete by exact path once
 the full build is verified (parity can rerun with --weights pointing at the build's model-00036-of-00037.safetensors).
+
+## Session 13 (2026-10-28 05:22-06:45 EET): MOPD omni live; vision works; 2-row batch crash blocks Gauntlet
+STARTED 05:22 after both Macs had 10 min with no voice/TTS job (waited from 23:39). Holds were perl
+"mimo-mopd benchmark hold" + ~/.leanzero/benchmarks/<pid>.json marker (node-probe BUSY); RELEASED at stop.
+END STATE: dev app quit, installed app back on 9897 (single-guard OK both Macs), holds killed, no ranks.
+ngram-go NOT touched (stopped at ctx 351k, as instructed). /tmp/gmimo config KEPT for the next run:
+mlx_distributed context 114688 + gpu_headroom_gb 8.0; OPENAI_HOST http://127.0.0.1:8191, OPENAI_BASE_PATH
+v1/chat/completions, GOOSE_CONTEXT_LIMIT 114688, provider_default_models.openai = the model id. Backup of the
+pre-s13 file: <scratchpad>/s13/config.yaml.before-s13. Rig: <scratchpad>/s13 (ask.py, pair.py, launch2.py, tools/).
+COMMITS (mimo-distributed, each with a test that fails without it):
+- acb9f02730 preflight proves the LAYER split's fork env (pipelinePython) -> a pin bump rebuilds it at Run
+  (before: only qwen4_exp was proven; the 07126f051 envs ran against the 1e5d581d1 pin). Also fixed the stale
+  tensor-program test (rank_media.py missing; it failed at 1a2b0b8267).
+- ff3deeda31 checkpoint_weight_map + CheckpointIndexJson: mlx_lm sharded_load looked up model.* in an index
+  keyed language_model.* ("Pipeline loading is only supported for MLX converted models").
+- e210b73e2f rank_media wrap_chat_template: the wrapper was set THROUGH TokenizerWrapper (forwarded to HF,
+  "maximum recursion depth exceeded" at readiness) and read tokenize default False (server passes none).
+CONTEXT: 256k does NOT fit with the vision tower under the owner's rules (5% reserve, 8 GB under the Metal
+limit). Planner measured: 19/29 needs ~75.1 GB on the workhorse at 262k vs budget ~71-72 (available ~76-77.6
+GB); 18/30 needs the mule over its 107.45 ceiling above ~116k. Largest stable = 114,688 (both splits fit).
+The ctx was bisected by reading the card text after setctx.sh + reload.
+LIVE RESULTS (split 18/30 then 19/29, 241-246 s cold loads x5, 0 NFS errors):
+- /v1/models: context_window 114688, capabilities text,vision,video,tools.
+- IMAGE: rendered table (s13/table.png): Delta/Q3 = 8,416 and largest Q1 = Charlie: both right.
+- COLOUR A/B (GOOSE_MIMO_IMAGE_NORM in the dev app's env reaches rank 0): basic 12 colours 12/12 both;
+  pastel 12: ImageNet 11/12 (coral->apricot), CLIP 12/12; shuffled 20 CSS names 18/20 both (same swap);
+  low-contrast codes right both; mean logprobs within 0.01 everywhere. VERDICT: no measurable difference ->
+  default stays ImageNet (upstream preprocessor_config, vLLM). No code change.
+- CACHE: 100k prompt cold TTFT 360 s (277 tok/s prefill), repeat TTFT 0.52 s; decode 24.8 tok/s; swap flat;
+  peaks rank0 73.1 GB / rank1 104.5 GB (18/30).
+- PARITY (parity_check.py): PASS vision, provider, sampling 1.0/0.95, thinking (tool_turns_think), qwen3_coder,
+  max output, no read timeout; FAIL context 114,688 < 256k (and GOOSE_CONTEXT_LIMIT = 114,688).
+BLOCKER (OPEN, design not settled): Gauntlet launch 06:20 (cloud-17f73a42, run dir /tmp/gmimo/userdata/
+benchmark/runs/build/openai-cloud-17f73a42-...-r0) died 1 min in: rank 0 "[jaccl] Recv failed with error
+code -12" (= ibv_post_recv ENOMEM, MAX_RECV_WR 32 full: recvs posted the peer never matched) during a 2-ROW
+batch (req-4 963 tok + req-5 2422 tok, width 2425). REPRODUCED on a fresh load, no images: s13/pair.py
+(two concurrent 1.7k/4.4k prompts): pair 1 ok, pair 2 -> rank 1 "[METAL] GPU Timeout" with y2 joining while
+y1 prefilled (rank0 log: 1736/1737 then 2048/4459). Session 12's text-only run batched 2 rows 5x with no fatal
+(split 18/30, old pin). Suspects, unproven: the 19/29 split (cache_weights full 5 vs 4), a cold row joining a
+prefilling batch on the pipeline. Candidate fix: in rank_wrapper.room_for, a pipeline split admits a new
+request only when rows == 0 (rank 0 alone decides what is shared, so ranks stay paired), with a named field
+in RANK_ADMISSION. Check first that `prefill` is set for the pipeline spec (rank0 log had NO RANK_ADMISSION /
+RANK_PREFILL lines: the admission path may not run there at all -> then the hold must go in the pipeline path).
+Prove with pair.py x3 on a fresh load before relaunching the Gauntlet.
+ALSO: MediaRequests.get_nowait calls media_prepare twice (Queue.get_nowait -> self.get); harmless for text,
+fix it with the above. go.sh's memwatch kill was `pgrep -f mimo10/memwatch.sh | xargs kill` (pattern);
+changed to a per-pid loop on the full scratchpad path. CDP: the dev app has TWO page targets (main window
+and #/engine-glance); mimo9/cdp2.mjs picks the one whose URL has 'leanzero-swarm' -> PAGE=benchmark when the
+main window is on the Benchmark view. Launch: s13/launch2.py (exec of sb72_chain.launch tail, port 9461 tools;
+pick OpenAI with tools/cdpkeys.mjs OpenAI first).
+NEXT: 1 wait for no voice jobs 10 min (s13/wait_clear.sh), holds (s13/hold.sh); 2 fix the 2-row crash + test;
+3 rebuild (live/build.sh), app.sh up, go.sh, pair.py x3, parity; 4 Gauntlet via launch2.py; at BENCH_PHASE
+score stop the split; 5 compare per task: cloud = s12/cloud_checks.txt (0.7909), old local =
+s13/old-local-verdict.json (0.5894); 6 publish a NEW entry (pub_local.py-style title "MiMo-V2.6-Flash MOPD
+4-bit · 2-Mac split · vision, 114k"), notes = caveats (114k not 256k; cloud 1M); 7 cleanup; touch
+<scratchpad>/ngram-go LAST.
