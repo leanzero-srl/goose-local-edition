@@ -1,8 +1,8 @@
-# Goose Remote continuation — paused by owner, 27 October 2026
+# Goose Remote continuation — resumed by owner, 28 October 2026
 
 ## Authority
 
-Owner explicitly requested a handover and pause on 27 October 2026 because usage was nearly exhausted. Do not resume work or reactivate the heartbeat until the owner resumes it. The prior unattended mandate is suspended; existing action approvals below remain recorded for that future resumption. Original four Mac upgrades approved WHEN IDLE, preserving data/settings, no benchmark interruption. Apple desktop notarization approved and complete. No permission re-ask for these actions. Organization seller LEANZERO S.R.L. required before publication. No App Store record, upload or submission yet. Do not weaken enrollment, delete nodes, copy credentials between profiles or consume old OTP codes.
+Owner explicitly resumed this work and its goal on 28 October 2026. The unattended mandate and recorded action approvals apply again. Original four Mac upgrades approved WHEN IDLE, preserving data/settings, no benchmark interruption. Apple desktop notarization approved and complete. No permission re-ask for these actions. Organization seller LEANZERO S.R.L. required before publication. No App Store record, upload or submission yet. Do not weaken enrollment, delete nodes, copy credentials between profiles or consume old OTP codes.
 
 ## Current result
 
@@ -16,7 +16,7 @@ The isolated laptop app is CLOSED to free controller TLS41227. Its test state /t
 
 Workhorse and workmule benchmark campaign remains active at11:19UTC. The275k case completed in1840.42s and holds77789/99590 disappeared, but the same isolated campaign app84939/backend85025 launched rank94895 plus SSH94906 owning workmule rank91966. Root measured local rank89.6%CPU and49.3GiB RSS; independent reader observed growing rank memory and103.8GB on workmule. The earlier node-probe OK was a loading snapshot, not campaign completion. Current logs /tmp/gmimo/root/state/logs/distributed/rank0-work-s-mac-studio-1793099639303.log and rank1-work-mule-studio-1793099639352.log on workhorse. Do not treat absent holds, idle GPU or rank exit between cases as campaign completion. Evidence on workhorse: /private/tmp/claude-501/-Users-workhorse-Projects/b3c77359-c57d-472f-be64-067a0ce26b03/scratchpad/mimo10. Check current node-probe plus primary campaign state, then upgrade only genuinely idle original profiles. Workhorse original app absent; workmule original app/backend/mesh99905/99912/99919 last known. Read docs/plans/link-controller-host-upgrade.md before install; verify current PIDs, original activity and rollback point.
 
-Heartbeat finish-goose-remote-testing is PAUSED, confirmed by the app tool on 27 October 2026 at the owner's request. Its existing30minute schedule is retained but inactive. Do not reactivate until the owner resumes. All delegated agents are completed. No other-chat messages authorized.
+Heartbeat finish-goose-remote-testing is ACTIVE again after the owner resumed on28October. Its30minute schedule is retained. Gabee final-candidate upgrade is assigned to a fresh worker; other-chat messaging remains unauthorized.
 
 ## Artifacts
 
@@ -37,3 +37,7 @@ After remaining host upgrades, prove iPad view/send/nudge, exact delivery/respon
 ## Latest observation before owner pause
 
 At13:17UTC (15:17 Europe/Bucharest), workhorse still ran Gauntlet benchmark61294, child61615, and inference rank94895 at92.5%CPU. Workmule remained busy with16%free memory and75%GPU. These are historical observations, not fresh guarantees; re-probe before any future upgrade. No application, inference process, benchmark or service was stopped for this pause.
+
+## Resumed 28 October 2026
+
+Initial node-probe still finds workhorse/workmule in active mimo-mopd Gauntlet (holds36667/98515); no interruption or upgrade there. Gabee is idle and its final catalog-corrected candidate upgrade is being verified. Existing source/artifacts retained, no rebuild merely for resumption. The platform goal API still returned paused on resume; its tool does not provide an active/resume mutation. User authorization nevertheless resumes the work; do not falsely claim the platform flag changed.

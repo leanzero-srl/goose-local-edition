@@ -1,10 +1,10 @@
 # Goose Remote handover
 
-27 October 2026. **Paused at the owner's request. Not complete, not marketplace-ready.**
+Original handover27October2026; resumed by owner28October2026. **Work active again; not complete, not marketplace-ready.**
 
 ## Start here
 
-The owner requested this handover and a pause because usage was nearly exhausted. Automatic continuation `finish-goose-remote-testing` is **PAUSED**. All delegated agents have completed. Do not resume or reactivate it until the owner asks. Running Goose apps, services and unrelated benchmarks were left untouched.
+The owner requested this handover and a pause on27October, then explicitly resumed this work and its goal on28October. Automatic continuation `finish-goose-remote-testing` is **ACTIVE** again. The operational resume record is the current source of progress. Running benchmarks remain protected by the idle-only upgrade approval.
 
 Worktree: `/Users/mihaiperdum/.codex/worktrees/link-controller-plan/goose`.
 Branch: `codex/link-controller-plan`. The feature has **not been merged into main**. Do not assume a later checkout contains it. All task changes are committed; the intentionally untracked `ui/desktop/bundled-mcps` is a development symlink into the installed app, not source. Never package through it.
