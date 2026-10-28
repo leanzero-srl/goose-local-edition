@@ -212,6 +212,11 @@ export default function ControllerWorkView({
             </Button>
           </div>
         )}
+        {work.commandNotice && (
+          <p role="status" className="text-sm">
+            {work.commandNotice}
+          </p>
+        )}
       </header>
       <div
         ref={transcript}

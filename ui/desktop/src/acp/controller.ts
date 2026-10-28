@@ -67,6 +67,12 @@ export interface PendingCommand {
 export const controllerPendingCommands = (work: WorkRef) =>
   call<{ commands: PendingCommand[] }>('pendingCommands', { work });
 
+export function controllerCommandNotAdmitted(error: unknown): boolean {
+  const detail = (error as { data?: { error?: { status?: unknown; code?: unknown } } } | null)?.data
+    ?.error;
+  return detail?.status === 409 && detail.code === 'stale_revision';
+}
+
 export function controllerErrorText(error: unknown): string {
   const data = (error as { data?: unknown } | null)?.data;
   if (typeof data === 'string') return data;

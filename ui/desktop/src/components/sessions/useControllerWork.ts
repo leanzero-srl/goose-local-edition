@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   controllerChanges,
   controllerCommand,
+  controllerCommandNotAdmitted,
   controllerErrorText,
   controllerHistory,
   controllerOpen,
@@ -25,6 +26,7 @@ import {
 export function useControllerWork(selected: CatalogEntry) {
   const [state, setState] = useState<ControllerWorkState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [commandNotice, setCommandNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [historyPaused, setHistoryPaused] = useState(false);
@@ -205,6 +207,7 @@ export function useControllerWork(selected: CatalogEntry) {
   const submitExact = useCallback(async (command: WorkCommand) => {
     if (commandBusy.current) throw new Error('A command is already being submitted.');
     commandBusy.current = true;
+    setCommandNotice(null);
     setSending(true);
     setCommands((items) => [
       ...items.filter((item) => item.command.command_id !== command.command_id),
@@ -227,6 +230,25 @@ export function useControllerWork(selected: CatalogEntry) {
       if (receipt.state === 'rejected' || receipt.state === 'outcome_unknown')
         throw new Error(receipt.reason ?? receipt.state);
     } catch (failure) {
+      if (controllerCommandNotAdmitted(failure)) {
+        const detail =
+          'Not sent: the session changed before the owner accepted this action. Review the refreshed session and try again. Your draft has been kept.';
+        if (
+          alive.current &&
+          current.current &&
+          workKey(current.current.entry.work) === workKey(command.work) &&
+          current.current.entry.store_generation === command.expected_store_generation
+        ) {
+          setCommands((items) =>
+            items.filter((item) => item.command.command_id !== command.command_id)
+          );
+          setCommandNotice(detail);
+          setLoading(true);
+          current.current = null;
+          setReload((value) => value + 1);
+        }
+        throw new Error(detail);
+      }
       const detail = controllerErrorText(failure);
       if (alive.current) setError(detail);
       throw new Error(detail);
@@ -277,6 +299,7 @@ export function useControllerWork(selected: CatalogEntry) {
   return {
     state,
     error,
+    commandNotice,
     loading,
     loadingOlder,
     historyPaused,

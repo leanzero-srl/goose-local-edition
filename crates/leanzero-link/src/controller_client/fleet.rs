@@ -319,7 +319,7 @@ impl DesktopController {
             crate::controller_host::save_json(&self.outbox_path, &next)?;
             *outbox = next;
         }
-        let receipt: CommandReceipt = transport
+        let result: ClientResult<CommandReceipt> = transport
             .request(
                 Method::POST,
                 &format!("{}/commands", work_path(&command.work)),
@@ -330,7 +330,17 @@ impl DesktopController {
                         .map_err(|_| ClientError::invalid("Invalid typed command"))?,
                 ),
             )
-            .await?;
+            .await;
+        let receipt = match result {
+            Err(error) if error.status == 409 && error.code == "stale_revision" => {
+                // The owner checks existing receipts before revision and rejects stale
+                // new commands before admission. Other failures cannot prove non-delivery.
+                self.remove_unaccepted_command(&command, credentials.device.device_id)
+                    .await?;
+                return Err(error);
+            }
+            result => result?,
+        };
         if receipt.command_id != command.command_id
             || receipt.work != command.work
             || receipt.authenticated_device_id != credentials.device.device_id
@@ -341,6 +351,26 @@ impl DesktopController {
         }
         self.save_receipt(receipt.clone()).await?;
         Ok(receipt)
+    }
+
+    async fn remove_unaccepted_command(
+        &self,
+        command: &WorkCommand,
+        device_id: Uuid,
+    ) -> ClientResult<()> {
+        let mut outbox = self.outbox.lock().await;
+        let mut next = outbox.clone();
+        let index = next
+            .iter()
+            .position(|entry| entry.device_id == device_id && entry.command == *command)
+            .filter(|index| next[*index].receipt.is_none())
+            .ok_or_else(|| {
+                ClientError::invalid("Cannot discard a command with an existing receipt")
+            })?;
+        next.remove(index);
+        crate::controller_host::save_json(&self.outbox_path, &next)?;
+        *outbox = next;
+        Ok(())
     }
 
     pub async fn receipt(

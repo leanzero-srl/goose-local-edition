@@ -36,6 +36,7 @@ struct Fixture {
     lose_ack: Arc<AtomicBool>,
     command_requests: Arc<AtomicUsize>,
     required_outbox: Option<PathBuf>,
+    refuse_next: Arc<Mutex<Option<(StatusCode, &'static str)>>>,
 }
 impl Fixture {
     fn new(owner: Uuid, device: Uuid) -> Self {
@@ -67,6 +68,7 @@ impl Fixture {
             lose_ack: Arc::new(AtomicBool::new(true)),
             command_requests: Arc::new(AtomicUsize::new(0)),
             required_outbox: None,
+            refuse_next: Arc::new(Mutex::new(None)),
         }
     }
     fn receipt(&self, command: &WorkCommand) -> CommandReceipt {
@@ -133,6 +135,9 @@ async fn command(
         assert!(persisted
             .iter()
             .any(|entry| entry.device_id == f.device && entry.command == command));
+    }
+    if let Some((status, code)) = f.refuse_next.lock().await.take() {
+        return (status, Json(serde_json::json!({"error": {"code": code}}))).into_response();
     }
     let mut accepted = f.accepted.lock().await;
     if let Some(old) = accepted.get(&command.command_id) {
@@ -397,6 +402,98 @@ async fn two_pinned_owners_refresh_offline_cache_and_lost_ack_outbox() {
         .await
         .unwrap()
         .is_empty());
+    let stale = WorkCommand {
+        command_id: Uuid::new_v4(),
+        ..command.clone()
+    };
+    *first.refuse_next.lock().await = Some((StatusCode::CONFLICT, "stale_revision"));
+    let failure = service
+        .command(stale.clone(), Some(proxy))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (failure.status, failure.code.as_str()),
+        (409, "stale_revision")
+    );
+    assert!(!first.accepted.lock().await.contains_key(&stale.command_id));
+    assert!(service
+        .pending_commands(&stale.work)
+        .await
+        .unwrap()
+        .is_empty());
+    let restarted = DesktopController::load(
+        directory.path().join("desktop"),
+        authority.uri(),
+        "fixture@example.test".into(),
+        "Fixture".into(),
+    )
+    .unwrap();
+    assert!(restarted
+        .pending_commands(&stale.work)
+        .await
+        .unwrap()
+        .is_empty());
+    let reviewed = WorkCommand {
+        command_id: Uuid::new_v4(),
+        expected_revision: 2,
+        ..stale.clone()
+    };
+    let delivered = service
+        .command(reviewed.clone(), Some(proxy))
+        .await
+        .unwrap();
+    assert_eq!(delivered.command_id, reviewed.command_id);
+    assert_eq!(first.accepted.lock().await[&reviewed.command_id], reviewed);
+    for (status, code) in [
+        (StatusCode::CONFLICT, "stale_run"),
+        (StatusCode::SERVICE_UNAVAILABLE, "stale_revision"),
+        (StatusCode::NOT_FOUND, "command_not_found"),
+    ] {
+        let uncertain = WorkCommand {
+            command_id: Uuid::new_v4(),
+            ..command.clone()
+        };
+        *first.refuse_next.lock().await = Some((status, code));
+        assert!(service
+            .command(uncertain.clone(), Some(proxy))
+            .await
+            .is_err());
+        assert!(service
+            .pending_commands(&uncertain.work)
+            .await
+            .unwrap()
+            .iter()
+            .any(|p| p.command == uncertain));
+        let changed = WorkCommand {
+            expected_revision: 2,
+            ..uncertain.clone()
+        };
+        assert_eq!(
+            service
+                .command(changed, Some(proxy))
+                .await
+                .unwrap_err()
+                .code,
+            "invalid_request"
+        );
+        service.command(uncertain, Some(proxy)).await.unwrap();
+    }
+    // Even a contradictory owner response cannot erase an already recorded receipt.
+    *first.refuse_next.lock().await = Some((StatusCode::CONFLICT, "stale_revision"));
+    assert_eq!(
+        service
+            .command(command.clone(), Some(proxy))
+            .await
+            .unwrap_err()
+            .code,
+        "invalid_request"
+    );
+    let saved = private_json::<Vec<PendingCommand>>(&service.outbox_path)
+        .unwrap()
+        .unwrap();
+    assert!(saved
+        .iter()
+        .any(|p| p.command == command && p.receipt.is_some()));
     let before_entry_change = std::fs::read(&catalog_path).unwrap();
     let mut changed_entry = first.entry.clone();
     changed_entry.title = "Owner renamed the work".into();

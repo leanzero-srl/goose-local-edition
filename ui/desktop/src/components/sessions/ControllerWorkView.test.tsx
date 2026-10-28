@@ -127,6 +127,72 @@ describe('linked work user path', () => {
     expect(screen.getByRole('textbox')).toBeDisabled();
     expect(api.controllerCommand).not.toHaveBeenCalled();
   });
+  it('refreshes a definitively unaccepted steer and keeps the draft for a fresh user decision', async () => {
+    vi.mocked(api.controllerCommand).mockRejectedValueOnce({
+      data: { error: { status: 409, code: 'stale_revision', message: 'Owner refused' } },
+    });
+    render(
+      <ControllerWorkView entry={fixtureEntry} host={fixtureHost} stale={false} onBack={vi.fn()} />,
+      { wrapper: IntlTestWrapper }
+    );
+    await screen.findByText('Saved answer');
+    const input = screen.getByRole('textbox');
+    fireEvent.change(input, { target: { value: 'Keep this exact instruction' } });
+    const refreshed = fixtureSnapshot();
+    refreshed.entry = { ...refreshed.entry, revision: 8, current_run_id: 'run-b' };
+    vi.mocked(api.controllerOpen).mockResolvedValue(refreshed);
+    fireEvent.click(screen.getByRole('button', { name: 'Steer current run' }));
+    await screen.findByText(/Not sent: the session changed/);
+    await waitFor(() => expect(api.controllerOpen).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Steer current run' })).toBeEnabled()
+    );
+    expect(input).toHaveValue('Keep this exact instruction');
+    expect(screen.queryByRole('button', { name: 'Retry same command' })).not.toBeInTheDocument();
+    expect(api.controllerCommand).toHaveBeenCalledTimes(1);
+    vi.mocked(api.controllerCommand).mockImplementation(async (command) => ({
+      command_id: command.command_id,
+      work: command.work,
+      authenticated_device_id: 'controller-a',
+      revision: 9,
+      state: 'delivered',
+      run_id: 'run-b',
+      message_id: null,
+      input_id: null,
+      checkpoint_id: null,
+      reason: null,
+      updated_at: '2026-10-26T10:00:00Z',
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'Steer current run' }));
+    await waitFor(() => expect(api.controllerCommand).toHaveBeenCalledTimes(2));
+    const [first, second] = vi.mocked(api.controllerCommand).mock.calls.map(([command]) => command);
+    expect(second.command_id).not.toBe(first.command_id);
+    expect(second.payload).toEqual(first.payload);
+    expect(second).toMatchObject({ expected_revision: 8, expected_run_id: 'run-b' });
+    await waitFor(() => expect(input).toHaveValue(''));
+  });
+  it.each([
+    { status: 409, code: 'stale_run' },
+    { status: 503, code: 'stale_revision' },
+    { status: 404, code: 'command_not_found' },
+  ])('retains immutable recovery for other owner errors: $status $code', async (error) => {
+    vi.mocked(api.controllerCommand).mockRejectedValue({ data: { error } });
+    render(
+      <ControllerWorkView entry={fixtureEntry} host={fixtureHost} stale={false} onBack={vi.fn()} />,
+      { wrapper: IntlTestWrapper }
+    );
+    await screen.findByText('Saved answer');
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Keep command' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Steer current run' }));
+    const retry = await screen.findByRole('button', { name: 'Retry same command' });
+    await waitFor(() => expect(retry).toBeEnabled());
+    fireEvent.click(retry);
+    await waitFor(() => expect(api.controllerCommand).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.controllerCommand).mock.calls[1][0]).toEqual(
+      vi.mocked(api.controllerCommand).mock.calls[0][0]
+    );
+    expect(api.controllerOpen).toHaveBeenCalledTimes(1);
+  });
   it('reconciles a command saved before disconnect without submitting it again', async () => {
     const command: WorkCommand = {
       command_id: 'saved-command',
