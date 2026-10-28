@@ -1,6 +1,12 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
-import type { CatalogEntry, CommandAction, HostDescriptor } from '../../acp/controllerTypes';
+import {
+  workKey,
+  type CatalogEntry,
+  type CommandAction,
+  type HostDescriptor,
+  type WorkCommand,
+} from '../../acp/controllerTypes';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button } from '../ui/button';
 import { useControllerWork } from './useControllerWork';
@@ -127,6 +133,20 @@ export default function ControllerWorkView({
   const intl = useIntl();
   const work = useControllerWork(entry);
   const [text, setText] = useState('');
+  const recoveredIds = useRef(new Set<string>());
+  const identity = workKey(entry.work);
+  useEffect(() => {
+    setText('');
+    recoveredIds.current.clear();
+  }, [identity, entry.store_generation]);
+  useEffect(() => {
+    for (const command of work.unacceptedCommands) {
+      if (recoveredIds.current.has(command.command_id)) continue;
+      recoveredIds.current.add(command.command_id);
+      const recovered = commandText(command);
+      if (recovered !== null) setText((draft) => (draft === '' ? recovered : draft));
+    }
+  }, [work.unacceptedCommands]);
   const transcript = useRef<HTMLDivElement>(null);
   const olderScroll = useRef<{ height: number; top: number } | null>(null);
   const current = work.state?.entry ?? entry;
@@ -304,6 +324,17 @@ export default function ControllerWorkView({
             )}
           </div>
         ))}
+        {work.unacceptedCommands.map((command) => (
+          <details key={command.command_id} className="text-sm" open>
+            <summary>
+              {command.action} · {intl.formatMessage(messages.rejected)} ·{' '}
+              {intl.formatMessage(messages.content)}
+            </summary>
+            <pre className="whitespace-pre-wrap break-all">
+              {commandText(command) ?? JSON.stringify(command.payload, null, 2)}
+            </pre>
+          </details>
+        ))}
       </div>
       <footer className="p-4 border-t border-border-primary space-y-3">
         {(supports('send') || supports('steer') || supports('note')) && (
@@ -366,4 +397,16 @@ export default function ControllerWorkView({
       </footer>
     </div>
   );
+}
+
+function commandText(command: WorkCommand): string | null {
+  if (command.action === 'note') return command.payload.text;
+  if (
+    (command.action === 'send' || command.action === 'steer') &&
+    command.payload.content.length === 1 &&
+    command.payload.content[0].type === 'text'
+  ) {
+    return command.payload.content[0].text;
+  }
+  return null;
 }

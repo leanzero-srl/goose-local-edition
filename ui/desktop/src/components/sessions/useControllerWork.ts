@@ -27,6 +27,7 @@ export function useControllerWork(selected: CatalogEntry) {
   const [state, setState] = useState<ControllerWorkState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [commandNotice, setCommandNotice] = useState<string | null>(null);
+  const [unacceptedCommands, setUnacceptedCommands] = useState<WorkCommand[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [historyPaused, setHistoryPaused] = useState(false);
@@ -38,6 +39,11 @@ export function useControllerWork(selected: CatalogEntry) {
   const alive = useRef(false);
   const loadOlderRequest = useRef<(() => Promise<void>) | null>(null);
   const identity = workKey(selected.work);
+
+  useEffect(() => {
+    setUnacceptedCommands([]);
+    setCommandNotice(null);
+  }, [identity, selected.store_generation]);
 
   useEffect(() => {
     alive.current = true;
@@ -232,7 +238,7 @@ export function useControllerWork(selected: CatalogEntry) {
     } catch (failure) {
       if (controllerCommandNotAdmitted(failure)) {
         const detail =
-          'Not sent: the session changed before the owner accepted this action. Review the refreshed session and try again. Your draft has been kept.';
+          'Not sent: the session changed before the owner accepted this action. Review the refreshed session and try again.';
         if (
           alive.current &&
           current.current &&
@@ -243,6 +249,10 @@ export function useControllerWork(selected: CatalogEntry) {
             items.filter((item) => item.command.command_id !== command.command_id)
           );
           setCommandNotice(detail);
+          setUnacceptedCommands((items) => [
+            ...items.filter((item) => item.command_id !== command.command_id),
+            command,
+          ]);
           setLoading(true);
           current.current = null;
           setReload((value) => value + 1);
@@ -300,6 +310,11 @@ export function useControllerWork(selected: CatalogEntry) {
     state,
     error,
     commandNotice,
+    unacceptedCommands: unacceptedCommands.filter(
+      (command) =>
+        workKey(command.work) === identity &&
+        command.expected_store_generation === selected.store_generation
+    ),
     loading,
     loadingOlder,
     historyPaused,

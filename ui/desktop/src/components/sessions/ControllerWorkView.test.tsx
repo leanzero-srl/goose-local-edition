@@ -231,6 +231,131 @@ describe('linked work user path', () => {
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'A new message' } });
     expect(screen.getByRole('button', { name: 'Queue next message' })).toBeEnabled();
   });
+  it.each(['', 'Different unsent draft'])(
+    'recovers the text of a reopened unaccepted command without replacing draft %j',
+    async (draft) => {
+      const command: WorkCommand = {
+        command_id: 'restored-stale-command',
+        work: fixtureEntry.work,
+        expected_store_generation: 'generation-a',
+        expected_revision: 2,
+        expected_run_id: 'run-a',
+        action: 'steer',
+        payload: { content: [{ type: 'text', text: 'Recovered exact instruction' }] },
+      };
+      vi.mocked(api.controllerPendingCommands).mockResolvedValue({
+        commands: [{ command, receipt: null }],
+      });
+      vi.mocked(api.controllerReceipt).mockRejectedValue(new Error('Receipt not found'));
+      vi.mocked(api.controllerCommand).mockImplementation(async () => {
+        vi.mocked(api.controllerPendingCommands).mockResolvedValue({ commands: [] });
+        throw { data: { error: { status: 409, code: 'stale_revision' } } };
+      });
+      const view = render(
+        <ControllerWorkView
+          entry={fixtureEntry}
+          host={fixtureHost}
+          stale={false}
+          onBack={vi.fn()}
+        />,
+        { wrapper: IntlTestWrapper }
+      );
+      const retry = await screen.findByRole('button', { name: 'Retry same command' });
+      expect(screen.getByRole('textbox')).toHaveValue('');
+      if (draft) fireEvent.change(screen.getByRole('textbox'), { target: { value: draft } });
+      fireEvent.click(retry);
+      await screen.findByText(/Not sent: the session changed/);
+      await waitFor(() => expect(api.controllerOpen).toHaveBeenCalledTimes(2));
+      expect(api.controllerCommand).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(api.controllerCommand).mock.calls[0][0]).toEqual(command);
+      expect(screen.getByRole('textbox')).toHaveValue(draft || 'Recovered exact instruction');
+      expect(
+        screen.getByText('Recovered exact instruction', { selector: 'pre' })
+      ).toBeInTheDocument();
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: '' } });
+      expect(screen.getByRole('textbox')).toHaveValue('');
+      const changed = { ...fixtureEntry, store_generation: 'generation-b' };
+      view.rerender(
+        <ControllerWorkView entry={changed} host={fixtureHost} stale={false} onBack={vi.fn()} />
+      );
+      expect(
+        screen.queryByText('Recovered exact instruction', { selector: 'pre' })
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/Not sent: the session changed/)).not.toBeInTheDocument();
+      expect(screen.getByRole('textbox')).toHaveValue('');
+    }
+  );
+  it('keeps non-composer content inspectable without flattening it into a new draft', async () => {
+    const command: WorkCommand = {
+      command_id: 'restored-multi-part',
+      work: fixtureEntry.work,
+      expected_store_generation: 'generation-a',
+      expected_revision: 2,
+      expected_run_id: 'run-a',
+      action: 'send',
+      payload: {
+        content: [
+          { type: 'text', text: 'First part' },
+          { type: 'text', text: 'Second part' },
+        ],
+      },
+    };
+    vi.mocked(api.controllerPendingCommands).mockResolvedValue({
+      commands: [{ command, receipt: null }],
+    });
+    vi.mocked(api.controllerReceipt).mockRejectedValue(new Error('Receipt not found'));
+    vi.mocked(api.controllerCommand).mockImplementation(async () => {
+      vi.mocked(api.controllerPendingCommands).mockResolvedValue({ commands: [] });
+      throw { data: { error: { status: 409, code: 'stale_revision' } } };
+    });
+    render(
+      <ControllerWorkView entry={fixtureEntry} host={fixtureHost} stale={false} onBack={vi.fn()} />,
+      { wrapper: IntlTestWrapper }
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry same command' }));
+    await screen.findByText(/Not sent: the session changed/);
+    expect(screen.getByRole('textbox')).toHaveValue('');
+    expect(screen.getByText(/First part/, { selector: 'pre' })).toHaveTextContent('Second part');
+    expect(screen.queryByText(/Your draft has been kept/)).not.toBeInTheDocument();
+    expect(api.controllerCommand).toHaveBeenCalledTimes(1);
+  });
+  it('does not restore an old asynchronous rejection into another selected work', async () => {
+    let rejectCommand!: (reason: unknown) => void;
+    vi.mocked(api.controllerCommand).mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectCommand = reject;
+        })
+    );
+    const view = render(
+      <ControllerWorkView entry={fixtureEntry} host={fixtureHost} stale={false} onBack={vi.fn()} />,
+      { wrapper: IntlTestWrapper }
+    );
+    await screen.findByText('Saved answer');
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Old session instruction' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Steer current run' }));
+    await waitFor(() => expect(api.controllerCommand).toHaveBeenCalledTimes(1));
+    const changed = { ...fixtureEntry, work: { ...fixtureEntry.work, work_id: 'other-work' } };
+    vi.mocked(api.controllerOpen).mockResolvedValue({ ...fixtureSnapshot(), entry: changed });
+    vi.mocked(api.controllerHistory).mockResolvedValue({
+      work: changed.work,
+      store_generation: 'generation-a',
+      revision: 4,
+      items: [],
+      next_page_token: null,
+      work_cursor: 'other-history',
+    });
+    view.rerender(
+      <ControllerWorkView entry={changed} host={fixtureHost} stale={false} onBack={vi.fn()} />
+    );
+    await waitFor(() => expect(api.controllerOpen).toHaveBeenCalledTimes(2));
+    rejectCommand({ data: { error: { status: 409, code: 'stale_revision' } } });
+    await waitFor(() => expect(screen.getByRole('textbox')).toBeEnabled());
+    expect(screen.getByRole('textbox')).toHaveValue('');
+    expect(screen.queryByText('Old session instruction')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Not sent: the session changed/)).not.toBeInTheDocument();
+    expect(api.controllerOpen).toHaveBeenCalledTimes(2);
+  });
   it('keeps an unknown outcome visible and prevents another send or automatic retry', async () => {
     const command: WorkCommand = {
       command_id: 'uncertain-command',
