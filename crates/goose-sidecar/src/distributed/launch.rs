@@ -12382,6 +12382,43 @@ mod pipeline_launch_tests {
         );
     }
 
+    /// Session 14 (2026-10-28): after the 256k Gauntlet's first image request the two pipeline
+    /// ranks sampled different tokens (uid 70 from token 9-16, uid 71 from token 2), so their
+    /// prompt caches held different answers, the next request's cached prefix was shorter on
+    /// rank 1, and rank 1 sent a prefill chunk rank 0 never posted for (GPU timeout). Every rank
+    /// now samples rank 0's token: two ranks whose own samplers disagree both return rank 0's.
+    #[test]
+    fn every_pipeline_rank_samples_rank_zeros_token() {
+        let source = include_str!("rank_pipeline_split.py");
+        let start = source.find("def rank0_sampler").unwrap();
+        let end = source.find("def pipeline_load_turn").unwrap();
+        let check = format!(
+            "{}\n\
+             contributions = {{}}\n\
+             def run(rank, own):\n\
+             \x20   def all_sum(x):\n\
+             \x20       contributions[rank] = x\n\
+             \x20       return 'SUM'\n\
+             \x20   out = rank0_sampler(lambda lp: own, rank, all_sum, lambda t: 0)('lp')\n\
+             \x20   return out\n\
+             assert run(0, 7) == 'SUM' and run(1, 9) == 'SUM'\n\
+             assert contributions == {{0: 7, 1: 0}}, contributions\n\
+             print('ok')\n",
+            &source[start..end]
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(source.contains("pipeline_server._make_sampler = make_rank0_sampler"));
+    }
+
     #[test]
     fn the_pipeline_ranks_load_one_at_a_time_rank_zero_last() {
         let source = include_str!("rank_pipeline_split.py");

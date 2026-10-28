@@ -101,6 +101,24 @@ class CheckpointIndexJson:
         return getattr(json, name)
 
 
+def rank0_sampler(sampler, rank, all_sum, zeros_like):
+    """`sampler`, returning the token rank 0 sampled on every rank: each rank samples (the same
+    RNG draws stay in step), then the ranks sum rank 0's tokens with zeros. A pipeline rank feeds
+    the token it holds into its own layers and its own prompt cache, so a rank whose sample
+    differs runs a different conversation from there. Measured 2026-10-28 (session 14, the 256k
+    Gauntlet): rank 0 and rank 1 agreed on all 69 answers until the run's first image request,
+    then uid 70 differed from token 9-16 and uid 71 from token 2 (GOOSE_RANK_STATE `ended`
+    checkpoints); the next request found a shorter cached prefix on rank 1 (it held its own
+    tokens), rank 1 still sent a (1, 256) chunk when rank 0 posted for its last (1, 103), and
+    rank 1's GPU timed out (RANK_FATAL 19:02:56Z)."""
+
+    def sample(logprobs):
+        own = sampler(logprobs)
+        return all_sum(own if rank == 0 else zeros_like(own))
+
+    return sample
+
+
 def pipeline_load_turn(rank, size):
     """(barriers before, barriers after) this rank's load: the ranks load one at a time, the last
     rank first and rank 0 last. Every rank joins `size - 1` CPU barriers around its load (plus
@@ -292,6 +310,19 @@ if spec.get("pipeline_split") is not None:
 
 
     pipeline_server.sharded_load = sharded_load_with_barrier
+
+    # Every rank samples rank 0's token (`rank0_sampler`): one small all_sum per row and step.
+    original_make_sampler = pipeline_server._make_sampler
+
+    def make_rank0_sampler(*args, **kwargs):
+        return rank0_sampler(
+            original_make_sampler(*args, **kwargs),
+            spec["rank"],
+            mx.distributed.all_sum,
+            mx.zeros_like,
+        )
+
+    pipeline_server._make_sampler = make_rank0_sampler
 
     weights = spec.get("pipeline_cache_weights")
     if weights is None:
