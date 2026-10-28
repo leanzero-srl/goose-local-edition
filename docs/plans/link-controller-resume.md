@@ -1,5 +1,11 @@
 # Goose Remote continuation — resumed by owner, 28 October 2026
 
+## Recovery and cloud test — 28 October 2026, 21:45 UTC
+
+Both original hosts recovered successfully through authenticated hosts/release then normal Connect (laptop actual UI Retry). Exact mismatch was only the provider pre-auth key reference: laptop307→321, Gabee319→324; node/user/key/IP otherwise unchanged before recovery. Current provider/confirmed/activated bindings match exactly with fresh leases; same owner, node ID, machine key and IP, rotated node public key as normal. Clean restarts passed: laptop backend190, Gabee73537. Both catalog syncs now fresh: laptop557 entries including newly created disposable test, Gabee55. Other inactive/legacy owners remain unavailable; do not call them both Studios without attribution.
+
+Root created original-laptop session20261028_1 via UI, title Cloud controller test, explicitly selected existing cloud node node:deepseek-v4-1-flash-openrouter. Actual cloud reply “Cloud controller test ready.” visible. Public WorkRef c787fd2d-0909-4f49-9e85-bd48a684f020. Gabee lane is sending one idempotent remote continuation and recording delivery; root verifies actual UI. No local inference. New Apple-upload approval question is pending; no submission yet.
+
 ## Latest live rollout — 28 October 2026, 21:37 UTC
 
 Both original MacBooks now run the complete signed 3.0.134 controller candidate (CLI88cdf89cde29c490cccbd0eb4e999b367f2d301aa77eb5120704c509bd30ae0c), launched normally without OS warnings or security bypass. The independently validated ZIP is local and on Gabee at /tmp/goose-controller-full-signed-c86a0b33/Goose-Swarm-Apple-submission.zip, SHA3d124c48fb915f624a7bed4743082d3fbe490671e5be2e48c2a4909c17197c1b. Local developer testing was explicitly authorized and does not require distribution notarization first. New Apple upload remains blocked pending exact-artifact approval. Do not rerun signing/validation; finalizer91b4 passed.
