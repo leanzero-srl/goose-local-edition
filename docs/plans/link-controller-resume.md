@@ -16,6 +16,9 @@ Apple account browser session is now expired; organization-conversion outcome wa
 
 ### Merged build completed — signing next
 
+28October21:06UTC: local-only validation70b1 exited1 before file validation because codesign interpreted the requirement expression as a filename. Root corrected the missing `=` prefix for an inline requirement. Actual system-access command now passes for teamZZ8MTZ6NRZ and rejects wrong teamINVALID000 with exit3. No signature/app changes. Replacement local-only job **`laptop-20261028-230625-7be7`** queued once (execsession86193), waiting for laptop load. Use this job instead of70b1. It creates the validated receipt and exact ZIP; still NO Apple credentials/upload/stapling. Do not enqueue another copy.
+
+
 28October20:12UTC approval boundary: independent review passed the narrow signing-metadata validator and recovery script, but automatic approval review REJECTED execution of the new3.0.134 notarization upload before it ran. Stated reason: trusted prior Apple-upload approval named the older3.0.132 artifact; it does not cover this changed payload. Do not bypass through a different route or assume old authorization resolves this rejection. No new Apple upload/staple occurred. Complete local checks and prepare exact candidate for new owner approval as the final step.
 
 Safer local-only validation is queued once as `laptop-20261028-221202-70b1`, execsession20992, script `/tmp/goose-controller-validate-signed-c86a.cjs`. It loads no Apple credentials and contains no submission/stapling tail. Fresh fingerprints,691file signatures, code equivalence and negative controls lead to a concrete signed receipt. The notarization recovery is NOT queued. Originala1a6 remains failed; do not relaunch it.
