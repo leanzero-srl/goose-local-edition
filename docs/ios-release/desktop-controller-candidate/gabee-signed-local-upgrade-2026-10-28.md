@@ -47,3 +47,11 @@ Gabee persisted command `b793cd28-af41-4bba-9f29-d79b30156716` locally before it
 A reverse-direction new Gabee test was not created: supported provider inventory shows Anthropic/OpenRouter unconfigured, no swarm device config exists, and the nominally configured OpenAI provider points to `http://127.0.0.1:8090`. That is not proof of a cloud route. No old session or global provider default was changed to manufacture one. The parent owns any further cloud routing decision and actual UI confirmation.
 
 The additional existing-auth check also excludes a Claude reverse test: Gabee has the Claude CLI installed, but `claude auth status` returned exit 1, `loggedIn: false`, `authMethod: none`. The supported `claude-acp` provider is present and reports `configured: false`. No login or credential transfer was attempted.
+
+## Active steer observation
+
+A coordinated cloud-only active-chat test used the same disposable laptop work. Gabee's bounded read-only observer opened a fresh running snapshot, required the advertised `steer` action and exact active run, then persisted command `6d1f0c2d-d1f0-4006-bd40-309cbd2455d2` before its sole send at 21:50:51.525 UTC. Expected revision was 73471; run was `2e95d091-140c-4b49-aefb-94fbe784bf69`.
+
+This test did not deliver a steer. The current Gabee backend log at 21:50:51.866082 records the exact typed refusal: `stale_revision`, HTTP 409, retryable false. Subsequent receipt lookup returned `command_not_found`, HTTP 404. At 21:52:30 the shared history contained six messages, no message for that steer command, and the cloud run had returned to idle at revision 73617. This proves a pre-admission optimistic-revision race, not an ambiguous transport outcome. The earlier idle continuation remains a separate passing result.
+
+No resend occurred. The client outbox deliberately rejects reusing a command ID with changed contents (`controller_client/fleet.rs`), so changing the expected revision under the same ID is not a supported retry through that client. The private snapshot's `cloud-active-steer-command.json` retains the original request and exact rejection evidence. Source behavior was not changed by this lane.
