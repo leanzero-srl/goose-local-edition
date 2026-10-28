@@ -309,6 +309,27 @@ if spec.get("pipeline_split") is not None:
 
         cls.nbytes = property(nbytes)
 
+    # Diagnostic (2026-10-28, the 2-row JACCL desync): with /tmp/goose-pipe-trace present on a
+    # node, each collective this rank BUILDS is appended to /tmp/goose-pipe-trace-rank<r>.log
+    # (sequence, time, op, shape, dtype, thread), so two ranks' sequences can be diffed.
+    if os.path.exists("/tmp/goose-pipe-trace"):
+        pipe_trace = open(f"/tmp/goose-pipe-trace-rank{spec['rank']}.log", "a", buffering=1)
+        pipe_trace_seq = [0]
+
+        def pipe_traced(name, fn):
+            def traced(x, *args, **kwargs):
+                pipe_trace_seq[0] += 1
+                pipe_trace.write(
+                    f"{pipe_trace_seq[0]} {time.time():.3f} {name} {tuple(x.shape)} {x.dtype} "
+                    f"{threading.current_thread().name}\n"
+                )
+                return fn(x, *args, **kwargs)
+
+            return traced
+
+        for pipe_op in ("send", "recv_like", "all_gather", "all_sum"):
+            setattr(mx.distributed, pipe_op, pipe_traced(pipe_op, getattr(mx.distributed, pipe_op)))
+
     full_weight, swa_weight = int(weights["full"]), int(weights["swa"])
     for name in ("KVCache", "BatchKVCache"):
         weigh(getattr(pipeline_cache, name), full_weight)
