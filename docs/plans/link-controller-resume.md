@@ -16,6 +16,11 @@ Apple account browser session is now expired; organization-conversion outcome wa
 
 ### Merged build completed — signing next
 
+28October20:12UTC approval boundary: independent review passed the narrow signing-metadata validator and recovery script, but automatic approval review REJECTED execution of the new3.0.134 notarization upload before it ran. Stated reason: trusted prior Apple-upload approval named the older3.0.132 artifact; it does not cover this changed payload. Do not bypass through a different route or assume old authorization resolves this rejection. No new Apple upload/staple occurred. Complete local checks and prepare exact candidate for new owner approval as the final step.
+
+Safer local-only validation is queued once as `laptop-20261028-221202-70b1`, execsession20992, script `/tmp/goose-controller-validate-signed-c86a.cjs`. It loads no Apple credentials and contains no submission/stapling tail. Fresh fingerprints,691file signatures, code equivalence and negative controls lead to a concrete signed receipt. The notarization recovery is NOT queued. Originala1a6 remains failed; do not relaunch it.
+
+
 28October20:10UTC: ticketa1a6 ran19:36–19:43 and exited1 AFTER full Developer ID signing, strict deep verification and CLI/main equivalence. Its over-strict fingerprint classifier rejected expected detached resource-signature xattrs onMainMenu.nib before receipt creation or Apple upload. Root and independent reviewer found29Mach-O content changes,662resource-xattr-only changes and3_CodeSignature entries; no unclassified changes. Every resource retained bytes/mode/preexisting attrs and gained exactlycom.apple.cs.CodeDirectory/CodeRequirements/CodeSignature. The installed osx-sign walker signs binary resources, explaining these changes. System-access strict verification ofMainMenu.nib passed; sandbox-only invalid-signature was disproved. Signing agent is preparing a narrowly checked resume of this already signed app, with independent review and negative controls before any upload. Do not sign again, erase this stage or blindly resubmit. No notary submission exists yet.
 
 Fresh node-probe20:05UTC still shows actual workhorseGauntlet35229 and workmule98515 inference busy. Laptop again resource-busy. No target upgraded.
