@@ -1,5 +1,15 @@
 # Goose Remote continuation — resumed by owner, 28 October 2026
 
+## Latest live rollout — 28 October 2026, 21:37 UTC
+
+Both original MacBooks now run the complete signed 3.0.134 controller candidate (CLI88cdf89cde29c490cccbd0eb4e999b367f2d301aa77eb5120704c509bd30ae0c), launched normally without OS warnings or security bypass. The independently validated ZIP is local and on Gabee at /tmp/goose-controller-full-signed-c86a0b33/Goose-Swarm-Apple-submission.zip, SHA3d124c48fb915f624a7bed4743082d3fbe490671e5be2e48c2a4909c17197c1b. Local developer testing was explicitly authorized and does not require distribution notarization first. New Apple upload remains blocked pending exact-artifact approval. Do not rerun signing/validation; finalizer91b4 passed.
+
+Gabee app/backend67588/67641; laptop88947/89333. Full record hashes preserved: laptop73324sessions/384284messages, Gabee16/37. Gabee config byte-identical; laptop config only reordered the adjacent openai/openrouter entries of provider_default_models, retaining both exact values and all other lines. Whole previous3.0.134 apps retained locally at ~/.local/share/goose-upgrade-rollback-3.0.134-20261028/Goose Swarm.app; historical132 rollback untouched.
+
+Both saved-login reconnects fail HTTP409 mesh_binding_changed from hosts/mesh/context. Do not claim integration success or merge yet. Live binding comparison is in progress; source review identified supported authenticated hosts/release then ordinary Connect as possible same-owner recovery, preserving saved account login and generation/high-water protections. Do not edit registry binding, suppress the rejection, delete nodes or reset identities. Root owns laptop, release_reconcile owns Gabee. Studios untouched.
+
+Latest direct owner instruction: inference tests should use cloud models/cloud nodes because both MacBooks are busy. Keep local models unloaded. Main merge remains authorized only after integration works.
+
 ## Authority
 
 28 October, latest direct owner instruction: upgrade Mihai's and Gabriela's MacBooks because Goose is idle there; if it all works well, merge the feature with main. Focus this rollout on the two laptops; do not interrupt either Studio. Both authenticated original ACP profiles showed zero running/waiting/background/looping sessions at21:11UTC. The feature merge into main is now explicitly authorized conditional on successful integration checks. Main was freshly checked at96e85f21ad (unchanged). Apple-upload rejection remains a separate unresolved boundary; the new owner messages did not explicitly approve that transmission.
