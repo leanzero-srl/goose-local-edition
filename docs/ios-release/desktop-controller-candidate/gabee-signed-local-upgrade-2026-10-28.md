@@ -1,6 +1,6 @@
 # Gabee signed local upgrade — 28 October 2026
 
-Status at 21:43 UTC: the complete signed controller candidate launches normally, saved-login Link connects, the controller is ready, and a second clean restart reconnects automatically. Original history, configuration, owner/account identity and personal Tailscale identity are preserved. The initial exact-binding refusal was recovered through authenticated host release and the normal Connect action. Cross-Mac controller interaction is being verified by the parent lane; no local model was loaded.
+Status at 21:43 UTC: the complete signed controller candidate launches normally, saved-login Link connects, the controller is ready, and a second clean restart reconnects automatically. Original history, configuration, owner/account identity and personal Tailscale identity are preserved. The initial exact-binding refusal was recovered through authenticated host release and the normal Connect action. Cross-Mac catalog sync is proven; the parent lane owns visible interaction and cloud-only session-command verification. No local model was loaded.
 
 ## Artifact and installation
 
@@ -34,4 +34,6 @@ Read-back at 21:40:48 proved a new confirmed and activated enrollment with all f
 
 After another fresh idle check, app 67588 and all owned children exited. Normal Launch Services reopening produced backend 73537 at 21:41:25. Saved-login recovery completed automatically: connected/Running/online and reconnect state `reconnected`; controller status is ready. Complete session/message/config digests still match the original snapshot after this restart.
 
-Supported controller sync at 21:41:42 returned Gabee's 55 catalog entries fresh with no error. The laptop's 556 cached entries were stale with a pinned-connection error during its parallel recovery; two unchanged Studio owners were correctly stale with no registered mesh endpoint. The parent lane owns cross-Mac visible catalog and cloud-only session-command proof after both hosts are ready. This lane has issued no session command or model request. Both previous whole-app rollback copies remain intact.
+Supported controller sync at 21:41:42 returned Gabee's 55 catalog entries fresh with no error. The laptop's 556 cached entries were initially stale during its parallel recovery. After both MacBooks completed clean restarts, the repeated Gabee sync at 21:43:05 returned the laptop's 557 entries fresh with no error and Gabee's 55 entries fresh with no error. Two unchanged Studio owners remained stale with no registered mesh endpoint. The parent lane owns cross-Mac visible catalog and cloud-only session-command proof after both hosts are ready. This lane has issued no session command or model request. Both previous whole-app rollback copies remain intact.
+
+Read-only inspection of all 16 existing Gabee sessions found no explicitly cloud-bound disposable test: two local t12 sessions and fourteen provider/model-null sessions. None was continued. The parent lane will use a new explicitly cloud-bound test for remote continuation.
