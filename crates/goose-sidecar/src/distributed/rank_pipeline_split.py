@@ -73,6 +73,34 @@ def shard_groups(names, weight_map):
     return [(f, groups[f]) for f in files] + ([(None, groups[None])] if None in groups else [])
 
 
+def checkpoint_weight_map(weight_map):
+    """The checkpoint's weight index, also keyed by the names the vendored model's parameters carry.
+    An mlx-vlm-layout omni build (EigenLabs MiMo-V2.6-Flash-MOPD) indexes `language_model.model.*`
+    and `language_model.lm_head.*`, which the fork's sanitize strips on load; mlx_lm's sharded_load
+    looks every parameter up by its stripped name and refused the build ("Pipeline loading is only
+    supported for MLX converted models", 2026-10-28), and the shard-by-shard eviction found no file.
+    Names the index already carries keep their entry."""
+    mapped = dict(weight_map)
+    for name, file in weight_map.items():
+        if name.startswith("language_model."):
+            mapped.setdefault(name[len("language_model."):], file)
+    return mapped
+
+
+class CheckpointIndexJson:
+    """mlx_lm.utils' `json` while sharded_load runs: `load` hands back the index with
+    `checkpoint_weight_map` applied; everything else is the json module."""
+
+    def load(self, fid, *args, **kwargs):
+        data = json.load(fid, *args, **kwargs)
+        if isinstance(data, dict) and isinstance(data.get("weight_map"), dict):
+            data["weight_map"] = checkpoint_weight_map(data["weight_map"])
+        return data
+
+    def __getattr__(self, name):
+        return getattr(json, name)
+
+
 def pipeline_load_turn(rank, size):
     """(barriers before, barriers after) this rank's load: the ranks load one at a time, the last
     rank first and rank 0 last. Every rank joins `size - 1` CPU barriers around its load (plus
@@ -175,7 +203,9 @@ if spec.get("pipeline_split") is not None:
         started = time.monotonic()
         model_dir = Path(args[0]) if args and Path(str(args[0])).is_dir() else None
         weight_map = (
-            json.loads((model_dir / "model.safetensors.index.json").read_text())["weight_map"]
+            checkpoint_weight_map(
+                json.loads((model_dir / "model.safetensors.index.json").read_text())["weight_map"]
+            )
             if model_dir is not None and (model_dir / "model.safetensors.index.json").exists()
             else None
         )
@@ -212,10 +242,13 @@ if spec.get("pipeline_split") is not None:
                 dropped = evict_file_cache(str(shard))
                 evicted["before_bytes"] = evicted.get("before_bytes", 0) + dropped
         mx.eval = eval_shard_by_shard
+        utils_json = pipeline_utils.json
+        pipeline_utils.json = CheckpointIndexJson()
         try:
             loaded = original_sharded_load(*args, **kwargs)
         finally:
             mx.eval = upstream_eval
+            pipeline_utils.json = utils_json
         emit("RANK_PIPELINE_FILE_CACHE", {"rank": spec["rank"], **evicted})
         for _ in range(after):
             mx.eval(mx.distributed.all_sum(mx.array(1.0), stream=mx.cpu))

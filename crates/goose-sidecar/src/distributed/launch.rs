@@ -12215,6 +12215,39 @@ mod pipeline_launch_tests {
         assert!(source.contains("RANK_PIPELINE_FILE_CACHE"));
     }
 
+    /// 2026-10-28: the MOPD omni build indexes `language_model.model.*`; mlx_lm's sharded_load
+    /// looked parameters up as `model.*` and refused it on both ranks.
+    #[test]
+    fn a_pipeline_rank_finds_an_omni_checkpoints_language_model_weights_in_its_index() {
+        let source = include_str!("rank_pipeline_split.py");
+        let start = source.find("def evict_file_cache").unwrap();
+        let end = source.find("def pipeline_load_turn").unwrap();
+        let check = format!(
+            "import json, io\n{}\n\
+             wm = {{'language_model.model.layers.0.w': 'a.safetensors', \
+             'language_model.lm_head.weight': 'b.safetensors', 'vision_tower.x': 'c.safetensors', \
+             'model.embed.w': 'd.safetensors'}}\n\
+             m = checkpoint_weight_map(wm)\n\
+             assert m['model.layers.0.w'] == 'a.safetensors' and m['lm_head.weight'] == 'b.safetensors', m\n\
+             assert m['model.embed.w'] == 'd.safetensors' and m['vision_tower.x'] == 'c.safetensors'\n\
+             d = CheckpointIndexJson().load(io.StringIO(json.dumps({{'metadata': {{}}, 'weight_map': wm}})))\n\
+             assert d['weight_map']['model.layers.0.w'] == 'a.safetensors'\n\
+             assert CheckpointIndexJson().dumps([1]) == '[1]'\n\
+             print('ok')\n",
+            &source[start..end]
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
     #[test]
     fn the_pipeline_ranks_load_one_at_a_time_rank_zero_last() {
         let source = include_str!("rank_pipeline_split.py");
