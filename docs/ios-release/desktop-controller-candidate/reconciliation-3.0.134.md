@@ -37,3 +37,7 @@ Job `laptop-20261028-203350-4b90` resumes the same tree at Clippy with installed
 Resume job4b90 exited0. Workspace all-target Clippy, CLI build, full-feature schema generation, SDK build, desktop typecheck/ESLint/i18n and complete desktop package passed. All567UI test files passed:5343tests,3skipped. Generated schema/SDK source and i18n message source remained identical. Exact machine-readable receipt: `build-receipt-3.0.134.json`.
 
 Unsigned local archive `/tmp/goose-controller-merged-c86a0b33-unsigned.zip`, SHA256 `ce361f66af6158fd8b9c89adee5c9d103562546ec94f5efa63a08dcdaafb1895`. Embedded CLI SHA256 `5ba611eee51ee68160c4161f7236ab3e173f0fda0e844b55e8fca9bd64bc7586`. Source changes after the tested tree are documentation only. Signing/notarization and actual host/native journeys remain separate; no installed app changed.
+
+## Independent unsigned-artifact review
+
+Reviewer merge_adversary independently streamed the ZIP and embedded CLI, verified both SHA256 values and main Info.plist3.0.134/net.leanzero.goose-swarm, checked gate script hashes and read raw remote logs/exit files. Source commit58e4bd3fc3 differs from tested treec86a only in documentation. Aggregate initial Rust results398passed/6ignored equal39core+1query-plan+358Link; scheduled-renewal test explicitly passed. Resume exit0, generated source unchanged,567UI files/5343tests/3skips, and complete packaging were confirmed. Verdict PASS for unsigned artifact/provenance; signing, notarization and actual user paths still require their own proof.

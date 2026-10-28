@@ -7,7 +7,7 @@ Original handover27October2026; resumed by owner28October2026. **Work active aga
 The owner requested this handover and a pause on27October, then explicitly resumed this work and its goal on28October. Automatic continuation `finish-goose-remote-testing` is **ACTIVE** again. The operational resume record is the current source of progress. Running benchmarks remain protected by the idle-only upgrade approval.
 
 Worktree: `/Users/mihaiperdum/.codex/worktrees/link-controller-plan/goose`.
-Branch: `codex/link-controller-plan`. The feature has **not been merged into main**. Do not assume a later checkout contains it. The3.0.134 source reconciliation is currently in progress; the intentionally untracked `ui/desktop/bundled-mcps` is a development symlink into the installed app, not source. Never package through it.
+Branch: `codex/link-controller-plan`. The feature has **not been merged into main**. Do not assume a later checkout contains it. The3.0.134 reconciliation is committed as58e4bd3fc3 on this feature branch; the intentionally untracked `ui/desktop/bundled-mcps` is a development symlink into the installed app, not source. Never package through it.
 
 Read [the operational resume record](docs/plans/link-controller-resume.md) for exact artifacts, hashes, local helper paths, host identities and next actions. Read [the progress ledger](docs/plans/link-controller-progress.md) for evidence and historical corrections. Later dated receipts supersede earlier blocked states.
 
@@ -17,7 +17,7 @@ Desktop and iPhone/iPad must view sessions started on any linked Mac and send me
 
 ## Historical delivered proof — 27 October
 
-**Current28October change:** laptop and Gabee now run3.0.134 without the controller feature. A merge of origin/main96e85f21ad into this feature branch and a full new desktop build are in progress. Never downgrade them to the old3.0.132 candidate. Gabee returns controller/catalog method-not-found; ordinary Link remains connected. See the dated hold receipt and operational resume.
+**Current28October change:** laptop and Gabee now run3.0.134 without the controller feature. Origin/main96e85f21ad is merged into this feature branch as58e4bd3fc3. Full new desktop build and required gates passed; signing/notarization and live rollout remain. Never downgrade them to the old3.0.132 candidate. Gabee returns controller/catalog method-not-found; ordinary Link remains connected. See the dated hold receipt and operational resume.
 
 ## Previously proved
 
