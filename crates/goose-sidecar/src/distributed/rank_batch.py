@@ -4,7 +4,7 @@
 import inspect  # noqa: E402
 
 import mlx.core as mx  # noqa: E402
-from mlx_lm.models.cache import ArraysCache, BatchKVCache, KVCache  # noqa: E402
+from mlx_lm.models.cache import ArraysCache, BatchKVCache, BatchRotatingKVCache, KVCache  # noqa: E402
 
 
 def cache_width(caches):

@@ -6347,6 +6347,58 @@ os._exit(0)
         );
     }
 
+    /// Session 14 (2026-10-28), the pipeline split's 2-row crash: mlx_lm 0.31.3's
+    /// BatchRotatingKVCache.extend pads a row holding no KV with `mx.array([])` (float32), as
+    /// BatchKVCache.extend did before Q-447, and MiMo's 39 sliding-window layers use it. Rank 1 then
+    /// sent float32 hidden states into rank 0's bfloat16 `recv_like` buffer (the collective trace:
+    /// `send (2, 768, 4096) float32` against `recv_like (2, 768, 4096) bfloat16`), the transfers
+    /// stopped pairing and rank 1's GPU timed out. Through real mlx_lm: the rank wrapper's
+    /// `batch_kv_dtype` block keeps both batch caches in the KV's dtype.
+    #[test]
+    fn a_sliding_window_batch_keeps_its_kv_dtype_when_an_empty_row_joins() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper.find("if spec.get(\"batch_kv_dtype\"):").unwrap();
+        let end = wrapper
+            .find("    dtype_keeping(BatchRotatingKVCache)\n")
+            .unwrap()
+            + "    dtype_keeping(BatchRotatingKVCache)\n".len();
+        let check = format!(
+            "{batch}\n\
+             import mlx_lm\n\
+             spec = {{'batch_kv_dtype': True}}\n\
+             class G:\n\
+             \x20   def rank(self): return 0\n\
+             group = G()\n\
+             mixed = []\n\
+             def emit(tag, body): mixed.append(body)\n\
+             {block}\n\
+             for cls in (BatchKVCache, BatchRotatingKVCache):\n\
+             \x20   a = cls(8, [0]) if cls is BatchRotatingKVCache else cls([0])\n\
+             \x20   k = mx.ones((1, 2, 3, 4), dtype=mx.bfloat16)\n\
+             \x20   a.update_and_fetch(k, k)\n\
+             \x20   b = cls(8, [0]) if cls is BatchRotatingKVCache else cls([0])\n\
+             \x20   b.extend(a)\n\
+             \x20   assert b.keys.dtype == mx.bfloat16 and b.keys.shape[0] == 2, (cls.__name__, b.keys.dtype)\n\
+             assert mixed == [], mixed\n\
+             print('ok')\n",
+            batch = include_str!("rank_batch.py"),
+            block = &wrapper[start..end],
+        );
+        let out = std::process::Command::new(&python)
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
     /// Q-447 through the REAL mlx_lm 0.31.3 server on a tiny qwen3_5 in bfloat16 (the 27B's
     /// compute dtype). E2E #3u's first chat request (rank0 ...1790625429786, 19:57:18Z: the
     /// 42,642-token agent request, read cold) joined the prompt batch of a 206-token helper after
@@ -11459,6 +11511,10 @@ print("ok")
              \x20   def advance(self, N): pass\n\
              class BatchKVCache:\n\
              \x20   step = 256\n\
+             \x20   def extend(self, other): pass\n\
+             \x20   @classmethod\n\
+             \x20   def merge(cls, caches): pass\n\
+             class BatchRotatingKVCache:\n\
              \x20   def extend(self, other): pass\n\
              \x20   @classmethod\n\
              \x20   def merge(cls, caches): pass\n\

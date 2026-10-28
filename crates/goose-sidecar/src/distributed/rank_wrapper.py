@@ -1777,30 +1777,50 @@ if spec.get("row_processors"):
 # on the 27B split). The dtype decides the byte count of every tensor-parallel all_sum, so only a
 # launch whose every rank runs it asks for it (`batch_kv_dtype`). KV of two different dtypes still
 # meeting in a batch (upstream casts or promotes it silently) is named: RANK_KV_DTYPE_MIXED.
+#
+# The same padding is in mlx_lm's BatchRotatingKVCache.extend (a sliding-window layer, MiMo's 39 of
+# 48): on the pipeline split it is FATAL, not slow. A rank receives the previous rank's hidden
+# states into a buffer shaped and TYPED like its own embedding (`recv_like`, bfloat16), so rank 1
+# sending float32 sent twice the bytes rank 0 posted for: session 14's collective trace, pair 2
+# (13:39Z): rank 1 `send (2, 768, 4096) float32`, rank 0 `recv_like (2, 768, 4096) bfloat16`, then
+# rank 0's next receive already a different shape (2, 512) and rank 1's Metal command buffer timed
+# out ("GPU Timeout", RANK_FATAL; session 13's -12 "Recv failed" is the same unpaired traffic).
 if spec.get("batch_kv_dtype"):
-    for name in ("extend", "merge"):
-        if not hasattr(BatchKVCache, name):
-            raise SystemExit(
-                f"goose rank wrapper: mlx_lm {mlx_lm.__version__} has no BatchKVCache.{name}; "
-                "the batch's KV dtype was written against mlx_lm 0.31.3"
-            )
-    upstream_kv_extend = BatchKVCache.extend
-    upstream_kv_merge = BatchKVCache.merge
+    for cls in (BatchKVCache, BatchRotatingKVCache):
+        for name in ("extend", "merge"):
+            if not hasattr(cls, name):
+                raise SystemExit(
+                    f"goose rank wrapper: mlx_lm {mlx_lm.__version__} has no {cls.__name__}.{name}; "
+                    "the batch's KV dtype was written against mlx_lm 0.31.3"
+                )
 
-    def kv_extend(self, other):
-        mixed = kv_dtypes((self, other))
-        if len(mixed) > 1:
-            emit("RANK_KV_DTYPE_MIXED", {"rank": group.rank(), "where": "extend", "dtypes": mixed})
-        return extend_in_its_dtype(self, other, upstream_kv_extend)
+    def dtype_keeping(cls):
+        upstream_kv_extend = cls.extend
+        upstream_kv_merge = cls.merge
 
-    def kv_merge(cls, caches):
-        mixed = kv_dtypes(caches)
-        if len(mixed) > 1:
-            emit("RANK_KV_DTYPE_MIXED", {"rank": group.rank(), "where": "merge", "dtypes": mixed})
-        return upstream_kv_merge(caches)
+        def kv_extend(self, other):
+            mixed = kv_dtypes((self, other))
+            if len(mixed) > 1:
+                emit(
+                    "RANK_KV_DTYPE_MIXED",
+                    {"rank": group.rank(), "where": "extend", "cache": cls.__name__, "dtypes": mixed},
+                )
+            return extend_in_its_dtype(self, other, upstream_kv_extend)
 
-    BatchKVCache.extend = kv_extend
-    BatchKVCache.merge = classmethod(kv_merge)
+        def kv_merge(_, caches):
+            mixed = kv_dtypes(caches)
+            if len(mixed) > 1:
+                emit(
+                    "RANK_KV_DTYPE_MIXED",
+                    {"rank": group.rank(), "where": "merge", "cache": cls.__name__, "dtypes": mixed},
+                )
+            return upstream_kv_merge(caches)
+
+        cls.extend = kv_extend
+        cls.merge = classmethod(kv_merge)
+
+    dtype_keeping(BatchKVCache)
+    dtype_keeping(BatchRotatingKVCache)
 
 # A finished prompt joins an EMPTY generation batch without a second copy of its KV
 # (rank_batch.py `adopting_extend`): the copy was the peak of a long request.
