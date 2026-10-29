@@ -52,6 +52,19 @@ Do NOT load the skills goose-mlx-inference / goose-feature-dev / node-dispatch w
 - Flash-Next MTP (in-shard head detection + K 1-2) still with the engine owner.
 - Merge ngram-decoding to main.
 
+## RESULTS 2026-10-29 long context 128k-262k (Flash-Next 4-bit, PLE on, MTP k=2, PLD 0 vs 1, workmule, engine @450bd19e5 = lz.14-ple.1)
+Run dir /Volumes/AI-workhorse/runs/2026-10-29-longctx-pld-256k (NOTES.md). One row per finding:
+| finding | numbers |
+|---|---|
+| code_edit PLD speed-up shrinks with length | 1.44x 128k (35.5->51.2 tok/s), 1.26x 192k (29.7->37.6), 1.24x 256k (25.4->31.6); 8k/32k/64k were 1.85/1.74/1.66x |
+| PLD acceptance stays high | 1,846-1,894 accepted of ~1,875 drafted per request (98-99 %) at every length |
+| PLD on vs off byte-identical on code_edit | sha 5aea2712 at 128k/192k, 7bed0853 at 256k (both configs) |
+| model error at 256k, PLD-independent | line 164 `a = a.parse_args()` for `a = ap.parse_args()`, with PLD on and off |
+| doc_quote / free_chat no PLD gain | -10 % to +1 %, 0-10 tokens drafted |
+| 262,144 fits with PLE | peak 81.1 / 84.6 / 92.07 GB at 128k / 192k / 256k, active 72.25, swap flat (1,255->1,259 MB) |
+| prefill at long context | 845 / 672 / 561 tok/s, TTFT 155 / 292 / 461 s |
+| memory guard prior calibrates down | 192 -> ~8.4-9.2 B/(chunk x ctx) in the first requests; chunks stay 2,048, no halvings |
+
 ## Engine facts (verified in /Users/workhorse/Projects/Rapid-MLX-wt-offload @ v0.14.3-lz.14, READ-ONLY)
 - spec_decode/mtp/generator.py `_effective_prompt_lookup_policy`: env read per request; MIN>=2,
   MAX>=MIN, MAX_TOKENS>=1; `_SAMPLED` is disable-only. `_prompt_lookup_is_enabled` needs
