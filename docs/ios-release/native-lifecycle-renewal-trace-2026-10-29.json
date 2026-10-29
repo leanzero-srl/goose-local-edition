@@ -1,0 +1,53 @@
+{
+  "source_commit": "52d17d7cae84fd8a5278a8e53cc9f8cf5235b67c",
+  "native_tree": "8195e21b8980d610c3fdc5f5c4025a0bf8cf8d86",
+  "kind": "original-account iPad simulator natural foreground renewal",
+  "authority": {
+    "captured_at": "2026-10-29T08:16:06.065Z",
+    "device_revision": 17,
+    "revoked_at": null,
+    "scope_count": 14,
+    "receipts": [
+      {
+        "revision": 15,
+        "issued_at": "2026-10-29T07:45:15.000Z",
+        "expires_at": "2026-10-29T08:00:15.000Z"
+      },
+      {
+        "revision": 16,
+        "issued_at": "2026-10-29T08:00:14.000Z",
+        "expires_at": "2026-10-29T08:15:14.000Z"
+      },
+      {
+        "revision": 17,
+        "issued_at": "2026-10-29T08:15:13.000Z",
+        "expires_at": "2026-10-29T08:30:13.000Z"
+      }
+    ]
+  },
+  "log_path": "/tmp/goose-ipad-52d-renewal-1015.log",
+  "log_sha256": "3ff41783630f012f7f8a7cb9ea731754b627c4058a06802d0ea6f151d7bcff98",
+  "credential_free_lifecycle_events": [
+    "2026-10-29 10:15:13.499 Df GooseRemote[28157:1f027bd] [net.leanzero.goose-remote:MeshLifecycle] stage=sync-begin operation=99C9D2A7-D198-4C98-8FFF-93AF6B5EBA34",
+    "2026-10-29 10:15:13.508 Df GooseRemote[28157:1f027bd] [net.leanzero.goose-remote:MeshLifecycle] stage=sync-wait-shutdown operation=99C9D2A7-D198-4C98-8FFF-93AF6B5EBA34",
+    "2026-10-29 10:15:13.508 Df GooseRemote[28157:1f027bd] [net.leanzero.goose-remote:MeshLifecycle] stage=sync-prepare-begin operation=99C9D2A7-D198-4C98-8FFF-93AF6B5EBA34",
+    "2026-10-29 10:15:13.508 Df GooseRemote[28157:1f03f07] [net.leanzero.goose-remote:MeshLifecycle] stage=prepare-begin operation=D9640C58-B5C8-4243-9FAB-CD7AA4C928EA",
+    "2026-10-29 10:15:13.508 Df GooseRemote[28157:1f03f07] [net.leanzero.goose-remote:MeshLifecycle] stage=node-close-begin operation=none",
+    "2026-10-29 10:15:13.509 Df GooseRemote[28157:1f03f07] [net.leanzero.goose-remote:MeshLifecycle] stage=node-close-end operation=none",
+    "2026-10-29 10:15:13.509 Df GooseRemote[28157:1f03f07] [net.leanzero.goose-remote:MeshLifecycle] stage=prepare-closed-prior operation=D9640C58-B5C8-4243-9FAB-CD7AA4C928EA",
+    "2026-10-29 10:15:13.512 Df GooseRemote[28157:1f03f07] [net.leanzero.goose-remote:MeshLifecycle] stage=node-create operation=D9640C58-B5C8-4243-9FAB-CD7AA4C928EA",
+    "2026-10-29 10:15:13.523 Df GooseRemote[28157:1f03f07] [net.leanzero.goose-remote:MeshLifecycle] stage=node-up-begin operation=D9640C58-B5C8-4243-9FAB-CD7AA4C928EA",
+    "2026-10-29 10:15:15.372 Df GooseRemote[28157:1f038f4] [net.leanzero.goose-remote:MeshLifecycle] stage=node-up-end operation=D9640C58-B5C8-4243-9FAB-CD7AA4C928EA",
+    "2026-10-29 10:15:15.372 Df GooseRemote[28157:1f038f4] [net.leanzero.goose-remote:MeshLifecycle] stage=node-status-begin operation=D9640C58-B5C8-4243-9FAB-CD7AA4C928EA",
+    "2026-10-29 10:15:15.373 Df GooseRemote[28157:1f038f4] [net.leanzero.goose-remote:MeshLifecycle] stage=node-status-end operation=D9640C58-B5C8-4243-9FAB-CD7AA4C928EA",
+    "2026-10-29 10:15:15.373 Df GooseRemote[28157:1f038f4] [net.leanzero.goose-remote:MeshLifecycle] stage=confirm-begin operation=D9640C58-B5C8-4243-9FAB-CD7AA4C928EA",
+    "2026-10-29 10:15:15.625 Df GooseRemote[28157:1f03f04] [net.leanzero.goose-remote:MeshLifecycle] stage=confirm-end operation=D9640C58-B5C8-4243-9FAB-CD7AA4C928EA",
+    "2026-10-29 10:15:15.627 Df GooseRemote[28157:1f027bd] [net.leanzero.goose-remote:MeshLifecycle] stage=sync-prepare-end operation=99C9D2A7-D198-4C98-8FFF-93AF6B5EBA34",
+    "2026-10-29 10:15:15.627 Df GooseRemote[28157:1f027bd] [net.leanzero.goose-remote:MeshLifecycle] stage=sync-hosts-begin operation=99C9D2A7-D198-4C98-8FFF-93AF6B5EBA34",
+    "2026-10-29 10:15:15.868 Df GooseRemote[28157:1f027bd] [net.leanzero.goose-remote:MeshLifecycle] stage=sync-hosts-end operation=99C9D2A7-D198-4C98-8FFF-93AF6B5EBA34",
+    "2026-10-29 10:15:24.561 Df GooseRemote[28157:1f027bd] [net.leanzero.goose-remote:MeshLifecycle] stage=sync-end operation=99C9D2A7-D198-4C98-8FFF-93AF6B5EBA34"
+  ],
+  "alert_presentation_count": 0,
+  "interpretation": "Revision16\u219217 once one second before expiry; native close completed in1ms, up/confirm/hosts succeeded, sync ended10:15:24.561. No shutdown hang in this observed transition. Scope count14 and unrevoked; no exact scope-name comparison in this capture.",
+  "ui_observation": "Root saw temporary purged selection/catalog during renewal and deliberately did not click manualSync. Final visible scroll/phone acceptance remains root-owned."
+}

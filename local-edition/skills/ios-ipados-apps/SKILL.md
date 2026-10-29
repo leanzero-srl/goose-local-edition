@@ -82,3 +82,5 @@ This installation is laptop-owned. Canonical source: `~/.claude/skills/ios-ipado
 2026-10-29: Added single scroll ownership, header-versus-message anchor geometry, lazy-tail measurement and clean-build viewport verification after repeated state-test passes disagreed with the actual iPad screen.
 
 2026-10-29: Added measured Xcode-managed development signing recovery: manual profile pinning failed, automatic debugging export succeeded; verify actual embedded device membership and keep setup packaging separate from final physical acceptance.
+
+2026-10-29: Device-build verification refined the managed-signing lesson: automatic signing rejects a named development certificate override; the generic Apple Development identity builds and signs successfully.

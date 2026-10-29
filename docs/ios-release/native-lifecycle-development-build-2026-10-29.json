@@ -1,0 +1,53 @@
+{
+  "captured_at": "2026-10-29T08:16:12.748805+00:00",
+  "purpose": "development-only lifecycle diagnosis; temporary redacted MeshLifecycle events; NOT final acceptance candidate",
+  "source_commit": "52d17d7cae84fd8a5278a8e53cc9f8cf5235b67c",
+  "native_tree": "8195e21b8980d610c3fdc5f5c4025a0bf8cf8d86",
+  "app": "/tmp/goose-phone-lifecycle-52d17d7cae84/GooseRemote.app",
+  "app_sha256": "5c065aa068dec36d068038da76ed5a0bdb35e790b773fb35618bbefecdd6c8de",
+  "app_uuid": "9F671DF7-4EEF-3F31-9A79-E73F78E3E947",
+  "matching_dsym": true,
+  "strict_signature": true,
+  "team": "ZZ8MTZ6NRZ",
+  "actual_profile_uuid": "da27f4b6-6c1a-4495-871b-da7890d58fac",
+  "phone_included": true,
+  "profile_and_app_get_task_allow": true,
+  "mesh_linked": true,
+  "pinned_framework_uuid_matches": true,
+  "privacy_manifests_match": true,
+  "archive_created": false,
+  "exported": false,
+  "uploaded": false,
+  "installed": false,
+  "lifecycle_commit": "94b1b2d6de",
+  "build_job": "laptop-20261029-101600-800b",
+  "prior_failed_build": {
+    "job": "laptop-20261029-101515-a188",
+    "reason": "Automatic signing rejected the manually specified named Apple Development certificate; generic Apple Development identity resolved the conflict."
+  },
+  "combined_tests": {
+    "job": "laptop-20261029-100921-a1fd",
+    "tests": 63,
+    "failures": 0,
+    "xcresult": "/tmp/goose-latest-native-derived/Logs/Test/Test-GooseRemote-2026.10.29_10-09-22-+0200.xcresult"
+  },
+  "final_scroll_guard_tests": {
+    "job": "laptop-20261029-101121-f7dc",
+    "tests": 28,
+    "failures": 0
+  },
+  "prior_red_reproduction": {
+    "job": "laptop-20261029-100123-d063",
+    "tests": 3,
+    "failed_assertions": 5
+  },
+  "intermediate_test_failure": {
+    "job": "laptop-20261029-100320-26a8",
+    "tests": 34,
+    "failures": 1,
+    "cause": "Test checked connected before fresh hosts read completion; changed to await observable sync completion."
+  },
+  "source_review": "native-physical-mesh-review-2026-10-29.md",
+  "physical_acceptance": "Pending root in-place installation and same-identity session/lock-unlock proof; no claim exact original native blocked await is known.",
+  "operator_sha256": "b4b231303889ac8c6da71b5ec56da1471fd47114c579101b5305a9740e6322cc"
+}
