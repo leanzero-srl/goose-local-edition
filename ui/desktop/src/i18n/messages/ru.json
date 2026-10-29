@@ -5987,6 +5987,81 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} нужно {need} ГБ на этом Mac, а свободно для неё сейчас {free} ГБ — не хватает {short} ГБ."
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "Авто"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "авто: выкл на этом Mac"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "авто: вкл на этом Mac"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "Держать таблицу n-грамм на диске"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Измерено на Qwen3.8-Flash-Next (M5 Max 128 ГБ): занято 72 ГБ вместо 104 ГБ, скорость декодирования в пределах нескольких процентов, те же ответы."
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "Модель читает с SSD те несколько строк своей таблицы n-грамм на 32 ГБ, которые нужны каждому токену, вместо того чтобы держать таблицу в памяти. Авто включает это, когда иначе модель не поместится на этом Mac. Применяется при следующей загрузке."
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "Выкл"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "Вкл"
+  },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "Авто"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "Пустые числа оставляют значение движка по умолчанию. Внутри MTP 31, 63 или 95 заполняют целые 32-строчные плитки проверки. Применяется при следующей загрузке."
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "модель сочетает слои linear-attention или SSM с attention и работает без головы MTP. Движок отказывается от suffix decoding на рекуррентных слоях, а prompt lookup работает только внутри MTP."
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "внутри MTP"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "Самый длинный черновик (токены)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "Самая длинная n-грамма"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "Самая короткая n-грамма"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "Измерено на Qwen3.8-27B Q8: правки кода с 42,8 до 134,8 tok/s, принято 99% копий; пересказы и чат не ускоряются."
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "Копирует продолжение, которое уже есть в промпте, как длинный черновик внутри MTP и проверяет его как любой черновик, поэтому вывод остаётся выводом модели. Авто сохраняет значение семейства в движке (включено для Qwen3.5/3.6/3.8)."
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Prompt lookup нужна папка модели, чтобы выбрать режим, а этой модели нет в папке моделей."
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "Выкл."
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "Вкл."
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup (n-граммы)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "Модель работает без MTP, поэтому рычаг управляет suffix decoder движка: только greedy-сэмплинг, один запрос за раз. Авто оставляет его выключенным; на Mellum измерен как более медленный, включайте только после сравнения."
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "Недоступно для этой модели: {reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose не может определить, является ли модель чисто attention ({error})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Отмена"
   },

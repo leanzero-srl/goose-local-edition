@@ -5987,6 +5987,81 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} needs {need} GB on this Mac and {free} GB is free for it now — {short} GB short."
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "auto: off for this Mac"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "auto: on for this Mac"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "Keep n-gram table on disk"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Measured on Qwen3.8-Flash-Next (M5 Max 128 GB): 104 GB to 72 GB held, decode speed within a few percent, the same answers."
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "The model reads the few rows of its 32 GB n-gram table each token needs from the SSD instead of holding the table in memory. Auto turns it on when the model would not otherwise fit this Mac. Applies at the next mount."
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "Off"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "On"
+  },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "Blank numbers keep the engine default. Inside MTP, 31, 63 or 95 fill whole 32-row verify tiles. Applies at the next mount."
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "it mixes linear-attention or SSM layers with attention and is served without an MTP head. The engine refuses suffix decoding on recurrent layers, and prompt lookup only runs inside MTP."
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "inside MTP"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "Longest draft (tokens)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "Longest n-gram"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "Shortest n-gram"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "Measured on Qwen3.8-27B Q8: code edits 42.8 to 134.8 tok/s with 99% of copies accepted; summaries and chat gain nothing."
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "Copies a continuation the prompt already contains as a long draft inside MTP, verified like any draft, so the output stays the model's own. Auto keeps the engine's family default (on for Qwen3.5/3.6/3.8)."
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Prompt lookup needs the model's folder to pick its lane, and this model is not in the models folder."
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "Off"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "On"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup (n-gram)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "Served without MTP, so the lever drives the engine suffix decoder: greedy sampling only, one request at a time. Auto leaves it off; measured slower on Mellum, so turn it on only after comparing."
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "Unavailable for this model: {reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose cannot tell whether this model is pure attention ({error})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Cancel"
   },

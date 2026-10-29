@@ -858,6 +858,11 @@ mod imp {
                 .model_profiles
                 .get(model_id)
                 .and_then(|p| p.kv_cache),
+            ple_offload: ctx
+                .settings
+                .model_profiles
+                .get(model_id)
+                .and_then(|p| p.ple_offload),
             nodes: &nodes,
             cluster: cluster.as_ref(),
             tensor: tensor.as_ref(),

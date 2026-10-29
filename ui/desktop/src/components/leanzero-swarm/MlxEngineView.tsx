@@ -58,6 +58,8 @@ import {
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { MlxThinkingFields } from './MlxThinkingFields';
 import { MlxKvCacheFields } from './MlxKvCacheFields';
+import { MlxPromptLookupFields } from './MlxPromptLookupFields';
+import { MlxNgramTableFields } from './MlxNgramTableFields';
 import {
   mlxEngineBrowse,
   mlxEngineBrowseFilters,
@@ -75,6 +77,7 @@ import {
   type MlxEngineStatus,
   type MlxLocalModel,
   type MlxModelProfile,
+  type MlxPromptLookup,
 } from '../../acp/mlx-engine';
 import {
   DownloadProgressRow,
@@ -301,11 +304,24 @@ export type LaneSettingKey = 'speculative' | 'adapterPath' | 'textOnly';
 export type ThinkingSettingKey = 'thinking' | 'reasoningEffort';
 /** `kvCache` is '' (off — the engine's bf16 cache) | 'int8' | 'int4'. */
 export type KvCacheSettingKey = 'kvCache';
+/** `pleOffload` is '' (auto) | 'true' | 'false'. */
+export type NgramTableSettingKey = 'pleOffload';
+/**
+ * `promptLookupMode` is '' (auto) | 'on' | 'off'; the three numbers are drafted as text and a
+ * blank one leaves the engine's default for the lane.
+ */
+export type PromptLookupSettingKey =
+  | 'promptLookupMode'
+  | 'promptLookupMinNgram'
+  | 'promptLookupMaxNgram'
+  | 'promptLookupMaxDraft';
 export type ProfileDraftKey =
   | NumericSettingKey
   | LaneSettingKey
   | ThinkingSettingKey
-  | KvCacheSettingKey;
+  | KvCacheSettingKey
+  | NgramTableSettingKey
+  | PromptLookupSettingKey;
 
 export type NumericDrafts = Record<ProfileDraftKey, string>;
 
@@ -314,11 +330,22 @@ const NUMERIC_KEYS: NumericSettingKey[] = [...SAMPLING_FIELDS, CONTEXT_LIMIT_FIE
 );
 const LANE_KEYS: LaneSettingKey[] = ['speculative', 'adapterPath', 'textOnly'];
 const THINKING_KEYS: ThinkingSettingKey[] = ['thinking', 'reasoningEffort'];
-const PROFILE_KEYS: ProfileDraftKey[] = [
+const PROFILE_KEYS = [
   ...NUMERIC_KEYS,
   ...LANE_KEYS,
   ...THINKING_KEYS,
   'kvCache',
+  'pleOffload',
+] as const;
+const PROMPT_LOOKUP_NUMBERS = [
+  ['promptLookupMinNgram', 'minNgram'],
+  ['promptLookupMaxNgram', 'maxNgram'],
+  ['promptLookupMaxDraft', 'maxDraft'],
+] as const;
+const DRAFT_KEYS: ProfileDraftKey[] = [
+  ...PROFILE_KEYS,
+  'promptLookupMode',
+  ...PROMPT_LOOKUP_NUMBERS.map(([key]) => key),
 ];
 
 export function draftsFromProfile(profile: MlxModelProfile | undefined): NumericDrafts {
@@ -333,6 +360,12 @@ export function draftsFromProfile(profile: MlxModelProfile | undefined): Numeric
   drafts.thinking = profile?.thinking ?? '';
   drafts.reasoningEffort = profile?.reasoningEffort ?? '';
   drafts.kvCache = profile?.kvCache ?? '';
+  drafts.pleOffload = profile?.pleOffload == null ? '' : String(profile.pleOffload);
+  drafts.promptLookupMode = profile?.promptLookup?.mode ?? '';
+  for (const [key, field] of PROMPT_LOOKUP_NUMBERS) {
+    const value = profile?.promptLookup?.[field];
+    drafts[key] = value == null ? '' : String(value);
+  }
   return drafts;
 }
 
@@ -356,11 +389,22 @@ export function profileFromDrafts(drafts: NumericDrafts): MlxModelProfile {
   const effort = drafts.reasoningEffort.trim();
   if (effort !== '') profile.reasoningEffort = effort;
   if (drafts.kvCache === 'int8' || drafts.kvCache === 'int4') profile.kvCache = drafts.kvCache;
+  if (drafts.pleOffload === 'true') profile.pleOffload = true;
+  else if (drafts.pleOffload === 'false') profile.pleOffload = false;
+  const promptLookup: MlxPromptLookup = {};
+  const plMode = drafts.promptLookupMode.trim();
+  if (plMode === 'on' || plMode === 'off') promptLookup.mode = plMode;
+  for (const [key, field] of PROMPT_LOOKUP_NUMBERS) {
+    const text = drafts[key].trim();
+    const n = Number(text);
+    if (text !== '' && Number.isInteger(n) && n >= 1) promptLookup[field] = n;
+  }
+  if (Object.keys(promptLookup).length > 0) profile.promptLookup = promptLookup;
   return profile;
 }
 
 export function profileHasValues(profile: MlxModelProfile): boolean {
-  return PROFILE_KEYS.some((key) => profile[key] != null);
+  return PROFILE_KEYS.some((key) => profile[key] != null) || profile.promptLookup != null;
 }
 
 /**
@@ -399,7 +443,7 @@ export function settingsWithProfile(
 }
 
 export function draftsEqual(a: NumericDrafts, b: NumericDrafts): boolean {
-  return PROFILE_KEYS.every((key) => a[key].trim() === b[key].trim());
+  return DRAFT_KEYS.every((key) => a[key].trim() === b[key].trim());
 }
 
 // ---------------------------------------------------------------------------
@@ -563,13 +607,13 @@ const STEP_BUTTON = cx(
  * a blank field means the key is omitted and the engine's own default applies (said in quiet
  * text beside the field); a typed 0 is sent as 0 and a Clear action takes it back to blank.
  */
-function NumericField({
+export function NumericField({
   spec,
   text,
   onText,
   engineValue,
 }: {
-  spec: NumericFieldSpec;
+  spec: Omit<NumericFieldSpec, 'key'> & { key: string };
   text: string;
   onText: (v: string) => void;
   /** What the running engine samples with for this field when nothing is sent (Q-170). */
@@ -1436,6 +1480,16 @@ function SamplingSection(props: SamplingSectionProps) {
                 drafts={drafts}
                 setDraft={setDraft}
               />
+              <MlxPromptLookupFields
+                model={models.find((m) => m.id === selectedModelId)}
+                drafts={drafts}
+                setDraft={setDraft}
+              />
+              <MlxNgramTableFields
+                model={models.find((m) => m.id === selectedModelId)}
+                drafts={drafts}
+                setDraft={setDraft}
+              />
             </div>
           )}
           <p className={TYPE.meta}>
@@ -1462,7 +1516,7 @@ interface SpeculativeOption extends StudioSelectOption {
 }
 
 const SPECULATIVE_OPTIONS: readonly SpeculativeOption[] = [
-  { value: '', label: 'Auto — MTP when the model folder has mtp.safetensors' },
+  { value: '', label: 'Auto — MTP when the model has an MTP head' },
   { value: 'mtp', label: 'MTP — demand it (skipped with a warning if the head is missing)' },
   { value: 'off', label: 'Off — never speculate' },
 ];

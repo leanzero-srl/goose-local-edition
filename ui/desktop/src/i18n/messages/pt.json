@@ -5987,6 +5987,81 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} precisa de {need} GB neste Mac e agora há {free} GB livres para ele — faltam {short} GB."
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "auto: desligado neste Mac"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "auto: ligado neste Mac"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "Manter a tabela de n-gramas no disco"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Medido no Qwen3.8-Flash-Next (M5 Max 128 GB): de 104 GB para 72 GB em memória, velocidade de decodificação a poucos por cento, as mesmas respostas."
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "O modelo lê do SSD as poucas linhas da sua tabela de n-gramas de 32 GB de que cada token precisa, em vez de manter a tabela na memória. Auto ativa-o quando o modelo não caberia de outra forma neste Mac. Aplica-se na próxima montagem."
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "Desligado"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "Ligado"
+  },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "Números em branco mantêm o padrão do motor. Dentro do MTP, 31, 63 ou 95 preenchem blocos de verificação inteiros de 32 linhas. Aplica-se na próxima montagem."
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "mistura camadas de atenção linear ou SSM com atenção e é servido sem cabeça MTP. O motor recusa suffix decoding em camadas recorrentes, e o prompt lookup só funciona dentro do MTP."
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "dentro do MTP"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "Rascunho mais longo (tokens)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "N-grama mais longo"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "N-grama mais curto"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "Medido no Qwen3.8-27B Q8: edições de código de 42,8 para 134,8 tok/s com 99% das cópias aceitas; resumos e chat não ganham nada."
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "Copia uma continuação que o prompt já contém como rascunho longo dentro do MTP, verificado como qualquer rascunho, então a saída continua sendo do modelo. Auto mantém o padrão da família no motor (ligado para Qwen3.5/3.6/3.8)."
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "O prompt lookup precisa da pasta do modelo para escolher sua via, e este modelo não está na pasta de modelos."
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "Desligado"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "Ligado"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup (n-grama)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "Servido sem MTP, então a alavanca aciona o suffix decoder do motor: apenas amostragem greedy, uma requisição por vez. Auto o deixa desligado; medido mais lento no Mellum, ligue só depois de comparar."
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "Indisponível para este modelo: {reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "O goose não consegue dizer se este modelo é de atenção pura ({error})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Cancelar"
   },

@@ -5987,6 +5987,81 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model}은(는) 이 Mac에서 {need} GB가 필요하고 지금 쓸 수 있는 여유는 {free} GB입니다. {short} GB 부족합니다."
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "자동"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "자동: 이 Mac에서 꺼짐"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "자동: 이 Mac에서 켜짐"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "n-gram 테이블을 디스크에 두기"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Qwen3.8-Flash-Next(M5 Max 128GB)에서 측정: 메모리 104GB에서 72GB로, 디코드 속도 차이는 몇 퍼센트 이내, 같은 답변."
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "모델이 32GB n-gram 테이블을 메모리에 두지 않고 토큰마다 필요한 몇 행만 SSD에서 읽습니다. 자동은 그렇지 않으면 모델이 이 Mac에 맞지 않을 때 켭니다. 다음 마운트부터 적용됩니다."
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "꺼짐"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "켜짐"
+  },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "자동"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "빈 숫자는 엔진 기본값을 유지합니다. MTP 안에서는 31, 63, 95가 32행 검증 타일을 꽉 채웁니다. 다음 마운트 때 적용됩니다."
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "linear-attention 또는 SSM 레이어를 attention과 섞어 쓰며 MTP 헤드 없이 제공됩니다. 엔진은 순환 레이어에서 suffix decoding을 거부하고, prompt lookup은 MTP 안에서만 동작합니다."
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "MTP 안"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "가장 긴 드래프트(토큰)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "가장 긴 n-gram"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "가장 짧은 n-gram"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "Qwen3.8-27B Q8에서 측정: 코드 편집 42.8에서 134.8 tok/s, 복사본 99% 수락. 요약과 채팅은 이득 없음."
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "프롬프트에 이미 있는 이어지는 내용을 MTP 안에서 긴 드래프트로 복사하고 다른 드래프트처럼 검증하므로 출력은 모델 자신의 것입니다. 자동은 엔진의 모델군 기본값을 따릅니다(Qwen3.5/3.6/3.8은 켜짐)."
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Prompt lookup은 경로를 고르기 위해 모델 폴더가 필요한데, 이 모델은 모델 폴더에 없습니다."
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "끄기"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "켜기"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup(n-gram)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "MTP 없이 제공되므로 이 레버는 엔진의 suffix decoder를 조작합니다. greedy 샘플링만, 한 번에 요청 하나. 자동은 꺼 둡니다. Mellum에서 더 느리게 측정되었으니 비교한 뒤에만 켜세요."
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "이 모델에서는 사용할 수 없음: {reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose가 이 모델이 순수 attention인지 판단할 수 없습니다({error})."
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "취소"
   },
