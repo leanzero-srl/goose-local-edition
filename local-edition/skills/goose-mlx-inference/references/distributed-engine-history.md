@@ -427,3 +427,70 @@ default OFF, read per request — flips without a reconnect). The ssh path is un
   repair cannot reorder the table, so the old "must be GID[1]" check refused a working link.
 - Plan with both Macs free: split 17/31 (workhorse L31-47 61.2 GB, workmule L0-30 107.4 GB), context
   126,208 at the 5% mimo_v2 reserve. Any other model or TTS job on either Mac (30+ GB) and no split fits.
+
+## 2026-10-27 MiMo split live through goose (branch mimo-distributed ae9d068c98)
+- Peer rank program must stay under OpenSSH's 256 KiB exec packet: shipped zlib+base64 (264 KB -> 108 KB on the wire).
+- After a ~100 GB load the workhorse GPU took 6.9-16.4 s to answer; the GPU-stream seed all_sum then died on the mule
+  ("[METAL] GPU Timeout Error"). Fix: timed local GPU warm-up + second CPU barrier (GOOSE_RANK_PIPELINE_WARM).
+- MiMo's tokenizer_config.json names json_tools but its template writes qwen3_coder XML: swap the parser after load.
+- Mule NFS (rclone, soft) fails cold loads ~1/2 at shard 3: warm with an mx.load pass first.
+- Measured: decode ~35 tok/s short, 31 at 16-32k, 27.5 at 64k; prefill ~290 tok/s to 32k, 112 avg at 64k.
+  Context past ~257k is bound by the prefill score workspace (chunk x context x heads x 4 B), not KV.
+
+## 2026-10-27 (session 10) MiMo split: prefill cause, memory model, long context (branch mimo-distributed)
+- PREFILL DROP (64k fell 270 -> 80 tok/s, TTFT 562 s): NOT the full-attention maths alone. Microbench (scratchpad
+  mimo10/sdpa*.py, mini.py = the real vendored mimo_v2 with the first N checkpoint layers through mlx_lm's own
+  BatchKVCache path): unfused SDPA (head_dim 192) costs ~0.83 ms per 1k width per 256-token chunk per full layer on the
+  M3 Ultra (~0.6 on the M5 Max), ~60 s of a 64k prefill. The rest was MEMORY: rank 0's weights not wired and compressed
+  by the kernel under pressure (top CMPRS 47-63 GB of rank 0's 61-64 GB, vm_stat compressor 54 GB, swap +2.5..+6 GB)
+  whenever something else held RAM on the workhorse: the mule's NFS reads through its file cache during the load,
+  content-pipeline TTS jobs (16 GB), a GitHub Actions runner (16 GB RSS, 81 node procs), our own cargo/pnpm build.
+  ROOT: an MLX array is NOT wired until a GPU command buffer uses it (4.8 GB shard: wired 10.2 -> 14.7 GB only after
+  a 1-element GPU sum), and an idle rank's weights are unwired again; under file-cache pressure the kernel compresses
+  them. Three attempts failed (parallel, rank 0 first, wire-touch per shard). WHAT WORKED (12:36 load: pressure never
+  WARN, compressor 0.2 GB, swap flat, 221 s): rank 0 loads LAST and first drops the whole model folder from the file
+  cache (msync MS_INVALIDATE on a read-only mmap, no root: 167 GB asked), and every rank evaluates its weights shard by
+  shard dropping each shard after (73 GB on rank 0). See rank_pipeline_split.py evict_file_cache/shard_groups.
+  Other fixes: ranks load one at a time (`pipeline_load_turn`), a node-dispatch "benchmark"
+  hold on both Macs while the split measures (perl $0="mimo-longctx benchmark hold"; node-probe then says BUSY and
+  queues TTS jobs), wait for CI/TTS/builds to end before a load, and larger prefill chunks at short widths (the plan's
+  step is 2,048, the workspace bounds each step: 32k on 6 layers 16.2 s at 256 vs 11.7 s at 1,024).
+  Result: 64k TTFT 562 -> 218 s (prefill 112 -> 293 tok/s), decode 28.0.
+- MEMORY MODEL (measured, use it before every long run): real peak per rank = weights + full_layers x 2560 B x N +
+  chunk x width x (2 x 64 x 2 + 1) B. The x2 is MLX's SDPA fallback holding scores AND softmax (64k: 9.5-10 GB past
+  resident vs a 5.1 GB one-copy workspace). 128k check: predicted 73.9 / 106.3, measured 72.9 / 105.9 GB.
+  Weights 19/29: rank0 68.28 GB (4 full: 29,35,41,47), rank1 100.31 GB (5 full: 0,5,11,17,23); 18/30: 64.8 / 103.86.
+- PLANNER (layer_split.rs): pair_bytes = 2*heads*act+1; chunk falls 256 -> 16 (MIN_PREFILL_CHUNK) for a requested
+  context; then plans with NO cached prompt context (reason says a follow-up re-reads); config `gpu_headroom_gb: 8.0`
+  (+ `node_gpu_headroom_gb` by node name) caps each budget at ceiling - headroom = the owner's "8 GB under the Metal
+  limit". A derived context (none set) is now smaller (true scores at a 256 chunk).
+- NFS (machine-sync 61f1b54, the NFS agent): the mule mount was `soft`; macOS ignores timeo on soft mounts while
+  reconnecting (0.25 s) -> ETIMEDOUT -> "[load_safetensors] Failed to open". Now hard,intr,deadtimeout=180. Cold
+  loads through goose since: 09:26, 09:55, 10:24, 10:47, 11:21 — 0 "not responding", 0 open failures, no warm-up read.
+- UI (590c272758, 22ff9e614a, 5bd17ea712): hero no longer "Stopped" while the split's status is unread; the split
+  card's context is goose's layer-split plan (no "fits only at"); measured runs key mlxLmPipeline. Verified over CDP.
+- Traps: the card's Stop button can vanish from a stale window -> reload then click (mimo10/stop.sh). /v1/models
+  answers BEFORE the weights load (wait for GOOSE_RANK_PIPELINE_WARM on both). pgrep -f <pattern> matches your own
+  zsh -c wrapper: an until-loop on it never ends.
+- RESULTS 2026-10-27 (19/29 unless noted): 64k 218 s TTFT / 293 prefill / 28.0 decode; 128k 512 / 250 / 22.3, peaks
+  72.9/105.9; 250k 1,594 / 157 / 15.8, 74.3/107.6; 275k (max under 8 GB headroom) 1,826 / 151 / 15.0, 74.9/108.4
+  (mule 7.05 GB under: ~1 GB unmodeled on rank 1). 300k/350k refused (mule short 0.65/1.94 GB). Answers: 2/3 to 128k,
+  degraded past it (garbled self-corrections at 250k).
+
+## 2026-10-28 (session 13) MiMo-V2.6-Flash MOPD omni (EigenLabs 4bit-mtp) live on the split (mimo-distributed 11621e2dd7)
+- THREE fixes before it served (each with a failing-without test): acb9f02730 the layer split's fork env is proven
+  by preflight (a pin bump never rebuilt it before; only qwen4_exp was proven); ff3deeda31 mlx_lm sharded_load
+  looks parameters up as model.* but an mlx-vlm-layout index says language_model.* (checkpoint_weight_map shim);
+  e210b73e2f rank_media's apply_chat_template wrapper must be set with object.__setattr__ on the TokenizerWrapper
+  (its __setattr__ forwards to HF -> infinite recursion) and must honour the callee's tokenize default (True).
+- CONTEXT: with the vision tower on rank 0 the owner's rules (5% reserve, 8 GB under the Metal limit) cap the
+  window at 114,688 (19/29: workhorse short ~3-4 GB at 262k; 18/30: mule over 107.45 GB past ~116k). The text-only
+  build reached 275k only at 19/29 with ~1 GB more available on the workhorse; available swings 76-77.6 GB.
+- VISION WORKS: table cell + max read right; colour A/B ImageNet vs CLIP (GOOSE_MIMO_IMAGE_NORM via the app's env)
+  showed no measurable difference (44 items, logprobs within 0.01) -> ImageNet stays default.
+- CACHE: 100k cold TTFT 360 s, warm 0.52 s, decode ~25 tok/s, swap flat.
+- OPEN BLOCKER: a 2-ROW batch kills the split (jaccl Recv -12 = ENOMEM on ibv_post_recv / rank-1 Metal GPU
+  timeout), reproduced with two concurrent prompts (scratchpad s13/pair.py); text-only run of 10-27 survived 2-row
+  batches at 18/30. Gauntlet not run. Details + candidate fix: HANDOFF.md "Session 13".
+- TRAPS: the dev app has two CDP page targets (main + #/engine-glance), pick by URL; ~/goose-builds tools hardcode
+  9897 and need mainpage.mjs beside them; pgrep|xargs kill in go.sh replaced by a per-pid loop.
