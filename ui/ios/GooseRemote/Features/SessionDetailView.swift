@@ -1,4 +1,8 @@
 import SwiftUI
+#if DEBUG
+import OSLog
+private let sessionScrollLogger = Logger(subsystem: "net.leanzero.GooseRemote", category: "SessionScrollTrace")
+#endif
 
 enum SessionScrollTarget: Hashable {
     case message(String)
@@ -21,11 +25,26 @@ struct SessionScrollState {
     private var olderRequest: UUID?
     private var olderFallbackID: String?
     private var lastTailCorrection: SessionTailMeasurement?
+    func trace(_ reason: String) {
+#if DEBUG
+        let target: String
+        switch position.viewID(type: SessionScrollTarget.self) {
+        case .latest: target = "latest"
+        case .message: target = "message"
+        case nil: target = "none"
+        }
+        sessionScrollLogger.notice("\(reason, privacy: .public) target=\(target, privacy: .public) userPositioned=\(position.isPositionedByUser) follows=\(followsLatest) loading=\(loadingOlder) fallback=\(olderFallbackID != nil)")
+#endif
+    }
     mutating func userScrolled(nearBottom: Bool) {
+        trace("userScrolled before nearBottom=\(nearBottom)")
+        defer { trace("userScrolled after") }
         followsLatest = nearBottom
         olderFallbackID = nil
     }
     @discardableResult mutating func beginOlder(transcriptIDs: [String] = [], firstMessageBelowTop: Bool = false) -> UUID {
+        trace("beginOlder before count=\(transcriptIDs.count) firstBelowTop=\(firstMessageBelowTop)")
+        defer { trace("beginOlder after") }
         let request = UUID()
         olderRequest = request
         loadingOlder = true
@@ -35,6 +54,8 @@ struct SessionScrollState {
         return request
     }
     mutating func endOlder(request: UUID, didPrepend: Bool = false) {
+        trace("endOlder before sameRequest=\(olderRequest == request) didPrepend=\(didPrepend)")
+        defer { trace("endOlder after") }
         guard olderRequest == request else { return }
         loadingOlder = false
         olderRequest = nil
@@ -44,12 +65,16 @@ struct SessionScrollState {
         olderFallbackID = nil
     }
     mutating func jumpToLatest() {
+        trace("jump before")
+        defer { trace("jump after") }
         followsLatest = true
         lastTailCorrection = nil
         olderFallbackID = nil
         position.scrollTo(id: SessionScrollTarget.latest, anchor: .bottom)
     }
     mutating func followContent() {
+        trace("followContent before")
+        defer { trace("followContent after") }
         if shouldFollowContent { position.scrollTo(id: SessionScrollTarget.latest, anchor: .bottom) }
     }
     @discardableResult mutating func revealClippedTail(overflowPixels: Int, contentHeight: CGFloat, userScrolling: Bool) -> Bool {
@@ -57,6 +82,7 @@ struct SessionScrollState {
         guard overflowPixels > 0, !userScrolling, shouldFollowContent else { return false }
         let measurement = SessionTailMeasurement(overflowPixels: overflowPixels, contentHeight: contentHeight)
         guard measurement != lastTailCorrection else { return false }
+        trace("tailCorrection overflow=\(overflowPixels) height=\(contentHeight)")
         lastTailCorrection = measurement
         followContent()
         return true
@@ -72,6 +98,9 @@ struct SessionDetailView: View {
     @Environment(ControllerStore.self) private var store
     @Environment(\.displayScale) private var displayScale
     let work: WorkRef
+    #if DEBUG
+    @State private var diagnosticViewID = UUID()
+    #endif
     @State private var action: WorkAction = .send
     @State private var confirmStop = false
     @State private var scrolling = SessionScrollState()
@@ -100,8 +129,8 @@ struct SessionDetailView: View {
         .studioScreen().navigationTitle(store.selectedWork?.entry.title ?? work.kind.title)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: work) { if store.selectedRef != work || store.selectedError != nil { await store.select(work) } }
-        .onDisappear { store.endSelection(work) }
-        .onChange(of: work) { _, _ in scrolling = SessionScrollState(); firstMessageBelowTop = false; tailOverflowPixels = 0; tailContentHeight = 0 }
+        .onDisappear { traceView("view disappear"); store.endSelection(work) }
+        .onChange(of: work) { _, _ in traceView("work reset before"); scrolling = SessionScrollState(); firstMessageBelowTop = false; tailOverflowPixels = 0; tailContentHeight = 0; traceView("work reset after") }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -113,6 +142,25 @@ struct SessionDetailView: View {
         .confirmationDialog("Stop this run on \(store.ownerName(work.ownerNodeId))?", isPresented: $confirmStop, titleVisibility: .visible) {
             Button("Stop run", role: .destructive) { Task { await store.send(action: .stop) } }
         } message: { Text("This requests a stop for the exact run currently shown. Closing this screen does not stop work.") }
+    }
+    private func traceView(_ reason: String) {
+#if DEBUG
+        let items = store.selectedWork?.transcript ?? []
+        let index = scrolling.visibleMessageID.flatMap { id in items.firstIndex(where: { $0.id == id }) } ?? -1
+        sessionScrollLogger.notice("\(reason, privacy: .public) view=\(diagnosticViewID.uuidString, privacy: .public) selectedNil=\(store.selectedWork == nil) selectedMatches=\(store.selectedWork?.entry.work == work) refMatches=\(store.selectedRef == work) count=\(items.count) index=\(index) userScrolling=\(userScrolling)")
+        scrolling.trace(reason)
+#endif
+    }
+    private var tracedPosition: Binding<ScrollPosition> {
+#if DEBUG
+        Binding(get: { scrolling.position }, set: { value, transaction in
+            traceView("binding before")
+            $scrolling.position.transaction(transaction).wrappedValue = value
+            traceView("binding after")
+        })
+#else
+        $scrolling.position
+#endif
     }
     private func content(_ selected: SelectedWork) -> some View {
         VStack(spacing: 0) {
@@ -202,7 +250,9 @@ struct SessionDetailView: View {
                         }
                 }.scrollTargetLayout().padding(16).frame(maxWidth: 900)
             }
-            .scrollPosition($scrolling.position, anchor: .top)
+            .scrollPosition(tracedPosition, anchor: .top)
+            .onAppear { traceView("scroll appear") }
+            .onDisappear { traceView("scroll disappear") }
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.top, for: .sizeChanges)
             .onScrollGeometryChange(for: Bool.self) { geometry in
@@ -216,20 +266,25 @@ struct SessionDetailView: View {
                 scrolling.revealClippedTail(overflowPixels: tailOverflowPixels, contentHeight: tailContentHeight, userScrolling: userScrolling)
             }
             .onScrollPhaseChange { _, phase in
+                traceView("phase \(String(describing: phase))")
                 userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
                 if userScrolling { scrolling.userScrolled(nearBottom: nearBottom) }
                 else if phase == .idle { scrolling.revealClippedTail(overflowPixels: tailOverflowPixels, contentHeight: tailContentHeight, userScrolling: false) }
             }
             .task(id: selected.transcript) {
+                traceView("content task before yield count=\(selected.transcript.count)")
                 await Task.yield()
+                traceView("content task resumed cancelled=\(Task.isCancelled)")
                 if !Task.isCancelled, !userScrolling { scrolling.followContent() }
             }
             .onChange(of: store.selectedHistoryReset) { _, _ in
+                traceView("history reset")
                 scrolling.jumpToLatest()
             }
             .overlay(alignment: .bottomTrailing) {
                 if !scrolling.followsLatest {
                     Button {
+                        traceView("jump tapped paused=\(store.selectedHistoryPaused)")
                         Task {
                             if store.selectedHistoryPaused {
                                 await store.select(work)

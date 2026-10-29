@@ -1,0 +1,90 @@
+diff --git a/ui/ios/GooseRemoteTests/OwnerReplayTests.swift b/ui/ios/GooseRemoteTests/OwnerReplayTests.swift
+index 4f728f9cf9..c067b7fa03 100644
+--- a/ui/ios/GooseRemoteTests/OwnerReplayTests.swift
++++ b/ui/ios/GooseRemoteTests/OwnerReplayTests.swift
+@@ -438,7 +438,52 @@ final class OwnerReplayTests: XCTestCase {
+         await store.sceneBackground()
+     }
+ 
+-    @MainActor private func historyStore(expireOlder: Bool = false) async throws -> (ControllerStore, HistoryRefreshOwner) {
++    @MainActor func testLoadedTranscriptScaleRendersAndScrollsEightHistoryPages() async throws {
++        let rows = (0..<1024).map { index in
++            TranscriptItem(id: "scale-\(index)", revision: 80, role: index.isMultiple(of: 2) ? "user" : "assistant",
++                text: "Loaded message \(index). " + String(repeating: "A measured transcript line with enough text to wrap naturally. ", count: 1 + index % 24), timestamp: nil)
++        }
++        let (store, _) = try await historyStore(transcript: rows)
++        let work = entry().work
++        await store.select(work)
++        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
++        let previous = scene.keyWindow
++        let window = UIWindow(windowScene: scene)
++        let host = UIHostingController(rootView: NavigationStack { SessionDetailView(work: work).environment(store) })
++        window.rootViewController = host
++        let started = Date()
++        window.makeKeyAndVisible()
++        defer { window.isHidden = true; previous?.makeKey() }
++        host.view.layoutIfNeeded()
++        await Task.yield()
++        host.view.layoutIfNeeded()
++        func allScrollViews(_ view: UIView) -> [UIScrollView] {
++            (view as? UIScrollView).map { [$0] } ?? view.subviews.flatMap(allScrollViews)
++        }
++        let scroll = try XCTUnwrap(allScrollViews(host.view).max { $0.contentSize.height < $1.contentSize.height })
++        let laidOut = Date().timeIntervalSince(started)
++        XCTAssertEqual(store.selectedWork?.transcript.count, 1024)
++        XCTAssertGreaterThan(scroll.contentSize.height, scroll.bounds.height * 100, "The large transcript must be laid out, not replaced by an empty loading surface")
++        XCTAssertLessThan(laidOut, 5, "Initial loaded-history layout must not stall interaction for multiple seconds")
++        var worstScrollWork: TimeInterval = 0
++        for fraction in [0.0, 0.25, 0.75, 0.5, 1.0] {
++            let step = Date()
++            let top = -scroll.adjustedContentInset.top
++            let bottom = scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
++            let target = top + (bottom - top) * fraction
++            scroll.setContentOffset(CGPoint(x: 0, y: target), animated: false)
++            host.view.layoutIfNeeded()
++            await Task.yield()
++            host.view.layoutIfNeeded()
++            worstScrollWork = max(worstScrollWork, Date().timeIntervalSince(step))
++            XCTAssertEqual(scroll.contentOffset.y, target, accuracy: 1, "Loaded-history navigation must reach its measured offset")
++        }
++        XCTAssertLessThan(worstScrollWork, 0.5, "A measured scroll must remain responsive at eight loaded pages")
++        print("TRANSCRIPT_SCALE rows=\(rows.count) characters=\(rows.reduce(0) { $0 + $1.text.count }) initialLayoutSeconds=\(laidOut) worstScrollSeconds=\(worstScrollWork) contentHeight=\(scroll.contentSize.height)")
++        await store.sceneBackground()
++    }
++
++    @MainActor private func historyStore(expireOlder: Bool = false, transcript: [TranscriptItem]? = nil) async throws -> (ControllerStore, HistoryRefreshOwner) {
+         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+         let storage = MemoryCredentials()
+@@ -447,7 +492,7 @@ final class OwnerReplayTests: XCTestCase {
+         let host = HostDescriptor(ownerNodeId: owner, name: "Mac", deviceRole: "host", protocolVersion: 1, availability: "online", lastSeenAt: nil,
+             endpoints: [.init(url: URL(string: "https://100.64.0.1:41227")!, tlsSpkiSha256: String(repeating: "a", count: 64))], capabilities: [], registrationState: nil, tlsSpkiSha256: nil)
+         let transport = ScriptedTransport([.response(200, try ControllerCodec.encoder().encode(HostPage(revision: 1, hosts: [host])))])
+-        let owner = HistoryRefreshOwner(entry: entry(80), expireOlder: expireOlder)
++        let owner = HistoryRefreshOwner(entry: entry(80), expireOlder: expireOlder, transcript: transcript)
+         let store = ControllerStore(credentials: storage, owner: owner, transport: transport, directory: directory)
+         await store.synchronize()
+         return (store, owner)
+@@ -523,15 +568,19 @@ private struct ClosedStreamTransport: OwnerEventTransport {
+ private actor HistoryRefreshOwner: OwnerControllerService {
+     let entry: CatalogEntry
+     let expireOlder: Bool
++    let transcript: [TranscriptItem]?
+     var selections = 0
+-    init(entry: CatalogEntry, expireOlder: Bool) { self.entry = entry; self.expireOlder = expireOlder }
++    init(entry: CatalogEntry, expireOlder: Bool, transcript: [TranscriptItem]? = nil) {
++        self.entry = entry; self.expireOlder = expireOlder; self.transcript = transcript
++    }
+     func catalog(host: HostDescriptor, credential: String) async throws -> OwnerCatalogSnapshot {
+         .init(entries: [entry], watermark: .init(ownerNodeId: entry.work.ownerNodeId, storeGeneration: entry.storeGeneration, revision: 80), resumeCursor: "catalog-80")
+     }
+     func selected(work: CatalogEntry, host: HostDescriptor, credential: String) async throws -> SelectedWork {
+         selections += 1
+-        return .init(entry: entry, transcript: [.init(id: "newest", revision: 80, role: "assistant", text: "Latest page", timestamp: nil)],
+-            pendingInputs: [], nextPageToken: "older-80", historyRevision: 80, workCursor: "work-80", streamRevision: 80, historyOrder: ["newest"])
++        let rows = transcript ?? [.init(id: "newest", revision: 80, role: "assistant", text: "Latest page", timestamp: nil)]
++        return .init(entry: entry, transcript: rows,
++            pendingInputs: [], nextPageToken: "older-80", historyRevision: 80, workCursor: "work-80", streamRevision: 80, historyOrder: rows.map(\.id))
+     }
+     func history(work: CatalogEntry, pageToken: String, host: HostDescriptor, credential: String) async throws -> HistoryPage {
+         if expireOlder { throw ControllerError.remote(410, "snapshot_required", "Expired page") }
