@@ -1,0 +1,105 @@
+{
+  "captured_at": "2026-10-29T05:46:38.984824+00:00",
+  "progress": {
+    "progress": {
+      "state": "done",
+      "totalBytes": 79217711,
+      "downloadedBytes": 79217711
+    }
+  },
+  "receipts": [
+    {
+      "command_id": "e19ff270-c379-4873-80e8-8a42ef602e90",
+      "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+      "authenticated_device_id": "6398edbb-d0a8-4d9c-a7b4-5dcbe8cb24b5",
+      "action": "download",
+      "state": "delivered",
+      "target": "mlx-community/SmolLM-135M-Instruct-4bit",
+      "reason": null,
+      "updated_at": "2026-10-29T05:44:14.191728Z"
+    }
+  ],
+  "files": [
+    {
+      "name": "._.gitattributes",
+      "bytes": 4096
+    },
+    {
+      "name": "._README.md",
+      "bytes": 4096
+    },
+    {
+      "name": "._config.json",
+      "bytes": 4096
+    },
+    {
+      "name": "._merges.txt",
+      "bytes": 4096
+    },
+    {
+      "name": "._model.safetensors",
+      "bytes": 4096
+    },
+    {
+      "name": "._model.safetensors.index.json",
+      "bytes": 4096
+    },
+    {
+      "name": "._special_tokens_map.json",
+      "bytes": 4096
+    },
+    {
+      "name": "._tokenizer.json",
+      "bytes": 4096
+    },
+    {
+      "name": "._tokenizer_config.json",
+      "bytes": 4096
+    },
+    {
+      "name": "._vocab.json",
+      "bytes": 4096
+    },
+    {
+      "name": ".gitattributes",
+      "bytes": 1519
+    },
+    {
+      "name": "README.md",
+      "bytes": 638
+    },
+    {
+      "name": "config.json",
+      "bytes": 803
+    },
+    {
+      "name": "merges.txt",
+      "bytes": 466391
+    },
+    {
+      "name": "model.safetensors",
+      "bytes": 75789919
+    },
+    {
+      "name": "model.safetensors.index.json",
+      "bytes": 48978
+    },
+    {
+      "name": "special_tokens_map.json",
+      "bytes": 655
+    },
+    {
+      "name": "tokenizer.json",
+      "bytes": 2104556
+    },
+    {
+      "name": "tokenizer_config.json",
+      "bytes": 3590
+    },
+    {
+      "name": "vocab.json",
+      "bytes": 800662
+    }
+  ],
+  "scope": "Read-only original owner download tracker and iPad management receipt; no model load or new download request."
+}

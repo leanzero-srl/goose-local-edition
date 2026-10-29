@@ -1,6 +1,6 @@
 # Convert the existing Apple membership to LEANZERO S.R.L.
 
-Submitted 26 October 2026 through Apple's authenticated individual-to-organization form, after the owner confirmed the form facts. Apple acknowledged receipt; organization conversion remains pending. The updated Developer Program License Agreement has not yet been verified as accepted. No App Store build was uploaded.
+Submitted 26 October 2026 through Apple's authenticated individual-to-organization form, after the owner confirmed the form facts. Apple acknowledged receipt; organization conversion remains pending. The owner accepted the updated Developer Program License Agreement; the refreshed portal recorded issue14October and acceptance26October (see release README). No App Store build was uploaded.
 
 ## Existing account
 
@@ -82,7 +82,7 @@ The screenshot `/tmp/goose-apple-conversion-submitted.png`, recorded at `2026-10
 ## Pending after submission
 
 1. Await Apple's response and any requested verification documents. Supply only the documents Apple actually asks for; no document list or attachment is invented here.
-2. Verify the owner's acceptance of the updated Developer Program License Agreement. The owner said he would accept it; acceptance has not yet been confirmed in the account.
+2. Program License Agreement acceptance was verified26October; do not ask the owner again absent a new agreement.
 3. After Apple confirms conversion, re-read membership/provider details and the seller display in App Store Connect, resolve any actual remaining agreements/status, then recheck the final archive's team/profile against the resulting account. No App Store upload has occurred.
 
 Apple's organization-enrollment guidance also calls for legal entity status, authority to bind it, a domain-associated work email and a working organization website. LeanZero's public records supply the company/contact/website context; Apple verifies eligibility. [Apple organization requirements](https://developer.apple.com/help/account/membership/program-enrollment).
@@ -92,3 +92,7 @@ Do not promise a conversion completion date or that team identifiers/certificate
 ## Agreement verified after request
 
 The authenticated Apple Developer account, freshly reloaded on 26 October 2026, records Apple Developer Program License Agreement issued 14 October 2026, accepted 26 October 2026. The owner accepted it in the browser. The previous agreement warning is gone. This does not confirm organization conversion.
+
+## Read-only recheck, 29 October 2026
+
+Existing credential authentication via Apple altool list-providers succeeded at05:48UTC. The same provider still reports developerProgram/entityType INDIVIDUAL, name Mihai Perdum, developerTeamId ZZ8MTZ6NRZ. Organization conversion is not yet reflected in this source. No new conversion request, app record or upload was made. The ambiguous isSignupComplete=false field still does not establish a specific missing action.
