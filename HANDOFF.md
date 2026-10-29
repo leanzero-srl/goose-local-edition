@@ -40,7 +40,16 @@ Do NOT load the skills goose-mlx-inference / goose-feature-dev / node-dispatch w
 
 ## OPEN
 - Live CDP check of a packaged build from this branch (saved profile -> engine env/argv) NOT done.
-- Engine owner: streaming space-drop before " [" / " &"; Flash-Next MTP (in-shard head detection + K 1-2).
+- Engine fix RELEASED 2026-10-29 (fork, NOT pinned anywhere yet): streaming whitespace bug (every streamed content
+  delta holding < [ ] was .strip()-ed: " [--" -> "[--", "]\n\n" -> "]") + non-stream outer trim + LongCat tool parser.
+  Tags: v0.14.3-lz.16 (= lz.15 + fix, branch lz/stream-whitespace b328262b8) and v0.14.3-lz.16-ple.1 (= lz.16 merged
+  with lz.14-ple.1, branch lz/stream-whitespace-ple 8c9927ae3). Evidence /Volumes/AI-workhorse/runs/2026-10-29-stream-whitespace-fix/.
+  Pin line for engine.rs ENGINE_LAUNCHER (main line / this branch):
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16",
+  Pin line for the ple-offload branch:
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.1",
+  When pinning: move the old pin into SUPERSEDED_ENGINE_LAUNCHERS and update the argv goldens in engine.rs.
+- Flash-Next MTP (in-shard head detection + K 1-2) still with the engine owner.
 - Merge ngram-decoding to main.
 
 ## Engine facts (verified in /Users/workhorse/Projects/Rapid-MLX-wt-offload @ v0.14.3-lz.14, READ-ONLY)
