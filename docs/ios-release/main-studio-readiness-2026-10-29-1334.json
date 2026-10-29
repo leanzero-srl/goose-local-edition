@@ -1,0 +1,140 @@
+{
+  "captured_at": "2026-10-29T11:34:28.543972+00:00",
+  "scope": "Read-only main CI / Studio upgrade dependency audit. No build, install, merge, push, runner, hold or settings change.",
+  "repository": {
+    "head_and_remote_feature": "e756d90694adb14cbce4024e9b434de46c3f0f19",
+    "origin_main_live": "96e85f21ad0e5759a86aec8ef0e13790fabb2ca0",
+    "head_ahead_of_main": 228,
+    "head_behind_main": 0,
+    "remote_verification": "git ls-remote; local origin refs match, no fetch or checkout change",
+    "dirty_paths": [
+      "ui/desktop/bundled-mcps (known intentional untracked link)"
+    ]
+  },
+  "fleet": [
+    {
+      "name": "laptop",
+      "summary": "OK 0/2 heavy, 90.9 GB free above floor, load 0.42/core, can take ~2 more 8 GB jobs",
+      "disk_free_gb": 117.1,
+      "benchmark": [],
+      "bench_activity": null
+    },
+    {
+      "name": "workhorse",
+      "summary": "OK 0/7 heavy, 66.2 GB free above floor, load 0.21/core, can take ~7 more 8 GB jobs",
+      "disk_free_gb": 94.4,
+      "benchmark": [
+        "snapshot-zsh-1793017469862-65mtck.sh (pid 55838)"
+      ],
+      "bench_activity": {
+        "active_now": false,
+        "why": [],
+        "idle_s": 2087,
+        "last_active": 1793271275.91863,
+        "first_seen": 1793260029.702066,
+        "procs": 64,
+        "cpu_pct": 17,
+        "rss_gb": 1.6
+      }
+    },
+    {
+      "name": "gabee",
+      "summary": "OK 0/1 heavy, 42.2 GB free above floor, load 0.46/core, can take ~1 more 8 GB job",
+      "disk_free_gb": 20.3,
+      "benchmark": [],
+      "bench_activity": null
+    },
+    {
+      "name": "workmule",
+      "summary": "BUSY: benchmark running: Gauntlet build run 2026-10-29T07:34Z (pid 34970) [active: GPU 86%] (0/4 heavy, 20.5 GB free above floor, load 0.13/core)",
+      "disk_free_gb": 368.5,
+      "benchmark": [
+        "Gauntlet build run 2026-10-29T07:34Z (pid 34970)"
+      ],
+      "bench_activity": {
+        "active_now": true,
+        "why": [
+          "GPU 86%"
+        ],
+        "idle_s": 0,
+        "last_active": 1793273362.9193652,
+        "first_seen": 1793260029.786178,
+        "procs": 10,
+        "cpu_pct": 0,
+        "rss_gb": 0.3
+      }
+    }
+  ],
+  "workmule_primary": {
+    "benchmark_pid": 34970,
+    "parent_pid": 33882,
+    "parent": "isolated /Users/workmule/goose-builds/flashpld/Goose Swarm.app",
+    "started": "2026-10-29T07:34Z",
+    "command": "run_build.py --entrant openai-cloud-9fc934f2-4168-49a5-9743-25c457ca67d4 --only-rep 0 --timeout 0 --out /tmp/gflash/userdata/benchmark/runs/build --provider openai --model rapid-mlx/Qwen3.8-Flash-Next-4bit --sb72",
+    "gpu_percent": 86,
+    "engine_console_mtime": "2026-10-29T11:27:09.177020+00:00",
+    "watch_log_recent_samples": [
+      "13:28:00 34970 1147.31M 78.29 96.15 11",
+      "13:30:01 34970 1147.31M 78.38 96.15 11"
+    ],
+    "watch_log_path_on_workhorse": "/private/tmp/claude-501/-Users-workhorse-Projects/b3c77359-c57d-472f-be64-067a0ce26b03/scratchpad/flash/watch.log",
+    "active_not_between_runs": true,
+    "isolated_runtime_vendor_endpoint": "http://127.0.0.1:8291",
+    "vendor_upstream_dependency_independently_established": false
+  },
+  "workhorse_primary": {
+    "original_app_pid": 1513,
+    "original_backend_pid": 1567,
+    "owner": "f6085e2e-82de-4b64-8fd0-24f8d6f45dad",
+    "fresh_catalog_entries": 165,
+    "active_catalog_entries": [],
+    "studio_idle_probe_at": "2026-10-29T11:31:32.798190+00:00",
+    "self_node_id": "worksmacstudio-lan-6a972f",
+    "auth_state": "connected",
+    "last_error_present": false,
+    "activity_counts": {
+      "running": 0,
+      "needsYou": 0,
+      "failed": 0,
+      "stopped": 0,
+      "background": 0,
+      "looping": 0,
+      "notesWaiting": 0
+    },
+    "job_states": [],
+    "live_agents": 0,
+    "live_benchmark_markers": 0,
+    "local_campaign_processes": 0,
+    "separate_watcher_pid": 55838,
+    "separate_watcher_role": "Reads ongoing Workmule flash watch.log until sample threshold; not original Goose app work.",
+    "goose_runner_listener_pid": 77608,
+    "runner_worker_detected": false
+  },
+  "ci": {
+    "workflow": ".github/workflows/ci.yml",
+    "triggers": [
+      "push main",
+      "workflow_dispatch"
+    ],
+    "self_hosted_label": [
+      "self-hosted",
+      "goose"
+    ],
+    "jobs": [
+      "rust-format",
+      "rust-build-and-test",
+      "rust-msrv",
+      "rust-lint",
+      "schema-check",
+      "desktop-lint"
+    ],
+    "environment_script": ".github/workhorse-env.sh",
+    "note": "Main push starts actual Workhorse CI; available Workhorse headroom does not satisfy the current requirement for genuine campaign completion."
+  },
+  "recommendation": {
+    "main_push": "HOLD: active campaign has not completed; root additionally found missing requested remote compute-node creation and holds merge for implementation.",
+    "workmule_upgrade": "HOLD: exact live benchmark and active GPU are positive evidence, not an old hold or between-run gap.",
+    "workhorse_upgrade": "Original app idle/resource gates currently pass; no demonstrated local activity blocker. Retain coordinated Studio hold while the live campaign dependency remains unresolved; loopback vendor upstream was not established. Root now additionally holds restart/upgrade pending reviewed compute-node candidate.",
+    "next_action": "Implement/review the missing node feature. Before any later main push or Studio replacement, recheck exact run completion and live processes plus fresh headroom, then repeat per-original-owner gates; never remove holds or stop a runner to create room."
+  }
+}
