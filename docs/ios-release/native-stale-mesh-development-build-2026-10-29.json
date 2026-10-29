@@ -1,0 +1,121 @@
+{
+  "captured_at": "2026-10-29T08:41:14.353332+00:00",
+  "purpose": "development-only same-controller missing-provider-node recovery with temporary diagnostics; not final release",
+  "source_commit": "867119541e90ad12cab50e47b929088abd51b1fa",
+  "native_tree": "a0af2e298e18971af9a2a0b0f5301aafafed5e53",
+  "app": "/tmp/goose-phone-lifecycle-867119541e90/GooseRemote.app",
+  "app_sha256": "2e349f9d3e7664644b6fb8dc4ac20132e18d795e5fe0ee010421dd12fe995bfe",
+  "app_uuid": "CBF88BE1-FC98-3445-AA1A-87FE004B4DE8",
+  "matching_dsym": true,
+  "strict_signature": true,
+  "team": "ZZ8MTZ6NRZ",
+  "actual_profile_uuid": "da27f4b6-6c1a-4495-871b-da7890d58fac",
+  "phone_included": true,
+  "profile_and_app_get_task_allow": true,
+  "mesh_linked": true,
+  "pinned_framework_uuid_matches": true,
+  "privacy_manifests_match": true,
+  "archive_created": false,
+  "exported": false,
+  "uploaded": false,
+  "installed": true,
+  "recovery_commit": "c1d237d741",
+  "build_job": "laptop-20261029-104106-1ccd",
+  "tests": {
+    "job": "laptop-20261029-103547-5eb9",
+    "count": 43,
+    "failures": 0,
+    "new_enrollment_cases": 8,
+    "xcresult": "/tmp/goose-latest-native-derived/Logs/Test/Test-GooseRemote-2026.10.29_10-35-48-+0200.xcresult"
+  },
+  "review": "native-stale-mesh-review-2026-10-29.md",
+  "operator": "native-lifecycle-development-build-2026-10-29.sh",
+  "operator_sha256": "b4b231303889ac8c6da71b5ec56da1471fd47114c579101b5305a9740e6322cc",
+  "installation_observer": "root via supported devicectl in-place install, around10:43local",
+  "physical_execution": "Not yet attempted: Home-icon launch reached the phone lock screen. Root asked owner once to unlock/open latest app; no new sign-in code or reenrollment requested.",
+  "authority_before": {
+    "captured_at": "2026-10-29T08:42:50.847040+00:00",
+    "device": {
+      "device_id": "333b2a27-9958-4195-8341-2256696e8287",
+      "name": "My iPhone",
+      "platform": "ios",
+      "role": "controller",
+      "revision": 2,
+      "scopes": [
+        "catalog.read",
+        "history.read",
+        "work.send",
+        "work.steer",
+        "work.stop",
+        "input.answer",
+        "resources.read",
+        "models.read",
+        "models.download",
+        "models.manage",
+        "providers.read",
+        "providers.manage",
+        "devices.read",
+        "devices.manage"
+      ],
+      "created_at": "2026-10-29T07:48:53.698Z",
+      "revoked_at": null
+    },
+    "mesh_enrollments": [
+      {
+        "enrollment_id": "ed48f07d-04da-4a89-999c-d287db99d22c",
+        "status": "confirmed",
+        "created_at": 1793260134427,
+        "bound_node_id": "49",
+        "provider_present": false,
+        "provider_online": null,
+        "provider_last_seen": null,
+        "provider_expiry": null,
+        "cleanup_pending": false
+      }
+    ],
+    "provider_node_count": 4
+  },
+  "authority_pre_attempt": {
+    "captured_at": "2026-10-29T08:43:33.182776+00:00",
+    "device": {
+      "device_id": "333b2a27-9958-4195-8341-2256696e8287",
+      "name": "My iPhone",
+      "platform": "ios",
+      "role": "controller",
+      "revision": 2,
+      "scopes": [
+        "catalog.read",
+        "history.read",
+        "work.send",
+        "work.steer",
+        "work.stop",
+        "input.answer",
+        "resources.read",
+        "models.read",
+        "models.download",
+        "models.manage",
+        "providers.read",
+        "providers.manage",
+        "devices.read",
+        "devices.manage"
+      ],
+      "created_at": "2026-10-29T07:48:53.698Z",
+      "revoked_at": null
+    },
+    "mesh_enrollments": [
+      {
+        "enrollment_id": "ed48f07d-04da-4a89-999c-d287db99d22c",
+        "status": "confirmed",
+        "created_at": 1793260134427,
+        "bound_node_id": "49",
+        "provider_present": false,
+        "provider_online": null,
+        "provider_last_seen": null,
+        "provider_expiry": null,
+        "cleanup_pending": false
+      }
+    ],
+    "provider_node_count": 4
+  },
+  "acceptance": "Pending actual app launch, same-device replacement, owner admission and lock/resume proof. Unchanged metadata is not a recovery failure because no launch occurred."
+}
