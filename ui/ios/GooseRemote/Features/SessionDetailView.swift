@@ -1,4 +1,13 @@
 import SwiftUI
+#if DEBUG
+import OSLog
+#endif
+
+private func traceSessionScroll(_ event: String) {
+#if DEBUG
+    Logger(subsystem: "net.leanzero.goose-remote", category: "SessionScroll").notice("\(event, privacy: .public)")
+#endif
+}
 
 struct SessionScrollState {
     var position = ScrollPosition(idType: String.self, edge: .bottom)
@@ -7,6 +16,7 @@ struct SessionScrollState {
     private var olderRequest: UUID?
     private var olderFallbackID: String?
     mutating func userScrolled(nearBottom: Bool) {
+        traceSessionScroll("userScrolled nearBottom=\(nearBottom) clearingFallback=\(olderFallbackID != nil) loading=\(loadingOlder)")
         followsLatest = nearBottom
         olderFallbackID = nil
     }
@@ -17,18 +27,22 @@ struct SessionScrollState {
         followsLatest = false
         let visibleID = position.viewID(type: String.self)
         olderFallbackID = visibleID.map(transcriptIDs.contains) == true ? nil : transcriptIDs.first
+        traceSessionScroll("begin count=\(transcriptIDs.count) boundIndex=\(visibleID.flatMap(transcriptIDs.firstIndex) ?? -1) boundNil=\(visibleID == nil) userPositioned=\(position.isPositionedByUser) edgeBottom=\(position.edge == .bottom) fallback=\(olderFallbackID != nil)")
         return request
     }
     mutating func endOlder(request: UUID, didPrepend: Bool = false) {
+        traceSessionScroll("end sameRequest=\(olderRequest == request) didPrepend=\(didPrepend) follows=\(followsLatest) fallback=\(olderFallbackID != nil)")
         guard olderRequest == request else { return }
         loadingOlder = false
         olderRequest = nil
         if didPrepend, !followsLatest, let olderFallbackID {
             position.scrollTo(id: olderFallbackID, anchor: .top)
+            traceSessionScroll("restore boundMatches=\(position.viewID(type: String.self) == olderFallbackID) userPositioned=\(position.isPositionedByUser)")
         }
         olderFallbackID = nil
     }
     mutating func jumpToLatest() {
+        traceSessionScroll("jump clearingFallback=\(olderFallbackID != nil) loading=\(loadingOlder)")
         followsLatest = true
         olderFallbackID = nil
         position.scrollTo(edge: .bottom)
@@ -122,6 +136,7 @@ struct SessionDetailView: View {
                                     && store.selectedHistoryReset == historyReset && current?.entry.work == work
                                     && firstMessageID != nil && current?.transcript.first?.id != firstMessageID
                                     && current?.transcript.contains(where: { $0.id == firstMessageID }) == true
+                                traceSessionScroll("loaded count=\(current?.transcript.count ?? -1) previousFirstIndex=\(current?.transcript.firstIndex(where: { $0.id == firstMessageID }) ?? -1) cancelled=\(Task.isCancelled) sameSelection=\(store.selectedRef == work) sameReset=\(store.selectedHistoryReset == historyReset) sameWork=\(current?.entry.work == work) firstExists=\(firstMessageID != nil) firstChanged=\(current?.transcript.first?.id != firstMessageID) eligible=\(didPrepend)")
                                 scrolling.endOlder(request: request, didPrepend: didPrepend)
                             }
                         }.buttonStyle(StudioSecondaryButtonStyle()).disabled(store.selectedLoading)
@@ -158,14 +173,20 @@ struct SessionDetailView: View {
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentSize.height - geometry.visibleRect.maxY <= 80
             } action: { _, isNearBottom in
+                traceSessionScroll("geometry nearBottom=\(isNearBottom) userScrolling=\(userScrolling) loading=\(scrolling.loadingOlder)")
                 nearBottom = isNearBottom
                 if userScrolling { scrolling.userScrolled(nearBottom: isNearBottom) }
             }
             .onScrollPhaseChange { _, phase in
+                traceSessionScroll("phase tracking=\(phase == .tracking) interacting=\(phase == .interacting) decelerating=\(phase == .decelerating) idle=\(phase == .idle) animating=\(phase == .animating)")
                 userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
                 if userScrolling { scrolling.userScrolled(nearBottom: nearBottom) }
             }
+            .onChange(of: scrolling.position) { _, position in
+                traceSessionScroll("position count=\(selected.transcript.count) boundIndex=\(selected.transcript.firstIndex(where: { $0.id == position.viewID(type: String.self) }) ?? -1) boundNil=\(position.viewID(type: String.self) == nil) edgeBottom=\(position.edge == .bottom) userPositioned=\(position.isPositionedByUser)")
+            }
             .task(id: selected.transcript) {
+                traceSessionScroll("render count=\(selected.transcript.count) loading=\(scrolling.loadingOlder) follows=\(scrolling.shouldFollowContent)")
                 await Task.yield()
                 if !Task.isCancelled, !userScrolling { scrolling.followContent() }
             }
