@@ -5,15 +5,57 @@
   "uploadArchive": "/tmp/goose-controller-corrected-signed-bf5966b19fdf/Goose-Swarm-signed.zip",
   "uploadArchiveSha256": "8261f27b92581b9d26c8b12bdb7e8a1f938228cb7f730a4d8f7d76f5df3b873e",
   "preUploadReceiptSha256": "0ecf05a4e59b4dda8941f01b069fb58340c0c7a926833f9fdde965541126844b",
-  "notarized": false,
+  "notarized": true,
   "uploaded": true,
   "installed": false,
   "notarySubmissionAttemptedAt": "2026-10-29T05:27:33.972Z",
   "notarySubmissionId": "d4b59b60-4db2-43e9-921a-fe3bcdcc7f8f",
-  "notaryStatus": "In Progress",
-  "lastCheckedAt": "2026-10-29T05:28:36.672Z",
+  "notaryStatus": "Accepted",
+  "lastCheckedAt": "2026-10-29T05:32:44.007Z",
+  "stapledApp": "/tmp/goose-controller-corrected-signed-bf5966b19fdf/Goose Swarm.app",
+  "notarizedAt": "2026-10-29T05:33:04.649Z",
+  "notarizationChanged": [
+    "Contents/CodeResources"
+  ],
+  "postStapleFingerprintSha256": "89a3976616dfa2dce5787de6ea97e3453e2884ce08537f20477f925121752a06",
+  "postStapleCliSha256": "349b242b64a4a48072fbbfcecda0c9a9a2c32fef5639ae6c045003b34d7bee6f",
+  "preUploadArchivePreserved": true,
+  "validation": {
+    "strictSignature": true,
+    "team": "ZZ8MTZ6NRZ",
+    "stapler": true,
+    "gatekeeper": true
+  },
+  "distributionArchiveCreated": false,
   "operatorSha256": "f1f62c6b1bd9803dfef66ee113f3f7bad132c9a36d1087bbd594068f34432041",
   "securePromptWrapperSha256": "b170e22d64a10217c3ba72e15b5a5c8a177e8671359ddcf4fa9657babb64429e",
   "historyBaselineSha256": "2601817dbbf1696dfcb59a79aee2877f9c3a6c00da4dfb03e4b5f5f7c0c6f978",
-  "independentReview": "PASS after replacing password argv with tested secure PTY prompt"
+  "independentReview": "PASS after replacing password argv with tested secure PTY prompt",
+  "validationJob": {
+    "id": "laptop-20261029-073256-a6dc",
+    "exit": 0,
+    "ended": "2026-10-29T05:33:05Z"
+  },
+  "appleLogSha256": "e78052cef1f030ca848a980c4da27c13491bf222c1e72e5a5b7b067b4f7c6533",
+  "appleStatusSummary": "Ready for distribution",
+  "appleTicketEntries": 43,
+  "appleWarnings": [
+    {
+      "severity": "warning",
+      "code": null,
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/leanzero-documents/node_modules/mammoth/test/test-data/empty.zip",
+      "message": "The archive at Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/leanzero-documents/node_modules/mammoth/test/test-data/empty.zip could not be unpacked. Any executables contained in the archive will not be notarized.",
+      "docUrl": null,
+      "architecture": null
+    }
+  ],
+  "warningVerification": {
+    "path": "Contents/Resources/bundled-mcps/leanzero-documents/node_modules/mammoth/test/test-data/empty.zip",
+    "bytes": 22,
+    "sha256": "8739c76e681f900923b900c9df0ef75cf421d39cabb54650c4b9ad19b6a76d85",
+    "zipEntries": [],
+    "conclusion": "Empty dependency test fixture contains no executable"
+  },
+  "gatekeeperOutput": "/tmp/goose-controller-corrected-signed-bf5966b19fdf/Goose Swarm.app: accepted\nsource=Notarized Developer ID",
+  "staplerValidationOutput": "Processing: /tmp/goose-controller-corrected-signed-bf5966b19fdf/Goose Swarm.app\nThe validate action worked!"
 }
