@@ -5762,7 +5762,13 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: '
           if (!hasScoredVerdict(v) || !sameScorer || (!forge && typeof v.evidence_dir !== 'string'))
             throw new Error('Scorer produced no valid result or evidence directory.');
           const evidenceWorkdir = forge ? workdir : path.join(output, 'verdict-evidence');
-          if (!forge && path.resolve(v.evidence_dir) !== path.resolve(evidenceWorkdir))
+          // realpath on both sides: the scorer reports a resolved path, and a profile under a symlinked
+          // directory (/tmp -> /private/tmp on macOS) otherwise refused its own evidence (2026-10-29).
+          const realOrResolved = (p: string) => fs.realpath(p).catch(() => path.resolve(p));
+          if (
+            !forge &&
+            (await realOrResolved(v.evidence_dir)) !== (await realOrResolved(evidenceWorkdir))
+          )
             throw new Error('Scorer evidence directory does not belong to this attempt.');
           const scoredAt = new Date().toISOString();
           // A re-grade keeps the build's own finish (runMeta.finishedAt, the session's endedAt): the
