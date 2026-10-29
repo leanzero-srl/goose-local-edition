@@ -159,6 +159,12 @@ struct SessionDetailView: View {
                             }
                             Text(item.text).font(work.kind == .shellJob ? .system(.body, design: .monospaced) : .body).textSelection(.enabled)
                         }.id(item.id)
+                            .onGeometryChange(for: CGRect?.self) { geometry in
+                                guard item.id == selected.transcript.last?.id else { return nil }
+                                return geometry.frame(in: .global)
+                            } action: { _, frame in
+                                if let frame { traceSessionScroll("lastRow count=\(selected.transcript.count) globalTop=\(frame.minY) globalBottom=\(frame.maxY) height=\(frame.height) width=\(frame.width)") }
+                            }
                             .onGeometryChange(for: Bool?.self) { geometry in
                                 guard item.id == selected.transcript.first?.id else { return nil }
                                 return geometry.frame(in: .scrollView(axis: .vertical)).minY >= 0
@@ -177,6 +183,15 @@ struct SessionDetailView: View {
                         }
                     }
                 }.scrollTargetLayout().padding(16).frame(maxWidth: 900)
+            }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { _, frame in
+                traceSessionScroll("viewport globalTop=\(frame.minY) globalBottom=\(frame.maxY) height=\(frame.height) width=\(frame.width)")
+            }
+            .onScrollGeometryChange(for: [CGFloat].self) { geometry in
+                [geometry.contentOffset.y, geometry.visibleRect.minY, geometry.visibleRect.maxY,
+                 geometry.contentSize.height, geometry.containerSize.height, geometry.contentInsets.top, geometry.contentInsets.bottom]
+            } action: { _, values in
+                traceSessionScroll("metrics offsetY=\(values[0]) visibleTop=\(values[1]) visibleBottom=\(values[2]) contentHeight=\(values[3]) containerHeight=\(values[4]) insetTop=\(values[5]) insetBottom=\(values[6])")
             }
             .scrollPosition($scrolling.position, anchor: .top)
             .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -222,6 +237,9 @@ struct SessionDetailView: View {
             }
             if selected.entry.capabilities.contains(where: { [.send, .steer, .note].contains($0) }) {
                 composer(selected.entry)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { _, frame in
+                        traceSessionScroll("composer globalTop=\(frame.minY) globalBottom=\(frame.maxY) height=\(frame.height)")
+                    }
             } else {
                 Text("\(work.kind.title) controls are limited to the capabilities its owner advertises.")
                     .font(.caption).foregroundStyle(Studio.secondaryInk).padding(16)
