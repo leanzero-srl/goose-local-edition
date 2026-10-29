@@ -45,7 +45,7 @@ actor ManagementServiceProbe: OwnerManagementService {
         if nodesUnsupported { throw ControllerError.remote(404, "not_found", "Missing route") }
         nodeReads += 1
         let nodes: [ManagedComputeNode] = state == .delivered && requests.last?.action == .nodeCreate ? [.init(id: "test-node", name: "Test", kind: "cloud", model: "claude-test", provider: "anthropic", macs: [], editable: true, definitionRevision: "revision-a")] : []
-        return .init(nodes: nodes, providers: [], localModels: [], supportedKinds: ["cloud", "endpoint", "mlx"], capabilities: ["node_create", "node_remove"])
+        return .init(nodes: nodes, providers: [], localModels: [], supportedKinds: ["cloud", "endpoint", "mlx"], capabilities: ["node_create", "node_remove"], localModelsError: nil)
     }
     func manage(_ command: ManagementCommand, host: HostDescriptor, credential: String) async throws -> ManagementReceipt {
         let saved = try storage.read([PendingManagement].self, account: ManagementModel.outboxAccount) ?? []
@@ -267,7 +267,7 @@ actor ManagementServiceProbe: OwnerManagementService {
         XCTAssertEqual(sent.count, 1)
     }
     func testNodeDraftOnlyAllowsAdvertisedModelsAndNoExecutionFields() throws {
-        let inventory = ManagedComputeNodes(nodes: [], providers: [.init(id: "anthropic", displayName: "Anthropic", models: ["claude-test"])], localModels: ["org/local-model"], supportedKinds: ["cloud", "endpoint", "mlx"], capabilities: ["node_create"])
+        let inventory = ManagedComputeNodes(nodes: [], providers: [.init(id: "anthropic", displayName: "Anthropic", models: ["claude-test"])], localModels: ["org/local-model"], supportedKinds: ["cloud", "endpoint", "mlx"], capabilities: ["node_create"], localModelsError: nil)
         var draft = ComputeNodeDraft(id: "test-node", name: " Test ", kind: "cloud", provider: "anthropic", model: "claude-test")
         var encoded = try ControllerCodec.encoder().encode(draft.payload(in: inventory))
         var fields = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: String])
@@ -320,12 +320,23 @@ actor ManagementServiceProbe: OwnerManagementService {
     }
     func testNodeDraftRejectsRemovedCapabilityAndRemovedProviderModel() throws {
         let draft = ComputeNodeDraft(id: "test-node", name: "Test", kind: "cloud", provider: "anthropic", model: "claude-test")
-        let enabled = ManagedComputeNodes(nodes: [], providers: [.init(id: "anthropic", displayName: "Anthropic", models: ["claude-test"])], localModels: [], supportedKinds: ["cloud"], capabilities: ["node_create"])
+        let enabled = ManagedComputeNodes(nodes: [], providers: [.init(id: "anthropic", displayName: "Anthropic", models: ["claude-test"])], localModels: [], supportedKinds: ["cloud"], capabilities: ["node_create"], localModelsError: nil)
         XCTAssertNoThrow(try draft.payload(in: enabled))
-        let disabled = ManagedComputeNodes(nodes: [], providers: enabled.providers, localModels: [], supportedKinds: ["cloud"], capabilities: [])
+        let disabled = ManagedComputeNodes(nodes: [], providers: enabled.providers, localModels: [], supportedKinds: ["cloud"], capabilities: [], localModelsError: nil)
         XCTAssertThrowsError(try draft.payload(in: disabled))
-        let disappeared = ManagedComputeNodes(nodes: [], providers: [.init(id: "anthropic", displayName: "Anthropic", models: [])], localModels: [], supportedKinds: ["cloud"], capabilities: ["node_create"])
+        let disappeared = ManagedComputeNodes(nodes: [], providers: [.init(id: "anthropic", displayName: "Anthropic", models: [])], localModels: [], supportedKinds: ["cloud"], capabilities: ["node_create"], localModelsError: nil)
         XCTAssertThrowsError(try draft.payload(in: disappeared))
+    }
+
+    func testUnavailableLocalModelsDoesNotBlockCloudDefinition() throws {
+        let inventory = ManagedComputeNodes(nodes: [], providers: [.init(id: "anthropic", displayName: "Anthropic", models: ["claude-test"])], localModels: [], supportedKinds: ["cloud", "endpoint"], capabilities: ["node_create"], localModelsError: "Local model storage could not be read.")
+        var draft = ComputeNodeDraft(id: "test-node", name: "Test", kind: "cloud", provider: "anthropic", model: "claude-test")
+        XCTAssertNoThrow(try draft.payload(in: inventory))
+        draft.kind = "mlx"
+        XCTAssertThrowsError(try draft.payload(in: inventory))
+        let data = Data(#"{"nodes":[],"providers":[],"local_models":[],"supported_kinds":["cloud","endpoint"],"capabilities":[],"local_models_error":"Local model storage could not be read."}"#.utf8)
+        let decoded = try ControllerCodec.decoder().decode(ManagedComputeNodes.self, from: data)
+        XCTAssertEqual(decoded.localModelsError, "Local model storage could not be read.")
     }
 
 }

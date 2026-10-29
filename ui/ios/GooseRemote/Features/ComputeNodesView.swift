@@ -10,6 +10,9 @@ struct ComputeNodesSection: View {
             Section("Compute nodes on this Mac") {
                 Text("Named ways to run a model. Saving a node does not start inference or change your session defaults.")
                     .font(.subheadline).foregroundStyle(Studio.secondaryInk)
+                if let localError = inventory.localModelsError {
+                    Text("Local model inventory unavailable: \(localError)").font(.caption).foregroundStyle(Studio.warningInk)
+                }
                 if inventory.nodes.isEmpty { Text("No compute nodes defined.").foregroundStyle(Studio.secondaryInk) }
                 ForEach(inventory.nodes) { node in
                     VStack(alignment: .leading, spacing: 6) {
@@ -76,7 +79,7 @@ struct ComputeNodeDraft {
         }
         var fields: [String: JSONValue] = ["id": .string(id), "name": .string(trimmedName), "kind": .string(kind), "model": .string(model)]
         if kind == "mlx" {
-            guard inventory.localModels.contains(model) else { throw ControllerError.invalid("Choose a model installed on this Mac.") }
+            guard inventory.localModelsError == nil, inventory.localModels.contains(model) else { throw ControllerError.invalid("Choose a model installed on this Mac.") }
         } else {
             guard inventory.providers.contains(where: { $0.id == provider && $0.models.contains(model) }) else {
                 throw ControllerError.invalid("Choose a provider and one of its available models.")
@@ -125,7 +128,7 @@ struct NewComputeNodeView: View {
                         ForEach(choices, id: \.self) { Text($0).tag($0) }
                     }
                     if choices.isEmpty {
-                        Text(draft.kind == "mlx" ? "Download a model to this Mac first." : "Choose a configured provider with available models.")
+                        Text(draft.kind == "mlx" ? (inventory.localModelsError == nil ? "Download a model to this Mac first." : "Local models are unavailable. Refresh after this Mac can read its model storage.") : "Choose a configured provider with available models.")
                             .font(.subheadline).foregroundStyle(Studio.secondaryInk)
                     }
                     TextField("Node name", text: $draft.name)

@@ -54,6 +54,7 @@ struct ManagedComputeNodes: Decodable, Sendable {
     let localModels: [String]
     let supportedKinds: [String]
     let capabilities: [String]
+    let localModelsError: String?
 }
 enum ManagementAction: String, Codable, Sendable {
     case download, downloadCancel = "download_cancel", downloadPause = "download_pause", downloadResume = "download_resume"
