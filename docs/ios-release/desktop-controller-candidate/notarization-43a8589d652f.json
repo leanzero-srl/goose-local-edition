@@ -5,11 +5,26 @@
   "uploadArchive": "/tmp/goose-controller-incremental-43a8589d652f/Goose-Swarm-signed.zip",
   "uploadArchiveSha256": "36f291982387c88f357f077e1b2231333f42922a97a537857a6be6f1fe56cfb2",
   "preUploadReceiptSha256": "010dbd3d90a4023fed9eaf7a963dff6b9affe2c9cc7cef6a224b14340bbea048",
-  "notarized": false,
+  "notarized": true,
   "uploaded": true,
   "installed": false,
   "notarySubmissionAttemptedAt": "2026-10-29T09:47:50.538Z",
   "notarySubmissionId": "0c590721-38ae-4ea1-ae61-6b49db1b74e7",
-  "notaryStatus": "In Progress",
-  "lastCheckedAt": "2026-10-29T09:50:06.040Z"
+  "notaryStatus": "Accepted",
+  "lastCheckedAt": "2026-10-29T09:53:20.556Z",
+  "stapledApp": "/tmp/goose-controller-incremental-43a8589d652f/Goose Swarm.app",
+  "notarizedAt": "2026-10-29T09:53:46.920Z",
+  "notarizationChanged": [
+    "Contents/CodeResources"
+  ],
+  "postStapleFingerprintSha256": "1188eb96ac70157c4b75272be5ccef80e676acd5ab9b6af80b6a09ea55892792",
+  "postStapleCliSha256": "f43f47848b133350cfc037c6a3fb142683688d9410e598b2652319ee65fe460c",
+  "preUploadArchivePreserved": true,
+  "validation": {
+    "strictSignature": true,
+    "team": "ZZ8MTZ6NRZ",
+    "stapler": true,
+    "gatekeeper": true
+  },
+  "distributionArchiveCreated": false
 }

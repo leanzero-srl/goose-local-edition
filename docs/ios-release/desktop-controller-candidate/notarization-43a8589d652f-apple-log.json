@@ -1,0 +1,280 @@
+{
+  "logFormatVersion": 1,
+  "jobId": "0c590721-38ae-4ea1-ae61-6b49db1b74e7",
+  "status": "Accepted",
+  "statusSummary": "Ready for distribution",
+  "statusCode": 0,
+  "archiveFilename": "Goose-Swarm-signed.zip",
+  "uploadDate": "2026-10-29T09:48:44.251Z",
+  "sha256": "36f291982387c88f357f077e1b2231333f42922a97a537857a6be6f1fe56cfb2",
+  "ticketContents": [
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Goose Swarm Helper (GPU).app",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "36f2c280d9ba49160f28d3fbd293ff237753c9af",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Goose Swarm Helper (GPU).app/Contents/MacOS/Goose Swarm Helper (GPU)",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "36f2c280d9ba49160f28d3fbd293ff237753c9af",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Goose Swarm Helper.app",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "410e2d58964d96af90847d721215e176bb795bbd",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Goose Swarm Helper.app/Contents/MacOS/Goose Swarm Helper",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "410e2d58964d96af90847d721215e176bb795bbd",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Goose Swarm Helper (Renderer).app",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "2aad0a471ac87a7b2bcfc247c7572147b3038f0d",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Goose Swarm Helper (Renderer).app/Contents/MacOS/Goose Swarm Helper (Renderer)",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "2aad0a471ac87a7b2bcfc247c7572147b3038f0d",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Goose Swarm Helper (Plugin).app",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "0f585769c54f6129087c072e02d37696e5aee60e",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Goose Swarm Helper (Plugin).app/Contents/MacOS/Goose Swarm Helper (Plugin)",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "0f585769c54f6129087c072e02d37696e5aee60e",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Squirrel.framework/Versions/Current",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "a568fd10fdf38b85ca6616430eb93c10a214320b",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "8fcbfbd559966e1b496ca32e5e81178c1512850e",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Electron Framework.framework/Versions/Current",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "fe580d9bf22a7ad1309aa2563ba8e5455fb43b73",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Electron Framework.framework/Versions/Current/Helpers/chrome_crashpad_handler",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "775b2af545d19baab421d6978b91a4b553ae8e2a",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Goose Swarm Helper (Renderer).app",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "2aad0a471ac87a7b2bcfc247c7572147b3038f0d",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Goose Swarm Helper.app",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "410e2d58964d96af90847d721215e176bb795bbd",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Goose Swarm Helper (GPU).app",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "36f2c280d9ba49160f28d3fbd293ff237753c9af",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Goose Swarm Helper (Plugin).app",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "0f585769c54f6129087c072e02d37696e5aee60e",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Mantle.framework/Versions/Current",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "ad20fcc059bb217131f644e81753e1a88a364c58",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/ReactiveObjC.framework/Versions/Current",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "a23284891f68d428367ce78ba05bb4f45cda42bf",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/MacOS/Goose Swarm",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "8fcbfbd559966e1b496ca32e5e81178c1512850e",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/browser/chrome-headless-shell/mac_arm-153.0.8010.36/chrome-headless-shell-mac-arm64/libEGL.dylib",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "2bee60db3dd8c225b2777b987f0f4a2508fb8fe1",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/browser/chrome-headless-shell/mac_arm-153.0.8010.36/chrome-headless-shell-mac-arm64/chrome-headless-shell",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "a398eb7fd690ac0f3de57606622df4e618aa9e62",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/browser/chrome-headless-shell/mac_arm-153.0.8010.36/chrome-headless-shell-mac-arm64/libvulkan.dylib",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "3c128296fb286a4c9866a9525ceba58b6909d9eb",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/browser/chrome-headless-shell/mac_arm-153.0.8010.36/chrome-headless-shell-mac-arm64/libvk_swiftshader.dylib",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "b6a35e51aa26cd9df01ad447a993b189f43ab4e6",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/browser/chrome-headless-shell/mac_arm-153.0.8010.36/chrome-headless-shell-mac-arm64/libGLESv2.dylib",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "ffdc18ffe9e18c418f77837995b77ce76a143091",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/leanzero-web-search/node_modules/argon2/prebuilds/darwin-x64/argon2.glibc.node",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "828284891d533922a0f4d48bef5939de1cf27931",
+      "arch": "x86_64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/leanzero-web-search/node_modules/argon2/prebuilds/darwin-arm64/argon2.armv8.glibc.node",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "fcf8ce18bcd34368f7eb0b67f7e81c0f92e3f3eb",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/leanzero-web-search/node_modules/@napi-rs/canvas-darwin-arm64/skia.darwin-arm64.node",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "c2d3a0aef7e0d865501354cf18549646c2293f5d",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/leanzero-documents/node_modules/argon2/prebuilds/darwin-x64/argon2.glibc.node",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "828284891d533922a0f4d48bef5939de1cf27931",
+      "arch": "x86_64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/leanzero-documents/node_modules/argon2/prebuilds/darwin-arm64/argon2.armv8.glibc.node",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "fcf8ce18bcd34368f7eb0b67f7e81c0f92e3f3eb",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/leanzero-documents/node_modules/@napi-rs/canvas-darwin-arm64/skia.darwin-arm64.node",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "c2d3a0aef7e0d865501354cf18549646c2293f5d",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bin/tailscale",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "0b48d46228762f0abdec0066fd194021e4f82913",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bin/tailscaled",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "46069d67710f575bc4eff30b0e92ec7fb318d426",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bin/goose",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "3820208c500fd30b1b550a49b33dd037d6426bea",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "fe580d9bf22a7ad1309aa2563ba8e5455fb43b73",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libEGL.dylib",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "64f0f7e41c69cad8a715153eab2cdba0fd2e3a53",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libvk_swiftshader.dylib",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "3dc6a78120ac768c7d267780d6359b1d5a2532ec",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libGLESv2.dylib",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "7e227ec34d0378dd2b745f0edd77de59b520507c",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libffmpeg.dylib",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "2922364a6425997d24e616ac259b72a046531b1d",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "775b2af545d19baab421d6978b91a4b553ae8e2a",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/ReactiveObjC.framework/Versions/A/ReactiveObjC",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "a23284891f68d428367ce78ba05bb4f45cda42bf",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Squirrel.framework/Versions/A/Squirrel",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "a568fd10fdf38b85ca6616430eb93c10a214320b",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Squirrel.framework/Versions/A/Resources/ShipIt",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "b6e27be3ce820050026565d2f955b2d4ca3fa685",
+      "arch": "arm64"
+    },
+    {
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Frameworks/Mantle.framework/Versions/A/Mantle",
+      "digestAlgorithm": "SHA-256",
+      "cdhash": "ad20fcc059bb217131f644e81753e1a88a364c58",
+      "arch": "arm64"
+    }
+  ],
+  "issues": [
+    {
+      "severity": "warning",
+      "code": null,
+      "path": "Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/leanzero-documents/node_modules/mammoth/test/test-data/empty.zip",
+      "message": "The archive at Goose-Swarm-signed.zip/Goose Swarm.app/Contents/Resources/bundled-mcps/leanzero-documents/node_modules/mammoth/test/test-data/empty.zip could not be unpacked. Any executables contained in the archive will not be notarized.",
+      "docUrl": null,
+      "architecture": null
+    }
+  ]
+}
