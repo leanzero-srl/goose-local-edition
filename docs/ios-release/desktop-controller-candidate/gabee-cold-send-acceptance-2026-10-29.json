@@ -1,0 +1,272 @@
+{
+  "source_commit": "43a8589d652f72c145f57cbe667b0b9ec2a71976",
+  "install_job": "laptop-20261029-120332-77dd",
+  "install_exit": 0,
+  "preservation": {
+    "checks": {
+      "session_count": true,
+      "message_count": true,
+      "session_records_sha256": true,
+      "full_message_records_sha256": true,
+      "config_sha256": true,
+      "permissions": true,
+      "protected_files": true
+    },
+    "before": {
+      "captured_at": "2026-10-29T10:03:53.742281+00:00",
+      "profile_db": "/Users/mihaiperdum/.local/share/goose/sessions/sessions.db",
+      "permissions": {
+        "LEANZERO_LINK_ALLOW_REMOTE_EXECUTION": {
+          "on_disk": "true"
+        },
+        "LEANZERO_LINK_ALLOW_REMOTE_JOBS": {
+          "on_disk": "true"
+        },
+        "LEANZERO_LINK_SHARE_INFERENCE": {
+          "on_disk": null
+        }
+      },
+      "session_count": 16,
+      "message_count": 37,
+      "session_records_sha256": "2bd9fe3a81f3d2bf235395dce55f1b6d3eca013d170d8b4e667d6f77745a2cf9",
+      "session_ids_sha256": "90015189f1dd52a28dbc42004e7cc426ed6651698d481b21371e2926094cc591",
+      "message_records_sha256": "68db20a588b5fd2d83f0c9340695116d88b263b5f0f111581205d9a0625918c5",
+      "full_message_records_sha256": "0f1ded2d8b60f873c5ed656108ab5e6b12da2278b49ffd433ee1b55bf8a8e55b",
+      "latest_session_update": "2026-10-25 21:34:47",
+      "config_sha256": "d2c1b47d3fa8a6323d97ad9672f4a7b8d43e9c3bc9305dea7743b1c8aae7d551",
+      "owned_mesh": {
+        "socket_exists": true,
+        "status_exit": 0,
+        "node_id": "45",
+        "node_key_sha256": "cd8d669b2d1094b76011dd435b4f597184c345247ed963967b0634a560a284d1",
+        "ips": [
+          "100.64.0.12",
+          "fd7a:115c:a1e0::c"
+        ],
+        "online": true,
+        "backend_state": "Running"
+      },
+      "saved_identity_exists": true,
+      "saved_identity_mode": "0o600"
+    },
+    "after": {
+      "captured_at": "2026-10-29T10:04:08.702947+00:00",
+      "profile_db": "/Users/mihaiperdum/.local/share/goose/sessions/sessions.db",
+      "permissions": {
+        "LEANZERO_LINK_ALLOW_REMOTE_EXECUTION": {
+          "on_disk": "true"
+        },
+        "LEANZERO_LINK_ALLOW_REMOTE_JOBS": {
+          "on_disk": "true"
+        },
+        "LEANZERO_LINK_SHARE_INFERENCE": {
+          "on_disk": null
+        }
+      },
+      "session_count": 16,
+      "message_count": 37,
+      "session_records_sha256": "2bd9fe3a81f3d2bf235395dce55f1b6d3eca013d170d8b4e667d6f77745a2cf9",
+      "session_ids_sha256": "90015189f1dd52a28dbc42004e7cc426ed6651698d481b21371e2926094cc591",
+      "message_records_sha256": "68db20a588b5fd2d83f0c9340695116d88b263b5f0f111581205d9a0625918c5",
+      "full_message_records_sha256": "0f1ded2d8b60f873c5ed656108ab5e6b12da2278b49ffd433ee1b55bf8a8e55b",
+      "latest_session_update": "2026-10-25 21:34:47",
+      "config_sha256": "d2c1b47d3fa8a6323d97ad9672f4a7b8d43e9c3bc9305dea7743b1c8aae7d551",
+      "owned_mesh": {
+        "socket_exists": false
+      },
+      "saved_identity_exists": true,
+      "saved_identity_mode": "0o600"
+    },
+    "protected_files": [
+      {
+        "path": ".config/goose/config.yaml",
+        "same_bytes": true,
+        "same_mode": true
+      },
+      {
+        "path": ".config/goose/tls/server.key",
+        "same_bytes": true,
+        "same_mode": true
+      },
+      {
+        "path": ".config/goose/tls/server.pem",
+        "same_bytes": true,
+        "same_mode": true
+      },
+      {
+        "path": ".leanzero/identity.json",
+        "same_bytes": true,
+        "same_mode": true
+      },
+      {
+        "path": ".leanzero/host-secret.json",
+        "same_bytes": true,
+        "same_mode": true
+      },
+      {
+        "path": ".leanzero/link-intent.json",
+        "same_bytes": true,
+        "same_mode": true
+      },
+      {
+        "path": ".leanzero/tailscale/derpmap.cached.json",
+        "same_bytes": true,
+        "same_mode": true
+      },
+      {
+        "path": ".leanzero/tailscale/tailscaled.state",
+        "same_bytes": true,
+        "same_mode": true
+      },
+      {
+        "path": ".local/share/goose/sessions/controller-host/account.json",
+        "same_bytes": true,
+        "same_mode": true
+      },
+      {
+        "path": ".local/share/goose/sessions/controller-host/cursor-key.json",
+        "same_bytes": true,
+        "same_mode": true
+      },
+      {
+        "path": ".local/share/goose/sessions/controller-host/host-credential.json",
+        "same_bytes": true,
+        "same_mode": true
+      },
+      {
+        "path": ".local/share/goose/sessions/controller-host/owner.json",
+        "same_bytes": true,
+        "same_mode": true
+      },
+      {
+        "path": ".local/share/goose/sessions/controller-host/runtime.json",
+        "same_bytes": true,
+        "same_mode": true
+      },
+      {
+        "path": ".local/share/goose/sessions/controller-host/tls.json",
+        "same_bytes": true,
+        "same_mode": true
+      }
+    ],
+    "snapshot": "/Users/mihaiperdum/.local/share/goose-upgrade-snapshots/controller-cold-send-20261029T100353Z",
+    "installed": {
+      "installed_at": "2026-10-29T10:04:08.661860+00:00",
+      "source_commit": "43a8589d652f72c145f57cbe667b0b9ec2a71976",
+      "signed_cli_sha256": "f43f47848b133350cfc037c6a3fb142683688d9410e598b2652319ee65fe460c",
+      "rollback": "/Users/mihaiperdum/.local/share/goose-controller-rollbacks/cdc357f9743cabda/Goose Swarm.app",
+      "normal_launch_requested": false,
+      "installer_profile_writes": false,
+      "launch_may_migrate_schema_to": 19,
+      "saved_login_reconnection_verified": false
+    }
+  },
+  "after_root_launch": {
+    "captured_at": "2026-10-29T10:06:10.439524+00:00",
+    "profile_db": "/Users/mihaiperdum/.local/share/goose/sessions/sessions.db",
+    "permissions": {
+      "LEANZERO_LINK_ALLOW_REMOTE_EXECUTION": {
+        "on_disk": "true"
+      },
+      "LEANZERO_LINK_ALLOW_REMOTE_JOBS": {
+        "on_disk": "true"
+      },
+      "LEANZERO_LINK_SHARE_INFERENCE": {
+        "on_disk": null
+      }
+    },
+    "session_count": 16,
+    "message_count": 37,
+    "session_records_sha256": "2bd9fe3a81f3d2bf235395dce55f1b6d3eca013d170d8b4e667d6f77745a2cf9",
+    "session_ids_sha256": "90015189f1dd52a28dbc42004e7cc426ed6651698d481b21371e2926094cc591",
+    "message_records_sha256": "68db20a588b5fd2d83f0c9340695116d88b263b5f0f111581205d9a0625918c5",
+    "full_message_records_sha256": "0f1ded2d8b60f873c5ed656108ab5e6b12da2278b49ffd433ee1b55bf8a8e55b",
+    "latest_session_update": "2026-10-25 21:34:47",
+    "config_sha256": "d2c1b47d3fa8a6323d97ad9672f4a7b8d43e9c3bc9305dea7743b1c8aae7d551",
+    "owned_mesh": {
+      "socket_exists": true,
+      "status_exit": 0,
+      "node_id": "45",
+      "node_key_sha256": "cd8d669b2d1094b76011dd435b4f597184c345247ed963967b0634a560a284d1",
+      "ips": [
+        "100.64.0.12",
+        "fd7a:115c:a1e0::c"
+      ],
+      "online": true,
+      "backend_state": "Running"
+    },
+    "saved_identity_exists": true,
+    "saved_identity_mode": "0o600"
+  },
+  "cross_mac_history": {
+    "captured_at": "2026-10-29T10:06:10.187372+00:00",
+    "backend_pid": 89363,
+    "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+    "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+    "remote_owner_fresh": true,
+    "endpoint": "historyLatest",
+    "item_count": 2,
+    "revision": 74077,
+    "snapshot_revision_match": true,
+    "snapshot_revision_field": "history_watermark.revision",
+    "latest_message_id": "gen-1793266865-hohfsp9cfFfqhaNivcEr",
+    "matches_owner_db_latest": true,
+    "has_older_page": false
+  },
+  "original_owner_activity": [
+    {
+      "owner_node_id": "295d8723-74c6-49ec-af5c-9e4915786299",
+      "fresh": true,
+      "entry_count": 55,
+      "active": []
+    },
+    {
+      "backend_pid": 89363,
+      "captured_at": "2026-10-29T10:06:11.597665+00:00",
+      "activity_counts": {
+        "running": 0,
+        "needsYou": 0,
+        "failed": 0,
+        "stopped": 0,
+        "background": 0,
+        "looping": 0,
+        "notesWaiting": 0
+      }
+    }
+  ],
+  "actual_installed_artifact": {
+    "signed_cli_sha256": "f43f47848b133350cfc037c6a3fb142683688d9410e598b2652319ee65fe460c",
+    "checks": [
+      {
+        "tool": "codesign",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "tool": "xcrun",
+        "exit": 0,
+        "output": "Processing: /Applications/Goose Swarm.app\nThe validate action worked!"
+      },
+      {
+        "tool": "spctl",
+        "exit": 0,
+        "output": "/Applications/Goose Swarm.app: accepted\nsource=Notarized Developer ID"
+      }
+    ]
+  },
+  "proof_scope": "Root launched normally. This lane verified saved reconnection, profile, installed artifact and cross-Mac latest history read-only. No model inference, original profile write or UI action by this lane.",
+  "preference_snapshot_correction": "Initial snapshot captured14protectedfiles. Three actual Electron preferences were absent from its path list. Current files were proven byte-and-mode identical to the earlier17file preupgrade backup, then copied locally from that backup into the new snapshot. Original14manifest retained; supplemental capture is explicitly after launch. Separately named future operator asserts actual preference file presence; executed operator/pins remain unchanged.",
+  "preference_supplement": {
+    "snapshot": "/Users/mihaiperdum/.local/share/goose-upgrade-snapshots/controller-cold-send-20261029T100353Z",
+    "initial_files": 14,
+    "supplemental": {
+      "captured_at": "2026-10-29T10:09:23.455432+00:00",
+      "source_snapshot": "/Users/mihaiperdum/.local/share/goose-upgrade-snapshots/controller-latest-history-20261029T062834Z",
+      "count": 3,
+      "current_content_and_modes_match_prior_preupgrade_backup": true,
+      "note": "Initial current snapshot contained14files. Three actual Electron preferences were verified after launch against the earlier preupgrade snapshot, then copied locally from that snapshot; not represented as newly captured before installation."
+    },
+    "final_files": 17,
+    "raw_data_transferred": false
+  }
+}

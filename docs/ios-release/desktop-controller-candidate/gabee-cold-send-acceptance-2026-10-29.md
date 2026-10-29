@@ -1,0 +1,13 @@
+# Gabee 43a upgrade acceptance — 29 October 2026
+
+Installed and reconnected successfully. The main task released installation and started joblaptop-20261029-120332-77dd, which exited0 at12:04:08. The installed whole app carries source43a8589d652f72c145f57cbe667b0b9ec2a71976 and signed CLI SHA256f43f47848b133350cfc037c6a3fb142683688d9410e598b2652319ee65fe460c. Actual installed strict team signature, staple and Gatekeeper checks passed after the main task's normal launch.
+
+All16 sessions and37 messages retain full-record hashes, with unchanged config bytes and remote permissions. Saved identity/account/host credential and owned mesh state survived. After launch, mesh node45, node-key digest and IPs exactly match the pre-upgrade identity, and the node is online. The original owner295d8723-74c6-49ec-af5c-9e4915786299 returns a fresh55-entry catalog with no active work; all named session activity categories are zero.
+
+Supported read-only controller openWork/historyLatest calls from Gabee reached the original laptop's completed physical-phone test workd26c3b8b-09ef-4a04-b500-492cd5ae1c6f. The latest page contains both visible messages; revision74077 equals the snapshot's history watermark, and its last message IDgen-1793266865-hohfsp9cfFfqhaNivcEr exactly matches the owner database's completed answer. No new model inference or session activation was performed.
+
+Rollback is local at ~/.local/share/goose-controller-rollbacks/cdc357f9743cabda/Goose Swarm.app. Private snapshot ~/.local/share/goose-upgrade-snapshots/controller-cold-send-20261029T100353Z passed SQLite integrity and keeps original files locally. Raw credentials were never transferred.
+
+Snapshot scope correction: the inherited preservation operator captured14 files because it derived the older manifest and named nonexistent Goose Swarm preference paths. The three actual Goose/Preferences, settings.json and window-state.json files were verified after launch to be byte-and-mode identical to the earlier17-file pre-upgrade backup. Those exact prior-backup bytes were copied locally into the new snapshot; manifest.initial-14.json preserves the original evidence and the supplemental timestamp/provenance explicitly says after launch. No claim of a newly captured17-file pre-install snapshot is made. The separately named future operator gabee-profile-preserve-all-settings.py derives all17 real paths and refuses if any required preference file is absent or a symlink; the executed wrapper and its pins remain unchanged.
+
+Actual mobile UI checks remain separately owned by the main task. No Studio upgrade, main-branch change or further inference was performed here.
