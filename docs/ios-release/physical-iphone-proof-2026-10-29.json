@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-10-29T08:51:00Z",
+  "updated_at": "2026-10-29T09:11:00Z",
   "device": {
     "name": "Zerobarat celular",
     "model": "iPhone 17 Pro Max",
@@ -32,7 +32,7 @@
     "diagnostic_limit": "Initial old-build Console stream was empty; the updated development build has a positive-control stream and nine MeshLifecycle events captured through Console actual UI."
   },
   "app_installed": true,
-  "physical_journeys": "Same-identity automaticmesh recovery andactualsessionreadproved. Physicalsendrejectedstale_revision; no modelrun. Phone/iPad scrollfailure remainsopen. Finalnetwork/lifecyclequalificationpending.",
+  "physical_journeys": "Same-identity automatic mesh recovery, actual session read and Home-to-app background recovery proved. Physical send rejected stale_revision; no model run. Phone/iPad scrolling remains broken. Final network and release qualification pending.",
   "owner_action_pending": null,
   "setup_candidate": {
     "source": "15a3625e41f1de500f6b293557f06ba1b448edd7",
@@ -137,5 +137,26 @@
     "initial": "Cloudcontrollertest title/composer loaded but transcriptviewport wasblank10:45; downwardgesture revealedloaded80facts lines54-77.",
     "jump": "Jump then moved toolderlines40-62 instead oflatest.",
     "receipt": "Rejectedreceipt belowlastmessage hiddenuntilmanualforwardscroll."
+  },
+  "recovery_background_reopen": {
+    "source": "867119541e90ad12cab50e47b929088abd51b1fa",
+    "action": "Actual Device Hub Home, then visible Goose Remote icon. No forced quit, sign-in reset, new code or manual sync.",
+    "sync_operation": "3CE5D30A-F7B2-4DE4-81FC-4F7D22F08271",
+    "prepare_operation": "06EC8D33-FA95-463C-8C05-ACA67BF37C27",
+    "stages_local": [
+      "11:09:19.592293 scene-background",
+      "11:09:19.597269 node-close-begin",
+      "11:09:19.598223 node-close-end",
+      "11:09:19.598253 background-shutdown-end",
+      "11:09:25.644793 scene-active",
+      "11:09:25.665775 sync-begin",
+      "11:09:25.677814 prepare-closed-prior",
+      "11:09:28.345890 confirm-end",
+      "11:09:28.924818 sync-hosts-end",
+      "11:09:30.466749 sync-end"
+    ],
+    "evidence_source": "Actual Console UI filtered category:MeshLifecycle for paired Zerobarat celular; stream paused after transition. Duplicate displayed log rows are not separate operations.",
+    "visible_result": "Existing Cloud controller test and retained draft returned without an error or login prompt. At11:10 explicit Refresh retained readable existing history and composer without a connection error.",
+    "limits": "Short Home/reopen only, not a locked-device or extended cellular qualification. Reading position changed from lines60-80 before background to48-71 after resume; current scrolling defect remains. Draft contains additional owner text and was preserved; no resend."
   }
 }
