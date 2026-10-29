@@ -134,8 +134,9 @@ pub const PIPELINE_FORK_COMMIT: &str = "8c000705422c314b2f7acd81ae9e398db0ae9320
 /// v0.14.3-lz.16-ple.1 (stream-delta whitespace, non-stream outer whitespace, LongCat tool parser,
 /// vendored mimo_v2 for mlx-lm 0.31.3) is n/a for the same reason: the split runs its own pinned fork commit.
 /// v0.14.3-lz.16-ple.2 (qwen4_exp images on the single engine's text lane: batched.py, qwen4_exp model/cache,
-/// chat route) is n/a too: the split serves images with its own rank-0 tower at its pinned fork commit.
-pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.16-ple.2";
+/// chat route) and v0.14.3-lz.16-ple.3 (its /v1/models vision listing) are n/a too: the split serves images with its
+/// own rank-0 tower at its pinned fork commit.
+pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.16-ple.3";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
     "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@8c000705422c314b2f7acd81ae9e398db0ae9320";

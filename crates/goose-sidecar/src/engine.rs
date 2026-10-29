@@ -179,6 +179,9 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.16-ple.3 (fork lz/qwen4-vision-ple aafee8699) = ple.2 + `/v1/models` lists "vision" for that text lane
+/// behind the `is_text_only` qwen3.8-flash-next-4bit alias (goose serves it under the alias's hf_path; ple.2 listed
+/// text only there, so the openai provider sent placeholders).
 /// v0.14.3-lz.16-ple.2 (fork lz/qwen4-vision-ple 1d4f4072d) = lz.16-ple.1 + qwen4_exp images on the text lane
 /// (lane reason `text_lane_vision`): Qwen3.8-Flash-Next reads images with MTP, prompt lookup, the PLE offload,
 /// continuous batching and the prefix cache kept; `/v1/models` lists "vision" for it ([`TEXT_LANE_VISION_FAMILIES`]).
@@ -289,7 +292,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.2",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.3",
     "rapid-mlx",
 ];
 
@@ -412,6 +415,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.1",
         "rapid-mlx",
     ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.2",
+        "rapid-mlx",
+    ],
 ];
 
 /// The MTP head file an MTPLX-style artefact ships next to its trunk shards. One of the two ways
@@ -429,7 +438,7 @@ pub const MTP_SIDECAR_FILE: &str = "mtp.safetensors";
 pub const IN_SHARD_MTP_FAMILIES: [&str; 1] = ["qwen4_exp"];
 
 /// Vision checkpoints whose images the pinned engine reads ON ITS TEXT LANE (fork
-/// v0.14.3-lz.16-ple.2, lane reason `text_lane_vision`, rapid_mlx/models/qwen4_exp_vision.py):
+/// v0.14.3-lz.16-ple.2+, lane reason `text_lane_vision`, rapid_mlx/models/qwen4_exp_vision.py):
 /// image requests keep MTP, prompt lookup, the PLE offload, continuous batching and the prefix
 /// cache, so goose does not pin `--text-only` for them. The engine's own rule
 /// (`api/utils.py` `text_lane_vision_supported`) is mirrored in [`text_lane_vision`]: the family,
@@ -3405,7 +3414,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.2",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.3",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -3966,7 +3975,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.2",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.3",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
