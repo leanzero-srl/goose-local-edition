@@ -86,3 +86,5 @@ This installation is laptop-owned. Canonical source: `~/.claude/skills/ios-ipado
 2026-10-29: Device-build verification refined the managed-signing lesson: automatic signing rejects a named development certificate override; the generic Apple Development identity builds and signs successfully.
 
 2026-10-29: Added provider-membership preflight and crash-safe same-controller replacement after ephemeral node cleanup left saved confirmation intact and native Up waiting; preserve causal chronology and require physical recovery proof.
+
+2026-10-29: Added native virtualized transcript anchor/recreation proof, early FlowLayout width invalidation and full-log warning checks after repeated SwiftUI state-test passes failed the actual paired viewport and a tail-only log read hid478 invalid-size warnings.
