@@ -64,6 +64,11 @@ final class ControllerStore {
     @ObservationIgnored private var selectedRequest = UUID()
     @ObservationIgnored private var refreshTask: Task<CredentialEnvelope, Error>?
 
+    @ObservationIgnored private var accessEpoch = UUID()
+    @ObservationIgnored private var recoveryTask: Task<Void, Never>?
+    @ObservationIgnored private var credentialSyncTask: Task<Void, Never>?
+    @ObservationIgnored private var recoveryAttempted = false
+
     struct SavedEnrollment: Codable { let authority: URL; let attempt: EnrollmentAttempt }
     struct SavedRevoke: Codable { let device: DeviceRecord; let requestId: UUID }
 
@@ -191,7 +196,7 @@ final class ControllerStore {
     func validCredential(forceRefresh: Bool = false) async throws -> CredentialEnvelope {
         guard authenticated, let current = envelope else { throw ControllerError.unavailable("Connect this device to Link first.") }
         if let refreshTask { return try await refreshTask.value }
-        if !forceRefresh, current.refreshRequestId == nil && current.credentials.expiresAt > Date() { return current }
+        if !forceRefresh, current.refreshRequestId == nil && current.credentials.expiresAt.timeIntervalSince1970 > ceil(Date().timeIntervalSince1970) { return current }
         let task = Task { @MainActor [self] in
             var pending = current
             if pending.refreshRequestId == nil {
@@ -201,14 +206,32 @@ final class ControllerStore {
             }
             let api = try ControllerAPI(authority: pending.authority, transport: transport)
             let rotated = try await api.refresh(pending)
+            guard authenticated, envelope?.credentials.device.id == pending.credentials.device.id else { throw CancellationError() }
             let next = CredentialEnvelope(authority: pending.authority, credentials: rotated)
             try credentials.write(next, account: "device")
             envelope = next
+            accessEpoch = UUID()
+            stopStreams()
+            // A replacement token is not proof that its scopes still authorize cached content.
+            try clearAuthorizedViews()
+            queueCredentialSync()
             return next
         }
         refreshTask = task
+        let epoch = accessEpoch
         defer { refreshTask = nil }
-        return try await task.value
+        do { return try await task.value }
+        catch {
+            if Self.isAccessFailure(error), epoch == accessEpoch {
+                accessEpoch = UUID()
+                stopStreams()
+                connection = .stale(error.localizedDescription)
+                selectedError = error.localizedDescription
+                errorMessage = error.localizedDescription
+                try clearAuthorizedViews()
+            }
+            throw error
+        }
     }
 
     func manualSync() {
@@ -220,10 +243,11 @@ final class ControllerStore {
             defer { syncTask = nil; syncRunning = false }
             do {
                 let identity = try await validCredential()
+                let epoch = accessEpoch
                 try await mesh?.prepare(identity: identity)
                 let api = try ControllerAPI(authority: identity.authority, transport: transport)
                 let page = try await api.hosts(token: identity.credentials.accessToken)
-                guard !Task.isCancelled else { throw CancellationError() }
+                guard !Task.isCancelled, epoch == accessEpoch else { throw CancellationError() }
                 guard Set(page.hosts.map(\.id)).count == page.hosts.count else { throw ControllerError.malformedResponse }
                 hosts = page.hosts
                 try local?.retainOwners(Set(page.hosts.map(\.id)))
@@ -238,7 +262,8 @@ final class ControllerStore {
                     }
                     syncResults[index].state = .syncing
                     do {
-                        let result = try await synchronizedCatalog(host: host, credential: identity.credentials.accessToken)
+                        let result = try await synchronizedCatalog(host: host, credential: identity.credentials.accessToken, epoch: epoch)
+                        guard !Task.isCancelled, epoch == accessEpoch else { return }
                         guard result.watermark.ownerNodeId == host.id,
                               result.entries.allSatisfy({ $0.work.ownerNodeId == host.id && $0.storeGeneration == result.watermark.storeGeneration }) else {
                             throw ControllerError.malformedResponse
@@ -250,8 +275,9 @@ final class ControllerStore {
                         syncResults[index].state = .complete(result.entries.count)
                         startCatalogStream(host: host)
                     } catch {
+                        guard !Task.isCancelled, epoch == accessEpoch else { return }
                         syncResults[index].state = .failed(error.localizedDescription)
-                        if case ControllerError.remote(403, _, _) = error { await streamFailed(error, host: host) }
+                        if Self.isAccessFailure(error) { streamFailed(error, host: host, epoch: epoch); return }
                     }
                 }
                 lastSync = Date()
@@ -289,6 +315,7 @@ final class ControllerStore {
         defer { if selectedRequest == request { selectedLoading = false } }
         do {
             let identity = try await validCredential()
+            let epoch = accessEpoch
             let result: SelectedWork
             if let previous, work.kind == .chat, previous.entry.storeGeneration == entry.storeGeneration,
                !previous.workCursor.isEmpty, !resetHistory {
@@ -296,6 +323,7 @@ final class ControllerStore {
             } else {
                 result = try await owner.selected(work: entry, host: host, credential: identity.credentials.accessToken)
             }
+            guard epoch == accessEpoch, !Task.isCancelled else { return }
             guard result.entry.work == work, result.entry.storeGeneration == entry.storeGeneration else { throw ControllerError.malformedResponse }
             if selectedRequest == request {
                 try local?.cacheSelected(result)
@@ -306,7 +334,12 @@ final class ControllerStore {
                 }
                 startWorkStream(host: host, request: request)
             }
-        } catch { if selectedRequest == request { selectedError = error.localizedDescription } }
+        } catch {
+            if selectedRequest == request {
+                selectedError = error.localizedDescription
+                if Self.isAccessFailure(error) { streamFailed(error, host: host, epoch: accessEpoch) }
+            }
+        }
     }
 
     func send(action: WorkAction) async {
@@ -421,12 +454,19 @@ final class ControllerStore {
     }
 
     func loadResources(_ host: HostDescriptor) async {
+        var epoch = accessEpoch
         do {
             let identity = try await validCredential()
+            epoch = accessEpoch
             let sample = try await owner.resources(host: host, credential: identity.credentials.accessToken)
-            guard authenticated, envelope?.credentials.device.id == identity.credentials.device.id else { return }
+            guard authenticated, envelope?.credentials.device.id == identity.credentials.device.id, identity.credentials.accessToken == envelope?.credentials.accessToken else { return }
+            guard epoch == accessEpoch else { return }
             resources[host.id] = sample
-        } catch { errorMessage = error.localizedDescription }
+        } catch {
+            guard epoch == accessEpoch else { return }
+            errorMessage = error.localizedDescription
+            if Self.isAccessFailure(error) { streamFailed(error, host: host, epoch: epoch) }
+        }
     }
     func loadMoreHistory() async {
         guard !selectedLoading, let current = selectedWork, let token = current.nextPageToken,
@@ -438,7 +478,9 @@ final class ControllerStore {
         defer { if selectedRequest == request { selectedLoading = false } }
         do {
             let identity = try await validCredential()
+            let epoch = accessEpoch
             let page = try await owner.history(work: current.entry, pageToken: token, host: host, credential: identity.credentials.accessToken)
+            guard epoch == accessEpoch else { return }
             guard page.work == current.entry.work, page.storeGeneration == current.entry.storeGeneration, page.revision == current.historyRevision,
                   page.nextPageToken != token else { throw ControllerError.malformedResponse }
             if selectedRequest == request, let current = selectedWork {
@@ -450,15 +492,20 @@ final class ControllerStore {
             guard selectedRequest == request else { return }
             selectedHistoryPaused = wasPaused
             if Self.needsFreshHistory(error) { await select(current.entry.work, resetHistory: true) }
-            else { errorMessage = error.localizedDescription }
+            else {
+                errorMessage = error.localizedDescription
+                if Self.isAccessFailure(error) { streamFailed(error, host: host, epoch: accessEpoch) }
+            }
         }
     }
 
     func loadDevices() async {
         do {
             let identity = try await validCredential()
+            let epoch = accessEpoch
             let page = try await ControllerAPI(authority: identity.authority, transport: transport).devices(token: identity.credentials.accessToken)
-            guard authenticated, envelope?.credentials.device.id == identity.credentials.device.id else { return }
+            guard authenticated, envelope?.credentials.device.id == identity.credentials.device.id, identity.credentials.accessToken == envelope?.credentials.accessToken else { return }
+            guard epoch == accessEpoch else { return }
             devices = page.devices
         } catch { errorMessage = error.localizedDescription }
     }
@@ -487,6 +534,9 @@ final class ControllerStore {
         sharingRequest = nil
         stopStreams()
         selectedRequest = UUID()
+        accessEpoch = UUID()
+        recoveryTask?.cancel(); recoveryTask = nil
+        credentialSyncTask?.cancel(); credentialSyncTask = nil
         envelope = nil
         enrollment = nil
         code = ""; email = ""
@@ -617,13 +667,14 @@ final class ControllerStore {
         }
     }
 
-    private func synchronizedCatalog(host: HostDescriptor, credential: String) async throws -> OwnerCatalogSnapshot {
+    private func synchronizedCatalog(host: HostDescriptor, credential: String, epoch: UUID) async throws -> OwnerCatalogSnapshot {
         guard var snapshot = local?.data.catalogs[host.id.uuidString], !snapshot.resumeCursor.isEmpty else {
             return try await owner.catalog(host: host, credential: credential)
         }
         do {
             while true {
                 let changes = try await owner.changes(cursor: snapshot.resumeCursor, host: host, credential: credential)
+                guard epoch == accessEpoch, !Task.isCancelled else { throw CancellationError() }
                 guard changes.cursor.ownerNodeId == host.id, changes.cursor.storeGeneration == snapshot.watermark.storeGeneration,
                       changes.cursor.revision >= snapshot.watermark.revision, !changes.resumeCursor.isEmpty else { throw ControllerError.malformedResponse }
                 let previous = snapshot.watermark.revision
@@ -644,11 +695,14 @@ final class ControllerStore {
         catalogTasks[host.id]?.cancel()
         catalogTasks[host.id] = Task { @MainActor [weak self] in
             guard let self else { return }
+            var epoch = accessEpoch
             do {
                 let identity = try await validCredential()
+                epoch = accessEpoch
+                guard !Task.isCancelled else { return }
                 let events = try await owner.catalogEvents(cursor: cached.resumeCursor, host: host, credential: identity.credentials.accessToken)
                 for try await change in events {
-                    guard !Task.isCancelled, let current = local?.data.catalogs[host.id.uuidString] else { return }
+                    guard !Task.isCancelled, epoch == accessEpoch, let current = local?.data.catalogs[host.id.uuidString] else { return }
                     let next = try OwnerReplay.catalog(change, into: current)
                     try local?.cacheCatalog(next)
                     entries.removeAll { $0.work.ownerNodeId == host.id }
@@ -659,9 +713,9 @@ final class ControllerStore {
                         selectedError = "This session is no longer visible on its owner."
                     }
                 }
-                if !Task.isCancelled { scheduleReconnect("The live catalog disconnected.") }
+                if !Task.isCancelled, epoch == accessEpoch { scheduleReconnect("The live catalog disconnected.") }
             } catch {
-                if !Task.isCancelled { await streamFailed(error, host: host) }
+                if !Task.isCancelled { streamFailed(error, host: host, epoch: epoch) }
             }
         }
     }
@@ -669,8 +723,9 @@ final class ControllerStore {
     private func refreshSelectedLog(host: HostDescriptor, request: UUID) async throws {
         guard !selectedHistoryPaused, let selected = selectedWork else { return }
         let identity = try await validCredential()
+        let epoch = accessEpoch
         let latest = try await owner.selected(work: selected.entry, host: host, credential: identity.credentials.accessToken)
-        guard selectedRequest == request, !selectedHistoryPaused else { return }
+        guard selectedRequest == request, epoch == accessEpoch, !Task.isCancelled, !selectedHistoryPaused else { return }
         guard latest.entry.work == selected.entry.work, latest.entry.storeGeneration == selected.entry.storeGeneration,
               latest.streamRevision >= selected.streamRevision else { throw ControllerError.malformedResponse }
         try local?.cacheSelected(latest)
@@ -681,11 +736,14 @@ final class ControllerStore {
         guard foreground, let current = selectedWork else { return }
         workTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            var epoch = accessEpoch
             do {
                 let identity = try await validCredential()
+                epoch = accessEpoch
+                guard !Task.isCancelled, selectedRequest == request else { return }
                 let events = try await owner.workEvents(work: current, host: host, credential: identity.credentials.accessToken)
                 for try await frame in events {
-                    guard !Task.isCancelled, selectedRequest == request, let selected = selectedWork else { return }
+                    guard !Task.isCancelled, epoch == accessEpoch, selectedRequest == request, let selected = selectedWork else { return }
                     let next = try OwnerReplay.work(frame, into: selected)
                     try local?.cacheSelected(next)
                     selectedWork = next
@@ -701,9 +759,9 @@ final class ControllerStore {
                     }
                     if frame.type == "command_receipt", unfinishedCommand != nil { await checkDelivery() }
                 }
-                if !Task.isCancelled { scheduleReconnect("The live session disconnected.") }
+                if !Task.isCancelled, epoch == accessEpoch { scheduleReconnect("The live session disconnected.") }
             } catch {
-                if !Task.isCancelled, selectedRequest == request {
+                if !Task.isCancelled, epoch == accessEpoch, selectedRequest == request {
                     if Self.needsFreshHistory(error) {
                         Task { @MainActor [weak self] in
                             guard let self, selectedRequest == request, selectedRef == current.entry.work else { return }
@@ -712,7 +770,7 @@ final class ControllerStore {
                         return
                     }
                     selectedError = error.localizedDescription
-                    await streamFailed(error, host: host)
+                    streamFailed(error, host: host, epoch: epoch)
                 }
             }
         }
@@ -724,26 +782,56 @@ final class ControllerStore {
         return false
     }
 
-    private func streamFailed(_ error: Error, host: HostDescriptor) async {
-        if case ControllerError.remote(401, _, _) = error {
+    private static func isAccessFailure(_ error: Error) -> Bool {
+        if case ControllerError.remote(let status, _, _) = error { return status == 401 || status == 403 }
+        return false
+    }
+
+    private func clearAuthorizedViews() throws {
+        selectedRequest = UUID()
+        entries = []; resources = [:]; devices = []
+        selectedWork = nil; selectedLoading = false; sharingRequest = nil
+        // Keep only navigation intent; a fresh owner read must supply every visible field.
+        try local?.retainOwners([])
+    }
+
+    private func queueCredentialSync() {
+        guard foreground, authenticated, credentialSyncTask == nil, !hosts.isEmpty || syncTask != nil else { return }
+        let pendingSync = syncTask
+        credentialSyncTask = Task { @MainActor [weak self] in
+            await pendingSync?.value
+            guard let self else { return }
+            _ = try? await refreshTask?.value
+            credentialSyncTask = nil
+            guard !Task.isCancelled, foreground, authenticated else { return }
+            manualSync()
+        }
+    }
+
+    private func streamFailed(_ error: Error, host: HostDescriptor, epoch: UUID) {
+        guard epoch == accessEpoch, authenticated else { return }
+        guard Self.isAccessFailure(error) else { scheduleReconnect(error.localizedDescription); return }
+        let mayRecover = !recoveryAttempted || (envelope?.credentials.expiresAt.timeIntervalSince1970 ?? .infinity) <= ceil(Date().timeIntervalSince1970)
+        accessEpoch = UUID()
+        stopStreams()
+        connection = .stale(error.localizedDescription)
+        selectedError = error.localizedDescription
+        do { try clearAuthorizedViews() } catch { errorMessage = error.localizedDescription; return }
+        guard foreground, mayRecover, recoveryTask == nil else { return }
+        recoveryAttempted = true
+        let deniedEpoch = accessEpoch
+        recoveryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { recoveryTask = nil }
             do {
                 _ = try await validCredential(forceRefresh: true)
-                scheduleReconnect("Reconnecting with refreshed device access.")
             } catch {
-                stopStreams()
+                guard deniedEpoch == accessEpoch, authenticated else { return }
                 connection = .stale(error.localizedDescription)
                 selectedError = error.localizedDescription
+                errorMessage = error.localizedDescription
             }
-        } else if case ControllerError.remote(403, _, _) = error {
-            catalogTasks[host.id]?.cancel(); catalogTasks[host.id] = nil
-            entries.removeAll { $0.work.ownerNodeId == host.id }
-            do { try local?.removeOwner(host.id) } catch { errorMessage = error.localizedDescription }
-            if selectedRef?.ownerNodeId == host.id {
-                workTask?.cancel(); workTask = nil; selectedWork = nil
-                selectedError = error.localizedDescription
-            }
-            connection = .stale(error.localizedDescription)
-        } else { scheduleReconnect(error.localizedDescription) }
+        }
     }
 
     private func scheduleReconnect(_ reason: String) {
@@ -783,6 +871,7 @@ final class ControllerStore {
         sharingRequest = nil
         foreground = false
         stopStreams()
+        credentialSyncTask?.cancel(); credentialSyncTask = nil
         syncTask?.cancel()
         selectedError = selectedWork == nil ? nil : "Reconnect to refresh this saved view."
         await mesh?.suspend()
