@@ -1,9 +1,21 @@
 # Goose Remote continuation
 
-Updated 29 October 2026, 13:51 local. Read the new checkpoint below first; older sections retain prior receipts. Earlier failures, intermediate receipts and superseded instructions are retained in [the preceding handoff](link-controller-history-through-2026-10-29-1209.md) and its linked history; do not follow its pending jobs or obsolete approvals.
+Updated 29 October 2026, 14:14 local. Read the new checkpoint below first; older sections retain prior receipts. Earlier failures, intermediate receipts and superseded instructions are retained in [the preceding handoff](link-controller-history-through-2026-10-29-1209.md) and its linked history; do not follow its pending jobs or obsolete approvals.
 
 
-## 13:51 checkpoint — compute-node requirement being completed
+## 14:14 active checkpoint
+
+Backend gates: current core53passed/0failed +1 pre-existing ignored real-profile test; management11/0; actual HTTP controller12/0 including new routes. Independent reviewer re-read primary logs and matched all12 frozen source files against manifest ec2ecc6c…6697c. Zero-test controller_management filter from an earlier attempt is explicitly NOT coverage; recipe corrected. Earlier compiler assertion failures and obsolete revision fixtures were corrected in tests only, preserving failures in job ledger. Current admitted laptop job laptop-20261029-141039-170d is compiling full-feature schema, then full workspace Clippy in /tmp/goose-node-management-target. No second compiler job. Tester native_expiry_recovery owns that lane and final SHA-stamped CLI after source commit. Schema generation must preserve full justfile feature set.
+
+Full fresh Electron package IS required: updated runtime Zod validators consume NodesConfig.revision/staleRevision. native_jump_fix owns generated SDK tests and exact-source isolated package stage /tmp/goose-node-management-desktop; reviewed operators /tmp/goose-node-management-package.sh/.py. They pin actual43a baseline against immutable Apple receipt/fingerprint, stage-local SDK+immutable distribution manifest, exact source/CLI and copied/packaged MCP/Tailscale payloads. APFS clone dependencies prevents shared writable dependency changes. Root and reviewer reviewed; no package launched yet. Do not reuse old Electron resources by excluding changed SDK.
+
+native_auth_review is hardening the existing full signing operator before use: prior validator accepted any Mach-O content diff as signature material, comparing only main+CLI. Actual prior bundle has27arm64 and2thin x86_64 argon2 binaries, no universal. Minimal comparator must prove all changed Mach-O equivalence with strict load-command/LINKEDIT checks and negative corruption control. New /tmp/goose-node-management-sign-only.cjs + /tmp/goose-node-signature-equivalence.cjs are being prepared; ROOT REVIEW before use. No signing/upload/upgrade has occurred for node feature.
+
+Physical native8762 already installed. Five-minute13:56–14:01 Home/reopen retained selected conversation and blank draft;14:02 fresh owner sample CPU0.37/core, memory55.1%,128GiB proves reconnect beyond cache. Wi-Fi only, no lock/cellular/overnight or independently verified expiry. Original iPad simulator updated in place14:02, retained enrollment/catalog and showed Compute nodes / Update Goose against old43a at14:05. No real node created yet. Both original MacBooks still43a. Root phone ended on laptop resources; DeviceHub currently displays iPad Compute nodes update-required screen.
+
+Docs committed: physical-sharing-disclosure-2026-10-29.md proves actual pre-send prompt and Do not send, test draft cleared, no inference; reviewer runbook and stale release docs reconciled d518e7c19b; website support git-apply patch+internal incomplete privacy fragments eeb6825a32 under docs/ios-release/website-preparation-2026-10-29. Website shared checkout untouched; public retention/support-time scope remains unresolved. No public deployment. Fresh14:12 origin/main remains96e85f21, feature237ahead atfetch; main unmerged, Studio campaign holds persist.
+
+## 13:51 preceding checkpoint — compute-node requirement being completed
 
 The owner asked specifically whether nudging, downloading, creating nodes and defining providers had been tested. Existing active-steer proof is Mac→Mac plus original-account iPad simulator→real Mac. Model download includes final Ready UI and supported cleanup (latest-history-verification-2026-10-29.md). Provider creation/configured state/removal is proved with a disposable invalid endpoint, not provider inference. Physical iPhone Send/reply is separate. No physical iPad is present yet.
 
