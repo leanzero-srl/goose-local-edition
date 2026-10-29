@@ -76,3 +76,5 @@ This installation is laptop-owned. Canonical source: `~/.claude/skills/ios-ipado
 2026-10-27: Added companion-host migration procedure after an isolated new owner connected while legacy original hosts still blocked mobile admission. Preserving identity, work, permissions and signed bundles is part of the mobile rollout.
 
 2026-10-29: Added bounded latest-history, concurrent paging/replay and actual reading-position checks after live controller testing exposed oldest-page loading and a multi-batch lost-page race.
+
+2026-10-29: Added credential-generation recovery, ordinary authority-denial purge, real expiry proof, and embedded-framework linkage checks after live iPad token expiry exposed permanent denial and a test build omitted its optional mesh framework.
