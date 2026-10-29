@@ -854,3 +854,198 @@ private actor LifecycleMesh: ControllerMeshSession {
     func releaseSuspend() { holdSuspend = false; gate?.resume(); gate = nil }
     func removeLocalIdentity() async throws { await suspend() }
 }
+
+@MainActor final class MeshEnrollmentRecoveryTests: XCTestCase {
+    private func fixture(confirmFailure: (Int, String)? = (403, "mesh_binding_unverified"), joins: [ReplacementAuthority.Join] = [.grant]) throws -> (EmbeddedMeshConnectionProvider, ReplacementCredentials, ReplacementAuthority, CredentialEnvelope, URL, MeshEnrollmentState) {
+        let storage = ReplacementCredentials()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("old native node".utf8).write(to: directory.appendingPathComponent("old-node"))
+        let device = DeviceRecord(deviceId: UUID(), name: "Phone", platform: "ios", role: "controller", revision: 2, scopes: ["catalog.read"], createdAt: Date(), revokedAt: nil)
+        let identity = CredentialEnvelope(authority: URL(string: "https://link.example")!, credentials: .init(accessToken: "current-access", tokenType: "Bearer", expiresAt: .distantFuture, refreshToken: "unchanged-refresh", device: device))
+        let state = MeshEnrollmentState(authority: identity.authority, deviceId: device.id, enrollmentId: UUID(), loginServer: URL(string: "https://mesh.example")!, confirmedNodeKey: "nodekey:" + String(repeating: "1", count: 64))
+        try storage.write(identity, account: "device")
+        try storage.write(state, account: "mesh")
+        let authority = ReplacementAuthority(device: device, confirmFailure: confirmFailure, joins: joins)
+        let provider = EmbeddedMeshConnectionProvider(credentials: storage, authorityTransport: authority, directory: directory)
+        return (provider, storage, authority, identity, directory, state)
+    }
+    private func saved(_ storage: ReplacementCredentials) throws -> MeshEnrollmentState { try XCTUnwrap(storage.read(MeshEnrollmentState.self, account: "mesh")) }
+
+    func testLiveBindingPreflightPreservesNativeStateAndEnrollment() async throws {
+        let (provider, storage, authority, identity, directory, original) = try fixture(confirmFailure: nil)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let state = try await provider.prepareEnrollment(identity: identity).state
+        XCTAssertEqual(state.enrollmentId, original.enrollmentId)
+        XCTAssertEqual(state.confirmedNodeKey, original.confirmedNodeKey)
+        XCTAssertNil(state.replacementEnrollmentId)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("old-node").path))
+        let joins = await authority.joinIDs
+        XCTAssertTrue(joins.isEmpty)
+        XCTAssertEqual(try saved(storage).confirmedNodeKey, original.confirmedNodeKey)
+    }
+
+    func testMissingBindingOnlyResetsAfterAuthorityGrantsReplacement() async throws {
+        let (provider, storage, authority, identity, directory, original) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let state = try await provider.prepareEnrollment(identity: identity).state
+        let joins = await authority.joinIDs
+        XCTAssertEqual(joins, [state.enrollmentId])
+        XCTAssertNotEqual(state.enrollmentId, original.enrollmentId)
+        XCTAssertNil(state.confirmedNodeKey)
+        XCTAssertNil(state.replacementEnrollmentId)
+        XCTAssertEqual(state.join?.enrollmentId, state.enrollmentId)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+        XCTAssertEqual(try saved(storage).enrollmentId, state.enrollmentId)
+        XCTAssertEqual(try storage.read(CredentialEnvelope.self, account: "device")?.credentials.refreshToken, "unchanged-refresh")
+        let authorization = await authority.authorization
+        XCTAssertEqual(Set(authorization), ["Bearer current-access"])
+    }
+
+    func testOtherDenialsAndProviderFailuresNeverMintOrReset() async throws {
+        for failure in [(401, "revoked"), (403, "scope_denied"), (403, "enrollment_mismatch"), (502, "provider_failed"), (502, "provider_invalid"), (503, "unavailable")] {
+            let (provider, storage, authority, identity, directory, original) = try fixture(confirmFailure: failure)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            do { _ = try await provider.prepareEnrollment(identity: identity); XCTFail("Failure must remain visible") } catch { }
+            let joins = await authority.joinIDs
+            XCTAssertTrue(joins.isEmpty, failure.1)
+            XCTAssertEqual(try saved(storage).enrollmentId, original.enrollmentId)
+            XCTAssertNil(try saved(storage).replacementEnrollmentId)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("old-node").path))
+        }
+    }
+
+    func testLiveBindingRefusalAndAmbiguousJoinsRetainStableIntentAndDisk() async throws {
+        for failure in [(409, "already_enrolled"), (409, "enrollment_pending"), (409, "enrollment_expired"), (503, "provider_failed")] {
+            let (provider, storage, authority, identity, directory, original) = try fixture(joins: [.failure(failure.0, failure.1), .failure(failure.0, failure.1)])
+            defer { try? FileManager.default.removeItem(at: directory) }
+            for _ in 0..<2 {
+                do { _ = try await provider.prepareEnrollment(identity: identity); XCTFail("Join refused") } catch { }
+            }
+            let state = try saved(storage)
+            let pending = try XCTUnwrap(state.replacementEnrollmentId)
+            XCTAssertEqual(state.enrollmentId, original.enrollmentId)
+            XCTAssertEqual(state.confirmedNodeKey, original.confirmedNodeKey)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("old-node").path))
+            let ids = await authority.joinIDs
+            let confirms = await authority.confirms
+            XCTAssertEqual(ids, [pending, pending])
+            XCTAssertEqual(confirms, 1, "Retry pending intent directly; never depend on old binding becoming valid again")
+        }
+    }
+
+    func testLostJoinResponseRetriesSameEnrollmentWithoutEarlyReset() async throws {
+        let (provider, storage, authority, identity, directory, _) = try fixture(joins: [.lostResponse, .grant])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        do { _ = try await provider.prepareEnrollment(identity: identity); XCTFail("Response was lost") } catch { }
+        let pending = try XCTUnwrap(saved(storage).replacementEnrollmentId)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("old-node").path))
+        let state = try await provider.prepareEnrollment(identity: identity).state
+        XCTAssertEqual(state.enrollmentId, pending)
+        let ids = await authority.joinIDs
+        XCTAssertEqual(ids, [pending, pending])
+    }
+
+    func testSecureWriteFailureAfterResetResumesSameReceiptOnRecreation() async throws {
+        let (provider, storage, authority, identity, directory, original) = try fixture(joins: [.grant, .grant])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        storage.failReplacementPublish()
+        do { _ = try await provider.prepareEnrollment(identity: identity); XCTFail("Secure publication fails once") } catch { }
+        let pending = try XCTUnwrap(saved(storage).replacementEnrollmentId)
+        XCTAssertEqual(try saved(storage).enrollmentId, original.enrollmentId)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+        let reopened = EmbeddedMeshConnectionProvider(credentials: storage, authorityTransport: authority, directory: directory)
+        let state = try await reopened.prepareEnrollment(identity: identity).state
+        XCTAssertEqual(state.enrollmentId, pending)
+        XCTAssertNil(state.confirmedNodeKey)
+        let ids = await authority.joinIDs
+        XCTAssertEqual(ids, [pending, pending])
+    }
+
+    func testMalformedGrantCannotResetLocalNode() async throws {
+        let (provider, storage, _, identity, directory, original) = try fixture(joins: [.wrongEnrollment])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        do { _ = try await provider.prepareEnrollment(identity: identity); XCTFail("Mismatched receipt") } catch { }
+        XCTAssertEqual(try saved(storage).enrollmentId, original.enrollmentId)
+        XCTAssertNotNil(try saved(storage).replacementEnrollmentId)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("old-node").path))
+    }
+
+    func testCancelledOrSupersededGrantCannotResetAndRetryKeepsRequest() async throws {
+        for cancelTask in [true, false] {
+            let (provider, storage, authority, identity, directory, _) = try fixture(joins: [.heldGrant, .grant])
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let prepare = Task { try await provider.prepareEnrollment(identity: identity) }
+            await fulfillment(of: [authority.joinHeld], timeout: 3)
+            let pending = try XCTUnwrap(saved(storage).replacementEnrollmentId)
+            if cancelTask { prepare.cancel() } else { await provider.suspend() }
+            await authority.releaseJoin()
+            do { _ = try await prepare.value; XCTFail("Retired operation must not publish") }
+            catch is CancellationError { }
+            catch { XCTFail("Wrong cancellation result: \(error)") }
+            XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("old-node").path))
+            XCTAssertEqual(try saved(storage).replacementEnrollmentId, pending)
+            let next = try await provider.prepareEnrollment(identity: identity).state
+            XCTAssertEqual(next.enrollmentId, pending)
+            let ids = await authority.joinIDs
+            XCTAssertEqual(ids, [pending, pending])
+        }
+    }
+}
+
+private final class ReplacementCredentials: CredentialStorage, @unchecked Sendable {
+    private let memory = MemoryCredentials()
+    private let lock = NSLock()
+    private var failPublish = false
+    func failReplacementPublish() { lock.lock(); failPublish = true; lock.unlock() }
+    func read<T: Decodable>(_ type: T.Type, account: String) throws -> T? { try memory.read(type, account: account) }
+    func write<T: Encodable>(_ value: T, account: String) throws {
+        lock.lock()
+        let fail = failPublish && account == "mesh" && (value as? MeshEnrollmentState)?.join != nil && (value as? MeshEnrollmentState)?.replacementEnrollmentId == nil
+        if fail { failPublish = false }
+        lock.unlock()
+        if fail { throw ControllerError.unavailable("Secure storage temporarily unavailable") }
+        try memory.write(value, account: account)
+    }
+    func remove(account: String) throws { try memory.remove(account: account) }
+    func removeRevocationRequests() throws { try memory.removeRevocationRequests() }
+}
+
+private actor ReplacementAuthority: HTTPTransport {
+    enum Join: Sendable { case grant, lostResponse, failure(Int, String), wrongEnrollment, heldGrant }
+    nonisolated let joinHeld = XCTestExpectation(description: "replacement grant held")
+    let device: DeviceRecord
+    let confirmFailure: (Int, String)?
+    var joins: [Join]
+    var joinIDs: [UUID] = []
+    var authorization: [String] = []
+    var confirms = 0
+    var joinGate: CheckedContinuation<Void, Never>?
+    init(device: DeviceRecord, confirmFailure: (Int, String)?, joins: [Join]) { self.device = device; self.confirmFailure = confirmFailure; self.joins = joins }
+    func releaseJoin() { joinGate?.resume(); joinGate = nil }
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        authorization.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
+        func response(_ status: Int, _ data: Data) -> (Data, HTTPURLResponse) { (data, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!) }
+        func failure(_ status: Int, _ code: String) -> (Data, HTTPURLResponse) { response(status, Data("{\"error\":{\"code\":\"\(code)\",\"message\":\"Test authority refused\"}}".utf8)) }
+        if request.url!.path.hasSuffix("mesh/confirm") {
+            confirms += 1
+            if let confirmFailure { return failure(confirmFailure.0, confirmFailure.1) }
+            return response(200, try ControllerCodec.encoder().encode(device))
+        }
+        XCTAssertTrue(request.url!.path.hasSuffix("mesh/join-key"))
+        struct Body: Decodable { let enrollmentId: UUID }
+        let id = try ControllerCodec.decoder().decode(Body.self, from: XCTUnwrap(request.httpBody)).enrollmentId
+        joinIDs.append(id)
+        let outcome = joins.removeFirst()
+        switch outcome {
+        case .lostResponse: throw URLError(.networkConnectionLost)
+        case .failure(let status, let code): return failure(status, code)
+        case .heldGrant:
+            await withCheckedContinuation { joinGate = $0; joinHeld.fulfill() }
+        case .grant, .wrongEnrollment: break
+        }
+        let wrong: Bool
+        if case .wrongEnrollment = outcome { wrong = true } else { wrong = false }
+        return response(200, try ControllerCodec.encoder().encode(MeshJoinCredential(enrollmentId: wrong ? UUID() : id, authKey: "disposable-fixture-key", loginServer: URL(string: "https://mesh.example")!, expirySeconds: 600)))
+    }
+}

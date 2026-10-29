@@ -27,6 +27,7 @@ struct MeshEnrollmentState: Codable, Sendable {
     var join: MeshJoinCredential?
     var loginServer: URL?
     var confirmedNodeKey: String?
+    var replacementEnrollmentId: UUID?
 }
 
 extension ControllerAPI {
@@ -83,9 +84,8 @@ actor EmbeddedMeshConnectionProvider: OwnerConnectionProvider, ControllerMeshSes
         self.directory = directory
     }
 
-    func prepare(identity: CredentialEnvelope) async throws {
+    func prepareEnrollment(identity: CredentialEnvelope) async throws -> (state: MeshEnrollmentState, operation: UUID) {
         try Task.checkCancellation()
-        #if canImport(TailscaleKit)
         let operation = UUID()
         lifecycle = operation
         MeshLifecycleDiagnostics.record("prepare-begin", operation: operation)
@@ -100,12 +100,53 @@ actor EmbeddedMeshConnectionProvider: OwnerConnectionProvider, ControllerMeshSes
         }
         try credentials.write(state, account: "mesh")
         let api = try ControllerAPI(authority: identity.authority, transport: authorityTransport)
+        if let key = state.confirmedNodeKey, state.replacementEnrollmentId == nil {
+            MeshLifecycleDiagnostics.record("preflight-confirm-begin", operation: operation)
+            do {
+                let confirmed = try await api.confirmMesh(enrollmentId: state.enrollmentId, nodeKey: key, token: identity.credentials.accessToken)
+                guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
+                guard confirmed.deviceId == deviceId, confirmed.role == "controller", confirmed.revokedAt == nil else { throw ControllerError.malformedResponse }
+                MeshLifecycleDiagnostics.record("preflight-confirm-end", operation: operation)
+            } catch ControllerError.remote(403, "mesh_binding_unverified", _) {
+                guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
+                state.replacementEnrollmentId = UUID()
+                try credentials.write(state, account: "mesh")
+            }
+        }
+        if let replacement = state.replacementEnrollmentId {
+            MeshLifecycleDiagnostics.record("replacement-join-begin", operation: operation)
+            // The authority permits replacement only after its complete provider listing
+            // proves this device's prior binding absent or unusable. Confirm failure alone is not proof.
+            let join = try await api.meshJoin(enrollmentId: replacement, token: identity.credentials.accessToken)
+            guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
+            MeshLifecycleDiagnostics.record("replacement-join-granted", operation: operation)
+            // Keep the old state + stable replacement request until reset succeeds. A crash
+            // or secure-write failure then retries the same receipt, never the retired node.
+            if FileManager.default.fileExists(atPath: directory.path) { try FileManager.default.removeItem(at: directory) }
+            state = MeshEnrollmentState(authority: identity.authority, deviceId: deviceId, enrollmentId: replacement,
+                                        join: join, loginServer: join.loginServer)
+            try credentials.write(state, account: "mesh")
+            MeshLifecycleDiagnostics.record("replacement-reset-complete", operation: operation)
+        }
         if state.confirmedNodeKey == nil && state.join == nil {
             state.join = try await api.meshJoin(enrollmentId: state.enrollmentId, token: identity.credentials.accessToken)
             state.loginServer = state.join?.loginServer
             guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
             try credentials.write(state, account: "mesh")
         }
+        guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
+        return (state, operation)
+    }
+
+    func prepare(identity: CredentialEnvelope) async throws {
+        try Task.checkCancellation()
+        #if canImport(TailscaleKit)
+        let preparation = try await prepareEnrollment(identity: identity)
+        var state = preparation.state
+        let operation = preparation.operation
+        guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
+        let deviceId = identity.credentials.device.deviceId
+        let api = try ControllerAPI(authority: identity.authority, transport: authorityTransport)
         guard let loginServer = state.loginServer else { throw ControllerError.invalid("Mesh enrollment has no verified authority. Remove local access and enroll again.") }
         _ = try ControllerCodec.authority(loginServer.absoluteString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.complete])
