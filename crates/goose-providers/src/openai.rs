@@ -468,6 +468,60 @@ impl OpenAiProvider {
         }
     }
 
+    /// The benchmark's thinking pin reaches a LOCAL engine (2026-10-29, the T12 G1 gap). The bench
+    /// pins `GOOSE_THINKING_EFFORT` (medium since b497d064bc), but the chat format emits an effort
+    /// only for OpenAI Responses models, and Rapid-MLX switches thinking OFF on every tool-bearing
+    /// request that pins no preference (`maybe_auto_disable_thinking_for_tools`). So a local
+    /// entrant ran its whole Gauntlet without thinking while the cloud baseline it is compared
+    /// with thought (cloud Qwen3.8 Flash 10-05: 167 of 174 assistant messages carry thinking).
+    /// At a loopback fork engine (`lz_engine`, see [`Self::openai_at_lz_engine`]) an effort other
+    /// than Off now rides as `chat_template_kwargs.enable_thinking = true` plus the OpenAI
+    /// `reasoning_effort` (low / medium / high; Max sends high), which the engine maps onto the
+    /// template's own vocabulary (#3043: Qwen3.8 low / medium / xhigh) or onto a reasoning cap.
+    /// Off rides as `enable_thinking = false`, as on omlx. An explicit value already in the body
+    /// wins; no effort configured = the body is unchanged.
+    fn carry_effort_to_lz_engine(
+        model_config: &ModelConfig,
+        payload: &mut serde_json::Value,
+        lz_engine: bool,
+    ) -> Result<(), ProviderError> {
+        let Some(effort) = model_config.thinking_effort().filter(|_| lz_engine) else {
+            return Ok(());
+        };
+        let Some(obj) = payload.as_object_mut() else {
+            return Err(ProviderError::ExecutionError(
+                "the MLX request body is not a JSON object, so the thinking effort cannot reach it"
+                    .to_string(),
+            ));
+        };
+        let level = match effort {
+            ThinkingEffort::Off => None,
+            ThinkingEffort::Low => Some("low"),
+            ThinkingEffort::Medium => Some("medium"),
+            ThinkingEffort::High | ThinkingEffort::Max => Some("high"),
+        };
+        match obj
+            .entry("chat_template_kwargs")
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
+        {
+            serde_json::Value::Object(kwargs) => {
+                kwargs
+                    .entry("enable_thinking")
+                    .or_insert(serde_json::Value::Bool(level.is_some()));
+            }
+            other => {
+                return Err(ProviderError::ExecutionError(format!(
+                    "chat_template_kwargs is {other}, not an object, so the thinking effort cannot reach the MLX engine"
+                )))
+            }
+        }
+        if let Some(level) = level {
+            obj.entry("reasoning_effort")
+                .or_insert_with(|| serde_json::Value::String(level.to_string()));
+        }
+        Ok(())
+    }
+
     /// Whether this endpoint declared it honours `rapid_mlx_transient_tail` (the LeanZero Rapid-MLX
     /// fork, since v0.14.3-lz.2). The declaration is the engine identity: a stock Rapid-MLX or a
     /// real oMLX server behind `OMLX_HOST` never declares it and so never receives the field. Only a
@@ -477,6 +531,22 @@ impl OpenAiProvider {
         if !Self::PROVIDERS_FRONTING_RAPID_MLX.contains(&self.name.as_str()) {
             return false;
         }
+        self.declares_lz_engine(model_name).await
+    }
+
+    /// Whether this is the built-in `openai` provider at a LOOPBACK LeanZero Rapid-MLX engine: a
+    /// benchmark's "Single model" entrant on a local model (the bench fence refuses swarm/omlx).
+    /// The engine identity is the fork's `rapid_mlx_transient_tail` declaration (the same cached
+    /// `/v1/models` probe as [`Self::transient_tail`]); a remote host or a stock server is never one.
+    async fn openai_at_lz_engine(&self, model_name: &str) -> bool {
+        self.name == "openai"
+            && host_is_loopback(self.api_client.host())
+            && self.declares_lz_engine(model_name).await
+    }
+
+    /// The cached `/v1/models` check that the endpoint serving `model_name` declares
+    /// `rapid_mlx_transient_tail`, i.e. is the LeanZero Rapid-MLX fork. Only answered probes are cached.
+    async fn declares_lz_engine(&self, model_name: &str) -> bool {
         if let Some(known) = self
             .transient_tail_cache
             .lock()
@@ -575,9 +645,11 @@ impl OpenAiProvider {
         messages: &[Message],
         payload: serde_json::Value,
         transient_tail: bool,
+        lz_engine: bool,
     ) -> Result<serde_json::Value, ProviderError> {
         let mut payload = self.sanitize_request_for_compat(payload);
         self.carry_thinking_off_to_mlx(model_config, &mut payload)?;
+        Self::carry_effort_to_lz_engine(model_config, &mut payload, lz_engine)?;
         if transient_tail {
             if let Some(tail) = turn_context_tail_suffix(messages, &payload) {
                 payload[RAPID_MLX_TRANSIENT_TAIL] = serde_json::Value::String(tail);
@@ -1172,6 +1244,10 @@ impl Provider for OpenAiProvider {
             }
         } else {
             let transient_tail = self.transient_tail(&model_config.model_name).await;
+            // Probed only when an effort is configured, so a request without one sends exactly
+            // what it sent before (no extra /v1/models GET either).
+            let lz_engine = model_config.thinking_effort().is_some()
+                && self.openai_at_lz_engine(&model_config.model_name).await;
             let format_options = OpenAiFormatOptions {
                 preserve_thinking_context: self.preserve_thinking_context,
                 // Q-94: a chat's block rides the tool results it follows, never a user
@@ -1183,8 +1259,13 @@ impl Provider for OpenAiProvider {
             let (payload, mut images_notice) = self
                 .chat_request(model_config, system, messages, tools, format_options)
                 .await?;
-            let payload =
-                self.finish_chat_payload(model_config, messages, payload, transient_tail)?;
+            let payload = self.finish_chat_payload(
+                model_config,
+                messages,
+                payload,
+                transient_tail,
+                lz_engine,
+            )?;
             let mut log = start_log(model_config, &payload)?;
 
             // This provider is the one the swarm engine actually calls (lmstudio's declarative
@@ -1214,8 +1295,13 @@ impl Provider for OpenAiProvider {
                         format_options,
                     )?;
                     images_notice = notice;
-                    let retry =
-                        self.finish_chat_payload(model_config, messages, retry, transient_tail)?;
+                    let retry = self.finish_chat_payload(
+                        model_config,
+                        messages,
+                        retry,
+                        transient_tail,
+                        lz_engine,
+                    )?;
                     log = start_log(model_config, &retry)?;
                     telemetry_t0 = std::time::Instant::now();
                     self.post_chat(&retry).await.inspect_err(|e| {
@@ -2067,6 +2153,106 @@ mod tests {
             .find(|r| r.method.as_str() == "POST")
             .expect("the chat request was posted");
         serde_json::from_slice(&post.body).unwrap()
+    }
+
+    /// `body_sent`, but the engine's `/v1/models` entry declares `request_extensions` (the fork
+    /// identity) and the request carries one tool, like every agent turn of a benchmark.
+    async fn body_sent_to_engine(
+        name: &str,
+        model_config: &ModelConfig,
+        request_extensions: serde_json::Value,
+    ) -> serde_json::Value {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "object": "list",
+                "data": [{"id": "served", "request_extensions": request_extensions}],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+                             "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            })))
+            .mount(&server)
+            .await;
+        let mut provider = make_provider(name);
+        provider.api_client =
+            ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        provider.supports_streaming = false;
+        let tool = Tool::new(
+            "shell",
+            "run a command",
+            rmcp::object!({"type": "object", "properties": {"command": {"type": "string"}}}),
+        );
+        let messages = vec![Message::user().with_text("list the files")];
+        let mut stream = provider
+            .stream(model_config, "You are goose", &messages, &[tool])
+            .await
+            .unwrap();
+        use futures::StreamExt;
+        while stream.next().await.is_some() {}
+        let requests = server.received_requests().await.unwrap();
+        let post = requests
+            .iter()
+            .find(|r| r.method.as_str() == "POST")
+            .expect("the chat request was posted");
+        serde_json::from_slice(&post.body).unwrap()
+    }
+
+    /// T12 G1 (2026-10-29): the benchmark's effort pin reaches a loopback LeanZero engine on the
+    /// built-in `openai` provider (the bench's Single-model entrant), so Rapid-MLX's tool-turn
+    /// auto-disable no longer turns a local entrant's thinking off; Off still switches it off;
+    /// no effort, a stock server, an explicit profile value and the omlx path are left as they were.
+    #[tokio::test]
+    async fn the_benchmark_effort_reaches_a_loopback_lz_engine_on_the_openai_provider() {
+        let fork = json!(["rapid_mlx_transient_tail"]);
+        let medium = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Medium);
+        let body = body_sent_to_engine("openai", &medium, fork.clone()).await;
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({"enable_thinking": true})
+        );
+        assert_eq!(body["reasoning_effort"], json!("medium"));
+
+        let max = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Max);
+        let body = body_sent_to_engine("openai", &max, fork.clone()).await;
+        assert_eq!(body["reasoning_effort"], json!("high"));
+
+        let off = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Off);
+        let body = body_sent_to_engine("openai", &off, fork.clone()).await;
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({"enable_thinking": false})
+        );
+        assert!(body.get("reasoning_effort").is_none());
+
+        // negative controls
+        let body = body_sent_to_engine("openai", &medium, json!([])).await;
+        assert!(
+            body.get("chat_template_kwargs").is_none(),
+            "a stock server: {body}"
+        );
+        assert!(body.get("reasoning_effort").is_none());
+        let body = body_sent_to_engine("omlx", &medium, fork.clone()).await;
+        assert!(
+            body.get("reasoning_effort").is_none(),
+            "omlx keeps the swarm router's path"
+        );
+        let pinned = with_profile_kwargs(medium.clone());
+        let body = body_sent_to_engine("openai", &pinned, fork.clone()).await;
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({"enable_thinking": true, "reasoning_effort": "low"}),
+            "an explicit profile value wins"
+        );
     }
 
     fn with_profile_kwargs(config: ModelConfig) -> ModelConfig {
