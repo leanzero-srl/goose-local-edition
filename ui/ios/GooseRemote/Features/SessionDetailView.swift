@@ -4,11 +4,33 @@ struct SessionScrollState {
     var position = ScrollPosition(idType: String.self, edge: .bottom)
     private(set) var followsLatest = true
     private(set) var loadingOlder = false
-    mutating func userScrolled(nearBottom: Bool) { followsLatest = nearBottom }
-    mutating func beginOlder() { loadingOlder = true; followsLatest = false }
-    mutating func endOlder() { loadingOlder = false }
+    private var olderRequest: UUID?
+    private var olderFallbackID: String?
+    mutating func userScrolled(nearBottom: Bool) {
+        followsLatest = nearBottom
+        olderFallbackID = nil
+    }
+    @discardableResult mutating func beginOlder(transcriptIDs: [String] = []) -> UUID {
+        let request = UUID()
+        olderRequest = request
+        loadingOlder = true
+        followsLatest = false
+        let visibleID = position.viewID(type: String.self)
+        olderFallbackID = visibleID.map(transcriptIDs.contains) == true ? nil : transcriptIDs.first
+        return request
+    }
+    mutating func endOlder(request: UUID, didPrepend: Bool = false) {
+        guard olderRequest == request else { return }
+        loadingOlder = false
+        olderRequest = nil
+        if didPrepend, !followsLatest, let olderFallbackID {
+            position.scrollTo(id: olderFallbackID, anchor: .top)
+        }
+        olderFallbackID = nil
+    }
     mutating func jumpToLatest() {
         followsLatest = true
+        olderFallbackID = nil
         position.scrollTo(edge: .bottom)
     }
     mutating func followContent() {
@@ -90,8 +112,18 @@ struct SessionDetailView: View {
                     }
                     if selected.hasMoreHistory {
                         Button(work.kind == .chat ? "Load older messages" : "Load older activity") {
-                            scrolling.beginOlder()
-                            Task { await store.loadMoreHistory(); scrolling.endOlder() }
+                            let request = scrolling.beginOlder(transcriptIDs: selected.transcript.map(\.id))
+                            let firstMessageID = selected.transcript.first?.id
+                            let historyReset = store.selectedHistoryReset
+                            Task {
+                                await store.loadMoreHistory()
+                                let current = store.selectedWork
+                                let didPrepend = !Task.isCancelled && store.selectedRef == work
+                                    && store.selectedHistoryReset == historyReset && current?.entry.work == work
+                                    && firstMessageID != nil && current?.transcript.first?.id != firstMessageID
+                                    && current?.transcript.contains(where: { $0.id == firstMessageID }) == true
+                                scrolling.endOlder(request: request, didPrepend: didPrepend)
+                            }
                         }.buttonStyle(StudioSecondaryButtonStyle()).disabled(store.selectedLoading)
                             .accessibilityIdentifier("load-older-history")
                     }

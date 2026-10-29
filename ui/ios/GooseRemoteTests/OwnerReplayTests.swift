@@ -268,9 +268,9 @@ final class OwnerReplayTests: XCTestCase {
         XCTAssertTrue(scroll.shouldFollowContent)
         scroll.userScrolled(nearBottom: false)
         XCTAssertFalse(scroll.shouldFollowContent)
-        scroll.beginOlder()
+        let request = scroll.beginOlder()
         XCTAssertFalse(scroll.shouldFollowContent)
-        scroll.endOlder()
+        scroll.endOlder(request: request)
         XCTAssertFalse(scroll.shouldFollowContent, "Finishing older history or a same-work refresh must not resume following")
         scroll.jumpToLatest()
         XCTAssertTrue(scroll.shouldFollowContent)
@@ -300,10 +300,10 @@ final class OwnerReplayTests: XCTestCase {
         let readingPosition = scroll.position
         scroll.followContent()
         XCTAssertEqual(scroll.position, readingPosition)
-        scroll.beginOlder()
+        let request = scroll.beginOlder()
         scroll.followContent()
         XCTAssertEqual(scroll.position, readingPosition)
-        scroll.endOlder()
+        scroll.endOlder(request: request)
         scroll.followContent()
         XCTAssertEqual(scroll.position, readingPosition)
         scroll.jumpToLatest()
@@ -311,6 +311,45 @@ final class OwnerReplayTests: XCTestCase {
         scroll.position.scrollTo(id: "newest-message", anchor: .top)
         scroll.followContent()
         XCTAssertEqual(scroll.position.edge, .bottom, "Same-message growth must follow through the same bound position")
+    }
+
+    func testPrependAtHeaderRetainsPreviousFirstMessageOnce() {
+        var scroll = SessionScrollState()
+        scroll.userScrolled(nearBottom: false)
+        let request = scroll.beginOlder(transcriptIDs: ["previous-first", "last"])
+        scroll.endOlder(request: request, didPrepend: true)
+        XCTAssertEqual(scroll.position.viewID(type: String.self), "previous-first")
+        scroll.position.scrollTo(id: "another-row", anchor: .top)
+        scroll.endOlder(request: request, didPrepend: true)
+        XCTAssertEqual(scroll.position.viewID(type: String.self), "another-row")
+    }
+
+    func testPrependDoesNotReplaceAnExistingMessagePosition() {
+        var scroll = SessionScrollState()
+        scroll.position.scrollTo(id: "middle", anchor: .center)
+        scroll.userScrolled(nearBottom: false)
+        let readingPosition = scroll.position
+        let request = scroll.beginOlder(transcriptIDs: ["first", "middle", "last"])
+        scroll.endOlder(request: request, didPrepend: true)
+        XCTAssertEqual(scroll.position, readingPosition)
+    }
+
+    func testOlderFallbackDoesNotOverrideFailedLoadJumpScrollOrNewSelection() {
+        for interruption in ["failed", "jump", "scroll", "selection"] {
+            var scroll = SessionScrollState()
+            let request = scroll.beginOlder(transcriptIDs: ["previous-first", "last"])
+            switch interruption {
+            case "jump": scroll.jumpToLatest()
+            case "scroll":
+                scroll.position.scrollTo(id: "reader-chosen", anchor: .center)
+                scroll.userScrolled(nearBottom: false)
+            case "selection": scroll = SessionScrollState()
+            default: break
+            }
+            let expected = scroll.position
+            scroll.endOlder(request: request, didPrepend: interruption != "failed")
+            XCTAssertEqual(scroll.position, expected, interruption)
+        }
     }
 
     @MainActor func testSameWorkRefreshAndDeclinedSendRetainLoadedOlderHistory() async throws {
