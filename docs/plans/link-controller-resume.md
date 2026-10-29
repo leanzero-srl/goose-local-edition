@@ -4,7 +4,7 @@ Updated 29 October 2026 after native 035c3f7fc9 and physical-phone provisioning.
 
 ## Authority and active boundary
 
-Continue unattended. Original Mac upgrades are authorized only when genuinely idle, preserving histories, settings and credentials. No interrupted campaigns, removed holds or between-run gaps. All inference tests use explicit cloud providers; no local inference. Execution stays on the owner; controllers never join inference pools. Main merge is authorized after integration works, but NO MAIN PUSH while the active workmule campaign can be disturbed by self-hosted Studio CI. Recheck current node headroom and the actual campaign before that boundary; do not disable checks or seize a gap. Public App Store seller must be LEANZERO S.R.L.
+Continue unattended. Original Mac upgrades are authorized only when genuinely idle, preserving histories, settings and credentials. No interrupted campaigns, removed holds or between-run gaps. All inference tests use explicit cloud providers; no local inference. Execution stays on the owner; controllers never join inference pools. Main merge is authorized after integration works. At09:35 local, root verified protected jobworkhorse-20261029-072833-fd1b completed exit0 with F_ple_pld1 done and CHAIN_DONE; workmule has no chain/lc_client/lc_run process, GPU0 and94.7GB headroom. That campaign dependency is genuinely complete; no holds/runners were changed. Main remains unmerged/integration pending, and fresh headroom checks are still required before CI-triggering main push. Workhorse content job093122-a1b4 separately holds the SSD lock; do not treat it as the completed campaign or disturb it. Public App Store seller must be LEANZERO S.R.L.
 
 ## Desktop: installed and notarized
 
@@ -38,7 +38,7 @@ Original test chat 20261028_1, Cloud controller test, work c787fd2d-0909-4f49-9e
 
 ## Merge and publication remaining
 
-Main remains unmerged. Feature commits may be pushed as recoverable checkpoints; main push waits for integration acceptance AND an actually safe campaign/CI window. Fetch current main before eventual integration rather than relying on a historical SHA. Preserve active chain256.sh/workmule GPU work and all holds/runners.
+Main remains unmerged. Feature commits may be pushed as recoverable checkpoints. The protected campaign has completed, but main push still waits for integration acceptance and a fresh node/headroom check for self-hosted CI. Fetch current main before eventual integration rather than relying on a historical SHA. Preserve unrelated active work and all holds/runners.
 
 Apple membership last checked 29 October still reports Individual/Mihai Perdum/team ZZ8MTZ6NRZ; LEANZERO S.R.L. organization conversion remains pending. Do not resubmit it. Agreement accepted 26 October. DUNS 303218286 / CUI 51336260/co-founder/no DBA/no separate membership already confirmed. Do not ask for these again. No App Store app record/upload/submission has occurred. Prior 27 October Organizer export worked despite misleading CLI No Accounts; that historical failure is not a current login blocker and its IPA is older source.
 
