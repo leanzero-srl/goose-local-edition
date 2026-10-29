@@ -1,0 +1,523 @@
+{
+  "captured_at": "2026-10-29T09:41:48.838426+00:00",
+  "work": {
+    "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+    "kind": "chat",
+    "local_locator": "20261029_1",
+    "revision": 74077,
+    "title": "Physical iPhone cold-send check 29 October",
+    "working_dir": "/tmp/goose-physical-cold-send",
+    "session_type": "user",
+    "state": "idle",
+    "current_run_id": null,
+    "archived": 0,
+    "updated_at": "2026-10-29T09:41:12.000Z",
+    "deleted": 0,
+    "event_kind": "command_receipt"
+  },
+  "commands": [
+    {
+      "command": {
+        "command_id": "b031cea7-7e39-489f-abf9-ad7414a2940e",
+        "work": {
+          "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+          "kind": "chat",
+          "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f"
+        },
+        "expected_store_generation": "ac8c3df7-ac2d-4604-b1bb-12ae9ada465b",
+        "expected_revision": 74059,
+        "expected_run_id": null,
+        "action": "send",
+        "payload": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Reply with exactly these three words: Phone connection works.\n"
+            }
+          ]
+        }
+      },
+      "receipt": {
+        "command_id": "b031cea7-7e39-489f-abf9-ad7414a2940e",
+        "work": {
+          "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+          "kind": "chat",
+          "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f"
+        },
+        "authenticated_device_id": "333b2a27-9958-4195-8341-2256696e8287",
+        "revision": 74059,
+        "state": "delivered",
+        "run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+        "message_id": "controller_0d133a33-717e-4396-9d0c-28c5f83eb7d5_333b2a27-9958-4195-8341-2256696e8287_b031cea7-7e39-489f-abf9-ad7414a2940e",
+        "input_id": null,
+        "checkpoint_id": null,
+        "reason": null,
+        "updated_at": "2026-10-29T09:41:12.649788Z"
+      }
+    }
+  ],
+  "catalog_versions": [
+    {
+      "revision": 74056,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "idle",
+      "current_run_id": null,
+      "archived": 0,
+      "updated_at": "2026-10-29T09:22:35.000Z",
+      "deleted": 0,
+      "event_kind": "created"
+    },
+    {
+      "revision": 74057,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "idle",
+      "current_run_id": null,
+      "archived": 0,
+      "updated_at": "2026-10-29T09:22:35.000Z",
+      "deleted": 0,
+      "event_kind": "session_changed"
+    },
+    {
+      "revision": 74058,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "idle",
+      "current_run_id": null,
+      "archived": 0,
+      "updated_at": "2026-10-29T09:22:35.000Z",
+      "deleted": 0,
+      "event_kind": "session_changed"
+    },
+    {
+      "revision": 74059,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "idle",
+      "current_run_id": null,
+      "archived": 0,
+      "updated_at": "2026-10-29T09:22:35.000Z",
+      "deleted": 0,
+      "event_kind": "session_changed"
+    },
+    {
+      "revision": 74060,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "idle",
+      "current_run_id": null,
+      "archived": 0,
+      "updated_at": "2026-10-29T09:22:35.000Z",
+      "deleted": 0,
+      "event_kind": "command_receipt"
+    },
+    {
+      "revision": 74061,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:04.982Z",
+      "deleted": 0,
+      "event_kind": "run_state"
+    },
+    {
+      "revision": 74062,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:04.000Z",
+      "deleted": 0,
+      "event_kind": "session_changed"
+    },
+    {
+      "revision": 74063,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:04.000Z",
+      "deleted": 0,
+      "event_kind": "session_changed"
+    },
+    {
+      "revision": 74064,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:04.988Z",
+      "deleted": 0,
+      "event_kind": "message_upsert"
+    },
+    {
+      "revision": 74065,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:04.000Z",
+      "deleted": 0,
+      "event_kind": "session_changed"
+    },
+    {
+      "revision": 74066,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:05.631Z",
+      "deleted": 0,
+      "event_kind": "message_upsert"
+    },
+    {
+      "revision": 74067,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:05.000Z",
+      "deleted": 0,
+      "event_kind": "session_changed"
+    },
+    {
+      "revision": 74068,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:05.000Z",
+      "deleted": 0,
+      "event_kind": "command_receipt"
+    },
+    {
+      "revision": 74069,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:05.000Z",
+      "deleted": 0,
+      "event_kind": "partial_replacement"
+    },
+    {
+      "revision": 74070,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:05.000Z",
+      "deleted": 0,
+      "event_kind": "partial_replacement"
+    },
+    {
+      "revision": 74071,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:12.000Z",
+      "deleted": 0,
+      "event_kind": "session_changed"
+    },
+    {
+      "revision": 74072,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:12.622Z",
+      "deleted": 0,
+      "event_kind": "message_upsert"
+    },
+    {
+      "revision": 74073,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:12.000Z",
+      "deleted": 0,
+      "event_kind": "session_changed"
+    },
+    {
+      "revision": 74074,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "running",
+      "current_run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:12.000Z",
+      "deleted": 0,
+      "event_kind": "session_changed"
+    },
+    {
+      "revision": 74075,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "idle",
+      "current_run_id": null,
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:12.000Z",
+      "deleted": 0,
+      "event_kind": "pending_input"
+    },
+    {
+      "revision": 74076,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "idle",
+      "current_run_id": null,
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:12.000Z",
+      "deleted": 0,
+      "event_kind": "session_changed"
+    },
+    {
+      "revision": 74077,
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "kind": "chat",
+      "local_locator": "20261029_1",
+      "title": "Physical iPhone cold-send check 29 October",
+      "working_dir": "/tmp/goose-physical-cold-send",
+      "session_type": "user",
+      "state": "idle",
+      "current_run_id": null,
+      "archived": 0,
+      "updated_at": "2026-10-29T09:41:12.000Z",
+      "deleted": 0,
+      "event_kind": "command_receipt"
+    }
+  ],
+  "messages": [
+    {
+      "id": 779301,
+      "message_id": "controller_0d133a33-717e-4396-9d0c-28c5f83eb7d5_333b2a27-9958-4195-8341-2256696e8287_b031cea7-7e39-489f-abf9-ad7414a2940e",
+      "role": "user",
+      "created_timestamp": 1793266864,
+      "metadata_json": "{\"userVisible\":true,\"agentVisible\":true}",
+      "content": [
+        {
+          "type": "text",
+          "text": "Reply with exactly these three words: Phone connection works.\n"
+        }
+      ],
+      "omitted_thinking_blocks": 0
+    },
+    {
+      "id": 779302,
+      "message_id": "msg_20261029_1_48060d40-53b1-4cc4-b230-2a202e8ae0f7",
+      "role": "user",
+      "created_timestamp": 1793266865,
+      "metadata_json": "{\"userVisible\":false,\"agentVisible\":true}",
+      "content": [
+        {
+          "type": "text",
+          "text": "<turn-context>\n<current-time>2026-10-29 11:41:00</current-time>\n<working-directory>/tmp/goose-physical-cold-send</working-directory>\ncontext: 1,048,576 tokens window; no call completed yet\n</turn-context>"
+        }
+      ],
+      "omitted_thinking_blocks": 0
+    },
+    {
+      "id": 779303,
+      "message_id": "gen-1793266865-hohfsp9cfFfqhaNivcEr",
+      "role": "assistant",
+      "created_timestamp": 1793266866,
+      "metadata_json": "{\"userVisible\":true,\"agentVisible\":true}",
+      "content": [
+        {
+          "type": "text",
+          "text": "Phone connection works."
+        }
+      ],
+      "omitted_thinking_blocks": 1
+    }
+  ],
+  "run_completions": [
+    {
+      "work_id": "d26c3b8b-09ef-4a04-b500-492cd5ae1c6f",
+      "generation": "ac8c3df7-ac2d-4604-b1bb-12ae9ada465b",
+      "run_id": "03b9e74d-dd29-43c8-b090-130b9e4c0dfa",
+      "completed_at": "2026-10-29T09:41:12.646850+00:00"
+    }
+  ],
+  "authority_identity": {
+    "captured_at": "2026-10-29T09:42:14.063274+00:00",
+    "device": {
+      "device_id": "333b2a27-9958-4195-8341-2256696e8287",
+      "name": "My iPhone",
+      "platform": "ios",
+      "role": "controller",
+      "revision": 6,
+      "scopes": [
+        "catalog.read",
+        "history.read",
+        "work.send",
+        "work.steer",
+        "work.stop",
+        "input.answer",
+        "resources.read",
+        "models.read",
+        "models.download",
+        "models.manage",
+        "providers.read",
+        "providers.manage",
+        "devices.read",
+        "devices.manage"
+      ],
+      "created_at": "2026-10-29T07:48:53.698Z",
+      "revoked_at": null
+    },
+    "mesh_enrollments": [
+      {
+        "enrollment_id": "ed48f07d-04da-4a89-999c-d287db99d22c",
+        "status": "revoked",
+        "created_at": 1793260134427,
+        "bound_node_id": "49",
+        "provider_present": false,
+        "provider_online": null,
+        "provider_last_seen": null,
+        "provider_expiry": null,
+        "cleanup_pending": false
+      },
+      {
+        "enrollment_id": "cd35b756-3562-410b-bd53-e0788159fc5d",
+        "status": "confirmed",
+        "created_at": 1793263473099,
+        "bound_node_id": "50",
+        "provider_present": true,
+        "provider_online": true,
+        "provider_last_seen": "2026-10-29T09:29:32.739161Z",
+        "provider_expiry": null,
+        "cleanup_pending": false
+      }
+    ],
+    "provider_node_count": 5
+  },
+  "verification": {
+    "matching_command_count": 1,
+    "exact_message_id_rows": 1,
+    "visible_user_rows": 1,
+    "assistant_text": [
+      "Phone connection works."
+    ],
+    "before_execution_sequence": [
+      {
+        "revision": 74059,
+        "event_kind": "session_changed",
+        "state": "idle"
+      },
+      {
+        "revision": 74060,
+        "event_kind": "command_receipt",
+        "state": "idle"
+      },
+      {
+        "revision": 74061,
+        "event_kind": "run_state",
+        "state": "running"
+      }
+    ],
+    "readonly": true,
+    "ui_proof": "Root separately observed automatically updated matching answer, Delivered receipt and empty draft without manual delivery check or resend."
+  }
+}
