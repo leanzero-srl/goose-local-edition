@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-10-29T07:43:12.377438+00:00",
+  "updated_at": "2026-10-29T08:02:00Z",
   "device": {
     "name": "Zerobarat celular",
     "model": "iPhone 17 Pro Max",
@@ -25,11 +25,15 @@
     "developer_mode": "devicectl device info details, 29 October 09:23 local",
     "apple_account": "Actual Xcode Accounts pane showed owner signed in; Signing & Capabilities then offered Register Device",
     "registration": "Register Device completed; actual Xcode panel showed Apple Development: Mihai Perdum (XMTA27328F) without registration/profile errors; decoded saved profile includes the connected phone",
-    "installation": "devicectl installed net.leanzero.goose-remote successfully; physical Device Hub screen is locked"
+    "installation": "devicectl installed net.leanzero.goose-remote successfully; physical Device Hub screen is locked",
+    "enrollment": "Owner entered emailed code; authority confirms My iPhone controller, revision 1, unrevoked, 14 scopes, confirmed mesh enrollment. Actual Settings shows My iPhone / Controller.",
+    "physical_catalog": "09:51-09:52 local actual iPhone: Cloud controller test and benchmark rows visible. Expanded sync: Gabee 55, laptop 557, workhorse 165 sessions synchronized; isolated laptop Mesh setup needed, Workmule Offline.",
+    "physical_failure": "After brief screen lock and owner unlock, opening original laptop Cloud controller test says Connect this device\u2019s embedded mesh before opening a Mac. Fleet remains Syncing fleet beyond three minutes. Source proves node == nil; precise blocked await not yet proven.",
+    "diagnostic_limit": "Console process:GooseRemote phone stream produced no matching messages during short observation and was stopped; no claim of no underlying errors."
   },
   "app_installed": true,
-  "physical_journeys": "pending phone unlock and normal Link enrollment; final native update follows UI fixes",
-  "owner_action_pending": "unlock phone and open installed Goose Remote",
+  "physical_journeys": "Enrollment and catalog visible; session access fails after brief lock/resume. Lifecycle investigation active; final update and qualification pending.",
+  "owner_action_pending": null,
   "setup_candidate": {
     "source": "15a3625e41f1de500f6b293557f06ba1b448edd7",
     "purpose": "physical enrollment setup; superseded UI corrections pending",
