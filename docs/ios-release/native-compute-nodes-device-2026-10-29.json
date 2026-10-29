@@ -32,5 +32,25 @@
     "create_control_available_on_old_owner": false,
     "observation_time_local": "2026-10-29 13:50 Europe/Bucharest",
     "actual_node_creation_proved": false
+  },
+  "physical_background_followup": {
+    "home_at_local": "13:56",
+    "reopened_at_local": "14:01",
+    "date": "2026-10-29",
+    "duration_minutes_approx": 5,
+    "same_selection_and_complete_result": true,
+    "draft_remained_blank": true,
+    "refresh_without_login_or_error": true,
+    "fresh_owner_resource_sample_at_local": "14:02",
+    "cpu_load_per_core": 0.37,
+    "memory_available_percent": 55.1,
+    "memory_capacity_gib": 128.0,
+    "network": "Wi-Fi",
+    "limits": [
+      "No lock or overnight suspension in this check",
+      "No cellular transition",
+      "Credential expiry was not independently established",
+      "No new inference"
+    ]
   }
 }
