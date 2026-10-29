@@ -54,6 +54,18 @@ Write the answers into the run's NOTES.md / parity file. A step that cannot pass
 3. **Context: the largest the model AND the machine can actually hold.**
    - Native `max_position_embeddings`, plus any rope_scaling / YaRN in the official card. Does our engine implement it
      (grep the model file)? Cloud Qwen3.8-Flash = 1M via YaRN. Open weights are 262k native.
+     Flash-Next YaRN: fork tag v0.14.3-lz.16-ple.5+, opt-in `--qwen4-rope-scaling yarn` (env
+     RAPID_MLX_QWEN4_ROPE_SCALING; `yarn:<f>`, JSON, `off`). Without it the engine still ADMITS >262k (plain
+     extrapolation; 300k needle passed both ways), so "it accepted the prompt" proves nothing. Evidence
+     /Volumes/AI-workhorse/experiments/2026-10-29-qwen4-yarn/NOTES.md (2026-10-29).
+     IN GOOSE (flash-pld-bench 707900523d, 2026-10-29): model profile key `rope_scaling: yarn` -> argv
+     `--qwen4-rope-scaling yarn` (qwen4_exp only, typo/other family fails the mount; rides the ACP DTO and the
+     desktop drafts, no form row). Pair it with `context_limit` + `GOOSE_CONTEXT_LIMIT` 409,600 on the mule.
+     Live check: /v1/models `context_window` 1,048,576 (max_model_len still prints 262,144).
+   - TRAP (2026-10-29): Flash-Next (qwen4_exp) prompt lookup is GREEDY-ONLY: its PromptLookupPolicy
+     (qwen4_exp_inject.py ~235) leaves enabled_under_sampling=False, the env can only disable, so at the card's
+     temperature 1.0 (every Gauntlet/agent run) n-gram drafts NOTHING (0 proposals / 21.5k MTP steps measured).
+     Greedy proofs (code_edit 1894/1906 accepted) do not carry over. Qualifying it needs a sampled A/B on qwen4_exp.
    - The cloud's real need: peak prompt_tokens in the cloud run's telemetry (Gauntlet sb-7.2 peaked at 322,851).
    - KV arithmetic from config.json: full-attention layers × KV heads × (k_dim+v_dim) × bytes. Examples:
      Flash-Next 24.6 KB/token; MiMo 23 KB/token. Linear/SWA layers are constant.
@@ -62,6 +74,12 @@ Write the answers into the run's NOTES.md / parity file. A step that cannot pass
    - Operating point = the largest step whose MEASURED peak stays clear of the Metal ceiling. Ceilings: workmule
      ~115 GB, workhorse ~77 GB, laptop ~115 GB, Gabee ~48 GB. Example 2026-10-29: Flash 400k peaked 96 GB on the mule
      = production; 512k at 114.7 GB = "fits, at the ceiling", not used for a 5 h run.
+   - MEASURE WITH THE APP'S EXACT ARGV: prefix cache on, `--cache-memory-percent`, `--hybrid-cache-entries 24`,
+     `--max-concurrent-requests 8`. Run a multi-turn session that GROWS to the target, not one cold request. Then set
+     GOOSE_CONTEXT_LIMIT to what the memory guard actually admits. Why, 2026-10-29: the YaRN proof
+     (`--disable-prefix-cache`, cold requests) showed 400k at 96 GB. In the Gauntlet the same model refused 241,320
+     tokens ("needs 104.8 GB, this Mac can hold 103.9 GB"; footprint 82 GB with the prefix cache), and goose compacted
+     at 59 % of the 409,600 it had been given. model-limits.json said `provider_default_unverified`.
    - Every margin names its origin (owner rule vs mine).
    - Never leave goose's default context (128k) on a model proven for more.
 4. **Speed levers on, and proven lossless:** MTP, prompt lookup (n-gram), PLE offload, prefix cache.
