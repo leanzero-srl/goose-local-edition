@@ -1,0 +1,203 @@
+{
+  "scope": "Remote compute-node definitions backend; no inference or installed app mutation.",
+  "frozen_manifest_sha256": "ec2ecc6c1363df6f6c297172c4296a7c4cb7f7015688c895237c8b45c996697c",
+  "frozen_manifest": {
+    "base_commit": "43a8589d652f72c145f57cbe667b0b9ec2a71976",
+    "head": "8762c69d386e6da8e719cc4599f7efe0b43d3afd",
+    "working_tree_uncommitted": true,
+    "files": {
+      "crates/goose-sdk-types/src/custom_requests/nodes.rs": "d70c63afcae51e118df4780c638e010c9a0bfe8ee0b8378000c01cf315dbd8c9",
+      "crates/goose/src/nodes/mod.rs": "32c0e9924b9d7dd14933906637c2685cf7740b48e7490d2a171d009a04328f7a",
+      "crates/goose/src/nodes/tests.rs": "0c0a254dd1e5c71e6da0a504686b0903f8a14e47d5f9ed9cb3fd09524bde84e7",
+      "crates/goose/src/work_control/management/mod.rs": "d58275d575efc961b9a2e682e8b8690c4a682f1325b7d4d25df68b06653087f1",
+      "crates/goose/src/work_control/management/nodes.rs": "1a5647563497af22aa9cd1e22dc947df6d4fe78396acc78100ad8d799c86c1d3",
+      "crates/goose/src/work_control/management/receipts.rs": "f23112075c2d9776c096b2e5e91b1b12fb82b41340a3b57b889052290fe7149b",
+      "crates/goose/src/work_control/management/tests.rs": "1dc5b0037a600915002c83bf23102b8659bde16dab0bf5c3cce257b53a3040c0",
+      "crates/leanzero-link/src/controller_management/mod.rs": "12db2e97c8244e197e31bc2b6efbbf8dd34a1027aae8e5fe84442a7cf43198c7",
+      "crates/leanzero-link/src/controller_management/routes.rs": "0babe10383d59d8423cd9f3866ffd1ab7db10e835dc7cc735170453dbc73d1c7",
+      "crates/goose/src/nodes/nodes.fixture.gen.rb": "dd75b6d28b79b65caad3125af3c87a337a26f31968fc1e03aff474efe0149064",
+      "crates/goose/src/nodes/nodes.fixture.json": "d36ba17b05616450e518b48e3beb0cf194ca92d9051cbb878a3715ea1c4c530c",
+      "crates/leanzero-link/tests/controller.rs": "4a4b91e8402a140a79fbf14cc10db0079ed80acd1d4b3021cecf6cef4de370c2"
+    },
+    "correction": "Five test-only CommandState assertions use matches! instead of unavailable PartialEq; production eight files unchanged.",
+    "fixture_correction": "Canonical generator emits revision0 for allfourlegacyfixtures; removal-specific refusal test rereads current revision after successfulwrite. Production unchanged."
+  },
+  "snapshot": "/tmp/goose-node-management-frozen-source",
+  "target": "/tmp/goose-node-management-target",
+  "jobs": [
+    {
+      "job": "laptop-20261029-135408-13e6",
+      "status": "done",
+      "exit": "1",
+      "started": "2026-10-29T13:54:09+0200",
+      "ended": "2026-10-29T13:54:10+0200",
+      "test_results": [],
+      "log_sha256": "a8ee5aadf8259f79a137db712e224039d17c4aa989625117febfecc4bbc0139f",
+      "sentinels": []
+    },
+    {
+      "job": "laptop-20261029-135526-e729",
+      "status": "done",
+      "exit": "101",
+      "started": "2026-10-29T13:55:26+0200",
+      "ended": "2026-10-29T13:58:01+0200",
+      "test_results": [],
+      "log_sha256": "2aa4402556bec3d08f3b0ab05adf483cebe34cb643799b7bbc89523663118364",
+      "sentinels": [
+        "FROZEN_NODE_SOURCE_VERIFIED 9 a7c4a2821d142065456e7e8b556fe35285348cda6a5c190df2599b7f5427f04e"
+      ]
+    },
+    {
+      "job": "laptop-20261029-135913-0b4c",
+      "status": "done",
+      "exit": "101",
+      "started": "2026-10-29T13:59:14+0200",
+      "ended": "2026-10-29T14:00:50+0200",
+      "test_results": [
+        "test result: FAILED. 51 passed; 2 failed; 1 ignored; 0 measured; 2382 filtered out; finished in 0.35s"
+      ],
+      "log_sha256": "fa4835d034dac086451bb5b598f25c96867277cb518ea77834d5567ac85926c6",
+      "sentinels": [
+        "FROZEN_NODE_SOURCE_VERIFIED 9 ba91bcdb3b70d42989bf75bbdced00894c14b6b851e4fbafdede6bec84a41121"
+      ]
+    },
+    {
+      "job": "laptop-20261029-140319-a0dd",
+      "status": "done",
+      "exit": "0",
+      "started": "2026-10-29T14:03:20+0200",
+      "ended": "2026-10-29T14:03:53+0200",
+      "test_results": [
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 2425 filtered out; finished in 0.52s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 154 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 53 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 55 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s"
+      ],
+      "log_sha256": "9109e19eb224852c69b4295b41a3a044cadc04804aecc59aaae3e2ce134a662b",
+      "sentinels": [
+        "FROZEN_NODE_SOURCE_VERIFIED 9 ba91bcdb3b70d42989bf75bbdced00894c14b6b851e4fbafdede6bec84a41121",
+        "NODE_MANAGEMENT_FOCUSED_GATE_PASSED"
+      ]
+    },
+    {
+      "job": "laptop-20261029-140522-16ff",
+      "status": "done",
+      "exit": "0",
+      "started": "2026-10-29T14:05:22+0200",
+      "ended": "2026-10-29T14:05:44+0200",
+      "test_results": [
+        "test result: ok. 53 passed; 0 failed; 1 ignored; 0 measured; 2382 filtered out; finished in 0.34s",
+        "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 2425 filtered out; finished in 0.50s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 154 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 53 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 55 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s"
+      ],
+      "log_sha256": "71530a6fb36c8ff6effecdae8f14190ab48e5973c7984f5335556b2fee64194d",
+      "sentinels": [
+        "FROZEN_NODE_SOURCE_VERIFIED 11 52d4aaa0554211e8217b911beebdd6881a4bd9b3620f09472b139b0cfa73ddbd",
+        "NODE_MANAGEMENT_FOCUSED_GATE_PASSED"
+      ]
+    },
+    {
+      "job": "laptop-20261029-141039-170d",
+      "status": "done",
+      "exit": "0",
+      "started": "2026-10-29T14:10:40+0200",
+      "ended": "2026-10-29T14:16:48+0200",
+      "test_results": [
+        "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s"
+      ],
+      "log_sha256": "9639793852656abd0d8389a06d0a179a884489e6d6e904386fdf1e22139d9788",
+      "sentinels": [
+        "FROZEN_NODE_SOURCE_VERIFIED 12",
+        "NODE_MANAGEMENT_SCHEMA_GENERATED",
+        "NODE_MANAGEMENT_WORKSPACE_CLIPPY_PASSED"
+      ]
+    }
+  ],
+  "result": {
+    "core": {
+      "passed": 53,
+      "failed": 0,
+      "ignored": 1,
+      "ignored_case": "adopt_a_copy_of_a_real_config (pre-existing explicit real-config opt-in)"
+    },
+    "management": {
+      "passed": 11,
+      "failed": 0
+    },
+    "http_controller": {
+      "passed": 12,
+      "failed": 0
+    },
+    "workspace_clippy": "--workspace --all-targets -- -D warnings PASS",
+    "schema": "full features; only default0 revision and staleRevision added; meta unchanged"
+  },
+  "limitations": [
+    "controller_management name filter matched zero tests in earlier jobs; it provides no controller coverage. Exact --test controller subsequently passed 12 tests.",
+    "No live mobile or installed desktop proof is claimed by these gates.",
+    "Fresh Electron packaging, signing and physical remote compute-node user-path proof remain separate."
+  ],
+  "history": [
+    "Initial snapshot verification caught two pre-43a archive files before compilation; both restored from exact43a git objects and baseline reverified.",
+    "First compile found five CommandState equality assertions; author changed assertions to matches!, no wire type change.",
+    "Next run exposed two revision fixture expectations; author updated canonical fixture generator and reread current revision after write. Production source unchanged."
+  ],
+  "storage": "Gabee exact redundant public/cache cleanup reclaimed no measured free space; no guard lowered. Root authorized laptop target; 20GiB start/10GiB end disk guards retained.",
+  "source_commit": "60998be32b57c414ec1fb54bd7ec6fe1a61ae2d9",
+  "source_tree": "57749493668fd7ee51136fc3c5afc8f4359f0cad",
+  "committed_runtime_files_verified": 1115,
+  "runtime_manifest_sha256": "143eed0d1faef586210486e8c01f7afe99b9fc9185a3dd65d801e5a33f846612",
+  "sdk_job": "laptop-20261029-141644-2833",
+  "sdk_verified": {
+    "result": "Generator, TypeScript build, test typecheck, 7/0 tests PASS",
+    "job": "laptop-20261029-141644-2833",
+    "exit": 0,
+    "log_sha256": "445993efc4823a436bf306a6dbe02dfc49df3822e8d1e5453671f1d9fea1060f"
+  },
+  "cli": {
+    "job": "laptop-20261029-141929-f70c",
+    "exit": 0,
+    "started": "2026-10-29T14:19:30+0200",
+    "ended": "2026-10-29T14:22:05+0200",
+    "path": "/tmp/goose-node-management-cli-60998be32b57/goose-gated",
+    "sha256": "a7b13a2b2071103f5427a5d1557cd01859328a406f60f1d781391fb33dd8bcd2",
+    "bytes": 465912176,
+    "exact_commit_stamp_verified": true,
+    "version_output": "3.0.2 (Cargo crate version)",
+    "build_version_env": "3.0.134",
+    "log_sha256": "7627ce0afd175b205714d90796ee968dad193b7f3b8204950206a5b13ea87e62"
+  },
+  "commands": [
+    "cargo test --locked -p goose --lib nodes::tests",
+    "cargo test --locked -p goose --lib work_control::management::",
+    "cargo test --locked -p leanzero-link --test controller",
+    "cargo run --locked -p goose --features code-mode,local-inference,aws-providers,telemetry,otel,rustls-tls,system-keyring --bin generate-acp-schema",
+    "cargo clippy --locked --workspace --all-targets -- -D warnings",
+    "GOOSE_BUILD_SHA=60998be32b57c414ec1fb54bd7ec6fe1a61ae2d9 GOOSE_BUILD_VERSION=3.0.134 cargo build --locked -p goose-cli --bin goose"
+  ],
+  "cargo_options": "All commands additionally used --config profile.dev.package.*.strip=false, CARGO_BUILD_JOBS=4, dev/test debug0, Homebrew OpenSSL, same target.",
+  "operator_sha256": {
+    "/tmp/goose-node-management-schema-clippy.sh": "ccdf07e26035610eea27ac7368674918be78b3220cf13f0ee2f79eb9460cb118",
+    "/tmp/goose-node-management-final-build.sh": "886f963038c595f051d117aba2a03011b074a14e45a8bc246ba0d0452a111eb0",
+    "/tmp/goose-node-management-verify-runtime.py": "83dfe26ebe07f78a51d2a353edf7e7f9704104da74a2b4cc8008747c2cc578aa"
+  }
+}
