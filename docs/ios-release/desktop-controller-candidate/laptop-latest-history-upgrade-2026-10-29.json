@@ -1,0 +1,113 @@
+{
+  "installation": {
+    "installed_at": "2026-10-29T06:26:00.583968+00:00",
+    "source_commit": "57419bcc521ce6f3ef0cc00dde59b735415496c3",
+    "signed_cli_sha256": "cdc357f9743cabda6b4f2a7852a5e7654be13bb7a9f5c359b99855cdd9a2c51f",
+    "rollback": "/Users/mihaiperdum/.local/share/goose-controller-rollbacks/349b242b64a4a480/Goose Swarm.app",
+    "normal_launch_requested": true,
+    "installer_profile_writes": false,
+    "launch_may_migrate_schema_to": 19,
+    "saved_login_reconnection_verified": false
+  },
+  "preservation": {
+    "checks": {
+      "session_count": true,
+      "message_count": true,
+      "session_records_sha256": true,
+      "full_message_records_sha256": true,
+      "config_sha256": true,
+      "permissions": true
+    },
+    "before": {
+      "captured_at": "2026-10-29T06:25:32.155929+00:00",
+      "profile_db": "/Users/mihaiperdum/.local/share/goose/sessions/sessions.db",
+      "permissions": {
+        "LEANZERO_LINK_ALLOW_REMOTE_EXECUTION": {
+          "on_disk": "true"
+        },
+        "LEANZERO_LINK_ALLOW_REMOTE_JOBS": {
+          "on_disk": null
+        },
+        "LEANZERO_LINK_SHARE_INFERENCE": {
+          "on_disk": null
+        }
+      },
+      "session_count": 73325,
+      "message_count": 384308,
+      "session_records_sha256": "bdaf7974cfb679b5e9f4a298fc645c4b2bd3d9eb28396da61571e16a384a6ac5",
+      "session_ids_sha256": "c962d26db1c030ebefcef3ae6914e06d6381643f9f6bfbb942e2fdd098f23aa9",
+      "message_records_sha256": "4c054ac90e2d2f077a549ce51f45bbcc3f109b1671a8b6f30e9983fee3f60cf5",
+      "full_message_records_sha256": "d0583974a7a97e4dd45f0b33c4466f790d4f2ace60bdd59fa28154b9da032ed9",
+      "latest_session_update": "2026-10-29 05:30:22",
+      "config_sha256": "08be53b4c512568ebb0efd1af4cae70866e590a83f480ee3f65660f5fc33b1f8",
+      "owned_mesh": {
+        "socket_exists": true,
+        "status_exit": 0,
+        "node_id": "33",
+        "node_key_sha256": "44c06e1a02bf4b084b148cf802fbce7ff8c194beea1e58f86f472de012d4f74f",
+        "ips": [
+          "100.64.0.1",
+          "fd7a:115c:a1e0::1"
+        ],
+        "online": true,
+        "backend_state": "Running"
+      },
+      "saved_identity_exists": true,
+      "saved_identity_mode": "0o600"
+    },
+    "after": {
+      "captured_at": "2026-10-29T06:26:00.634223+00:00",
+      "profile_db": "/Users/mihaiperdum/.local/share/goose/sessions/sessions.db",
+      "permissions": {
+        "LEANZERO_LINK_ALLOW_REMOTE_EXECUTION": {
+          "on_disk": "true"
+        },
+        "LEANZERO_LINK_ALLOW_REMOTE_JOBS": {
+          "on_disk": null
+        },
+        "LEANZERO_LINK_SHARE_INFERENCE": {
+          "on_disk": null
+        }
+      },
+      "session_count": 73325,
+      "message_count": 384308,
+      "session_records_sha256": "bdaf7974cfb679b5e9f4a298fc645c4b2bd3d9eb28396da61571e16a384a6ac5",
+      "session_ids_sha256": "c962d26db1c030ebefcef3ae6914e06d6381643f9f6bfbb942e2fdd098f23aa9",
+      "message_records_sha256": "4c054ac90e2d2f077a549ce51f45bbcc3f109b1671a8b6f30e9983fee3f60cf5",
+      "full_message_records_sha256": "d0583974a7a97e4dd45f0b33c4466f790d4f2ace60bdd59fa28154b9da032ed9",
+      "latest_session_update": "2026-10-29 05:30:22",
+      "config_sha256": "08be53b4c512568ebb0efd1af4cae70866e590a83f480ee3f65660f5fc33b1f8",
+      "owned_mesh": {
+        "socket_exists": true,
+        "status_exit": 0,
+        "node_id": "33",
+        "node_key_sha256": "44c06e1a02bf4b084b148cf802fbce7ff8c194beea1e58f86f472de012d4f74f",
+        "ips": [
+          "100.64.0.1",
+          "fd7a:115c:a1e0::1"
+        ],
+        "online": true,
+        "backend_state": "Running"
+      },
+      "saved_identity_exists": true,
+      "saved_identity_mode": "0o600"
+    }
+  },
+  "job": "laptop-20261029-082531-6328",
+  "exit": 0,
+  "saved_login": {
+    "connected": true,
+    "reconnected": true,
+    "mesh_online": true,
+    "mesh_ip": "100.64.0.1",
+    "app_pid": 77518,
+    "backend_pid": 77672
+  },
+  "ui": {
+    "desktop_latest_position": true,
+    "ipad_latest_position": true,
+    "ipad_refresh_reading_position": true,
+    "jump_to_latest": "interrupted by credential expiry error; not passed"
+  },
+  "acceptance": "held for credential expiry recovery fix"
+}
