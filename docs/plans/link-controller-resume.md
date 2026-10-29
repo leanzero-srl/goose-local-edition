@@ -1,6 +1,6 @@
 # Goose Remote continuation
 
-Updated 28 October 2026, 23:31 UTC (29 October local). This current summary supersedes historical statuses below in git history and older receipts.
+Updated 29 October 2026, 00:39 UTC (02:39 local). This current summary supersedes historical statuses below in git history and older receipts.
 
 ## Authority and non-negotiable constraints
 
@@ -66,6 +66,8 @@ WarmGabee source `/tmp/goose-controller-merged-c86a0b33/source`, target `/Users/
 Feature branch `codex/link-controller-plan` is pushed as a recoverable checkpoint; final receipt commits are pushed at the end of each meaningful update. Its push scheduled no GitHub Actions runs. Main is NOT merged/pushed. origin/main freshly checked96e85f21ad; feature includes it via58e4bd3fc3, so fast-forward possible after final acceptance. Canonical checkout has unrelated dirty skill file; do not reset/check it out. No required branchchecks, but active main-push CI schedules6heavy selfhostedStudio jobs; runnerActionsidle does NOT mean modelidle, and nice10 is not memory protection. No existing guard/delay. Do not disable CI, stop runners or seize benchmark gaps. Publish testedfeature branch if appropriate; ordinary nonforce mainpush only when it cannot interrupt protected runs. Canary/docs workflows disabled manually; no public release requested by this merge.
 
 Last23:04UTC node-probe: laptop4/4heavy slots (nightlimit), memory41%free/26.9GBabovefloor; workhorse Gauntlet35229 active with16%memoryfree/GPU84%; workmulehold98515 has95.8GB inference memory/activeCPU; Gabee0heavy42.2GBabovefloor beforeourupgrade. Re-probe AND inspect real campaign state before Studio upgrade or main CI. Neither Studio is upgraded by this task.
+
+**29 October 00:39 UTC dependency update:** the protected Studio campaign is complete. Its authoritative workhorse `~/Projects/goose-wt-mimo/HANDOFF.md`, Session14 (ending02:40EET), records final Gauntlet score0.6605, publication brun-79c4f078-8a57-41e7-a610-b8261f934d6f, ranks stopped, development app quit, installed apps restored, and holds/markers released on both Studios. Read-only process/marker checks corroborated this; node-probe reports both OK with no heavy jobs. This is campaign completion evidence, not a between-run gap. Approved Studio upgrade preparation is now active, with independent review of the legacy-release idle checks and preserved-profile rollout before installation. No Studio upgrade is claimed yet. Main remains96e85f21ad and feature8cabee0211 at live remote check. Mac UI remains locked at00:36UTC, so visible steering/native confirmation still waits for normal unlock; no repeat request was sent.
 
 ## Native and marketplace work remaining
 
