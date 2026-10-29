@@ -170,5 +170,17 @@
     "prepared_phone_draft": "Reply with exactly these three words: Phone connection works.",
     "expected_reply": "Phone connection works.",
     "phone_ui_preparation": "11:28 physical phone catalog received the new session without manual sync. Opened correct original-owner session, verified no messages, typed exact test draft, verified complete text, restored Capture Keyboard off. Send has not been pressed."
+  },
+  "cold_send_actual_ui": {
+    "observed_local": "2026-10-29 11:41",
+    "desktop_source": "43a8589d652f72c145f57cbe667b0b9ec2a71976",
+    "phone_source": "867119541e90ad12cab50e47b929088abd51b1fa",
+    "session_id": "20261029_1",
+    "cold_precondition": "Normal whole-app upgrade restart cleared agents; desktop opened only Home and Nodes, never this session. Phone sharing sheet reported saved configuration only, active connections unverified.",
+    "action": "One Send and one Allow sharing and send, exact precommitted payload. No manual delivery check, retry, or reopening.",
+    "visible_result": "One user message; Assistant Phone connection works.; Delivered to session; owner Idle; empty composer and disabled Send.",
+    "result": "PASS",
+    "independent_primary_receipt": "physical-iphone-cold-send-43a-primary-2026-10-29.json",
+    "limits": "Native scroll replacement and final native release qualification remain pending; old failed command and owner draft are preserved."
   }
 }

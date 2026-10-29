@@ -1,0 +1,29 @@
+{
+  "install": {
+    "installed_at": "2026-10-29T09:37:58.148231+00:00",
+    "source_commit": "43a8589d652f72c145f57cbe667b0b9ec2a71976",
+    "signed_cli_sha256": "f43f47848b133350cfc037c6a3fb142683688d9410e598b2652319ee65fe460c",
+    "rollback": "/Users/mihaiperdum/.local/share/goose-controller-rollbacks/cdc357f9743cabda/Goose Swarm.app",
+    "normal_launch_requested": false,
+    "installer_profile_writes": false,
+    "launch_may_migrate_schema_to": 19,
+    "saved_login_reconnection_verified": false
+  },
+  "preservation_checks": {
+    "session_count": true,
+    "message_count": true,
+    "session_records_sha256": true,
+    "full_message_records_sha256": true,
+    "config_sha256": true,
+    "permissions": true
+  },
+  "reconnect": {
+    "same_node_id": true,
+    "same_node_key": true,
+    "same_ips": true,
+    "online": true,
+    "backend_state": "Running"
+  },
+  "launch": "Normal CUA launch; original Nodes > Manage Macs showed three connected, with saved settings.",
+  "physical_phone_proof": "../physical-iphone-cold-send-43a-primary-2026-10-29.json"
+}
