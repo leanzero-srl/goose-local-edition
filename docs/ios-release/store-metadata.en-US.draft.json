@@ -21,8 +21,8 @@
     "See which Macs are available."
   ],
   "publication_holds": [
-    "Verify corrected latest-history build on actual connected iPhone/iPad UI.",
-    "Verify provider management and remaining advertised paths in final build.",
+    "Qualify remaining physical-iPad, extended-background/network and accessibility paths on the final native build; original-iPad-simulator scroll and short physical-iPhone checks already have separate passed receipts.",
+    "Complete subsequent compute-node management acceptance and reconcile any final advertised feature/version changes; provider configuration persistence and download Ready have passed baseline receipts.",
     "Use non-sensitive dedicated review/demo account for final screenshots.",
     "Publish mobile-specific privacy/support content at the linked destinations.",
     "Confirm LeanZero organization seller and final territory/export declarations.",
