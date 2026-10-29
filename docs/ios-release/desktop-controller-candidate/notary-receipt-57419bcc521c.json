@@ -1,0 +1,15 @@
+{
+  "sourceCommit": "57419bcc521ce6f3ef0cc00dde59b735415496c3",
+  "sourceTree": "159522d1223e21befb34632dbf997d3b2a2076b5",
+  "version": "3.0.134",
+  "uploadArchive": "/tmp/goose-controller-corrected-signed-57419bcc521c/Goose-Swarm-signed.zip",
+  "uploadArchiveSha256": "b1703dfda06d48ac052a5f43fdb3c952785fc4a04075bd84f0f25a56127c7872",
+  "preUploadReceiptSha256": "c3b52012c537fba7fac03bc093b4db9150e4597aa57e0f61f1683112b9e6d064",
+  "notarized": false,
+  "uploaded": true,
+  "installed": false,
+  "notarySubmissionAttemptedAt": "2026-10-29T07:10:57.736Z",
+  "notarySubmissionId": "94f23745-7c84-4e9a-a459-1961427aaea8",
+  "notaryStatus": "In Progress",
+  "lastCheckedAt": "2026-10-29T07:16:25.926Z"
+}
