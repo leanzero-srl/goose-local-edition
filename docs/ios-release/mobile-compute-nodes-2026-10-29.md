@@ -16,7 +16,7 @@ Focused native job laptop-20261029-134213-f5eb passed17 ManagementTests with0 fa
 
 Earlier job133948-20af failed before tests because the operator passed a nonexistent simulator framework directory. It was corrected without source workarounds; the failure remains in the job ledger.
 
-This receipt covers native source and focused tests only. Rust review/gates, actual upgraded owner, physical create/read/remove proof and matching signed native install remain outstanding. Neither main nor an installed app was changed by this source commit. The previously accepted Apple desktop43a artifact is unchanged.
+At the initial source commit this receipt covered native source and focused tests only. The subsequent native installation is recorded below. Rust execution gates, an upgraded owner and physical create/read/remove proof remain outstanding. Main and the previously accepted Apple desktop43a artifact remain unchanged.
 
 ## Existing management proof corrected
 
@@ -25,3 +25,5 @@ Download completion was already visually verified: latest-history-verification-2
 At13:30 the physical iPhone refreshed the original laptop's resource sample: CPUload/core0.38, memoryavailable53.8%, capacity128GiB, with a fresh relative timestamp. Model inventory was readable in portrait and landscape, then portrait was restored. No model loaded or new download requested. A physical iPad was still absent from devicectl; Goose Controller iPad is the simulator.
 
 Final native follow-up: optional local_models_error preserves a named local-storage failure while cloud/endpoint nodes remain available. MLX creation is unavailable on that failure even if a stale model ID remains selected. Independent source review passed; focused job laptop-20261029-134459-c6d7 passed18/0 with no full-log errors or invalid-size warnings. No real node has yet been created by this candidate.
+
+Native install follow-up13:46–13:50: source8762c69d386e/native tree130a11f36007 archived in job laptop-20261029-134632-0de6, exit0. Strict signing, actual phone membership, pinned mesh framework/privacy manifests and matching app dSYM passed. Installed in place on the original physical iPhone and launched through its normal icon; saved sign-in and catalog remained. Compute nodes against original laptop43a visibly says “Update Goose Swarm on this Mac to manage compute nodes from your controller.” No creation control is offered. See native-compute-nodes-device-2026-10-29.json. This proves old-owner compatibility, not successful node creation. The first install command used a mistyped archive suffix and failed before installation; the corrected exact archive path succeeded. No desktop upgrade or model inference occurred.

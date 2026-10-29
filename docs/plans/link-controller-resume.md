@@ -1,6 +1,21 @@
 # Goose Remote continuation
 
-Updated 29 October 2026, 12:09 local. This file is the current state. Earlier failures, intermediate receipts and superseded instructions are retained in [the preceding handoff](link-controller-history-through-2026-10-29-1209.md) and its linked history; do not follow its pending jobs or obsolete approvals.
+Updated 29 October 2026, 13:51 local. Read the new checkpoint below first; older sections retain prior receipts. Earlier failures, intermediate receipts and superseded instructions are retained in [the preceding handoff](link-controller-history-through-2026-10-29-1209.md) and its linked history; do not follow its pending jobs or obsolete approvals.
+
+
+## 13:51 checkpoint — compute-node requirement being completed
+
+The owner asked specifically whether nudging, downloading, creating nodes and defining providers had been tested. Existing active-steer proof is Mac→Mac plus original-account iPad simulator→real Mac. Model download includes final Ready UI and supported cleanup (latest-history-verification-2026-10-29.md). Provider creation/configured state/removal is proved with a disposable invalid endpoint, not provider inference. Physical iPhone Send/reply is separate. No physical iPad is present yet.
+
+Source audit found a real missing original feature: mobile Node setup only gave local Mac enrollment instructions, with no compute-node definition creation. This is now being implemented. Native source8762c69d386e is committed, independently reviewed, passed18 focused ManagementTests/0 failures and is installed on the physical iPhone. Archive /tmp/goose-remote-final-8762c69d386e.xcarchive; strict signature/profile/framework/privacy/dSYM verification passed. Saved login/catalog remained. At13:50 actual phone Compute nodes correctly showed Update Goose Swarm against the installed old43a Mac. No real node has been created yet. See docs/ios-release/mobile-compute-nodes-2026-10-29.md and native-compute-nodes-device-2026-10-29.json.
+
+Backend source changes are independently reviewed but NOT yet tested/committed/built. native_jump_fix owns Rust files and implementation receipt; native_expiry_recovery owns warm Gabee Rust gates/build and generated SDK coordination. Gabee is below the existing20GiB build-start floor (19.58GiB at13:47); verified obsolete public staging duplicates were deleted but APFS did not reclaim enough. Tester is checking exact redundant caches before considering a cold laptop build. Never lower the guard, remove active targets, duplicate jobs, or touch private profiles/rollbacks. No build launched as of13:51. Commit exact paths only after applicable gates.
+
+Contract: owner-authorized GET management/nodes; durable existing node_create/node_remove receipts, same ModelsManage/host-management permission. Only owner-advertised configured provider/model or complete installed local model; definition only, no model loading/inference/default changes. Pool-managed nodes read-only; removal uses exact observed fingerprint and usage checks. Local inventory failure explicitly reports local_models_error and disables MLX while cloud remains usable. Source review corrected final permission recheck after asynchronous preparation and shared node-write serialization/revision handling. Physical create/read/remove still needs tested desktop build, idle-only install and actual phone UI. Existing accepted43a Apple artifact is unchanged; never upload it again.
+
+Latest Studio readiness receipt docs/ios-release/main-studio-readiness-2026-10-29-1334.json: Workmule Gauntlet PID34970 still active, GPU86%, no completion. Workhorse owner was idle but coordinated campaign/vendor independence not established. No Studio upgrade or main push. Feature remains unmerged. Last feature push e756d90694; newer exact-path commits can be checkpoint-pushed after inspecting scope.
+
+native_auth_review is preparing reviewer access/capture runbook and reconciling obsolete release docs against actual receipts only. It must not provision accounts, publish policy or invent retention/support promises. Root owns this resume and native implementation receipt. All prior approvals persist, all inference explicitly cloud only. Current phone view is Nodes→original laptop→Compute nodes update-required screen; normal saved login works. No OTP needed.
 
 ## Authority and immediate next step
 
