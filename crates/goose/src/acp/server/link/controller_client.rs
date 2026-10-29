@@ -213,6 +213,20 @@ impl GooseAcpAgent {
                     .internal_err()?,
                 )
             }
+            "historyLatest" => {
+                let req: ControllerHistoryLatestRequest = decode(params)?;
+                let work: WorkRef = decode(req.work)?;
+                let generation: Uuid = decode(serde_json::json!(req.store_generation))?;
+                encode(
+                    serde_json::to_value(
+                        service
+                            .history_latest(&work, generation, &req.cursor, proxy().await)
+                            .await
+                            .map_err(rpc_error)?,
+                    )
+                    .internal_err()?,
+                )
+            }
             "workChanges" => {
                 let req: ControllerWorkChangesRequest = decode(params)?;
                 let work: WorkRef = decode(req.work)?;

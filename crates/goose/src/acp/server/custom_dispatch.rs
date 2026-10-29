@@ -120,6 +120,19 @@ impl GooseAcpAgent {
         .await
     }
 
+    #[custom_method(ControllerHistoryLatestRequest)]
+    async fn dispatch_controller_history_latest(
+        &self,
+        req: ControllerHistoryLatestRequest,
+    ) -> Result<ControllerResponse, agent_client_protocol::Error> {
+        self.on_controller_call(
+            "historyLatest",
+            serde_json::to_value(req)
+                .map_err(|_| agent_client_protocol::Error::invalid_params())?,
+        )
+        .await
+    }
+
     #[custom_method(ControllerWorkChangesRequest)]
     async fn dispatch_controller_work_changes(
         &self,

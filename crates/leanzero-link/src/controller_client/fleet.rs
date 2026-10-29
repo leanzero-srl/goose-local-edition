@@ -248,6 +248,37 @@ impl DesktopController {
         Ok(page)
     }
 
+    pub async fn history_latest(
+        &self,
+        work: &WorkRef,
+        generation: Uuid,
+        cursor: &str,
+        proxy: Option<MeshProxy>,
+    ) -> ClientResult<HistoryPage> {
+        let (transport, credentials) = self
+            .transport(work.owner_node_id, ControllerScope::HistoryRead, proxy)
+            .await?;
+        let page: HistoryPage = transport
+            .request(
+                Method::GET,
+                &format!("{}/history/latest", work_path(work)),
+                &[
+                    ("store_generation", generation.to_string()),
+                    ("cursor", cursor.to_owned()),
+                ],
+                &credentials.access_token,
+                None,
+            )
+            .await?;
+        if page.work != *work || page.store_generation != generation || page.work_cursor.is_empty()
+        {
+            return Err(ClientError::invalid(
+                "Owner history changed work identity or generation",
+            ));
+        }
+        Ok(page)
+    }
+
     pub async fn work_changes(
         &self,
         work: &WorkRef,

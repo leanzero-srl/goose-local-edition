@@ -329,6 +329,15 @@ impl ControllerBackend for Backend {
     ) -> Result<HistoryPage, ControllerError> {
         Err(unused())
     }
+    async fn history_latest(
+        &self,
+        _: &AuthenticatedDevice,
+        _: &WorkRef,
+        _: Uuid,
+        _: &str,
+    ) -> Result<HistoryPage, ControllerError> {
+        Err(unused())
+    }
     async fn work_changes(
         &self,
         _: &AuthenticatedDevice,

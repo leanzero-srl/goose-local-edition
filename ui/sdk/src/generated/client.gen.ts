@@ -36,6 +36,7 @@ import type {
   ConfigUpsertRequest_unstable,
   ControllerCatalogRequest_unstable,
   ControllerCommandRequest_unstable,
+  ControllerHistoryLatestRequest_unstable,
   ControllerHistoryRequest_unstable,
   ControllerHostsRequest_unstable,
   ControllerLogoutRequest_unstable,
@@ -658,6 +659,18 @@ export class GooseExtClient {
   ): Promise<ControllerResponse_unstable> {
     const raw = await this.conn.extMethod(
       "_goose/unstable/controller/history",
+      params,
+    );
+    return zControllerResponse_unstable.parse(
+      raw,
+    ) as ControllerResponse_unstable;
+  }
+
+  async controllerHistoryLatest_unstable(
+    params: ControllerHistoryLatestRequest_unstable,
+  ): Promise<ControllerResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/controller/historyLatest",
       params,
     );
     return zControllerResponse_unstable.parse(

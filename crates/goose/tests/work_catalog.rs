@@ -949,3 +949,71 @@ async fn latest_changes_coalesce_both_sources_and_resume_in_revision_order() {
     assert!(!empty.has_more);
     assert_eq!(empty.cursor, cursor);
 }
+
+#[tokio::test]
+async fn history_ordering_indexes_upgrade_existing_store_without_changing_watermark() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = SessionManager::new(root.path().to_path_buf());
+    let session = create(&manager, "existing history").await;
+    manager
+        .add_message(&session.id, &Message::assistant().with_text("retained"))
+        .await
+        .unwrap();
+    let catalog = manager.work_catalog().await.unwrap();
+    let before = catalog.watermark().await.unwrap();
+    let work = catalog.lookup_local_session(&session.id).await.unwrap();
+    let pool = direct_pool(root.path()).await;
+    for sql in [
+        "DROP INDEX controller_messages_order",
+        "DROP INDEX controller_message_versions_order",
+        "DELETE FROM schema_version WHERE version >= 19",
+        "INSERT OR IGNORE INTO schema_version(version) VALUES (18)",
+    ] {
+        sqlx::query(sql).execute(&pool).await.unwrap();
+    }
+    drop(catalog);
+    drop(manager);
+    let reopened = SessionManager::new(root.path().to_path_buf());
+    let catalog = reopened.work_catalog().await.unwrap();
+    assert_eq!(catalog.watermark().await.unwrap(), before);
+    let indexes: i64 = sqlx::query_scalar("SELECT count(*) FROM sqlite_master WHERE type='index' AND name IN ('controller_messages_order','controller_message_versions_order')")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(indexes, 2);
+    let page = catalog
+        .history_before(&work.work_id, &before, None, 2)
+        .await
+        .unwrap();
+    assert_eq!(page.records.len(), 1);
+    assert!(page.records[0].content_json.contains("retained"));
+    assert!(page.next.is_none());
+}
+
+#[tokio::test]
+async fn latest_history_includes_extreme_timestamp_and_row_id_without_sentinel_loss() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = SessionManager::new(root.path().to_path_buf());
+    let session = create(&manager, "timestamp extremes").await;
+    let pool = direct_pool(root.path()).await;
+    for (row, timestamp, id) in [
+        (1, i64::MIN, "first"),
+        (2, i64::MAX, "tied"),
+        (i64::MAX, i64::MAX, "last"),
+    ] {
+        sqlx::query("INSERT INTO messages(id,session_id,message_id,role,content_json,created_timestamp) VALUES (?, ?, ?, 'assistant', '[]', ?)")
+            .bind(row).bind(&session.id).bind(id).bind(timestamp).execute(&pool).await.unwrap();
+    }
+    let catalog = manager.work_catalog().await.unwrap();
+    let watermark = catalog.watermark().await.unwrap();
+    let work = catalog.lookup_local_session(&session.id).await.unwrap();
+    let mut before = None;
+    for expected in ["last", "tied", "first"] {
+        let page = catalog
+            .history_before(&work.work_id, &watermark, before.as_ref(), 1)
+            .await
+            .unwrap();
+        assert_eq!(page.records.len(), 1);
+        assert_eq!(page.records[0].message_id, expected);
+        before = page.next;
+    }
+    assert!(before.is_none());
+}

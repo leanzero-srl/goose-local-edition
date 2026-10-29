@@ -129,6 +129,13 @@ pub trait ControllerBackend: Send + Sync {
         generation: Uuid,
         page_token: Option<&str>,
     ) -> Result<HistoryPage, ControllerError>;
+    async fn history_latest(
+        &self,
+        device: &AuthenticatedDevice,
+        work: &WorkRef,
+        generation: Uuid,
+        cursor: &str,
+    ) -> Result<HistoryPage, ControllerError>;
     async fn work_stream(
         &self,
         device: &AuthenticatedDevice,
@@ -188,6 +195,10 @@ pub fn router(ctx: ControllerContext) -> Result<Router, ControllerError> {
         .route("/v1/controller/catalog/stream", get(catalog_stream))
         .route("/v1/controller/work/{kind}/{work_id}", get(snapshot))
         .route("/v1/controller/work/{kind}/{work_id}/history", get(history))
+        .route(
+            "/v1/controller/work/{kind}/{work_id}/history/latest",
+            get(history_latest),
+        )
         .route(
             "/v1/controller/work/{kind}/{work_id}/changes",
             get(work_changes),
@@ -417,6 +428,27 @@ async fn history(
             &work_ref(&ctx, kind, id),
             q.store_generation,
             q.page_token.as_deref(),
+        )
+        .await?;
+    device.check_fresh()?;
+    Ok(Json(result))
+}
+
+async fn history_latest(
+    State(ctx): State<ControllerContext>,
+    headers: HeaderMap,
+    Path((kind, id)): Path<(WorkKind, Uuid)>,
+    Query(q): Query<WorkChangesQuery>,
+) -> Result<Json<HistoryPage>, ControllerError> {
+    let (_, device) = authenticate(&ctx, &headers, ControllerScope::HistoryRead).await?;
+    check_generation(&ctx, q.store_generation)?;
+    let result = ctx
+        .backend
+        .history_latest(
+            &device,
+            &work_ref(&ctx, kind, id),
+            q.store_generation,
+            &q.cursor,
         )
         .await?;
     device.check_fresh()?;

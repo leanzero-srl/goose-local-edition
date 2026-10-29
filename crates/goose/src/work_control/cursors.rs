@@ -49,6 +49,11 @@ pub(crate) enum Position {
         after_timestamp: i64,
         after_row_id: i64,
     },
+    HistoryBefore {
+        work_id: Uuid,
+        before_timestamp: i64,
+        before_row_id: i64,
+    },
     ExternalLog {
         work_id: Uuid,
         offset: u64,

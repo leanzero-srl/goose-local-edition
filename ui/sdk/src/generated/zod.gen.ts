@@ -38,6 +38,12 @@ export const zControllerHistoryRequest_unstable = z.object({
     ]).optional()
 });
 
+export const zControllerHistoryLatestRequest_unstable = z.object({
+    work: z.unknown(),
+    store_generation: z.string(),
+    cursor: z.string()
+});
+
 export const zControllerWorkChangesRequest_unstable = z.object({
     work: z.unknown(),
     store_generation: z.string(),
@@ -8598,6 +8604,7 @@ export const zExtRequest = z.object({
             zControllerSyncRequest_unstable,
             zControllerOpenWorkRequest_unstable,
             zControllerHistoryRequest_unstable,
+            zControllerHistoryLatestRequest_unstable,
             zControllerWorkChangesRequest_unstable,
             zControllerCommandRequest_unstable,
             zControllerReceiptRequest_unstable,

@@ -1077,3 +1077,303 @@ async fn cursor_expiry_corruption_and_private_file_require_an_explicit_resnapsho
     error_code(f.reopen(None).await, "owner_unavailable");
     assert_eq!(std::fs::read(&key_path).unwrap(), b"corrupt");
 }
+
+fn cursor_payload(token: &str) -> Value {
+    serde_json::from_slice(
+        &URL_SAFE_NO_PAD
+            .decode(token.split_once('.').unwrap().0)
+            .unwrap(),
+    )
+    .unwrap()
+}
+
+fn signed_cursor(f: &Fixture, payload: &Value) -> String {
+    let bytes = serde_json::to_vec(payload).unwrap();
+    let key: [u8; 32] = std::fs::read(f.root.path().join("controller-cursor.key"))
+        .unwrap()
+        .try_into()
+        .unwrap();
+    format!(
+        "{}.{}",
+        URL_SAFE_NO_PAD.encode(&bytes),
+        URL_SAFE_NO_PAD.encode(blake3::keyed_hash(&key, &bytes).as_bytes())
+    )
+}
+
+#[tokio::test]
+async fn latest_history_prepends_ties_at_snapshot_revision_across_mutations() {
+    let f = Fixture::new(2, 16).await;
+    let (session, work) = f.create("latest", SessionType::User).await;
+    // Raw pages remain bounded even with invisible rows at both ends and between messages.
+    for n in 0..13 {
+        let mut message = Message::assistant()
+            .with_id(format!("m{n}"))
+            .with_text(format!("original{n}"))
+            .with_visibility(n % 2 == 1, true);
+        message.created = 100;
+        f.manager.add_message(&session.id, &message).await.unwrap();
+    }
+    let snapshot = f
+        .backend
+        .snapshot(&f.device, &work, f.generation)
+        .await
+        .unwrap();
+    let original_payload = cursor_payload(&snapshot.work_cursor);
+    let pool = f.pool().await;
+    sqlx::query("UPDATE messages SET content_json=?,created_timestamp=200,message_id='renamed' WHERE message_id='m9' AND session_id=?")
+        .bind(json!([{"type":"text","text":"later"}]).to_string()).bind(&session.id).execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM messages WHERE message_id='m7' AND session_id=?")
+        .bind(&session.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    f.manager
+        .update_message_metadata(&session.id, "m5", |mut metadata| {
+            metadata.user_visible = false;
+            metadata
+        })
+        .await
+        .unwrap();
+    let mut appended = Message::assistant()
+        .with_id("after-snapshot")
+        .with_text("new");
+    appended.created = 300;
+    f.manager.add_message(&session.id, &appended).await.unwrap();
+    let latest = f
+        .backend
+        .history_latest(&f.device, &work, f.generation, &snapshot.work_cursor)
+        .await
+        .unwrap();
+    assert_eq!(
+        latest
+            .items
+            .iter()
+            .map(|m| m.message_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["m11"]
+    );
+    assert_eq!(latest.work_cursor, snapshot.work_cursor);
+    assert_eq!(latest.revision, snapshot.history_watermark.revision);
+    let mut items = latest.items;
+    let mut next = latest.next_page_token;
+    let mut pages = 1;
+    while let Some(token) = next {
+        let payload = cursor_payload(&token);
+        for key in [
+            "owner",
+            "account",
+            "device",
+            "generation",
+            "revision",
+            "expires_at",
+        ] {
+            assert_eq!(payload[key], original_payload[key], "changed {key}");
+        }
+        assert_eq!(payload["position"]["purpose"], "history_before");
+        let page = f
+            .backend
+            .history(&f.device, &work, f.generation, Some(&token))
+            .await
+            .unwrap();
+        assert_eq!(page.revision, snapshot.history_watermark.revision);
+        assert_eq!(page.work_cursor, snapshot.work_cursor);
+        let mut older = page.items;
+        older.extend(items);
+        items = older;
+        next = page.next_page_token;
+        pages += 1;
+    }
+    assert_eq!(pages, 7);
+    assert_eq!(
+        items
+            .iter()
+            .map(|m| m.message_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["m1", "m3", "m5", "m7", "m9", "m11"]
+    );
+    for item in items {
+        assert_eq!(
+            item.message["content"][0]["text"],
+            format!("original{}", item.message_id.strip_prefix('m').unwrap())
+        );
+    }
+    // The existing initial forward endpoint still begins with the oldest raw page.
+    let forward = f
+        .backend
+        .history(&f.device, &work, f.generation, None)
+        .await
+        .unwrap();
+    assert_eq!(forward.items[0].message_id, "m1");
+    assert_eq!(
+        cursor_payload(forward.next_page_token.as_ref().unwrap())["position"]["purpose"],
+        "history_page"
+    );
+}
+
+#[tokio::test]
+async fn latest_history_rejects_wrong_cursor_binding_purpose_generation_and_expiry() {
+    let f = Fixture::new(1, 16).await;
+    let (session, work) = f.create("latest", SessionType::User).await;
+    let (_, other) = f.create("other", SessionType::User).await;
+    for n in 0..3 {
+        f.manager
+            .add_message(
+                &session.id,
+                &Message::assistant()
+                    .with_id(format!("m{n}"))
+                    .with_text("text"),
+            )
+            .await
+            .unwrap();
+    }
+    let snapshot = f
+        .backend
+        .snapshot(&f.device, &work, f.generation)
+        .await
+        .unwrap();
+    let latest = f
+        .backend
+        .history_latest(&f.device, &work, f.generation, &snapshot.work_cursor)
+        .await
+        .unwrap();
+    let older = latest.next_page_token.as_ref().unwrap();
+    error_code(
+        f.backend
+            .history_latest(&f.device, &other, f.generation, &snapshot.work_cursor)
+            .await,
+        "invalid_cursor",
+    );
+    error_code(
+        f.backend
+            .history(&f.device, &other, f.generation, Some(older))
+            .await,
+        "invalid_cursor",
+    );
+    error_code(
+        f.backend
+            .history_latest(&f.device, &work, f.generation, older)
+            .await,
+        "invalid_cursor",
+    );
+    error_code(
+        f.backend
+            .history(&f.device, &work, f.generation, Some(&snapshot.work_cursor))
+            .await,
+        "invalid_cursor",
+    );
+    let catalog = f.backend.catalog(&f.device, None).await.unwrap();
+    error_code(
+        f.backend
+            .history_latest(&f.device, &work, f.generation, &catalog.resume_cursor)
+            .await,
+        "invalid_cursor",
+    );
+    let other_device = device(f.owner, f.account, f.generation, Uuid::new_v4()).await;
+    error_code(
+        f.backend
+            .history_latest(&other_device, &work, f.generation, &snapshot.work_cursor)
+            .await,
+        "cursor_binding_mismatch",
+    );
+    error_code(
+        f.backend
+            .history(&other_device, &work, f.generation, Some(older))
+            .await,
+        "cursor_binding_mismatch",
+    );
+    for token in [&snapshot.work_cursor, older] {
+        for (field, value, code) in [
+            (
+                "expires_at",
+                json!(Utc::now().timestamp() - 1),
+                "snapshot_required",
+            ),
+            ("generation", json!(Uuid::new_v4()), "snapshot_required"),
+            ("revision", json!(i64::MAX), "cursor_ahead"),
+            ("owner", json!(Uuid::new_v4()), "cursor_binding_mismatch"),
+            ("account", json!(Uuid::new_v4()), "cursor_binding_mismatch"),
+        ] {
+            let mut payload = cursor_payload(token);
+            payload[field] = value;
+            let changed = signed_cursor(&f, &payload);
+            if token == &snapshot.work_cursor {
+                error_code(
+                    f.backend
+                        .history_latest(&f.device, &work, f.generation, &changed)
+                        .await,
+                    code,
+                );
+            } else {
+                error_code(
+                    f.backend
+                        .history(&f.device, &work, f.generation, Some(&changed))
+                        .await,
+                    code,
+                );
+            }
+        }
+    }
+    error_code(
+        f.backend
+            .history_latest(&f.device, &work, Uuid::new_v4(), &snapshot.work_cursor)
+            .await,
+        "snapshot_required",
+    );
+    let mut tampered = snapshot.work_cursor.into_bytes();
+    tampered[5] = if tampered[5] == b'A' { b'B' } else { b'A' };
+    error_code(
+        f.backend
+            .history_latest(
+                &f.device,
+                &work,
+                f.generation,
+                std::str::from_utf8(&tampered).unwrap(),
+            )
+            .await,
+        "invalid_cursor",
+    );
+}
+
+#[tokio::test]
+async fn latest_history_bounds_hidden_pages_and_finishes_without_visible_items() {
+    let f = Fixture::new(2, 16).await;
+    let (session, work) = f.create("empty", SessionType::User).await;
+    for hidden_count in [0, 7] {
+        for _ in 0..hidden_count {
+            f.manager
+                .add_message(
+                    &session.id,
+                    &Message::assistant()
+                        .with_text("secret")
+                        .with_visibility(false, true),
+                )
+                .await
+                .unwrap();
+        }
+        let snapshot = f
+            .backend
+            .snapshot(&f.device, &work, f.generation)
+            .await
+            .unwrap();
+        let page = f
+            .backend
+            .history_latest(&f.device, &work, f.generation, &snapshot.work_cursor)
+            .await
+            .unwrap();
+        assert!(page.items.is_empty());
+        assert_eq!(page.next_page_token.is_some(), hidden_count > 2);
+        let mut next = page.next_page_token;
+        let mut pages = 1;
+        while let Some(token) = next {
+            let page = f
+                .backend
+                .history(&f.device, &work, f.generation, Some(&token))
+                .await
+                .unwrap();
+            assert!(page.items.is_empty());
+            next = page.next_page_token;
+            pages += 1;
+        }
+        assert_eq!(pages, if hidden_count == 0 { 1 } else { 4 });
+    }
+}

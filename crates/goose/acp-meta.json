@@ -46,6 +46,11 @@
       "responseType": "ControllerResponse_unstable"
     },
     {
+      "method": "_goose/unstable/controller/historyLatest",
+      "requestType": "ControllerHistoryLatestRequest_unstable",
+      "responseType": "ControllerResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/controller/workChanges",
       "requestType": "ControllerWorkChangesRequest_unstable",
       "responseType": "ControllerResponse_unstable"

@@ -140,6 +140,17 @@ impl ControllerBackend for Backend {
             "fixture does not serve history",
         ))
     }
+    async fn history_latest(
+        &self,
+        _: &AuthenticatedDevice,
+        _: &WorkRef,
+        _: Uuid,
+        _: &str,
+    ) -> Result<HistoryPage, ControllerError> {
+        Err(ControllerError::unavailable(
+            "fixture does not serve history",
+        ))
+    }
     async fn work_changes(
         &self,
         _: &AuthenticatedDevice,
@@ -619,4 +630,39 @@ async fn revoked_stream_closes_while_other_device_survives_and_outage_closes_tha
     authority.unavailable.store(true, Ordering::SeqCst);
     assert_eq!(close_code(&mut other).await, 4413);
     server.abort();
+}
+
+#[tokio::test]
+async fn latest_history_route_requires_credentials_generation_and_snapshot_cursor() {
+    let (ctx, _, _) = fixture();
+    let url = format!(
+        "/v1/controller/work/chat/{}/history/latest?store_generation={}&cursor=snapshot",
+        Uuid::new_v4(),
+        ctx.receiver.store_generation
+    );
+    let wrong_generation = format!(
+        "/v1/controller/work/chat/{}/history/latest?store_generation={}&cursor=snapshot",
+        Uuid::new_v4(),
+        Uuid::new_v4()
+    );
+    let missing_cursor = url.replace("&cursor=snapshot", "");
+    let router = controller::router(ctx).unwrap();
+    for (url, token, expected) in [
+        (url.as_str(), None, StatusCode::UNAUTHORIZED),
+        (
+            wrong_generation.as_str(),
+            Some("phone"),
+            StatusCode::CONFLICT,
+        ),
+        (
+            missing_cursor.as_str(),
+            Some("phone"),
+            StatusCode::BAD_REQUEST,
+        ),
+        (url.as_str(), Some("phone"), StatusCode::SERVICE_UNAVAILABLE),
+    ] {
+        let response = router.clone().oneshot(get(url, token)).await.unwrap();
+        assert_eq!(response.status(), expected);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+    }
 }

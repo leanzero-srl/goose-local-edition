@@ -37,6 +37,7 @@ token; the controller router exposes no legacy paths.
 | GET/WS | `/v1/controller/catalog/stream?cursor=...` | `catalog.read` | `CatalogChange` frames |
 | GET | `/v1/controller/work/{kind}/{uuid}?store_generation=...` | `history.read` | `WorkSnapshot` |
 | GET | `/v1/controller/work/{kind}/{uuid}/history?store_generation=...&page_token=...` | `history.read` | `HistoryPage` |
+| GET | `/v1/controller/work/chat/{uuid}/history/latest?store_generation=...&cursor=...` | `history.read` | `HistoryPage` |
 | GET/WS | `/v1/controller/work/{kind}/{uuid}/stream?cursor=...` | `history.read` | `WorkFrame` |
 | POST | `/v1/controller/work/{kind}/{uuid}/commands` | action-specific | HTTP 202 `CommandReceipt` |
 | GET | `/v1/controller/commands/{uuid}` | `catalog.read` | device-visible `CommandReceipt` |
@@ -49,6 +50,17 @@ the serialized visible Goose message. `WorkCommand` flattens the typed enum into
 phone path. `ResourceSnapshot={load:NodeLoad,sampled_at:RFC3339}`. Failures, including
 malformed path/query extractor rejections, use `{error:{code,message,retryable}}`.
 Responses carry `Cache-Control: no-store`.
+
+Chat viewers open a snapshot, then pass its signed `work_cursor` to `history/latest`.
+The response contains the newest bounded raw page at that snapshot revision, with visible
+items returned in ascending `(created_timestamp, row_id)` order. Its `next_page_token`
+requests older rows through the existing `history` route. The token preserves the original
+principal, generation, revision and expiry. Filtering can leave an empty page with an older
+continuation; clients must honor that continuation without draining all history on open.
+The existing `history` request without a token still starts oldest-first. External log
+history retains its existing tail behavior. Expired cursors return HTTP 410
+`snapshot_required`; the distinct latest route returns 404 on owners without this feature.
+
 
 ## Authorization freshness
 

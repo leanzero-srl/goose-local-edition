@@ -94,6 +94,26 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/controller/history"
     },
+    "ControllerHistoryLatestRequest_unstable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "work": {},
+        "store_generation": {
+          "type": "string"
+        },
+        "cursor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "work",
+        "store_generation",
+        "cursor"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/controller/historyLatest"
+    },
     "ControllerWorkChangesRequest_unstable": {
       "type": "object",
       "additionalProperties": false,
@@ -20972,6 +20992,15 @@
                   ],
                   "description": "Params for _goose/unstable/controller/history",
                   "title": "ControllerHistoryRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ControllerHistoryLatestRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/controller/historyLatest",
+                  "title": "ControllerHistoryLatestRequest_unstable"
                 },
                 {
                   "allOf": [

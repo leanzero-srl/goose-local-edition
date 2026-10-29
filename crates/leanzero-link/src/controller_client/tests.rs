@@ -4,7 +4,7 @@ use crate::{
     peer_dial::MeshProxy,
 };
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -125,6 +125,20 @@ async fn history(State(f): State<Fixture>) -> Json<HistoryPage> {
         next_page_token: None,
     })
 }
+async fn history_latest(
+    State(f): State<Fixture>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Json<HistoryPage> {
+    assert_eq!(
+        query.get("cursor").map(String::as_str),
+        Some("snapshot-boundary")
+    );
+    assert_eq!(
+        query.get("store_generation"),
+        Some(&f.entry.store_generation.to_string())
+    );
+    history(State(f)).await
+}
 async fn command(
     State(f): State<Fixture>,
     Json(command): Json<WorkCommand>,
@@ -240,6 +254,10 @@ async fn two_pinned_owners_refresh_offline_cache_and_lost_ack_outbox() {
             .route("/v1/controller/catalog", get(catalog))
             .route("/v1/controller/catalog/changes", get(changes))
             .route("/v1/controller/work/chat/{id}/history", get(history))
+            .route(
+                "/v1/controller/work/chat/{id}/history/latest",
+                get(history_latest),
+            )
             .route("/v1/controller/work/chat/{id}/commands", post(command))
             .route("/v1/controller/commands/{id}", get(receipt))
             .with_state(fixture.clone());
@@ -356,6 +374,17 @@ async fn two_pinned_owners_refresh_offline_cache_and_lost_ack_outbox() {
         .await
         .unwrap();
     assert_eq!(first.history_reads.load(Ordering::SeqCst), 1);
+    assert_eq!(second.history_reads.load(Ordering::SeqCst), 0);
+    service
+        .history_latest(
+            &first.entry.work,
+            first.entry.store_generation,
+            "snapshot-boundary",
+            Some(proxy),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.history_reads.load(Ordering::SeqCst), 2);
     assert_eq!(second.history_reads.load(Ordering::SeqCst), 0);
     let command = WorkCommand {
         command_id: Uuid::new_v4(),

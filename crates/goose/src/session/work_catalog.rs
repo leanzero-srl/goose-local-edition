@@ -86,6 +86,24 @@ const LATEST_CHANGES_SQL: &str =
      UNION ALL \
      SELECT v.* FROM latest JOIN external_catalog_versions v USING (revision) ORDER BY revision";
 
+// Both branches walk ordering indexes; SQLite merges them and stops at the page limit.
+const HISTORY_BEFORE_SQL: &str =
+    "SELECT m.id AS row_id, r.message_id, r.valid_from AS revision, m.role, m.content_json, m.created_timestamp, m.metadata_json \
+     FROM messages m INDEXED BY controller_messages_order CROSS JOIN controller_message_rows r \
+     WHERE m.session_id = ?1 AND (m.created_timestamp, m.id) < (?4, ?5) \
+       AND r.row_id = m.id AND r.work_id = ?2 AND r.valid_from <= ?3 \
+     UNION ALL \
+     SELECT row_id, message_id, valid_from AS revision, role, content_json, created_timestamp, metadata_json \
+     FROM controller_message_versions INDEXED BY controller_message_versions_order \
+     WHERE work_id = ?2 AND (created_timestamp, row_id) < (?4, ?5) AND valid_from <= ?3 AND valid_to >= ?3 \
+     ORDER BY created_timestamp DESC, row_id DESC LIMIT ?6";
+
+static HISTORY_LATEST_SQL: LazyLock<String> = LazyLock::new(|| {
+    HISTORY_BEFORE_SQL
+        .replace(" AND (m.created_timestamp, m.id) < (?4, ?5)", "")
+        .replace(" AND (created_timestamp, row_id) < (?4, ?5)", "")
+});
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogPageCursor {
     pub watermark: StoreWatermark,
@@ -132,6 +150,18 @@ pub struct HistoryPage {
     pub watermark: StoreWatermark,
     pub records: Vec<HistoryRecord>,
     pub next: Option<HistoryPageCursor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryBeforeCursor {
+    pub before_timestamp: i64,
+    pub before_row_id: i64,
+}
+
+#[derive(Debug)]
+pub struct HistoryBeforePage {
+    pub records: Vec<HistoryRecord>,
+    pub next: Option<HistoryBeforeCursor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -459,6 +489,46 @@ impl WorkCatalog {
         })
     }
 
+    pub async fn history_before(
+        &self,
+        work_id: &str,
+        watermark: &StoreWatermark,
+        before: Option<&HistoryBeforeCursor>,
+        page_size: usize,
+    ) -> Result<HistoryBeforePage> {
+        let limit = page_limit(page_size)?;
+        let mut tx = self.pool.begin().await?;
+        validate_cursor(&read_watermark(&mut tx).await?, watermark)?;
+        let work = lookup_at(&mut tx, work_id, watermark.revision).await?;
+        let query = if before.is_some() {
+            HISTORY_BEFORE_SQL
+        } else {
+            HISTORY_LATEST_SQL.as_str()
+        };
+        let mut records = sqlx::query_as::<_, HistoryRecord>(query)
+            .bind(&work.local_locator)
+            .bind(work_id)
+            .bind(watermark.revision)
+            .bind(before.map(|cursor| cursor.before_timestamp))
+            .bind(before.map(|cursor| cursor.before_row_id))
+            .bind(limit)
+            .fetch_all(&mut *tx)
+            .await?;
+        let has_more = records.len() > page_size;
+        records.truncate(page_size);
+        let next = if has_more {
+            records.last().map(|record| HistoryBeforeCursor {
+                before_timestamp: record.created_timestamp,
+                before_row_id: record.row_id,
+            })
+        } else {
+            None
+        };
+        records.reverse();
+        tx.commit().await?;
+        Ok(HistoryBeforePage { records, next })
+    }
+
     pub async fn work_events(
         &self,
         work_id: &str,
@@ -721,6 +791,17 @@ pub(crate) async fn create_objects(tx: &mut Transaction<'_, Sqlite>) -> Result<(
              UPDATE work_events SET message_id = COALESCE({row}.message_id, 'row_' || {row}.id), row_id = {row}.id WHERE revision = (SELECT revision FROM controller_store WHERE singleton = 1); END", operation.to_lowercase()))
             .execute(&mut **tx).await?;
     }
+    create_history_indexes(tx).await?;
+    Ok(())
+}
+
+pub(crate) async fn create_history_indexes(tx: &mut Transaction<'_, Sqlite>) -> Result<()> {
+    for statement in [
+        "CREATE INDEX IF NOT EXISTS controller_messages_order ON messages(session_id, created_timestamp, id)",
+        "CREATE INDEX IF NOT EXISTS controller_message_versions_order ON controller_message_versions(work_id, created_timestamp, row_id, valid_from, valid_to)",
+    ] {
+        sqlx::query(statement).execute(&mut **tx).await?;
+    }
     Ok(())
 }
 
@@ -728,6 +809,52 @@ pub(crate) async fn create_objects(tx: &mut Transaction<'_, Sqlite>) -> Result<(
 mod query_plan_tests {
     use super::*;
     use sqlx::Row;
+
+    #[tokio::test]
+    async fn history_before_uses_ordered_seeks_without_sorting_the_transcript() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        for statement in [
+            "CREATE TABLE messages(id INTEGER PRIMARY KEY,session_id TEXT,role TEXT,content_json TEXT,created_timestamp INTEGER,metadata_json TEXT)",
+            "CREATE TABLE controller_message_rows(row_id INTEGER PRIMARY KEY,work_id TEXT,message_id TEXT,valid_from INTEGER)",
+            "CREATE TABLE controller_message_versions(row_id INTEGER,work_id TEXT,message_id TEXT,valid_from INTEGER,valid_to INTEGER,role TEXT,content_json TEXT,created_timestamp INTEGER,metadata_json TEXT)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+        let mut tx = pool.begin().await.unwrap();
+        create_history_indexes(&mut tx).await.unwrap();
+        tx.commit().await.unwrap();
+        let rows = sqlx::query(&format!("EXPLAIN QUERY PLAN {HISTORY_BEFORE_SQL}"))
+            .bind("session")
+            .bind("work")
+            .bind(1000_i64)
+            .bind(500_i64)
+            .bind(500_i64)
+            .bind(3_i64)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let plan = rows
+            .into_iter()
+            .map(|row| row.get::<String, _>("detail"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("Latest history query plan:\n{plan}");
+        assert!(plan.contains("MERGE (UNION ALL)"), "{plan}");
+        assert!(
+            plan.contains("controller_messages_order (session_id=? AND created_timestamp<?)"),
+            "{plan}"
+        );
+        assert!(
+            plan.contains("controller_message_versions_order (work_id=? AND "),
+            "{plan}"
+        );
+        assert!(
+            plan.contains("SEARCH r USING INTEGER PRIMARY KEY (rowid=?)"),
+            "{plan}"
+        );
+        assert!(!plan.contains("TEMP B-TREE"), "{plan}");
+        assert!(!plan.contains("SCAN "), "{plan}");
+    }
 
     #[tokio::test]
     async fn catalog_queries_use_bounded_indexes_on_bundled_sqlite() {

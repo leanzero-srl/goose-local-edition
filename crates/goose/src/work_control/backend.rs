@@ -275,6 +275,60 @@ impl GooseControllerBackend {
         Ok(record)
     }
 
+    async fn history_before(
+        &self,
+        work: &WorkRef,
+        token: &Cursor,
+        before: Option<work_catalog::HistoryBeforeCursor>,
+    ) -> Result<HistoryPage, ControllerError> {
+        let watermark = StoreWatermark {
+            generation: token.generation.to_string(),
+            revision: token.revision,
+        };
+        self.visible_work(work, &watermark).await?;
+        let page = self
+            .0
+            .catalog
+            .history_before(
+                &work.work_id.to_string(),
+                &watermark,
+                before.as_ref(),
+                self.0.policy.page_size,
+            )
+            .await
+            .map_err(store_error)?;
+        let mut items = Vec::new();
+        for record in &page.records {
+            if let Some(item) = visible_message(record)? {
+                items.push(item);
+            }
+        }
+        let next_page_token = page
+            .next
+            .map(|before| {
+                let mut next = token.clone();
+                next.position = Position::HistoryBefore {
+                    work_id: work.work_id,
+                    before_timestamp: before.before_timestamp,
+                    before_row_id: before.before_row_id,
+                };
+                self.0.signer.encode(&next)
+            })
+            .transpose()?;
+        let mut resume = token.clone();
+        resume.position = Position::WorkResume {
+            work_id: work.work_id,
+        };
+        Ok(HistoryPage {
+            work: work.clone(),
+            store_generation: token.generation,
+            revision: self.watermark(token.revision)?.revision,
+            items,
+            next_page_token,
+            work_cursor: self.0.signer.encode(&resume)?,
+        })
+    }
+
     fn entry(&self, record: &CatalogRecord) -> Result<CatalogEntry, ControllerError> {
         let kind = stored_kind(&record.kind)?;
         let state = match record.state.as_str() {
@@ -848,6 +902,29 @@ impl ControllerBackend for GooseControllerBackend {
         })
     }
 
+    async fn history_latest(
+        &self,
+        device: &AuthenticatedDevice,
+        work: &WorkRef,
+        generation: Uuid,
+        cursor: &str,
+    ) -> Result<HistoryPage, ControllerError> {
+        self.authenticate(device, ControllerScope::HistoryRead)?;
+        self.work_path(work, generation)?;
+        let token = self.decode(device, cursor)?;
+        if work.kind != WorkKind::Chat
+            || token.position
+                != (Position::WorkResume {
+                    work_id: work.work_id,
+                })
+        {
+            return Err(invalid_cursor());
+        }
+        let current = self.fence().await?;
+        self.visible_work(work, &current).await?;
+        self.history_before(work, &token, None).await
+    }
+
     async fn history(
         &self,
         device: &AuthenticatedDevice,
@@ -952,6 +1029,30 @@ impl ControllerBackend for GooseControllerBackend {
         let token = page_token
             .map(|token| self.decode(device, token))
             .transpose()?;
+        if let Some(Cursor {
+            position:
+                Position::HistoryBefore {
+                    work_id,
+                    before_timestamp,
+                    before_row_id,
+                },
+            ..
+        }) = &token
+        {
+            if *work_id != work.work_id {
+                return Err(invalid_cursor());
+            }
+            return self
+                .history_before(
+                    work,
+                    token.as_ref().ok_or_else(invalid_cursor)?,
+                    Some(work_catalog::HistoryBeforeCursor {
+                        before_timestamp: *before_timestamp,
+                        before_row_id: *before_row_id,
+                    }),
+                )
+                .await;
+        }
         let cursor = match &token {
             Some(Cursor {
                 position:

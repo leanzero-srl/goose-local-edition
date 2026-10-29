@@ -61,6 +61,15 @@ pub struct ControllerHistoryRequest {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(method = "_goose/unstable/controller/historyLatest", response = ControllerResponse)]
+#[serde(deny_unknown_fields)]
+pub struct ControllerHistoryLatestRequest {
+    pub work: serde_json::Value,
+    pub store_generation: String,
+    pub cursor: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(method = "_goose/unstable/controller/workChanges", response = ControllerResponse)]
 #[serde(deny_unknown_fields)]
 pub struct ControllerWorkChangesRequest {
