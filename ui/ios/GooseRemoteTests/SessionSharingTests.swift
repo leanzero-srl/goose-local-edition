@@ -169,6 +169,34 @@ import SwiftUI
         await store.sceneBackground()
     }
 
+    func testRejectedReceiptIsVisibleAndKeepsOriginalReceiptAndChangedDraftWithoutResend() async throws {
+        for lostAcknowledgement in [false, true] {
+            let (store, owner, _, _) = try await fixture(lostAcknowledgement: lostAcknowledgement)
+            let work = try XCTUnwrap(store.selectedWork?.entry.work)
+            store.saveDraft("The reviewed instruction", for: work)
+            await store.send(action: .send)
+            let request = try XCTUnwrap(store.sharingRequest)
+            store.saveDraft("An edited draft that must remain", for: work)
+            await owner.rejectDelivery()
+            await store.confirmSharing(request.id)
+            if lostAcknowledgement { await store.checkDelivery() }
+            XCTAssertTrue(store.errorMessage?.contains("owner rejected") == true)
+            XCTAssertTrue(store.errorMessage?.contains("stale_revision") == true)
+            XCTAssertEqual(store.pendingCommands.last?.id, request.id)
+            XCTAssertEqual(store.pendingCommands.last?.receipt?.state, .rejected)
+            XCTAssertEqual(store.draft(for: work), "An edited draft that must remain")
+            XCTAssertNil(store.unfinishedCommand)
+            XCTAssertNil(store.sharingRequest)
+            await store.checkDelivery()
+            let submissions = await owner.submissions
+            let receiptChecks = await owner.receiptChecks
+            XCTAssertEqual(submissions.count, 1)
+            XCTAssertEqual(submissions[0].payload, request.command.payload)
+            XCTAssertEqual(receiptChecks.count, lostAcknowledgement ? 1 : 0)
+            await store.sceneBackground()
+        }
+    }
+
     func testStructuredStaleRevisionRejectionAllowsNewExplicitlyReviewedCommand() async throws {
         let (store, owner, _, identity) = try await fixture()
         let host = try XCTUnwrap(store.hosts.first)
@@ -339,6 +367,8 @@ private actor SharingOwner: OwnerControllerService {
     let sharing: SessionSharingDescriptor?
     private(set) var submissions: [WorkCommand] = []
     private(set) var receiptChecks: [UUID] = []
+    private var rejectsDelivery = false
+    func rejectDelivery() { rejectsDelivery = true }
     private var submissionService: (any OwnerControllerService)?
     func useSubmissionService(_ service: any OwnerControllerService) { submissionService = service }
     private var frames: AsyncThrowingStream<WorkFrame, Error>.Continuation?
@@ -383,8 +413,8 @@ private actor SharingOwner: OwnerControllerService {
         return delivered(submissions.first { $0.commandId == commandId }!)
     }
     private func delivered(_ command: WorkCommand) -> CommandReceipt {
-        .init(commandId: command.commandId, work: command.work, authenticatedDeviceId: device, revision: 43, state: .delivered,
-              runId: command.expectedRunId, messageId: nil, inputId: command.payload.inputId, checkpointId: nil, reason: nil, updatedAt: Date())
+        .init(commandId: command.commandId, work: command.work, authenticatedDeviceId: device, revision: 43, state: rejectsDelivery ? .rejected : .delivered,
+              runId: command.expectedRunId, messageId: nil, inputId: command.payload.inputId, checkpointId: nil, reason: rejectsDelivery ? "stale_revision: work changed; refresh before issuing this command" : nil, updatedAt: Date())
     }
     func catalogEvents(cursor: String, host: HostDescriptor, credential: String) async throws -> AsyncThrowingStream<CatalogChange, Error> { AsyncThrowingStream { _ in } }
     func workEvents(work: SelectedWork, host: HostDescriptor, credential: String) async throws -> AsyncThrowingStream<WorkFrame, Error> {

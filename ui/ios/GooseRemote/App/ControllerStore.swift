@@ -452,7 +452,7 @@ final class ControllerStore {
             try local.record(pending)
             pendingRevision += 1
             if receipt.state == .delivered { clearDeliveredDraft(pending) }
-            errorMessage = nil
+            errorMessage = Self.rejectionMessage(receipt)
             if receipt.state == .delivered, selectedRef == command.work { await select(command.work) }
         } catch { errorMessage = error.localizedDescription }
     }
@@ -469,9 +469,14 @@ final class ControllerStore {
             try local.record(pending)
             pendingRevision += 1
             if receipt.state == .delivered { clearDeliveredDraft(pending) }
-            errorMessage = nil
+            errorMessage = Self.rejectionMessage(receipt)
         } catch { errorMessage = error.localizedDescription }
     }
+    private static func rejectionMessage(_ receipt: CommandReceipt) -> String? {
+        guard receipt.state == .rejected else { return nil }
+        return "The owner rejected this action. \(receipt.reason ?? "Review the session before trying again.")"
+    }
+
     private func clearDeliveredDraft(_ pending: PendingCommand) {
         let sent = pending.command.payload.content?.first?.text ?? pending.command.payload.text
         if let sent, draft(for: pending.command.work) == sent { saveDraft("", for: pending.command.work) }
