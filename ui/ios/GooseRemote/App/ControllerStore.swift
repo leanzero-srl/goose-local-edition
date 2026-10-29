@@ -340,8 +340,8 @@ final class ControllerStore {
             }
         } catch {
             if selectedRequest == request {
-                selectedError = error.localizedDescription
                 if Self.isAccessFailure(error) { streamFailed(error, epoch: accessEpoch) }
+                else { selectedError = error.localizedDescription }
             }
         }
     }
@@ -468,8 +468,8 @@ final class ControllerStore {
             resources[host.id] = sample
         } catch {
             guard epoch == accessEpoch else { return }
-            errorMessage = error.localizedDescription
             if Self.isAccessFailure(error) { streamFailed(error, epoch: epoch) }
+            else { errorMessage = error.localizedDescription }
         }
     }
     func loadMoreHistory() async {
@@ -497,8 +497,8 @@ final class ControllerStore {
             selectedHistoryPaused = wasPaused
             if Self.needsFreshHistory(error) { await select(current.entry.work, resetHistory: true) }
             else {
-                errorMessage = error.localizedDescription
                 if Self.isAccessFailure(error) { streamFailed(error, epoch: accessEpoch) }
+                else { errorMessage = error.localizedDescription }
             }
         }
     }
@@ -773,7 +773,7 @@ final class ControllerStore {
                         }
                         return
                     }
-                    selectedError = error.localizedDescription
+                    if !Self.isAccessFailure(error) { selectedError = error.localizedDescription }
                     streamFailed(error, epoch: epoch)
                 }
             }
@@ -816,13 +816,21 @@ final class ControllerStore {
         guard epoch == accessEpoch, authenticated else { return }
         guard Self.isAccessFailure(error) else { scheduleReconnect(error.localizedDescription); return }
         let mayRecover = !recoveryAttempted || (envelope?.credentials.expiresAt.timeIntervalSince1970 ?? .infinity) <= ceil(Date().timeIntervalSince1970)
+        let recovering = foreground && mayRecover && recoveryTask == nil
         accessEpoch = UUID()
         stopStreams()
-        connection = .stale(error.localizedDescription)
-        selectedError = error.localizedDescription
-        errorMessage = error.localizedDescription
-        do { try clearAuthorizedViews() } catch { errorMessage = error.localizedDescription; return }
-        guard foreground, mayRecover, recoveryTask == nil else { return }
+        connection = recovering ? .loading : .stale(error.localizedDescription)
+        selectedError = recovering ? nil : error.localizedDescription
+        errorMessage = recovering ? nil : error.localizedDescription
+        do { try clearAuthorizedViews() }
+        catch {
+            connection = .stale(error.localizedDescription)
+            selectedError = error.localizedDescription
+            errorMessage = error.localizedDescription
+            return
+        }
+        guard recovering else { return }
+        selectedLoading = selectedRef != nil
         recoveryAttempted = true
         let deniedEpoch = accessEpoch
         recoveryTask = Task { @MainActor [weak self] in
@@ -832,6 +840,7 @@ final class ControllerStore {
                 _ = try await validCredential(forceRefresh: true)
             } catch {
                 guard deniedEpoch == accessEpoch, authenticated else { return }
+                selectedLoading = false
                 connection = .stale(error.localizedDescription)
                 selectedError = error.localizedDescription
                 errorMessage = error.localizedDescription

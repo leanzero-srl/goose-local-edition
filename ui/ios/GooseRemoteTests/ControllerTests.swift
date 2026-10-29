@@ -497,6 +497,78 @@ final class OwnerWireTests: XCTestCase {
         await store.sceneBackground()
     }
 
+    private func pendingRenewal(deniedRefresh: Bool = false, denyFreshOwner: Bool = false, unavailable: Bool = false,
+                                trigger: String = "stream") async throws {
+        let (store, owner, authority, directory) = try fixture(deniedRefresh: deniedRefresh, denyFreshOwner: denyFreshOwner)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.synchronize()
+        let work = try XCTUnwrap(store.entries.first?.work)
+        let host = try XCTUnwrap(store.hosts.first)
+        await store.select(work)
+        await owner.waitForStreams()
+        await authority.pauseRefresh()
+        if unavailable { await authority.failRefresh() }
+        if trigger == "stream" { await owner.denyOriginalStreams() }
+        else {
+            await owner.denyNextRead(trigger)
+            switch trigger {
+            case "resources": await store.loadResources(host)
+            case "selection": await store.select(work)
+            case "history": await store.loadMoreHistory()
+            default: XCTFail("Unknown test read")
+            }
+        }
+        await authority.waitForPendingRefresh()
+        XCTAssertNil(store.errorMessage, "Supported renewal must not present the global denial alert")
+        XCTAssertNil(store.selectedError, "Pending renewal is not a definitive access denial")
+        XCTAssertEqual(store.connection, .loading)
+        XCTAssertTrue(store.selectedLoading)
+        XCTAssertTrue(store.entries.isEmpty)
+        XCTAssertNil(store.selectedWork)
+        XCTAssertEqual(store.selectedRef, work)
+        let disk = try LocalControllerStore(directory: directory)
+        XCTAssertTrue(disk.data.catalogs.isEmpty)
+        XCTAssertNil(disk.data.selected)
+        await owner.denyOriginalStreams()
+        await Task.yield()
+        let pendingCount = await authority.refreshes
+        XCTAssertEqual(pendingCount, 1)
+        XCTAssertNil(store.errorMessage)
+        await authority.releaseRefresh()
+        if deniedRefresh || denyFreshOwner || unavailable {
+            let message = deniedRefresh ? "Device revoked" : (denyFreshOwner ? "Still denied" : "Authority unavailable")
+            await eventually { store.errorMessage == message }
+            XCTAssertFalse(store.selectedLoading)
+            XCTAssertNotNil(store.selectedError)
+            XCTAssertTrue(store.entries.isEmpty)
+            XCTAssertNil(store.selectedWork)
+        } else {
+            await eventually { store.selectedWork?.transcript.first?.text == "authorized revision-10" && !store.syncRunning }
+            XCTAssertNil(store.errorMessage)
+            XCTAssertNil(store.selectedError)
+            XCTAssertFalse(store.selectedLoading)
+        }
+        let finalCount = await authority.refreshes
+        XCTAssertEqual(finalCount, 1)
+        await store.sceneBackground()
+    }
+
+    func testPendingRenewalHidesDeniedDataWithoutAlertThenRestoresAuthorizedReads() async throws {
+        try await pendingRenewal()
+    }
+    func testPendingRevokedRenewalShowsOnlyTheTerminalDenial() async throws {
+        try await pendingRenewal(deniedRefresh: true)
+    }
+    func testPendingUnavailableRenewalShowsTheFinalFailure() async throws {
+        try await pendingRenewal(unavailable: true)
+    }
+    func testPendingRenewalWithFreshOwnerDenialRemainsVisibleAndDoesNotLoop() async throws {
+        try await pendingRenewal(denyFreshOwner: true)
+    }
+    func testReadDenialsDoNotPublishAModalBeforeEnteringRecovery() async throws {
+        for trigger in ["resources", "selection", "history"] { try await pendingRenewal(trigger: trigger) }
+    }
+
     func testBackgroundRotationDoesNotReconnect() async throws {
         let (store, owner, authority, directory) = try fixture()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -521,6 +593,19 @@ private actor RecoveryAuthority: HTTPTransport {
     var rejectHosts = false
     var hideHosts = false
     var unavailable = false
+    var holdRefresh = false
+    var refreshGate: CheckedContinuation<Void, Never>?
+    func pauseRefresh() { holdRefresh = true }
+    func waitForPendingRefresh() async {
+        let deadline = Date().addingTimeInterval(5)
+        while refreshGate == nil && Date() < deadline { await Task.yield() }
+        XCTAssertNotNil(refreshGate)
+    }
+    func releaseRefresh() {
+        holdRefresh = false
+        refreshGate?.resume()
+        refreshGate = nil
+    }
     func rejectHostReads() { rejectHosts = true }
     func removeHosts() { hideHosts = true }
     func failRefresh() { unavailable = true }
@@ -532,6 +617,7 @@ private actor RecoveryAuthority: HTTPTransport {
         let data: Data
         if request.url!.path.hasSuffix("auth/refresh") {
             refreshes += 1
+            if holdRefresh { await withCheckedContinuation { refreshGate = $0 } }
             if unavailable {
                 status = 503; data = Data(#"{"error":{"code":"unavailable","message":"Authority unavailable"}}"#.utf8)
             } else if denied {
@@ -563,6 +649,14 @@ private actor RecoveryOwner: OwnerControllerService {
     var catalogs: [String: [AsyncThrowingStream<CatalogChange, Error>.Continuation]] = [:]
     var works: [String: [AsyncThrowingStream<WorkFrame, Error>.Continuation]] = [:]
     var holdOpening = false
+    var deniedRead: String?
+    func denyNextRead(_ kind: String) { deniedRead = kind }
+    func checkRead(_ kind: String) throws {
+        if deniedRead == kind {
+            deniedRead = nil
+            throw ControllerError.remote(403, "forbidden", "This device is no longer allowed to view this Mac.")
+        }
+    }
     var opening: CheckedContinuation<Void, Error>?
     func holdOriginalOpening() { holdOpening = true }
     func releaseOldOpening() {
@@ -598,7 +692,8 @@ private actor RecoveryOwner: OwnerControllerService {
     }
     func changes(cursor: String, host: HostDescriptor, credential: String) async throws -> CatalogChanges { throw ControllerError.remote(410, "snapshot_required", "Reload") }
     func selected(work: CatalogEntry, host: HostDescriptor, credential: String) async throws -> SelectedWork {
-        .init(entry: work, transcript: [.init(id: "message", revision: 80, role: "assistant", text: "authorized \(credential)", timestamp: nil)], pendingInputs: [], nextPageToken: nil, historyRevision: 80, workCursor: "work-80", streamRevision: 80)
+        try checkRead("selection")
+        return .init(entry: work, transcript: [.init(id: "message", revision: 80, role: "assistant", text: "authorized \(credential)", timestamp: nil)], pendingInputs: [], nextPageToken: "older", historyRevision: 80, workCursor: "work-80", streamRevision: 80)
     }
     func catalogEvents(cursor: String, host: HostDescriptor, credential: String) async throws -> AsyncThrowingStream<CatalogChange, Error> {
         let (stream, continuation) = AsyncThrowingStream<CatalogChange, Error>.makeStream()
@@ -614,8 +709,14 @@ private actor RecoveryOwner: OwnerControllerService {
         works[credential, default: []].append(continuation)
         return stream
     }
-    func history(work: CatalogEntry, pageToken: String, host: HostDescriptor, credential: String) async throws -> HistoryPage { throw ControllerError.unsupported("unused") }
-    func resources(host: HostDescriptor, credential: String) async throws -> ResourceSample { .init(sampledAt: Date(), cpuLoadPerCore: 0.5, memoryFreePercent: 50, memoryTotalGB: 64) }
+    func history(work: CatalogEntry, pageToken: String, host: HostDescriptor, credential: String) async throws -> HistoryPage {
+        try checkRead("history")
+        throw ControllerError.unsupported("unused")
+    }
+    func resources(host: HostDescriptor, credential: String) async throws -> ResourceSample {
+        try checkRead("resources")
+        return .init(sampledAt: Date(), cpuLoadPerCore: 0.5, memoryFreePercent: 50, memoryTotalGB: 64)
+    }
     func submit(_ command: WorkCommand, host: HostDescriptor, credential: String) async throws -> CommandReceipt { throw ControllerError.unsupported("unused") }
     func receipt(commandId: UUID, host: HostDescriptor, credential: String) async throws -> CommandReceipt { throw ControllerError.unsupported("unused") }
 }
