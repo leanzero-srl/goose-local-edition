@@ -64,6 +64,7 @@ Run dir /Volumes/AI-workhorse/runs/2026-10-29-longctx-pld-256k (NOTES.md). One r
 | 262,144 fits with PLE | peak 81.1 / 84.6 / 92.07 GB at 128k / 192k / 256k, active 72.25, swap flat (1,255->1,259 MB) |
 | prefill at long context | 845 / 672 / 561 tok/s, TTFT 155 / 292 / 461 s |
 | memory guard prior calibrates down | 192 -> ~8.4-9.2 B/(chunk x ctx) in the first requests; chunks stay 2,048, no halvings |
+| Gauntlet sb-7.2 local Flash-Next (PLE+MTP+PLD, 262k, thinking medium) | agent done ~5.5 h, 157 tool calls, peak 99 GB, swap flat; SCORING REFUSED "fire_d1_mutation:failed" after the candidate ledgerd hit EADDRINUSE; see /Volumes/AI-workhorse/runs/2026-10-29-longctx-pld-256k/HANDOFF.md |
 
 ## Engine facts (verified in /Users/workhorse/Projects/Rapid-MLX-wt-offload @ v0.14.3-lz.14, READ-ONLY)
 - spec_decode/mtp/generator.py `_effective_prompt_lookup_policy`: env read per request; MIN>=2,
