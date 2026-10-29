@@ -1,0 +1,104 @@
+{
+  "captured_at": "2026-10-29T08:58:29.101466+00:00",
+  "command": {
+    "command_id": "11a2f615-a9a3-4f0a-9700-60124f002e8c",
+    "work": {
+      "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+      "kind": "chat",
+      "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020"
+    },
+    "expected_store_generation": "ac8c3df7-ac2d-4604-b1bb-12ae9ada465b",
+    "expected_revision": 74052,
+    "expected_run_id": null,
+    "action": "send",
+    "payload": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Physical iPhone check 2026-10-29. Reply: Phone connection works."
+        }
+      ]
+    }
+  },
+  "receipt": {
+    "command_id": "11a2f615-a9a3-4f0a-9700-60124f002e8c",
+    "work": {
+      "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+      "kind": "chat",
+      "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020"
+    },
+    "authenticated_device_id": "333b2a27-9958-4195-8341-2256696e8287",
+    "revision": 74052,
+    "state": "rejected",
+    "run_id": "d5bcffc1-26d9-4e54-983c-1573cdc5a9a8",
+    "message_id": "controller_0d133a33-717e-4396-9d0c-28c5f83eb7d5_333b2a27-9958-4195-8341-2256696e8287_11a2f615-a9a3-4f0a-9700-60124f002e8c",
+    "input_id": null,
+    "checkpoint_id": null,
+    "reason": "stale_revision: work changed; refresh before issuing this command",
+    "updated_at": "2026-10-29T08:47:38.759508Z"
+  },
+  "catalog_versions": [
+    {
+      "revision": 74052,
+      "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020",
+      "kind": "chat",
+      "local_locator": "20261028_1",
+      "title": "Cloud controller test",
+      "working_dir": "/Users/mihaiperdum",
+      "session_type": "user",
+      "state": "idle",
+      "current_run_id": null,
+      "archived": 0,
+      "updated_at": "2026-10-29T05:30:22.000Z",
+      "deleted": 0,
+      "event_kind": "command_receipt"
+    },
+    {
+      "revision": 74053,
+      "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020",
+      "kind": "chat",
+      "local_locator": "20261028_1",
+      "title": "Cloud controller test",
+      "working_dir": "/Users/mihaiperdum",
+      "session_type": "user",
+      "state": "idle",
+      "current_run_id": null,
+      "archived": 0,
+      "updated_at": "2026-10-29T08:47:35.000Z",
+      "deleted": 0,
+      "event_kind": "session_changed"
+    },
+    {
+      "revision": 74054,
+      "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020",
+      "kind": "chat",
+      "local_locator": "20261028_1",
+      "title": "Cloud controller test",
+      "working_dir": "/Users/mihaiperdum",
+      "session_type": "user",
+      "state": "idle",
+      "current_run_id": null,
+      "archived": 0,
+      "updated_at": "2026-10-29T08:47:38.000Z",
+      "deleted": 0,
+      "event_kind": "session_changed"
+    },
+    {
+      "revision": 74055,
+      "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020",
+      "kind": "chat",
+      "local_locator": "20261028_1",
+      "title": "Cloud controller test",
+      "working_dir": "/Users/mihaiperdum",
+      "session_type": "user",
+      "state": "idle",
+      "current_run_id": null,
+      "archived": 0,
+      "updated_at": "2026-10-29T08:47:38.000Z",
+      "deleted": 0,
+      "event_kind": "command_receipt"
+    }
+  ],
+  "matching_message_id_rows": 0,
+  "notes": "Read-only. Initial admission passed because owner persisted command; rejection occurs during dispatch after prepare. Exact config contents at74052 not retained by catalog history, so two write callsites are source-correlated, not independently field-identified from DB."
+}
