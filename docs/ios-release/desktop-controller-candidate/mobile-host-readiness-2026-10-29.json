@@ -1,0 +1,53 @@
+{
+  "captured_at": "2026-10-29T01:01:04.964198+00:00",
+  "account_id": "0d133a33-717e-4396-9d0c-28c5f83eb7d5",
+  "policy_sha256": "f2c2235585cb17dbb58620102335ffac4c7f286545ca2cbe8c47495276233dcf",
+  "policy_isolates_accounts": true,
+  "same_account_provider_nodes": [
+    {
+      "node_id": "33",
+      "online": true,
+      "matched_confirmed_roles": [
+        "host"
+      ],
+      "activated_host": true,
+      "expiry": null,
+      "tags": []
+    },
+    {
+      "node_id": "36",
+      "online": true,
+      "matched_confirmed_roles": [
+        "host"
+      ],
+      "activated_host": true,
+      "expiry": null,
+      "tags": []
+    },
+    {
+      "node_id": "45",
+      "online": true,
+      "matched_confirmed_roles": [
+        "host"
+      ],
+      "activated_host": true,
+      "expiry": null,
+      "tags": []
+    },
+    {
+      "node_id": "47",
+      "online": true,
+      "matched_confirmed_roles": [
+        "host"
+      ],
+      "activated_host": true,
+      "expiry": null,
+      "tags": []
+    }
+  ],
+  "legacy_mints": {
+    "in_flight": 0,
+    "unexpired": false
+  },
+  "scope": "Read-only provider and authority verification. The prior usable legacy host blocker is absent; actual iPad enrollment and UI journeys have not yet been verified."
+}
