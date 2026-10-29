@@ -1,4 +1,5 @@
 //! Management shares the owner's session database and the desktop's real service paths.
+mod nodes;
 mod providers;
 mod receipts;
 #[cfg(test)]
@@ -11,7 +12,8 @@ use leanzero_link::{
     controller::ControllerError,
     controller_auth::{AuthenticatedDevice, DispatchAuthorization},
     controller_management::{
-        ManagedProviders, ManagementAction, ManagementBackend, ManagementCommand, ManagementReceipt,
+        ManagedNodes, ManagedProviders, ManagementAction, ManagementBackend, ManagementCommand,
+        ManagementReceipt,
     },
     controller_wire::ControllerScope,
     state::{MlxControl, MlxOp},
@@ -107,8 +109,16 @@ impl GooseManagement {
             )
         })
     }
-    async fn execute(&self, action: ManagementAction) -> Result<Option<String>, ControllerError> {
+    async fn execute(
+        &self,
+        action: ManagementAction,
+        authorization: &DispatchAuthorization,
+    ) -> Result<Option<String>, ControllerError> {
         match action {
+            action
+            @ (ManagementAction::NodeCreate { .. } | ManagementAction::NodeRemove { .. }) => {
+                self.execute_node(action, authorization).await
+            }
             ManagementAction::Download { repo_id } => self
                 .mlx(MlxOp::Download, json!({"repoId":repo_id}))
                 .await
@@ -136,10 +146,20 @@ impl ManagementBackend for GooseManagement {
         if (self.enabled)() {
             scopes.extend([
                 ControllerScope::ModelsDownload,
+                ControllerScope::ModelsManage,
                 ControllerScope::ProvidersManage,
             ]);
         }
         scopes
+    }
+    async fn nodes(&self, device: &AuthenticatedDevice) -> Result<ManagedNodes, ControllerError> {
+        self.authenticate(device, ControllerScope::ModelsRead)?;
+        self.fence().await?;
+        let mut inventory = self.node_inventory().await?;
+        if !device.scopes().contains(&ControllerScope::ModelsManage) {
+            inventory.capabilities.clear();
+        }
+        Ok(inventory)
     }
     async fn models(&self, device: &AuthenticatedDevice) -> Result<Value, ControllerError> {
         self.authenticate(device, ControllerScope::ModelsRead)?;

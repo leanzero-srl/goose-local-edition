@@ -5,6 +5,7 @@
       "name": "fresh: auto chats, pool builds",
       "config": {
         "version": 1,
+        "revision": 0,
         "defs": [
 
         ],
@@ -26,6 +27,7 @@
       "name": "every node kind and way, two strategies",
       "config": {
         "version": 1,
+        "revision": 0,
         "defs": [
           {
             "id": "27b-both",
@@ -202,6 +204,7 @@
       "name": "new chats on one node",
       "config": {
         "version": 1,
+        "revision": 0,
         "defs": [
           {
             "id": "flash-here",
@@ -237,6 +240,7 @@
       "name": "a chat's own node set beside a named strategy",
       "config": {
         "version": 1,
+        "revision": 0,
         "defs": [
           {
             "id": "27b-both",

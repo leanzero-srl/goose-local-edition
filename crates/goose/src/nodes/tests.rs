@@ -919,6 +919,7 @@ fn dropping_a_node_in_a_write_is_refused_removal_goes_through_remove_node() {
             .unwrap()
             .written
     );
+    let mut next = read(&t.config, Ok("Mac".into())).unwrap().config;
     next.defs.retain(|d| d.id != "sonnet");
     let out = write(&t.config, next, facts(&engine)).unwrap();
     assert_eq!(
@@ -2024,4 +2025,142 @@ fn adopt_a_copy_of_a_real_config() {
         before,
         "the read wrote the config"
     );
+}
+
+#[test]
+fn remote_definition_mutations_fence_stale_desktop_config_and_remove_only_exact_unused_def() {
+    let t = test_config("active_provider: anthropic\n");
+    let engine = no_engine();
+    let original = read(&t.config, Ok("Mac".into())).unwrap().config;
+    let added = create_definition(&t.config, sonnet("remote-proof"), facts(&engine)).unwrap();
+    assert!(added.written);
+    assert_eq!(added.read.config.revision, 1);
+    let mut stale = original;
+    stale.for_new_chats = NodesForNewChats::Node {
+        id: "remote-proof".into(),
+    };
+    assert!(!write(&t.config, stale, facts(&engine)).unwrap().written);
+    let selected = added
+        .read
+        .config
+        .defs
+        .iter()
+        .find(|d| d.id == "remote-proof")
+        .unwrap();
+    let fingerprint = definition_revision(selected).unwrap();
+    let mut edited = added.read.config.clone();
+    edited.defs[0].name = "Changed on desktop".into();
+    assert!(write(&t.config, edited, facts(&engine)).unwrap().written);
+    assert!(
+        !remove_definition(&t.config, "remote-proof", &fingerprint, 0, facts(&engine))
+            .unwrap()
+            .written
+    );
+    let current = read(&t.config, Ok("Mac".into())).unwrap();
+    let fingerprint = definition_revision(&current.config.defs[0]).unwrap();
+    assert!(
+        !remove_definition(&t.config, "remote-proof", &fingerprint, 1, facts(&engine))
+            .unwrap()
+            .written
+    );
+    assert!(
+        remove_definition(&t.config, "remote-proof", &fingerprint, 0, facts(&engine))
+            .unwrap()
+            .written
+    );
+    // A stale desktop write cannot resurrect the removed node or change a default.
+    assert!(
+        !write(&t.config, current.config, facts(&engine))
+            .unwrap()
+            .written
+    );
+    assert!(read(&t.config, Ok("Mac".into())).unwrap().nodes.is_empty());
+    assert_eq!(
+        t.config.get_param::<String>("active_provider").unwrap(),
+        "anthropic"
+    );
+}
+
+#[test]
+fn concurrent_definition_adds_and_chat_set_update_keep_both_nodes() {
+    let t = test_config("");
+    std::thread::scope(|scope| {
+        for id in ["first-remote", "second-remote"] {
+            let config = &t.config;
+            scope.spawn(move || {
+                let engine = no_engine();
+                let mut def = sonnet(id);
+                def.name = id.into();
+                assert!(
+                    create_definition(config, def, facts(&engine))
+                        .unwrap()
+                        .written
+                );
+            });
+        }
+    });
+    let engine = no_engine();
+    let before = read(&t.config, Ok("Mac".into())).unwrap();
+    assert_eq!(before.nodes.len(), 2);
+    let mut stale = before.config.clone();
+    stale.defs[0].name = "Stale desktop rename".into();
+    let changed = set_chat_nodes(
+        &t.config,
+        set_chat("chat-fixture", &["first-remote"], false),
+        facts(&engine),
+    )
+    .unwrap();
+    assert!(changed.written);
+    let refused = write(&t.config, stale, facts(&engine)).unwrap();
+    assert!(!refused.written);
+    assert_eq!(refused.refusals[0].code, NodesRefusalCode::StaleRevision);
+    assert!(chat_set_for(&refused.read.config, "chat-fixture").is_some());
+}
+
+#[test]
+fn remote_remove_rejects_pool_and_strategy_nodes_without_cascading() {
+    let t = test_config(POOL_YAML);
+    let engine = no_engine();
+    let read = read(&t.config, Ok("Mac".into())).unwrap();
+    let pooled = &read.config.defs[0];
+    assert!(
+        !remove_definition(
+            &t.config,
+            &pooled.id,
+            &definition_revision(pooled).unwrap(),
+            0,
+            facts(&engine)
+        )
+        .unwrap()
+        .written
+    );
+    let added = create_definition(&t.config, sonnet("remote-proof"), facts(&engine)).unwrap();
+    assert!(added.written);
+    assert!(
+        set_chat_nodes(
+            &t.config,
+            set_chat("chat-fixture", &["remote-proof"], false),
+            facts(&engine)
+        )
+        .unwrap()
+        .written
+    );
+    let def = added
+        .read
+        .config
+        .defs
+        .iter()
+        .find(|d| d.id == "remote-proof")
+        .unwrap();
+    let removed = remove_definition(
+        &t.config,
+        &def.id,
+        &definition_revision(def).unwrap(),
+        0,
+        facts(&engine),
+    )
+    .unwrap();
+    assert!(!removed.written);
+    assert!(chat_set_for(&removed.read.config, "chat-fixture").is_some());
+    assert!(removed.read.config.declined.is_empty());
 }

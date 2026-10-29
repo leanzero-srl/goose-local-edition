@@ -27,6 +27,8 @@ impl ControllerAuthority for Authority {
 struct DownloadProbe {
     pool: Pool<Sqlite>,
     calls: AtomicUsize,
+    models_unavailable: AtomicBool,
+    models_gate: std::sync::Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
 }
 #[async_trait]
 impl MlxControl for DownloadProbe {
@@ -46,6 +48,21 @@ impl MlxControl for DownloadProbe {
                 assert_eq!(request, json!({"repoId":"fixture/model"}));
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 Ok(json!({}))
+            }
+            MlxOp::ModelsList => {
+                if self.models_unavailable.load(Ordering::SeqCst) {
+                    return Err(MlxControlError::Failed(
+                        "private-storage-path-do-not-expose".into(),
+                    ));
+                }
+                let gate = self.models_gate.lock().unwrap().clone();
+                if let Some((started, release)) = gate {
+                    started.notify_one();
+                    release.notified().await;
+                }
+                Ok(
+                    json!({"models":[{"id":"fixture-installed","complete":true},{"id":"fixture-partial","complete":false}]}),
+                )
             }
             MlxOp::DownloadProgress => Ok(
                 json!({"progress":{"state":"downloading","totalBytes":100,"downloadedBytes":40}}),
@@ -103,6 +120,7 @@ impl Fixture {
                     ControllerScope::CatalogRead,
                     ControllerScope::ModelsRead,
                     ControllerScope::ModelsDownload,
+                    ControllerScope::ModelsManage,
                     ControllerScope::ProvidersManage,
                     ControllerScope::ProvidersRead,
                 ],
@@ -124,6 +142,8 @@ impl Fixture {
         let probe = Arc::new(DownloadProbe {
             pool: pool.clone(),
             calls: AtomicUsize::new(0),
+            models_gate: std::sync::Mutex::new(None),
+            models_unavailable: AtomicBool::new(false),
         });
         let enabled = Arc::new(AtomicBool::new(true));
         let flag = enabled.clone();
@@ -451,4 +471,229 @@ async fn management_real_custom_provider_uses_existing_store_and_registry() {
     assert!(crate::providers::get_from_registry(&id).await.is_ok());
     crate::config::declarative_providers::remove_custom_provider(&id).unwrap();
     crate::providers::refresh_custom_providers().await.unwrap();
+}
+
+#[tokio::test]
+async fn management_node_create_read_remove_is_owner_scoped_and_idempotent() {
+    use leanzero_link::controller_management::ManagedNodeKind;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().to_string_lossy().to_string();
+    let _env = env_lock::lock_env([("GOOSE_PATH_ROOT", Some(path.as_str()))]);
+    let provider = providers::execute(ManagementAction::ProviderCreate {
+        engine: "openai".into(),
+        display_name: "Node management fixture".into(),
+        api_url: "https://node-fixture.invalid".into(),
+        api_key: None,
+        models: vec!["fixture-model".into()],
+        requires_auth: false,
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    let fixture = Fixture::new().await;
+    let before = crate::nodes::read(crate::config::Config::global(), Ok("Fixture".into()))
+        .unwrap()
+        .config;
+    let mut command = fixture.command();
+    command.action = ManagementAction::NodeCreate {
+        id: "remote-endpoint-proof".into(),
+        name: "Remote endpoint proof".into(),
+        kind: ManagedNodeKind::Endpoint,
+        model: "fixture-model".into(),
+        provider: Some(provider.clone()),
+    };
+    fixture
+        .service
+        .accept(
+            &fixture.device,
+            command.clone(),
+            fixture.auth(ControllerScope::ModelsManage),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture.settled(command.command_id).await.state,
+        CommandState::Delivered
+    ));
+    let repeated = fixture
+        .service
+        .accept(
+            &fixture.device,
+            command.clone(),
+            fixture.auth(ControllerScope::ModelsManage),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(repeated.state, CommandState::Delivered));
+    let inventory = fixture.service.nodes(&fixture.device).await.unwrap();
+    assert_eq!(inventory.local_models, vec!["fixture-installed"]);
+    let node = inventory
+        .nodes
+        .iter()
+        .find(|n| n.id == "remote-endpoint-proof")
+        .unwrap();
+    assert!(node.editable);
+    assert_eq!(node.model.as_deref(), Some("fixture-model"));
+    let after = crate::nodes::read(crate::config::Config::global(), Ok("Fixture".into()))
+        .unwrap()
+        .config;
+    assert_eq!(after.defs.len(), before.defs.len() + 1);
+    assert_eq!(after.for_new_chats, before.for_new_chats);
+    assert_eq!(after.for_builds, before.for_builds);
+    assert_eq!(after.strategies, before.strategies);
+    assert_eq!(fixture.probe.calls.load(Ordering::SeqCst), 0);
+    let mut remove = fixture.command();
+    remove.action = ManagementAction::NodeRemove {
+        id: node.id.clone(),
+        expected_definition_revision: "old".into(),
+    };
+    fixture
+        .service
+        .accept(
+            &fixture.device,
+            remove.clone(),
+            fixture.auth(ControllerScope::ModelsManage),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture.settled(remove.command_id).await.state,
+        CommandState::Rejected
+    ));
+    fixture
+        .probe
+        .models_unavailable
+        .store(true, Ordering::SeqCst);
+    let unavailable = fixture.service.nodes(&fixture.device).await.unwrap();
+    assert!(unavailable.local_models.is_empty() && unavailable.local_models_error.is_some());
+    assert!(!unavailable.supported_kinds.contains(&ManagedNodeKind::Mlx));
+    assert!(unavailable.nodes.iter().any(|n| n.id == node.id));
+    assert!(!serde_json::to_string(&unavailable)
+        .unwrap()
+        .contains("private-storage-path"));
+    remove.command_id = Uuid::new_v4();
+    remove.action = ManagementAction::NodeRemove {
+        id: node.id.clone(),
+        expected_definition_revision: node.definition_revision.clone(),
+    };
+    fixture
+        .service
+        .accept(
+            &fixture.device,
+            remove.clone(),
+            fixture.auth(ControllerScope::ModelsManage),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        fixture.settled(remove.command_id).await.state,
+        CommandState::Delivered
+    ));
+    assert!(!fixture
+        .service
+        .nodes(&fixture.device)
+        .await
+        .unwrap()
+        .nodes
+        .iter()
+        .any(|n| n.id == node.id));
+    fixture.enabled.store(false, Ordering::SeqCst);
+    assert!(fixture
+        .service
+        .accept(
+            &fixture.device,
+            command,
+            fixture.auth(ControllerScope::ModelsManage)
+        )
+        .await
+        .is_err());
+    assert!(fixture
+        .service
+        .nodes(&fixture.device)
+        .await
+        .unwrap()
+        .capabilities
+        .is_empty());
+    crate::config::declarative_providers::remove_custom_provider(&provider).unwrap();
+    crate::providers::refresh_custom_providers().await.unwrap();
+}
+
+#[tokio::test]
+async fn management_node_revocation_and_host_toggle_during_model_preparation_prevent_write() {
+    use leanzero_link::controller_management::ManagedNodeKind;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().to_string_lossy().to_string();
+    let _env = env_lock::lock_env([("GOOSE_PATH_ROOT", Some(path.as_str()))]);
+    for revoked in [false, true] {
+        let fixture = Fixture::new().await;
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        *fixture.probe.models_gate.lock().unwrap() = Some((started.clone(), release.clone()));
+        let mut command = fixture.command();
+        command.action = ManagementAction::NodeCreate {
+            id: "denied-after-preparation".into(),
+            name: "Must not exist".into(),
+            kind: ManagedNodeKind::Mlx,
+            model: "fixture-installed".into(),
+            provider: None,
+        };
+        fixture
+            .service
+            .accept(
+                &fixture.device,
+                command.clone(),
+                fixture.auth(ControllerScope::ModelsManage),
+            )
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+            .await
+            .unwrap();
+        if revoked {
+            fixture.authority.active.store(false, Ordering::SeqCst);
+        } else {
+            fixture.enabled.store(false, Ordering::SeqCst);
+        }
+        release.notify_one();
+        assert!(matches!(
+            fixture.settled(command.command_id).await.state,
+            CommandState::Rejected
+        ));
+        assert!(
+            !crate::nodes::read(crate::config::Config::global(), Ok("Fixture".into()))
+                .unwrap()
+                .config
+                .defs
+                .iter()
+                .any(|d| d.id == "denied-after-preparation")
+        );
+    }
+}
+
+#[tokio::test]
+async fn management_node_inventory_does_not_advertise_writes_to_read_only_controller() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().to_string_lossy().to_string();
+    let _env = env_lock::lock_env([("GOOSE_PATH_ROOT", Some(path.as_str()))]);
+    let mut fixture = Fixture::new().await;
+    Arc::get_mut(&mut fixture.authority)
+        .unwrap()
+        .lease
+        .scopes
+        .retain(|s| *s != ControllerScope::ModelsManage);
+    let device = authorize(
+        fixture.authority.as_ref(),
+        "fixture",
+        &fixture.binding,
+        ControllerScope::ModelsRead,
+    )
+    .await
+    .unwrap();
+    assert!(fixture
+        .service
+        .nodes(&device)
+        .await
+        .unwrap()
+        .capabilities
+        .is_empty());
 }

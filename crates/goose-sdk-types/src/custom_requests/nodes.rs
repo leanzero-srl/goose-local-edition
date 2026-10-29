@@ -290,6 +290,9 @@ pub enum NodesForBuilds {
 #[serde(rename_all = "camelCase")]
 pub struct NodesConfig {
     pub version: u32,
+    /// Optimistic revision of this owner process's shared node configuration.
+    #[serde(default)]
+    pub revision: u64,
     #[serde(default)]
     pub defs: Vec<NodeDef>,
     #[serde(default)]
@@ -312,6 +315,7 @@ impl Default for NodesConfig {
     fn default() -> Self {
         Self {
             version: NODES_CONFIG_VERSION,
+            revision: 0,
             defs: Vec::new(),
             strategies: Vec::new(),
             declined: Vec::new(),
@@ -376,6 +380,7 @@ pub struct NodesRefusal {
 #[serde(rename_all = "camelCase")]
 pub enum NodesRefusalCode {
     UnsupportedVersion,
+    StaleRevision,
     /// An id is empty or carries `:` or `@`, the model-id grammar's delimiters.
     BadId,
     DuplicateId,

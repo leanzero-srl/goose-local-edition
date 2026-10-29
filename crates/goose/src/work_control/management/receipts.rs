@@ -118,7 +118,7 @@ impl GooseManagement {
                 if service.save_receipt(&receipt).await.is_err() {
                     return;
                 }
-                match service.execute(command.action).await {
+                match service.execute(command.action, &authorization).await {
                     Ok(target) => {
                         receipt.state = CommandState::Delivered;
                         if let Some(target) = target {

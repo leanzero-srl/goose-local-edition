@@ -9,6 +9,7 @@ use axum::{
 
 pub(crate) fn router() -> Router<ControllerContext> {
     Router::new()
+        .route("/v1/controller/management/nodes", get(nodes))
         .route("/v1/controller/management/models", get(models))
         .route("/v1/controller/management/downloads", get(download))
         .route("/v1/controller/management/providers", get(providers))
@@ -26,6 +27,15 @@ fn backend(
             false,
         )
     })
+}
+async fn nodes(
+    State(ctx): State<ControllerContext>,
+    headers: HeaderMap,
+) -> Result<Json<ManagedNodes>, ControllerError> {
+    let (_, device) = authenticate(&ctx, &headers, ControllerScope::ModelsRead).await?;
+    let result = backend(&ctx)?.nodes(&device).await?;
+    device.check_fresh()?;
+    Ok(Json(result))
 }
 async fn models(
     State(ctx): State<ControllerContext>,

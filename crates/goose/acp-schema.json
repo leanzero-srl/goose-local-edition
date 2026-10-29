@@ -16024,6 +16024,12 @@
           "type": "integer",
           "minimum": 0
         },
+        "revision": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "Optimistic revision of this owner process's shared node configuration."
+        },
         "defs": {
           "type": "array",
           "items": {
@@ -16717,6 +16723,7 @@
           "type": "string",
           "enum": [
             "unsupportedVersion",
+            "staleRevision",
             "duplicateId",
             "duplicateName",
             "emptyName",

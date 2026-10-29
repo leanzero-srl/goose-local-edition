@@ -41,6 +41,18 @@ pub enum ManagementAction {
     DownloadResume {
         repo_id: String,
     },
+    NodeCreate {
+        id: String,
+        name: String,
+        kind: ManagedNodeKind,
+        model: String,
+        #[serde(default)]
+        provider: Option<String>,
+    },
+    NodeRemove {
+        id: String,
+        expected_definition_revision: String,
+    },
     ProviderConfigure {
         provider_id: String,
         fields: BTreeMap<String, String>,
@@ -60,6 +72,8 @@ pub enum ManagementAction {
 impl ManagementAction {
     pub fn name(&self) -> &'static str {
         match self {
+            Self::NodeCreate { .. } => "node_create",
+            Self::NodeRemove { .. } => "node_remove",
             Self::Download { .. } => "download",
             Self::DownloadCancel { .. } => "download_cancel",
             Self::DownloadPause { .. } => "download_pause",
@@ -70,6 +84,7 @@ impl ManagementAction {
     }
     pub fn required_scope(&self) -> ControllerScope {
         match self {
+            Self::NodeCreate { .. } | Self::NodeRemove { .. } => ControllerScope::ModelsManage,
             Self::Download { .. }
             | Self::DownloadCancel { .. }
             | Self::DownloadPause { .. }
@@ -81,6 +96,7 @@ impl ManagementAction {
     }
     pub fn target(&self) -> &str {
         match self {
+            Self::NodeCreate { id, .. } | Self::NodeRemove { id, .. } => id,
             Self::Download { repo_id }
             | Self::DownloadCancel { repo_id }
             | Self::DownloadPause { repo_id }
@@ -121,9 +137,52 @@ pub struct ManagedProvider {
 pub struct ManagedProviders {
     pub providers: Vec<ManagedProvider>,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedNodeKind {
+    Cloud,
+    Endpoint,
+    Mlx,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedNode {
+    pub id: String,
+    pub name: String,
+    pub kind: ManagedNodeKind,
+    pub model: Option<String>,
+    pub provider: Option<String>,
+    pub macs: Vec<String>,
+    pub editable: bool,
+    pub definition_revision: String,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeProviderChoice {
+    pub id: String,
+    pub display_name: String,
+    pub models: Vec<String>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedNodes {
+    pub nodes: Vec<ManagedNode>,
+    pub providers: Vec<NodeProviderChoice>,
+    pub local_models: Vec<String>,
+    pub local_models_error: Option<String>,
+    pub capabilities: Vec<String>,
+    pub supported_kinds: Vec<ManagedNodeKind>,
+}
+
 #[async_trait]
 pub trait ManagementBackend: Send + Sync {
     fn scopes(&self) -> Vec<ControllerScope>;
+    async fn nodes(&self, _device: &AuthenticatedDevice) -> Result<ManagedNodes, ControllerError> {
+        Err(ControllerError::new(
+            axum::http::StatusCode::NOT_IMPLEMENTED,
+            "nodes_unavailable",
+            "Update the owner Mac to manage compute nodes",
+            false,
+        ))
+    }
     async fn models(
         &self,
         device: &AuthenticatedDevice,

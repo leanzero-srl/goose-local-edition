@@ -20,6 +20,10 @@ pub mod seam;
 pub mod served;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::Mutex;
+
+// ACP and controller mutations share this owner process. External profile editors are not covered.
+static MUTATIONS: Mutex<()> = Mutex::new(());
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
@@ -912,7 +916,29 @@ pub fn write(
     incoming: NodesConfig,
     facts: WriteFacts,
 ) -> Result<NodesWriteResponse> {
+    let _guard = MUTATIONS
+        .lock()
+        .map_err(|_| anyhow!("node mutation lock unavailable"))?;
+    write_locked(config, incoming, facts)
+}
+
+fn write_locked(
+    config: &Config,
+    incoming: NodesConfig,
+    facts: WriteFacts,
+) -> Result<NodesWriteResponse> {
     let current = read(config, facts.this_mac.clone())?;
+    if incoming.revision != current.config.revision {
+        return Ok(NodesWriteResponse {
+            written: false,
+            refusals: vec![refusal(
+                NodesRefusalCode::StaleRevision,
+                None,
+                "Node configuration changed; refresh before saving".into(),
+            )],
+            read: current,
+        });
+    }
     let incoming = match read_pool(config) {
         Ok(view) => {
             let mut notes = Vec::new();
@@ -953,7 +979,7 @@ fn store(
     let pool = read_pool(config);
     let mut notes = Vec::new();
     let mac = mac_name_for_adoption(facts.this_mac.clone(), &mut notes);
-    let incoming = match &pool {
+    let mut incoming = match &pool {
         Ok(view) => adopt(view.as_ref(), incoming, &mac).config,
         Err(_) => incoming,
     };
@@ -978,6 +1004,11 @@ fn store(
             read: current,
         });
     }
+    incoming.revision = current
+        .config
+        .revision
+        .checked_add(1)
+        .ok_or_else(|| anyhow!("node revision exhausted"))?;
     config
         .set_param(CONFIG_KEY, &incoming)
         .map_err(|e| anyhow!("the nodes could not be saved ({e})"))?;
@@ -1027,6 +1058,17 @@ fn take_out_of_chat_sets(config: &mut NodesConfig, node: &str) {
 }
 
 pub fn remove_node(
+    config: &Config,
+    req: RemoveNode,
+    facts: WriteFacts,
+) -> Result<NodesWriteResponse> {
+    let _guard = MUTATIONS
+        .lock()
+        .map_err(|_| anyhow!("node mutation lock unavailable"))?;
+    remove_node_locked(config, req, facts)
+}
+
+fn remove_node_locked(
     config: &Config,
     req: RemoveNode,
     facts: WriteFacts,
@@ -1295,6 +1337,9 @@ pub fn set_chat_nodes(
     req: SetChatNodes,
     facts: WriteFacts,
 ) -> Result<NodesWriteResponse> {
+    let _guard = MUTATIONS
+        .lock()
+        .map_err(|_| anyhow!("node mutation lock unavailable"))?;
     let current = read(config, facts.this_mac.clone())?;
     let mut next = current.config.clone();
     let existing = next
@@ -1392,6 +1437,9 @@ pub fn remove_strategy(
     req: RemoveStrategy,
     facts: WriteFacts,
 ) -> Result<NodesWriteResponse> {
+    let _guard = MUTATIONS
+        .lock()
+        .map_err(|_| anyhow!("node mutation lock unavailable"))?;
     use NodesRefusalCode as C;
     let current = read(config, facts.this_mac.clone())?;
     let mut next = current.config.clone();
@@ -1447,6 +1495,76 @@ pub fn remove_strategy(
     }
     let previous = current.config.for_new_chats.clone();
     store(config, next, &previous, facts, &mut refusals, current)
+}
+
+/// A fingerprint contains no provider secrets or surrounding strategy/chat configuration.
+pub fn definition_revision(def: &NodeDef) -> Result<String> {
+    Ok(blake3::hash(&serde_json::to_vec(def)?).to_hex().to_string())
+}
+
+pub fn create_definition(
+    config: &Config,
+    def: NodeDef,
+    facts: WriteFacts,
+) -> Result<NodesWriteResponse> {
+    let _guard = MUTATIONS
+        .lock()
+        .map_err(|_| anyhow!("node mutation lock unavailable"))?;
+    let current = read(config, facts.this_mac.clone())?;
+    let mut incoming = current.config;
+    incoming.defs.push(def);
+    write_locked(config, incoming, facts)
+}
+
+/// Remote removal may remove only an unchanged, unused user definition; it never cascades.
+pub fn remove_definition(
+    config: &Config,
+    id: &str,
+    expected: &str,
+    live_sessions: u32,
+    facts: WriteFacts,
+) -> Result<NodesWriteResponse> {
+    let _guard = MUTATIONS
+        .lock()
+        .map_err(|_| anyhow!("node mutation lock unavailable"))?;
+    let current = read(config, facts.this_mac.clone())?;
+    let allowed = current
+        .config
+        .defs
+        .iter()
+        .find(|d| d.id == id)
+        .map(|d| {
+            Ok::<_, anyhow::Error>(
+                d.origin == NodeOrigin::User
+                    && d.pool_device.is_none()
+                    && definition_revision(d)? == expected,
+            )
+        })
+        .transpose()?
+        .unwrap_or(false);
+    if !allowed {
+        return Ok(NodesWriteResponse {
+            written: false,
+            refusals: vec![refusal(
+                NodesRefusalCode::StaleRevision,
+                Some(id),
+                "Definition changed or is not a removable user node".into(),
+            )],
+            read: current,
+        });
+    }
+    remove_node_locked(
+        config,
+        RemoveNode {
+            id,
+            also_from_strategies: false,
+            also_from_chat_node_sets: false,
+            and_new_chats_auto: false,
+            acknowledged_sessions: None,
+            live_sessions,
+        },
+        facts,
+    )
 }
 
 #[cfg(test)]

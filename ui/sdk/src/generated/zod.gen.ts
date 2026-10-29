@@ -6942,6 +6942,7 @@ export const zNodesForBuilds = z.union([
  */
 export const zNodesConfig = z.object({
     version: z.number().int().gte(0),
+    revision: z.number().int().gte(0).optional().default(0),
     defs: z.array(zNodeDef).optional().default([]),
     strategies: z.array(zNodeStrategy).optional().default([]),
     declined: z.array(z.string()).optional().default([]),
@@ -7007,6 +7008,7 @@ export const zNodesWriteRequest_unstable = z.object({
 
 export const zNodesRefusalCode = z.union([
     z.literal('unsupportedVersion'),
+    z.literal('staleRevision'),
     z.literal('duplicateId'),
     z.literal('duplicateName'),
     z.literal('emptyName'),

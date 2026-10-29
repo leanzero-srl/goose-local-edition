@@ -193,16 +193,16 @@ chat_sets = [
 end
 
 configs = [
-  { 'name' => 'fresh: auto chats, pool builds', 'config' => { 'version' => 1, 'defs' => [], 'strategies' => [], 'declined' => [],
+  { 'name' => 'fresh: auto chats, pool builds', 'config' => { 'version' => 1, 'revision' => 0, 'defs' => [], 'strategies' => [], 'declined' => [],
                                                               'forNewChats' => { 'kind' => 'auto' }, 'forBuilds' => { 'kind' => 'pool' } } },
   { 'name' => 'every node kind and way, two strategies', 'config' => {
-    'version' => 1, 'defs' => [split_mlx, flash, remote, tensor, pool_mlx, cloud, endpoint], 'strategies' => [everyday, quick],
+    'version' => 1, 'revision' => 0, 'defs' => [split_mlx, flash, remote, tensor, pool_mlx, cloud, endpoint], 'strategies' => [everyday, quick],
     'declined' => ['old-cloud'], 'forNewChats' => { 'kind' => 'strategy', 'id' => 'everyday' },
     'forBuilds' => { 'kind' => 'strategy', 'id' => 'quick' } } },
-  { 'name' => 'new chats on one node', 'config' => { 'version' => 1, 'defs' => [flash], 'strategies' => [], 'declined' => [],
+  { 'name' => 'new chats on one node', 'config' => { 'version' => 1, 'revision' => 0, 'defs' => [flash], 'strategies' => [], 'declined' => [],
                                                      'forNewChats' => { 'kind' => 'node', 'id' => 'flash-here' }, 'forBuilds' => { 'kind' => 'pool' } } },
   { 'name' => 'a chat\'s own node set beside a named strategy', 'config' => {
-    'version' => 1, 'defs' => [split_mlx, cloud], 'strategies' => [everyday, chat_sets[2]['strategy']], 'declined' => [],
+    'version' => 1, 'revision' => 0, 'defs' => [split_mlx, cloud], 'strategies' => [everyday, chat_sets[2]['strategy']], 'declined' => [],
     'forNewChats' => { 'kind' => 'strategy', 'id' => 'everyday' }, 'forBuilds' => { 'kind' => 'pool' } } }
 ]
 

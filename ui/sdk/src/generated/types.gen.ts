@@ -6762,6 +6762,10 @@ export type NodesReadResponse_unstable = {
  */
 export type NodesConfig = {
     version: number;
+    /**
+     * Optimistic revision of this owner process's shared node configuration.
+     */
+    revision?: number;
     defs?: Array<NodeDef>;
     strategies?: Array<NodeStrategy>;
     /**
@@ -7004,7 +7008,7 @@ export type NodesRefusal = {
     liveSessions?: number | null;
 };
 
-export type NodesRefusalCode = 'unsupportedVersion' | 'duplicateId' | 'duplicateName' | 'emptyName' | 'missingModel' | 'missingProvider' | 'poolNodeOwnsModel' | 'placementMismatch' | 'badMacs' | 'unknownNode' | 'unknownStrategy' | 'emptyChain' | 'zeroWeight' | 'noRoleSet' | 'inheritanceCycle' | 'sharesTwoWays' | 'nodeInUse' | 'nodeIsForNewChats' | 'strategyIsForNewChats' | 'strategyIsForBuilds' | 'liveSessionsNotAcknowledged' | 'removedOutsideRemoveNode' | 'buildIneligible' | 'badId' | 'duplicateEntry' | 'chatNodeSetNotShared' | 'badChatNodeSet' | 'nodeInChatNodeSets';
+export type NodesRefusalCode = 'unsupportedVersion' | 'staleRevision' | 'duplicateId' | 'duplicateName' | 'emptyName' | 'missingModel' | 'missingProvider' | 'poolNodeOwnsModel' | 'placementMismatch' | 'badMacs' | 'unknownNode' | 'unknownStrategy' | 'emptyChain' | 'zeroWeight' | 'noRoleSet' | 'inheritanceCycle' | 'sharesTwoWays' | 'nodeInUse' | 'nodeIsForNewChats' | 'strategyIsForNewChats' | 'strategyIsForBuilds' | 'liveSessionsNotAcknowledged' | 'removedOutsideRemoveNode' | 'buildIneligible' | 'badId' | 'duplicateEntry' | 'chatNodeSetNotShared' | 'badChatNodeSet' | 'nodeInChatNodeSets';
 
 /**
  * Remove a node. Refused while a strategy uses it (unless `alsoFromStrategies`) or while new

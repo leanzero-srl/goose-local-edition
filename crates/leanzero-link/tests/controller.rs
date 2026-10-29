@@ -10,6 +10,7 @@ use leanzero_link::controller_auth::{
     authorize, AuthenticatedDevice, AuthorizationError, ControllerAuthority, DispatchAuthorization,
     ReceiverBinding,
 };
+use leanzero_link::controller_management::*;
 use leanzero_link::controller_wire::*;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -55,6 +56,7 @@ struct Backend {
     host: HostDescriptor,
     generation: Uuid,
     dispatched: AtomicUsize,
+    management: Option<Arc<dyn ManagementBackend>>,
 }
 
 fn cursor(backend: &Backend) -> CatalogCursor {
@@ -67,6 +69,9 @@ fn cursor(backend: &Backend) -> CatalogCursor {
 
 #[async_trait]
 impl ControllerBackend for Backend {
+    fn management(&self) -> Option<Arc<dyn ManagementBackend>> {
+        self.management.clone()
+    }
     fn host(&self) -> HostDescriptor {
         self.host.clone()
     }
@@ -252,6 +257,7 @@ fn fixture() -> (ControllerContext, Arc<Authority>, Arc<Backend>) {
     let backend = Arc::new(Backend {
         generation: receiver.store_generation,
         dispatched: AtomicUsize::new(0),
+        management: None,
         host: HostDescriptor {
             owner_node_id: receiver.owner_node_id,
             name: "Fixture host".into(),
@@ -664,5 +670,219 @@ async fn latest_history_route_requires_credentials_generation_and_snapshot_curso
         let response = router.clone().oneshot(get(url, token)).await.unwrap();
         assert_eq!(response.status(), expected);
         assert_eq!(response.headers()["cache-control"], "no-store");
+    }
+}
+
+struct NodeManagementProbe(AtomicUsize);
+#[async_trait]
+impl ManagementBackend for NodeManagementProbe {
+    fn scopes(&self) -> Vec<ControllerScope> {
+        vec![ControllerScope::ModelsRead, ControllerScope::ModelsManage]
+    }
+    async fn nodes(&self, device: &AuthenticatedDevice) -> Result<ManagedNodes, ControllerError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(ManagedNodes {
+            nodes: vec![ManagedNode {
+                id: "fixture".into(),
+                name: "Fixture".into(),
+                kind: ManagedNodeKind::Endpoint,
+                model: Some("fixture-model".into()),
+                provider: Some("fixture-provider".into()),
+                macs: vec![],
+                editable: true,
+                definition_revision: "fixture-revision".into(),
+            }],
+            providers: vec![],
+            local_models: vec![],
+            local_models_error: None,
+            capabilities: if device.scopes().contains(&ControllerScope::ModelsManage) {
+                vec!["node_create".into(), "node_remove".into()]
+            } else {
+                vec![]
+            },
+            supported_kinds: vec![ManagedNodeKind::Cloud, ManagedNodeKind::Endpoint],
+        })
+    }
+    async fn models(&self, _: &AuthenticatedDevice) -> Result<serde_json::Value, ControllerError> {
+        Err(ControllerError::unavailable("unused fixture path"))
+    }
+    async fn download(
+        &self,
+        _: &AuthenticatedDevice,
+        _: &str,
+    ) -> Result<serde_json::Value, ControllerError> {
+        Err(ControllerError::unavailable("unused fixture path"))
+    }
+    async fn providers(
+        &self,
+        _: &AuthenticatedDevice,
+    ) -> Result<ManagedProviders, ControllerError> {
+        Err(ControllerError::unavailable("unused fixture path"))
+    }
+    async fn receipt(
+        &self,
+        _: &AuthenticatedDevice,
+        _: Uuid,
+    ) -> Result<ManagementReceipt, ControllerError> {
+        Err(ControllerError::unavailable("unused fixture path"))
+    }
+    async fn accept(
+        &self,
+        device: &AuthenticatedDevice,
+        command: ManagementCommand,
+        authorization: DispatchAuthorization,
+    ) -> Result<ManagementReceipt, ControllerError> {
+        authorization.recheck().await?;
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(ManagementReceipt {
+            command_id: command.command_id,
+            owner_node_id: command.owner_node_id,
+            authenticated_device_id: device.device_id(),
+            action: command.action.name().into(),
+            state: CommandState::Accepted,
+            target: command.action.target().into(),
+            reason: None,
+            updated_at: Utc::now(),
+        })
+    }
+}
+fn node_management_fixture(
+    scopes: Vec<ControllerScope>,
+) -> (ControllerContext, Arc<NodeManagementProbe>) {
+    let (mut ctx, authority, backend) = fixture();
+    let mut lease = authority.lease.clone();
+    lease.scopes.extend(scopes.clone());
+    ctx.authority = Arc::new(Authority {
+        revoked: AtomicBool::new(false),
+        unavailable: AtomicBool::new(false),
+        deny_dispatch: AtomicBool::new(false),
+        calls: AtomicUsize::new(0),
+        lease,
+    });
+    let mut host = backend.host.clone();
+    host.capabilities.extend(scopes);
+    let probe = Arc::new(NodeManagementProbe(AtomicUsize::new(0)));
+    ctx.backend = Arc::new(Backend {
+        host,
+        generation: backend.generation,
+        dispatched: AtomicUsize::new(0),
+        management: Some(probe.clone()),
+    });
+    (ctx, probe)
+}
+#[tokio::test]
+async fn compute_node_get_route_passes_authenticated_scope_and_allowlisted_projection() {
+    for manage in [false, true] {
+        let mut scopes = vec![ControllerScope::ModelsRead];
+        if manage {
+            scopes.push(ControllerScope::ModelsManage);
+        }
+        let (ctx, probe) = node_management_fixture(scopes);
+        let router = controller::router(ctx).unwrap();
+        let path = "/v1/controller/management/nodes";
+        for (token, expected) in [
+            (None, StatusCode::UNAUTHORIZED),
+            (Some("revoked"), StatusCode::FORBIDDEN),
+        ] {
+            assert_eq!(
+                router
+                    .clone()
+                    .oneshot(get(path, token))
+                    .await
+                    .unwrap()
+                    .status(),
+                expected
+            );
+        }
+        assert_eq!(probe.0.load(Ordering::SeqCst), 0);
+        let response = router.oneshot(get(path, Some("phone"))).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["nodes"][0]["definition_revision"], "fixture-revision");
+        assert_eq!(value["nodes"][0]["kind"], "endpoint");
+        assert_eq!(
+            value["capabilities"].as_array().unwrap().len(),
+            if manage { 2 } else { 0 }
+        );
+        assert!(value.get("config").is_none());
+        assert_eq!(probe.0.load(Ordering::SeqCst), 1);
+    }
+    let (ctx, probe) = node_management_fixture(vec![]);
+    assert_eq!(
+        controller::router(ctx)
+            .unwrap()
+            .oneshot(get("/v1/controller/management/nodes", Some("phone")))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(probe.0.load(Ordering::SeqCst), 0);
+}
+#[tokio::test]
+async fn compute_node_commands_route_checks_write_scope_generation_and_typed_payloads() {
+    for manage in [false, true] {
+        let scopes = if manage {
+            vec![ControllerScope::ModelsManage]
+        } else {
+            vec![ControllerScope::ModelsRead]
+        };
+        let (ctx, probe) = node_management_fixture(scopes);
+        let envelope = serde_json::json!({"command_id":Uuid::new_v4(), "owner_node_id":ctx.receiver.owner_node_id,
+            "expected_store_generation":ctx.receiver.store_generation, "action":"node_create",
+            "payload":{"id":"fixture", "name":"Fixture", "kind":"endpoint", "model":"fixture-model", "provider":"fixture-provider"}});
+        let router = controller::router(ctx).unwrap();
+        let send = |body: serde_json::Value| {
+            Request::builder()
+                .method("POST")
+                .uri("/v1/controller/management/commands")
+                .header("Authorization", "Bearer phone")
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap()
+        };
+        for action in ["node_create", "node_remove"] {
+            let mut body = envelope.clone();
+            body["action"] = serde_json::json!(action);
+            if action == "node_remove" {
+                body["payload"] = serde_json::json!({"id":"fixture", "expected_definition_revision":"fixture-revision"});
+            }
+            assert_eq!(
+                router.clone().oneshot(send(body)).await.unwrap().status(),
+                if manage {
+                    StatusCode::ACCEPTED
+                } else {
+                    StatusCode::FORBIDDEN
+                }
+            );
+        }
+        let calls = probe.0.load(Ordering::SeqCst);
+        assert_eq!(calls, if manage { 2 } else { 0 });
+        let mut extra = envelope.clone();
+        extra["payload"]["keep_loaded"] = serde_json::json!(true);
+        assert_eq!(
+            router.clone().oneshot(send(extra)).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+        let mut remove = envelope.clone();
+        remove["action"] = serde_json::json!("node_remove");
+        remove["payload"] = serde_json::json!({"id":"fixture"});
+        assert_eq!(
+            router.clone().oneshot(send(remove)).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+        if manage {
+            let mut stale = envelope;
+            stale["expected_store_generation"] = serde_json::json!(Uuid::new_v4());
+            assert_eq!(
+                router.oneshot(send(stale)).await.unwrap().status(),
+                StatusCode::CONFLICT
+            );
+        }
+        assert_eq!(probe.0.load(Ordering::SeqCst), calls);
     }
 }
