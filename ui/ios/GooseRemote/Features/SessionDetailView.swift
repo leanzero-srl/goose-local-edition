@@ -5,6 +5,10 @@ enum SessionScrollTarget: Hashable {
     case latest
 }
 
+private extension TranscriptItem {
+    var sessionScrollTarget: SessionScrollTarget { .message(id) }
+}
+
 struct SessionScrollState {
     var position = ScrollPosition(id: SessionScrollTarget.latest, anchor: .bottom)
     private(set) var followsLatest = true
@@ -143,7 +147,7 @@ struct SessionDetailView: View {
                     if selected.transcript.isEmpty {
                         Notice(title: "No visible messages", message: selected.hasMoreHistory ? "There are no visible messages in this page. Load older history to continue." : "The owner returned no visible messages for this session.", icon: work.kind.icon)
                     }
-                    ForEach(selected.transcript) { item in
+                    ForEach(selected.transcript, id: \.sessionScrollTarget) { item in
                         StudioPanel {
                             HStack {
                                 Text(item.role.capitalized).font(.caption.weight(.bold)).foregroundStyle(Studio.secondaryInk)
@@ -151,7 +155,7 @@ struct SessionDetailView: View {
                                 if let timestamp = item.timestamp { Text(timestamp, style: .time).font(.caption).foregroundStyle(Studio.secondaryInk) }
                             }
                             Text(item.text).font(work.kind == .shellJob ? .system(.body, design: .monospaced) : .body).textSelection(.enabled)
-                        }.id(SessionScrollTarget.message(item.id))
+                        }
                             .onGeometryChange(for: Bool?.self) { geometry in
                                 guard item.id == selected.transcript.first?.id else { return nil }
                                 return geometry.frame(in: .scrollView(axis: .vertical)).minY >= 0
