@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-10-29T08:02:00Z",
+  "updated_at": "2026-10-29T08:23:00Z",
   "device": {
     "name": "Zerobarat celular",
     "model": "iPhone 17 Pro Max",
@@ -25,14 +25,14 @@
     "developer_mode": "devicectl device info details, 29 October 09:23 local",
     "apple_account": "Actual Xcode Accounts pane showed owner signed in; Signing & Capabilities then offered Register Device",
     "registration": "Register Device completed; actual Xcode panel showed Apple Development: Mihai Perdum (XMTA27328F) without registration/profile errors; decoded saved profile includes the connected phone",
-    "installation": "devicectl installed net.leanzero.goose-remote successfully; physical Device Hub screen is locked",
+    "installation": "Development source 52d17d7cae84 installed in place successfully at 10:20 local; devicectl installation result /tmp/goose-phone-lifecycle-52d-install.json. Actual Home launch at10:21 and Settings retained My iPhone / Controller without another code.",
     "enrollment": "Owner entered emailed code; authority confirms My iPhone controller, revision 1, unrevoked, 14 scopes, confirmed mesh enrollment. Actual Settings shows My iPhone / Controller.",
     "physical_catalog": "09:51-09:52 local actual iPhone: Cloud controller test and benchmark rows visible. Expanded sync: Gabee 55, laptop 557, workhorse 165 sessions synchronized; isolated laptop Mesh setup needed, Workmule Offline.",
     "physical_failure": "After brief screen lock and owner unlock, opening original laptop Cloud controller test says Connect this device\u2019s embedded mesh before opening a Mac. Fleet remains Syncing fleet beyond three minutes. Source proves node == nil; precise blocked await not yet proven.",
-    "diagnostic_limit": "Console process:GooseRemote phone stream produced no matching messages during short observation and was stopped; no claim of no underlying errors."
+    "diagnostic_limit": "Initial old-build Console stream was empty; the updated development build has a positive-control stream and nine MeshLifecycle events captured through Console actual UI."
   },
   "app_installed": true,
-  "physical_journeys": "Enrollment and catalog visible; session access fails after brief lock/resume. Lifecycle investigation active; final update and qualification pending.",
+  "physical_journeys": "Enrollment and old catalog visible. Old setup build lock/resume session access failed. Updated development app preserves identity but cold startup waits in embedded node.up; final qualification pending.",
   "owner_action_pending": null,
   "setup_candidate": {
     "source": "15a3625e41f1de500f6b293557f06ba1b448edd7",
@@ -59,5 +59,29 @@
       "signingStyle": "automatic",
       "upload": false
     }
-  ]
+  ],
+  "development_candidate": {
+    "source": "52d17d7cae84fd8a5278a8e53cc9f8cf5235b67c",
+    "receipt": "native-lifecycle-development-build-2026-10-29.json",
+    "app_path": "/tmp/goose-phone-lifecycle-52d17d7cae84/GooseRemote.app",
+    "installed": true,
+    "final_release": false
+  },
+  "development_startup_observation": {
+    "launch_local": "2026-10-29T10:21:22+02:00",
+    "sync_operation": "FFC0E6A6-B6C5-4902-B45E-20C6F5FB4CD7",
+    "prepare_operation": "3CB42D25-2A2B-401E-925A-46AB7A70D4E1",
+    "stages": [
+      "10:21:22.571129 sync-begin",
+      "10:21:22.672703 sync-wait-shutdown",
+      "10:21:22.706871 scene-active",
+      "10:21:23.519702 sync-prepare-begin",
+      "10:21:23.519834 prepare-begin",
+      "10:21:23.519851 node-close-join",
+      "10:21:23.519890 prepare-closed-prior",
+      "10:21:23.523545 node-create",
+      "10:21:23.532784 node-up-begin"
+    ],
+    "result": "As10:22 no subsequent MeshLifecycle stage; actual phone remains Syncing fleet / Checking your Macs. The blocking await is now localized to node.up on cold launch; its underlying cause remains under investigation."
+  }
 }
