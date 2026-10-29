@@ -158,5 +158,14 @@
     "evidence_source": "Actual Console UI filtered category:MeshLifecycle for paired Zerobarat celular; stream paused after transition. Duplicate displayed log rows are not separate operations.",
     "visible_result": "Existing Cloud controller test and retained draft returned without an error or login prompt. At11:10 explicit Refresh retained readable existing history and composer without a connection error.",
     "limits": "Short Home/reopen only, not a locked-device or extended cellular qualification. Reading position changed from lines60-80 before background to48-71 after resume; current scrolling defect remains. Draft contains additional owner text and was preserved; no resend."
+  },
+  "cold_send_fixture": {
+    "session_id": "20261029_1",
+    "title": "Physical iPhone cold-send check 29 October",
+    "creation": "Supported session/new RPC acknowledged; recipe pins openrouter/deepseek-v4.1-flash with empty extensions. No prompt submitted.",
+    "verification": "Exactly one matching saved session, zero messages, global config unchanged, original owner had no active run.",
+    "cold_requirement": "Created before desktop upgrade; normal upgrade restart must clear the loaded agent. Do not activate this session in desktop after restart before phone Send.",
+    "receipt": "~/.local/share/goose-upgrade-snapshots/physical-cold-send-20261029/create-once.json",
+    "existing_draft_preserved": true
   }
 }
