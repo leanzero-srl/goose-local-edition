@@ -184,6 +184,7 @@ final class ControllerStore {
             // A failed secure write leaves the enrollment receipt retryable with the same code/id.
             try credentials.write(next, account: "device")
             envelope = next
+            recoveryAttempted = false
             accountDeletionCompleted = false
             code = ""
             self.enrollment = nil
@@ -241,9 +242,10 @@ final class ControllerStore {
         connection = .loading
         syncTask = Task { @MainActor [self] in
             defer { syncTask = nil; syncRunning = false }
+            var epoch = accessEpoch
             do {
                 let identity = try await validCredential()
-                let epoch = accessEpoch
+                epoch = accessEpoch
                 try await mesh?.prepare(identity: identity)
                 let api = try ControllerAPI(authority: identity.authority, transport: transport)
                 let page = try await api.hosts(token: identity.credentials.accessToken)
@@ -277,7 +279,7 @@ final class ControllerStore {
                     } catch {
                         guard !Task.isCancelled, epoch == accessEpoch else { return }
                         syncResults[index].state = .failed(error.localizedDescription)
-                        if Self.isAccessFailure(error) { streamFailed(error, host: host, epoch: epoch); return }
+                        if Self.isAccessFailure(error) { streamFailed(error, epoch: epoch); return }
                     }
                 }
                 lastSync = Date()
@@ -288,7 +290,8 @@ final class ControllerStore {
                 errorMessage = nil
                 if let selectedRef { await select(selectedRef) }
             } catch {
-                if Task.isCancelled { return }
+                guard !Task.isCancelled, epoch == accessEpoch else { return }
+                if Self.isAccessFailure(error) { streamFailed(error, epoch: epoch); return }
                 connection = .stale(error.localizedDescription)
                 errorMessage = error.localizedDescription
             }
@@ -304,10 +307,11 @@ final class ControllerStore {
         selectedLoading = false
         selectedRef = work
         selectedHistoryPaused = false
-        selectedWork = previous
+        selectedWork = nil
         if previous == nil { selectedHistoryNotice = nil }
         selectedError = nil
         guard let work, let entry = entries.first(where: { $0.work == work }), let host = hosts.first(where: { $0.id == work.ownerNodeId }) else { return }
+        selectedWork = previous
         if selectedWork == nil, let saved = local?.data.selected, saved.entry.work == work { selectedWork = saved }
         let request = UUID()
         selectedRequest = request
@@ -337,7 +341,7 @@ final class ControllerStore {
         } catch {
             if selectedRequest == request {
                 selectedError = error.localizedDescription
-                if Self.isAccessFailure(error) { streamFailed(error, host: host, epoch: accessEpoch) }
+                if Self.isAccessFailure(error) { streamFailed(error, epoch: accessEpoch) }
             }
         }
     }
@@ -465,7 +469,7 @@ final class ControllerStore {
         } catch {
             guard epoch == accessEpoch else { return }
             errorMessage = error.localizedDescription
-            if Self.isAccessFailure(error) { streamFailed(error, host: host, epoch: epoch) }
+            if Self.isAccessFailure(error) { streamFailed(error, epoch: epoch) }
         }
     }
     func loadMoreHistory() async {
@@ -494,7 +498,7 @@ final class ControllerStore {
             if Self.needsFreshHistory(error) { await select(current.entry.work, resetHistory: true) }
             else {
                 errorMessage = error.localizedDescription
-                if Self.isAccessFailure(error) { streamFailed(error, host: host, epoch: accessEpoch) }
+                if Self.isAccessFailure(error) { streamFailed(error, epoch: accessEpoch) }
             }
         }
     }
@@ -715,7 +719,7 @@ final class ControllerStore {
                 }
                 if !Task.isCancelled, epoch == accessEpoch { scheduleReconnect("The live catalog disconnected.") }
             } catch {
-                if !Task.isCancelled { streamFailed(error, host: host, epoch: epoch) }
+                if !Task.isCancelled { streamFailed(error, epoch: epoch) }
             }
         }
     }
@@ -770,7 +774,7 @@ final class ControllerStore {
                         return
                     }
                     selectedError = error.localizedDescription
-                    streamFailed(error, host: host, epoch: epoch)
+                    streamFailed(error, epoch: epoch)
                 }
             }
         }
@@ -808,7 +812,7 @@ final class ControllerStore {
         }
     }
 
-    private func streamFailed(_ error: Error, host: HostDescriptor, epoch: UUID) {
+    private func streamFailed(_ error: Error, epoch: UUID) {
         guard epoch == accessEpoch, authenticated else { return }
         guard Self.isAccessFailure(error) else { scheduleReconnect(error.localizedDescription); return }
         let mayRecover = !recoveryAttempted || (envelope?.credentials.expiresAt.timeIntervalSince1970 ?? .infinity) <= ceil(Date().timeIntervalSince1970)
@@ -816,6 +820,7 @@ final class ControllerStore {
         stopStreams()
         connection = .stale(error.localizedDescription)
         selectedError = error.localizedDescription
+        errorMessage = error.localizedDescription
         do { try clearAuthorizedViews() } catch { errorMessage = error.localizedDescription; return }
         guard foreground, mayRecover, recoveryTask == nil else { return }
         recoveryAttempted = true

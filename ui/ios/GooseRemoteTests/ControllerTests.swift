@@ -449,6 +449,54 @@ final class OwnerWireTests: XCTestCase {
         await store.sceneBackground()
     }
 
+    func testAuthorityDenialWithoutRotationPurgesSavedViewsAndStopsAfterOneRecovery() async throws {
+        let (store, owner, authority, directory) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.synchronize()
+        let work = try XCTUnwrap(store.entries.first?.work)
+        await store.select(work)
+        await owner.waitForStreams()
+        await authority.rejectHostReads()
+        await store.synchronize()
+        await eventually { store.envelope?.credentials.accessToken == "revision-10" && !store.syncRunning && store.entries.isEmpty }
+        XCTAssertNil(store.selectedWork)
+        XCTAssertEqual(store.selectedRef, work)
+        XCTAssertTrue(try LocalControllerStore(directory: directory).data.catalogs.isEmpty)
+        let refreshes = await authority.refreshes
+        XCTAssertEqual(refreshes, 1)
+        await store.sceneBackground()
+    }
+
+    func testRemovedHostCannotKeepSelectedCachedTranscript() async throws {
+        let (store, _, authority, directory) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.synchronize()
+        await store.select(try XCTUnwrap(store.entries.first?.work))
+        await authority.removeHosts()
+        await store.synchronize()
+        XCTAssertTrue(store.entries.isEmpty)
+        XCTAssertNil(store.selectedWork)
+        XCTAssertNil(try LocalControllerStore(directory: directory).data.selected)
+        await store.sceneBackground()
+    }
+
+    func testUnavailableRefreshAfterDenialNeverRestoresCachedContent() async throws {
+        let (store, owner, authority, directory) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.synchronize()
+        await store.select(try XCTUnwrap(store.entries.first?.work))
+        await owner.waitForStreams()
+        await authority.failRefresh()
+        await owner.denyOriginalStreams()
+        await eventually { store.errorMessage == "Authority unavailable" }
+        XCTAssertTrue(store.entries.isEmpty)
+        XCTAssertNil(store.selectedWork)
+        XCTAssertTrue(try LocalControllerStore(directory: directory).data.catalogs.isEmpty)
+        let refreshes = await authority.refreshes
+        XCTAssertEqual(refreshes, 1)
+        await store.sceneBackground()
+    }
+
     func testBackgroundRotationDoesNotReconnect() async throws {
         let (store, owner, authority, directory) = try fixture()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -470,6 +518,12 @@ private actor RecoveryAuthority: HTTPTransport {
     let droppedScopes: Bool
     var refreshes = 0
     var hostReads = 0
+    var rejectHosts = false
+    var hideHosts = false
+    var unavailable = false
+    func rejectHostReads() { rejectHosts = true }
+    func removeHosts() { hideHosts = true }
+    func failRefresh() { unavailable = true }
     init(original: DeviceCredentials, hosts: [HostDescriptor], denied: Bool, droppedScopes: Bool) {
         self.original = original; self.hosts = hosts; self.denied = denied; self.droppedScopes = droppedScopes
     }
@@ -478,7 +532,9 @@ private actor RecoveryAuthority: HTTPTransport {
         let data: Data
         if request.url!.path.hasSuffix("auth/refresh") {
             refreshes += 1
-            if denied {
+            if unavailable {
+                status = 503; data = Data(#"{"error":{"code":"unavailable","message":"Authority unavailable"}}"#.utf8)
+            } else if denied {
                 status = 403; data = Data(#"{"error":{"code":"revoked","message":"Device revoked"}}"#.utf8)
             } else {
                 status = 200
@@ -489,10 +545,10 @@ private actor RecoveryAuthority: HTTPTransport {
             }
         } else {
             hostReads += 1
-            if droppedScopes && request.value(forHTTPHeaderField: "Authorization") == "Bearer revision-10" {
+            if rejectHosts || (droppedScopes && request.value(forHTTPHeaderField: "Authorization") == "Bearer revision-10") {
                 status = 403; data = Data(#"{"error":{"code":"scope_denied","message":"Scope removed"}}"#.utf8)
             } else {
-                status = 200; data = try ControllerCodec.encoder().encode(HostPage(revision: 1, hosts: hosts))
+                status = 200; data = try ControllerCodec.encoder().encode(HostPage(revision: 1, hosts: hideHosts ? [] : hosts))
             }
         }
         return (data, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
