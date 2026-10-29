@@ -24,6 +24,13 @@
   "installed": true,
   "install_receipt": "/tmp/goose-phone-final-cffccd650e6e-install.json",
   "installation_preserves_existing_data": true,
-  "actual_ui_qualification": "pending",
+  "actual_ui_qualification": {
+    "observed_local": "2026-10-29 12:07\u201312:08",
+    "saved_sign_in": "PASS: original catalog and owner names returned with no code/login.",
+    "existing_conversation": "PASS: exact existing phone-test user message, Phone connection works. assistant response and Delivered to session receipt visible; owner Idle, composer empty.",
+    "refresh": "Invoked on the actual physical phone; existing full conversation remained readable without error.",
+    "background": "PASS: normal Home then visible Goose Remote icon reopened the same conversation; subsequent Refresh retained it with no error/login.",
+    "limits": "Short Home/reopen only. Extended device-lock, cellular/network handoff, accessibility and physical iPad qualification remain open. No inference repeated."
+  },
   "physical_ipad": "Owner offered to connect it; not yet present in devicectl at12:05."
 }
