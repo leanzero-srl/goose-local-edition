@@ -1,0 +1,46 @@
+{
+  "priorStage": "/tmp/goose-controller-corrected-signed-57419bcc521c",
+  "equivalence": {
+    "Contents/Frameworks/Goose Swarm Helper.app/Contents/MacOS/Goose Swarm Helper": {
+      "original": {
+        "vmSize": 16384,
+        "fieldOffset": 1792,
+        "fileOffset": 196608,
+        "fileSize": 5240
+      },
+      "signed": {
+        "vmSize": 32768,
+        "fieldOffset": 1792,
+        "fileOffset": 196608,
+        "fileSize": 5240
+      },
+      "equivalentSha256": "7ebd0995030a6de94da1ef3fec050084826f9c05a075e98f5f6d2945f79d724b",
+      "byteLength": 201848
+    },
+    "Contents/Resources/bundled-mcps/leanzero-documents/node_modules/argon2/prebuilds/darwin-x64/argon2.glibc.node": {
+      "original": {
+        "vmSize": 32768,
+        "fieldOffset": 1248,
+        "fileOffset": 81920,
+        "fileSize": 11624
+      },
+      "signed": {
+        "vmSize": 32768,
+        "fieldOffset": 1248,
+        "fileOffset": 81920,
+        "fileSize": 11624
+      },
+      "equivalentSha256": "dc4c92e71735bea1fcbde55f548b2469ee66306bbdb8b4e5499e13cf634be6da",
+      "byteLength": 93544
+    }
+  },
+  "negative": {
+    "path": "Contents/Frameworks/Goose Swarm Helper.app/Contents/MacOS/Goose Swarm Helper",
+    "positiveComparisonPassed": true,
+    "corruptedTextOffset": 2360,
+    "nonSignatureCodeChangeRejected": true
+  },
+  "unsupportedCPURefused": true,
+  "universalMagicRefused": true,
+  "comparatorSha256": "91b9f66db0fcd8c624c6fe4fb51cd3ac0f345a5c8cc01701eae097cfabd232a2"
+}
