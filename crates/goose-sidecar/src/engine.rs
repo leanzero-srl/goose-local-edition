@@ -179,6 +179,9 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.16-ple.2 (fork lz/qwen4-vision-ple 1d4f4072d) = lz.16-ple.1 + qwen4_exp images on the text lane
+/// (lane reason `text_lane_vision`): Qwen3.8-Flash-Next reads images with MTP, prompt lookup, the PLE offload,
+/// continuous batching and the prefix cache kept; `/v1/models` lists "vision" for it ([`TEXT_LANE_VISION_FAMILIES`]).
 /// v0.14.3-lz.16-ple.1 (fork lz/stream-whitespace-ple 8c9927ae3) = lz.14-ple.1 + lz.16: a streamed content delta
 /// is never whitespace-stripped (it dropped the space before `[`/`<`/`&` and corrupted files written while streaming,
 /// 12 wrong lines in the 10-26 Flash code_edit), the non-streamed answer keeps its outer whitespace, LongCat tool parser.
@@ -286,7 +289,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.1",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.2",
     "rapid-mlx",
 ];
 
@@ -401,6 +404,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14-ple.1",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.1",
         "rapid-mlx",
     ],
 ];
@@ -3396,7 +3405,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.1",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.2",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -3830,7 +3839,10 @@ mod tests {
         // declares language_model_only, and a qwen3_5 vision checkpoint: images would land on
         // the serialized MLLM lane or on no tower at all, so auto keeps --text-only.
         let (_root, settings) = model_dir_with(FLASH_VISION_CONFIG, &[]);
-        write_index(&settings, &["model.language_model.layers.0.self_attn.q_proj.weight"]);
+        write_index(
+            &settings,
+            &["model.language_model.layers.0.self_attn.q_proj.weight"],
+        );
         let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
         assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
 
@@ -3954,7 +3966,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.1",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.2",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
