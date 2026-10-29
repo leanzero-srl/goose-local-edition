@@ -207,6 +207,11 @@ export interface MlxModelProfile {
    * model would not otherwise fit this Mac. Ignored for a model without the table.
    */
   pleOffload?: boolean;
+  /**
+   * RoPE scaling past the checkpoint's native positions (`--qwen4-rope-scaling`): 'yarn',
+   * 'yarn:<factor>', a JSON object or 'off'. Absent = the checkpoint's own config. qwen4_exp only.
+   */
+  ropeScaling?: string;
 }
 
 export type MlxKvCacheMode = 'int8' | 'int4';

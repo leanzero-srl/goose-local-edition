@@ -2368,6 +2368,11 @@ pub struct MlxModelProfileDto {
     /// checkpoint without the table (`MlxLocalModelDto::has_ngram_table`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ple_offload: Option<bool>,
+    /// RoPE scaling past the checkpoint's native positions (`--qwen4-rope-scaling`): `"yarn"`,
+    /// `"yarn:<factor>"`, a JSON object or `"off"`. Absent = the checkpoint's own config.
+    /// `qwen4_exp` only; any other family fails the mount.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rope_scaling: Option<String>,
     /// Sent as `chat_template_kwargs.enable_thinking` on every turn a session routes to this
     /// model: `"on"` | `"off"`. Absent = auto — nothing is sent and the engine decides (Rapid-MLX
     /// turns thinking off whenever the request carries tools). Captured once per session.

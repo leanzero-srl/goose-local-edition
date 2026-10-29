@@ -179,6 +179,9 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.16-ple.5 (fork 6579627b9) = ple.4 + opt-in qwen4_exp YaRN rope scaling past the native 262,144
+/// positions (`--qwen4-rope-scaling yarn`, profile `rope_scaling`): measured on the workmule with the Jundot oQ4e build,
+/// needles at 300k / 400k / 512k found, peak Metal 94.0 / 96.1 / 114.7 GB.
 /// v0.14.3-lz.16-ple.4 (fork lz/qwen4-vision-ple f6cc404c8) = ple.3 + mlx-vlm/oMLX Flash-Next builds load
 /// (Jundot/Qwen3.8-Flash-Next-oQ4e-mtp: PLE `shards.K` + quant layout from shapes, mixed-precision MTP head, folded
 /// FP8 PLE scale) and the text lane caps images at 1,003,520 px.
@@ -295,7 +298,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.4",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.5",
     "rapid-mlx",
 ];
 
@@ -430,6 +433,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.3",
         "rapid-mlx",
     ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.4",
+        "rapid-mlx",
+    ],
 ];
 
 /// The MTP head file an MTPLX-style artefact ships next to its trunk shards. One of the two ways
@@ -534,6 +543,13 @@ pub struct ModelProfile {
     /// `crate::ple_offload`). `None` = auto: on for a `qwen4_exp` checkpoint that would not
     /// otherwise fit this Mac. Never sent for a checkpoint without the table.
     pub ple_offload: Option<bool>,
+    /// RoPE scaling past the checkpoint's native positions (`--qwen4-rope-scaling SPEC`, engine
+    /// v0.14.3-lz.16-ple.5+): `"yarn"` (the card's static YaRN, Qwen3.8-Flash-Next factor 4 = ~1M),
+    /// `"yarn:<factor>"`, a JSON object, or `"off"`. `None` = the checkpoint's own config (native
+    /// 262,144 for the open Flash-Next weights). Only `qwen4_exp` reads it; any other family is
+    /// refused at argv build. Pair it with `context_limit` at a MEASURED size (2026-10-29 workmule:
+    /// 400k peaked 96.1 GB, 512k 114.7 GB = at the Metal ceiling).
+    pub rope_scaling: Option<String>,
 }
 
 /// The explicit thinking choices; auto is the ABSENCE of a choice (`Option::None`), never a variant,
@@ -1079,7 +1095,36 @@ pub fn build_serve_command(
     if ple_offload_on(&model_path, profile, ple_offload::Machine::local) {
         argv.push(ple_offload::ENGINE_FLAG.to_string());
     }
+    if let Some(spec) = profile.rope_scaling.as_deref() {
+        argv.extend(rope_scaling_flags(&model_path, spec)?);
+    }
     Ok(argv)
+}
+
+/// The engine flag that serves rope scaling `spec` for the checkpoint at `model_path`
+/// ([`ModelProfile::rope_scaling`]). Validates the spec the way the engine's
+/// `parse_rope_scaling_override` reads it, so a typo fails the mount, not the first long turn.
+pub fn rope_scaling_flags(model_path: &Path, spec: &str) -> Result<Vec<String>> {
+    let spec = spec.trim();
+    let valid = spec == "off"
+        || spec == "yarn"
+        || spec
+            .strip_prefix("yarn:")
+            .and_then(|f| f.parse::<f64>().ok())
+            .is_some_and(|f| f > 1.0)
+        || serde_json::from_str::<serde_json::Value>(spec).is_ok_and(|v| v.is_object());
+    anyhow::ensure!(
+        valid,
+        "rope_scaling {spec:?}: expected \"yarn\", \"yarn:<factor > 1>\", a JSON object or \"off\""
+    );
+    let facts = crate::placement::model::read_model_facts(model_path)?;
+    anyhow::ensure!(
+        facts.model_type == "qwen4_exp",
+        "rope_scaling is served for qwen4_exp checkpoints only ({} is {})",
+        model_path.display(),
+        facts.model_type
+    );
+    Ok(vec!["--qwen4-rope-scaling".to_string(), spec.to_string()])
 }
 
 /// Whether the engine leaves `model_path`'s n-gram table on disk under `profile` on `machine`.
@@ -3081,6 +3126,36 @@ mod tests {
     }
 
     #[test]
+    fn rope_scaling_reaches_the_engine_for_qwen4_exp_only() {
+        let argv = |root: &tempfile::TempDir, spec: Option<&str>| {
+            let mut s = prompt_lookup_settings(root, Default::default(), None);
+            s.model_profiles.get_mut("org/m").unwrap().rope_scaling = spec.map(str::to_string);
+            build_serve_command(&s, "org/m", &[])
+        };
+        let flash = ngram_table_dir("qwen4_exp", true);
+        let a = argv(&flash, Some("yarn")).unwrap();
+        let i = a
+            .iter()
+            .position(|x| x == "--qwen4-rope-scaling")
+            .expect("flag sent");
+        assert_eq!(a[i + 1], "yarn");
+        assert!(argv(&flash, Some("yarn:2")).is_ok());
+        assert!(argv(&flash, Some(r#"{"rope_type":"yarn","factor":4}"#)).is_ok());
+        assert!(argv(&flash, Some("yarm")).is_err(), "typo fails the mount");
+        assert!(argv(&flash, Some("yarn:0.5")).is_err());
+        let none = argv(&flash, None).unwrap();
+        assert!(
+            !none.iter().any(|x| x == "--qwen4-rope-scaling"),
+            "auto sends nothing"
+        );
+        let other = ngram_table_dir("qwen3_5_moe", false);
+        assert!(
+            argv(&other, Some("yarn")).is_err(),
+            "other families refused"
+        );
+    }
+
+    #[test]
     fn the_ngram_table_flag_follows_the_profile_and_auto_follows_the_fit() {
         let flag = |root: &tempfile::TempDir, choice: Option<bool>| {
             let mut s = prompt_lookup_settings(root, Default::default(), None);
@@ -3423,7 +3498,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.4",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.5",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -3987,7 +4062,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.4",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.5",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),

@@ -64,6 +64,11 @@ describe('prompt-lookup drafts', () => {
     };
     expect(profileFromDrafts(drafts).promptLookup).toBeUndefined();
   });
+  it('keep a rope scaling the form has no row for', () => {
+    const profile = { ropeScaling: 'yarn', contextLimit: 409600 };
+    expect(profileFromDrafts(draftsFromProfile(profile))).toEqual(profile);
+    expect(profileHasValues({ ropeScaling: 'yarn' })).toBe(true);
+  });
   it('count as an edit for the dirty check', () => {
     const base = draftsFromProfile(undefined);
     expect(draftsEqual(base, { ...base, promptLookupMode: 'off' })).toBe(false);

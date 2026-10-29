@@ -362,6 +362,7 @@ fn profile_to_dto(profile: ModelProfile) -> MlxModelProfileDto {
         adapter_path: profile.adapter_path,
         text_only: profile.text_only,
         ple_offload: profile.ple_offload,
+        rope_scaling: profile.rope_scaling,
         thinking: profile.thinking.map(|mode| match mode {
             ThinkingMode::On => MlxThinkingModeDto::On,
             ThinkingMode::Off => MlxThinkingModeDto::Off,
@@ -443,6 +444,7 @@ fn profile_from_dto(dto: MlxModelProfileDto) -> ModelProfile {
         adapter_path: dto.adapter_path,
         text_only: dto.text_only,
         ple_offload: dto.ple_offload,
+        rope_scaling: dto.rope_scaling,
         thinking: dto.thinking.map(|mode| match mode {
             MlxThinkingModeDto::On => ThinkingMode::On,
             MlxThinkingModeDto::Off => ThinkingMode::Off,

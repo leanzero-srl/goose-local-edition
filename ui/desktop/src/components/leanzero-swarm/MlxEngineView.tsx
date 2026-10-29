@@ -306,6 +306,8 @@ export type ThinkingSettingKey = 'thinking' | 'reasoningEffort';
 export type KvCacheSettingKey = 'kvCache';
 /** `pleOffload` is '' (auto) | 'true' | 'false'. */
 export type NgramTableSettingKey = 'pleOffload';
+/** `ropeScaling` is '' (the checkpoint's own rope) | 'yarn' | 'yarn:<factor>' | a JSON object | 'off'. No form row yet: carried so a save keeps it. */
+export type RopeSettingKey = 'ropeScaling';
 /**
  * `promptLookupMode` is '' (auto) | 'on' | 'off'; the three numbers are drafted as text and a
  * blank one leaves the engine's default for the lane.
@@ -321,6 +323,7 @@ export type ProfileDraftKey =
   | ThinkingSettingKey
   | KvCacheSettingKey
   | NgramTableSettingKey
+  | RopeSettingKey
   | PromptLookupSettingKey;
 
 export type NumericDrafts = Record<ProfileDraftKey, string>;
@@ -336,6 +339,7 @@ const PROFILE_KEYS = [
   ...THINKING_KEYS,
   'kvCache',
   'pleOffload',
+  'ropeScaling',
 ] as const;
 const PROMPT_LOOKUP_NUMBERS = [
   ['promptLookupMinNgram', 'minNgram'],
@@ -361,6 +365,7 @@ export function draftsFromProfile(profile: MlxModelProfile | undefined): Numeric
   drafts.reasoningEffort = profile?.reasoningEffort ?? '';
   drafts.kvCache = profile?.kvCache ?? '';
   drafts.pleOffload = profile?.pleOffload == null ? '' : String(profile.pleOffload);
+  drafts.ropeScaling = profile?.ropeScaling ?? '';
   drafts.promptLookupMode = profile?.promptLookup?.mode ?? '';
   for (const [key, field] of PROMPT_LOOKUP_NUMBERS) {
     const value = profile?.promptLookup?.[field];
@@ -391,6 +396,8 @@ export function profileFromDrafts(drafts: NumericDrafts): MlxModelProfile {
   if (drafts.kvCache === 'int8' || drafts.kvCache === 'int4') profile.kvCache = drafts.kvCache;
   if (drafts.pleOffload === 'true') profile.pleOffload = true;
   else if (drafts.pleOffload === 'false') profile.pleOffload = false;
+  const ropeScaling = drafts.ropeScaling.trim();
+  if (ropeScaling !== '') profile.ropeScaling = ropeScaling;
   const promptLookup: MlxPromptLookup = {};
   const plMode = drafts.promptLookupMode.trim();
   if (plMode === 'on' || plMode === 'off') promptLookup.mode = plMode;
