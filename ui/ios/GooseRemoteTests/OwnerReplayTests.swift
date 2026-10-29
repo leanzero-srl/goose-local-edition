@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 @testable import GooseRemote
 
@@ -278,6 +279,38 @@ final class OwnerReplayTests: XCTestCase {
         let before = TranscriptItem(id: "same", revision: 1, role: "assistant", text: "First", timestamp: nil)
         let grown = TranscriptItem(id: "same", revision: 2, role: "assistant", text: "First second", timestamp: nil)
         XCTAssertNotEqual([before], [grown], "The view's content trigger must detect same-ID streamed growth")
+    }
+
+    func testJumpReplacesTheBoundReadingAnchorWithTheBottomEdge() {
+        var scroll = SessionScrollState()
+        XCTAssertEqual(scroll.position.edge, .bottom)
+        scroll.position.scrollTo(id: "oldest-visible", anchor: .top)
+        scroll.userScrolled(nearBottom: false)
+        XCTAssertEqual(scroll.position.viewID(type: String.self), "oldest-visible")
+        scroll.jumpToLatest()
+        XCTAssertEqual(scroll.position.edge, .bottom)
+        XCTAssertNil(scroll.position.viewID(type: String.self), "The old reading ID must not compete with the explicit jump")
+        XCTAssertTrue(scroll.shouldFollowContent)
+    }
+
+    func testRefreshAndPrependKeepReadingPositionUntilExplicitJump() {
+        var scroll = SessionScrollState()
+        scroll.position.scrollTo(id: "middle-message", anchor: .top)
+        scroll.userScrolled(nearBottom: false)
+        let readingPosition = scroll.position
+        scroll.followContent()
+        XCTAssertEqual(scroll.position, readingPosition)
+        scroll.beginOlder()
+        scroll.followContent()
+        XCTAssertEqual(scroll.position, readingPosition)
+        scroll.endOlder()
+        scroll.followContent()
+        XCTAssertEqual(scroll.position, readingPosition)
+        scroll.jumpToLatest()
+        XCTAssertEqual(scroll.position.edge, .bottom)
+        scroll.position.scrollTo(id: "newest-message", anchor: .top)
+        scroll.followContent()
+        XCTAssertEqual(scroll.position.edge, .bottom, "Same-message growth must follow through the same bound position")
     }
 
     @MainActor func testSameWorkRefreshAndDeclinedSendRetainLoadedOlderHistory() async throws {

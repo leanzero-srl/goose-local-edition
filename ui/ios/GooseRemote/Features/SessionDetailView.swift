@@ -1,12 +1,19 @@
 import SwiftUI
 
 struct SessionScrollState {
+    var position = ScrollPosition(idType: String.self, edge: .bottom)
     private(set) var followsLatest = true
     private(set) var loadingOlder = false
     mutating func userScrolled(nearBottom: Bool) { followsLatest = nearBottom }
     mutating func beginOlder() { loadingOlder = true; followsLatest = false }
     mutating func endOlder() { loadingOlder = false }
-    mutating func jumpToLatest() { followsLatest = true }
+    mutating func jumpToLatest() {
+        followsLatest = true
+        position.scrollTo(edge: .bottom)
+    }
+    mutating func followContent() {
+        if shouldFollowContent { position.scrollTo(edge: .bottom) }
+    }
     var shouldFollowContent: Bool { followsLatest && !loadingOlder }
 }
 
@@ -16,10 +23,8 @@ struct SessionDetailView: View {
     @State private var action: WorkAction = .send
     @State private var confirmStop = false
     @State private var scrolling = SessionScrollState()
-    @State private var visibleMessage: String?
     @State private var userScrolling = false
     @State private var nearBottom = true
-    private let latestAnchor = "session-latest"
     var body: some View {
         Group {
             if store.selectedLoading && store.selectedWork == nil { ProgressView("Loading from owner Mac").frame(maxWidth: .infinity, maxHeight: .infinity) }
@@ -41,7 +46,7 @@ struct SessionDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: work) { if store.selectedRef != work || store.selectedError != nil { await store.select(work) } }
         .onDisappear { store.endSelection(work) }
-        .onChange(of: work) { _, _ in scrolling = SessionScrollState(); visibleMessage = nil }
+        .onChange(of: work) { _, _ in scrolling = SessionScrollState() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -56,105 +61,99 @@ struct SessionDetailView: View {
     }
     private func content(_ selected: SelectedWork) -> some View {
         VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        if let error = store.selectedError {
-                            Notice(title: "Saved view", message: error, icon: .offline)
-                        }
-                        if let notice = store.selectedHistoryNotice {
-                            Notice(title: "History refreshed", message: notice, icon: work.kind.icon)
-                        }
-                        StudioPanel {
-                            Label(store.ownerName(work.ownerNodeId), icon: .laptop).font(.headline)
-                            HStack {
-                                Text(work.kind.title).font(.subheadline)
-                                Spacer()
-                                StatusBadge(text: selected.entry.state.title, active: selected.entry.state == .running && store.connection == .connected && store.selectedError == nil && !store.selectedHistoryPaused)
-                            }
-                            if let directory = selected.entry.workingDir {
-                                Text(directory).font(.caption.monospaced()).foregroundStyle(Studio.secondaryInk).textSelection(.enabled)
-                            }
-                            RelativeSample(date: selected.entry.updatedAt, prefix: "Owner updated")
-                            if selected.entry.canPerform(.stop) {
-                                Button(role: .destructive) { confirmStop = true } label: { Label("Stop run", icon: .stop) }.buttonStyle(StudioSecondaryButtonStyle())
-                                    .disabled(store.selectedError != nil || store.sending || store.unfinishedCommand != nil)
-                            }
-                        }
-                        if store.selectedHistoryPaused {
-                            Notice(title: "Reading older activity", message: "Live log updates are paused to keep your place. Refresh to return to the latest activity.", icon: .pause)
-                        }
-                        if selected.hasMoreHistory {
-                            Button(work.kind == .chat ? "Load older messages" : "Load older activity") {
-                                scrolling.beginOlder()
-                                Task { await store.loadMoreHistory(); scrolling.endOlder() }
-                            }.buttonStyle(StudioSecondaryButtonStyle()).disabled(store.selectedLoading)
-                                .accessibilityIdentifier("load-older-history")
-                        }
-                        ForEach(selected.pendingInputs) { input in
-                            PendingInputView(input: input, supported: selected.entry.canPerform(.answerInput))
-                        }
-                        if selected.transcript.isEmpty {
-                            Notice(title: "No visible messages", message: selected.hasMoreHistory ? "There are no visible messages in this page. Load older history to continue." : "The owner returned no visible messages for this session.", icon: work.kind.icon)
-                        }
-                        ForEach(selected.transcript) { item in
-                            StudioPanel {
-                                HStack {
-                                    Text(item.role.capitalized).font(.caption.weight(.bold)).foregroundStyle(Studio.secondaryInk)
-                                    Spacer()
-                                    if let timestamp = item.timestamp { Text(timestamp, style: .time).font(.caption).foregroundStyle(Studio.secondaryInk) }
-                                }
-                                Text(item.text).font(work.kind == .shellJob ? .system(.body, design: .monospaced) : .body).textSelection(.enabled)
-                            }.id(item.id)
-                        }
-                        if let pending = store.pendingCommands.last(where: { $0.command.work == work }) {
-                            StudioPanel {
-                                Label(pending.receipt?.state.title ?? "Checking delivery", icon: .send).font(.headline)
-                                Text(pending.receipt?.reason ?? "Acceptance is separate from delivery. The owner’s receipt determines the result.").font(.subheadline).foregroundStyle(Studio.secondaryInk)
-                                if store.unfinishedCommand != nil { Button("Check delivery") { Task { await store.checkDelivery() } }.disabled(store.sending) }
-                            }
-                        }
-                        Color.clear.frame(height: 1).id(latestAnchor).accessibilityHidden(true)
-                    }.scrollTargetLayout().padding(16).frame(maxWidth: 900)
-                }
-                .scrollPosition(id: $visibleMessage, anchor: .top)
-                .defaultScrollAnchor(.bottom, for: .initialOffset)
-                .defaultScrollAnchor(.top, for: .sizeChanges)
-                .onScrollGeometryChange(for: Bool.self) { geometry in
-                    geometry.contentSize.height - geometry.visibleRect.maxY <= 80
-                } action: { _, isNearBottom in
-                    nearBottom = isNearBottom
-                    if userScrolling { scrolling.userScrolled(nearBottom: isNearBottom) }
-                }
-                .onScrollPhaseChange { _, phase in
-                    userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
-                    if userScrolling { scrolling.userScrolled(nearBottom: nearBottom) }
-                }
-                .task(id: selected.transcript) {
-                    await Task.yield()
-                    if !Task.isCancelled, !userScrolling, scrolling.shouldFollowContent { proxy.scrollTo(latestAnchor, anchor: .bottom) }
-                }
-                .onChange(of: store.selectedHistoryReset) { _, _ in
-                    scrolling.jumpToLatest()
-                    proxy.scrollTo(latestAnchor, anchor: .bottom)
-                }
-                .overlay(alignment: .bottomTrailing) {
-                    if !scrolling.followsLatest {
-                        Button {
-                            Task {
-                                if store.selectedHistoryPaused {
-                                    await store.select(work)
-                                    guard store.selectedError == nil, store.selectedRef == work else { return }
-                                }
-                                scrolling.jumpToLatest()
-                                await Task.yield()
-                                proxy.scrollTo(latestAnchor, anchor: .bottom)
-                            }
-                        } label: { Label("Jump to latest", systemImage: "arrow.down") }
-                        .buttonStyle(StudioPrimaryButtonStyle()).padding(16)
-                        .accessibilityIdentifier("jump-to-latest")
-                        .accessibilityHint("Scrolls to the newest message and follows live updates")
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    if let error = store.selectedError {
+                        Notice(title: "Saved view", message: error, icon: .offline)
                     }
+                    if let notice = store.selectedHistoryNotice {
+                        Notice(title: "History refreshed", message: notice, icon: work.kind.icon)
+                    }
+                    StudioPanel {
+                        Label(store.ownerName(work.ownerNodeId), icon: .laptop).font(.headline)
+                        HStack {
+                            Text(work.kind.title).font(.subheadline)
+                            Spacer()
+                            StatusBadge(text: selected.entry.state.title, active: selected.entry.state == .running && store.connection == .connected && store.selectedError == nil && !store.selectedHistoryPaused)
+                        }
+                        if let directory = selected.entry.workingDir {
+                            Text(directory).font(.caption.monospaced()).foregroundStyle(Studio.secondaryInk).textSelection(.enabled)
+                        }
+                        RelativeSample(date: selected.entry.updatedAt, prefix: "Owner updated")
+                        if selected.entry.canPerform(.stop) {
+                            Button(role: .destructive) { confirmStop = true } label: { Label("Stop run", icon: .stop) }.buttonStyle(StudioSecondaryButtonStyle())
+                                .disabled(store.selectedError != nil || store.sending || store.unfinishedCommand != nil)
+                        }
+                    }
+                    if store.selectedHistoryPaused {
+                        Notice(title: "Reading older activity", message: "Live log updates are paused to keep your place. Refresh to return to the latest activity.", icon: .pause)
+                    }
+                    if selected.hasMoreHistory {
+                        Button(work.kind == .chat ? "Load older messages" : "Load older activity") {
+                            scrolling.beginOlder()
+                            Task { await store.loadMoreHistory(); scrolling.endOlder() }
+                        }.buttonStyle(StudioSecondaryButtonStyle()).disabled(store.selectedLoading)
+                            .accessibilityIdentifier("load-older-history")
+                    }
+                    ForEach(selected.pendingInputs) { input in
+                        PendingInputView(input: input, supported: selected.entry.canPerform(.answerInput))
+                    }
+                    if selected.transcript.isEmpty {
+                        Notice(title: "No visible messages", message: selected.hasMoreHistory ? "There are no visible messages in this page. Load older history to continue." : "The owner returned no visible messages for this session.", icon: work.kind.icon)
+                    }
+                    ForEach(selected.transcript) { item in
+                        StudioPanel {
+                            HStack {
+                                Text(item.role.capitalized).font(.caption.weight(.bold)).foregroundStyle(Studio.secondaryInk)
+                                Spacer()
+                                if let timestamp = item.timestamp { Text(timestamp, style: .time).font(.caption).foregroundStyle(Studio.secondaryInk) }
+                            }
+                            Text(item.text).font(work.kind == .shellJob ? .system(.body, design: .monospaced) : .body).textSelection(.enabled)
+                        }.id(item.id)
+                    }
+                    if let pending = store.pendingCommands.last(where: { $0.command.work == work }) {
+                        StudioPanel {
+                            Label(pending.receipt?.state.title ?? "Checking delivery", icon: .send).font(.headline)
+                            Text(pending.receipt?.reason ?? "Acceptance is separate from delivery. The owner’s receipt determines the result.").font(.subheadline).foregroundStyle(Studio.secondaryInk)
+                            if store.unfinishedCommand != nil { Button("Check delivery") { Task { await store.checkDelivery() } }.disabled(store.sending) }
+                        }
+                    }
+                }.scrollTargetLayout().padding(16).frame(maxWidth: 900)
+            }
+            .scrollPosition($scrolling.position, anchor: .top)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.top, for: .sizeChanges)
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentSize.height - geometry.visibleRect.maxY <= 80
+            } action: { _, isNearBottom in
+                nearBottom = isNearBottom
+                if userScrolling { scrolling.userScrolled(nearBottom: isNearBottom) }
+            }
+            .onScrollPhaseChange { _, phase in
+                userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
+                if userScrolling { scrolling.userScrolled(nearBottom: nearBottom) }
+            }
+            .task(id: selected.transcript) {
+                await Task.yield()
+                if !Task.isCancelled, !userScrolling { scrolling.followContent() }
+            }
+            .onChange(of: store.selectedHistoryReset) { _, _ in
+                scrolling.jumpToLatest()
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !scrolling.followsLatest {
+                    Button {
+                        Task {
+                            if store.selectedHistoryPaused {
+                                await store.select(work)
+                                guard store.selectedError == nil, store.selectedRef == work else { return }
+                            }
+                            scrolling.jumpToLatest()
+                        }
+                    } label: { Label("Jump to latest", systemImage: "arrow.down") }
+                    .buttonStyle(StudioPrimaryButtonStyle()).padding(16)
+                    .accessibilityIdentifier("jump-to-latest")
+                    .accessibilityHint("Scrolls to the newest message and follows live updates")
                 }
             }
             if selected.entry.capabilities.contains(where: { [.send, .steer, .note].contains($0) }) {
