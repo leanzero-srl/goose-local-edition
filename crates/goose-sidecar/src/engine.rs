@@ -179,6 +179,12 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.16-ple.6 (fork lz/qwen4-cache-reclaim) = ple.5 + the memory guard calibrates in a goose session and
+/// reclaims before it refuses: prefix-hit steps enter the peak fit (copy measured), a flat full-chunk group votes
+/// a = 0, a turn that fits alone but not beside its own hit's copy is re-prefilled cold instead of refused (the
+/// workmule Gauntlet refused 241,320 tokens on ple.5), and a boundary copy the turn end cannot rebuild (qwen4_exp
+/// layout) plans under the device ceiling and evicts the own older resume point it supersedes instead of being
+/// skipped (on 4e9d739 the hit stuck at 200,785 tokens from 213k on).
 /// v0.14.3-lz.16-ple.5 (fork 6579627b9) = ple.4 + opt-in qwen4_exp YaRN rope scaling past the native 262,144
 /// positions (`--qwen4-rope-scaling yarn`, profile `rope_scaling`): measured on the workmule with the Jundot oQ4e build,
 /// needles at 300k / 400k / 512k found, peak Metal 94.0 / 96.1 / 114.7 GB.
@@ -298,7 +304,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.5",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.6",
     "rapid-mlx",
 ];
 
@@ -437,6 +443,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.4",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.5",
         "rapid-mlx",
     ],
 ];
@@ -3498,7 +3510,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.5",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.6",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -4062,7 +4074,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.5",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.6",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
