@@ -1,0 +1,17 @@
+{
+  "website_base": "c8cdb789d52fc35eefa06b852864cb1706c2a058",
+  "source_path": "src/app/(pages)/contact/page.tsx",
+  "source_sha256": "1b0bbfd01ee2e7cb17208bc87af95c28a50b022e2a096b0d03dfbbeb765833bc",
+  "patched_sha256": "c274a590eaff190b72782a6a35dc7bc7d3fb0b25efb1a1d2daeca29bfccd49f6",
+  "patch_sha256": "93cb7ab749827db725adf072db4c3c659a7c0ecc28d08f4dff41a1c2e1d98db7",
+  "apply_check": "passed",
+  "exact_output_match": true,
+  "reverse_check": "passed",
+  "website_checkout_changed": false,
+  "build_or_render": "not run",
+  "publication": "not authorized or performed",
+  "tsx_parse": {
+    "typescript": "5.9.3",
+    "diagnostics": 0
+  }
+}

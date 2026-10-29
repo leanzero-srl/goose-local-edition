@@ -1,0 +1,58 @@
+--- a/src/app/(pages)/contact/page.tsx
++++ b/src/app/(pages)/contact/page.tsx
+@@ -167,6 +167,55 @@
+           </aside>
+         </div>
+       </Section>
++
++      <Section id="goose-remote" tone="muted" aria-labelledby="goose-remote-title" className="scroll-mt-24">
++        <SectionHeader
++          id="goose-remote-title"
++          title="Goose Remote support"
++          intro="Help connecting your iPhone or iPad to your Mac, checking delivery and managing account access."
++        />
++        <div className="lz-grid gap-y-8" data-reveal-group="rise">
++          <div className="col-span-4 md:col-span-4 lg:col-span-6 space-y-4" data-reveal="rise">
++            <h3 className="lz-title text-slate-900 dark:text-white">Connection and delivery</h3>
++            <p className="text-slate-700 dark:text-slate-300">
++              Your work runs on the Mac you select. Keep that Mac online and signed in
++              to a compatible Goose Swarm version. Saved activity may be out of date
++              while it is disconnected; reconnect and refresh to check its current state.
++            </p>
++            <p className="text-slate-700 dark:text-slate-300">
++              If a message&apos;s delivery is uncertain, use Check delivery before sending
++              another copy. Accepted and Delivered are different states. Delivered confirms
++              delivery to the owner, not that the AI has finished the requested work.
++            </p>
++            <h3 className="lz-title text-slate-900 dark:text-white">Contact us</h3>
++            <p className="text-slate-700 dark:text-slate-300">
++              Email <a href="mailto:office@leanzero.net" className="font-semibold text-blue-700 dark:text-blue-300 underline underline-offset-2">office@leanzero.net</a> with
++              your app and build version, iOS or iPadOS version, the affected feature,
++              approximate time and any displayed error. Include a command or deletion
++              request reference if you have one. Do not send email codes, passwords,
++              API keys, full transcripts or private project paths.
++            </p>
++          </div>
++          <div className="col-span-4 md:col-span-4 lg:col-span-6 space-y-4" data-reveal="rise">
++            <h3 className="lz-title text-slate-900 dark:text-white">Account access and deletion</h3>
++            <p className="text-slate-700 dark:text-slate-300">
++              Settings offers Remove local access for this device. To delete your Link
++              account, use Delete Link account and confirm with the code sent to your
++              account email. This removes access for all connected devices.
++            </p>
++            <p className="text-slate-700 dark:text-slate-300">
++              If cleanup is pending, use Check deletion status. Pending does not mean
++              deletion is complete. Deleting a Link account does not erase projects,
++              model files or session databases on your Macs.
++            </p>
++            <p className="text-slate-700 dark:text-slate-300">
++              Messages and session context can reach the AI services and tools configured
++              on the selected Mac. Review the app&apos;s sharing details before sending;
++              they may not identify every onward recipient.
++            </p>
++          </div>
++        </div>
++      </Section>
+     </div>
+   );
+ }
