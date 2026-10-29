@@ -1,0 +1,30 @@
+{
+  "time": "2026-10-29T06:55:03.284550+00:00",
+  "model": "mlx-community/SmolLM-135M-Instruct-4bit",
+  "files_before": {
+    "._.gitattributes": 4096,
+    "._README.md": 4096,
+    "._config.json": 4096,
+    "._merges.txt": 4096,
+    "._model.safetensors": 4096,
+    "._model.safetensors.index.json": 4096,
+    "._special_tokens_map.json": 4096,
+    "._tokenizer.json": 4096,
+    "._tokenizer_config.json": 4096,
+    "._vocab.json": 4096,
+    ".gitattributes": 1519,
+    "README.md": 638,
+    "config.json": 803,
+    "merges.txt": 466391,
+    "model.safetensors": 75789919,
+    "model.safetensors.index.json": 48978,
+    "special_tokens_map.json": 655,
+    "tokenizer.json": 2104556,
+    "tokenizer_config.json": 3590,
+    "vocab.json": 800662
+  },
+  "supported_delete_response": {},
+  "removed": true,
+  "model_loaded": false,
+  "ui_before_cleanup": "Applied on the Mac; 79.3 MB \u00b7 Ready"
+}
