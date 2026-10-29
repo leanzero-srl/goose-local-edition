@@ -1244,13 +1244,16 @@ def inherited_observation_result(name, original, ctx):
 # are the harness's.
 
 def ledgerd_self_exit(ctx):
-    """The candidate's own ledgerd exit that left nothing serving: the last spawn exited by itself."""
+    """The candidate's own ledgerd exit that left nothing serving on the graded port: the LAST ledgerd
+    spawned on the boot ledgerd's port exited by itself. (The error journey's ledgerd runs on its own
+    port and db after the graded phases; it is not the service those phases graded.)"""
     if not CHARGE_LEDGERD_EXIT:
         return None
-    exits = getattr(ctx, 'ledger_self_exits', None) or []
-    if not exits or not isinstance(exits[-1], dict) or exits[-1].get('spawn') != exits[-1].get('of', 0) - 1:
+    spawns = [s for s in getattr(ctx, 'ledger_spawns', None) or [] if isinstance(s, dict)]
+    if not spawns:
         return None
-    return exits[-1]
+    graded = [s for s in spawns if s.get('port') == spawns[0].get('port')]
+    return graded[-1] if graded[-1].get('self_exit') is True else None
 
 
 def ledgerd_exit_missing(ctx):
@@ -1345,7 +1348,8 @@ def candidate_charge(name, original, ctx, outcome):
                       parts={'vacuous_root': 'server_runs', 'unexercised': outcome.get('detail')})
     died = ledgerd_self_exit(ctx)
     if died is not None:
-        return base.g(0.0, f"not exercised: the candidate's ledgerd (spawn {died['spawn'] + 1} of {died['of']}) exited "
+        return base.g(0.0, f"not exercised: the candidate's ledgerd (spawn {died['spawn'] + 1} of {died['of']}, "
+                      f"port {died.get('port')}) exited "
                       f"on its own with code {died['returncode']} and nothing served after it"
                       + (f": {died['last_line']}" if died.get('last_line') else ''),
                       'the candidate stopped serving; the behaviour this row grades is unproven',

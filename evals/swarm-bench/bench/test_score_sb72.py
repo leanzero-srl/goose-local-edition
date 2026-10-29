@@ -878,54 +878,68 @@ class CoveredCanvasTests(unittest.TestCase):
 BIND_FAILED = 'OSError: [Errno 48] Address already in use'
 
 
+def spawn(index, port, rc, line=''):
+    return {'spawn': index, 'port': port, 'returncode': rc, 'self_exit': rc is not None and rc >= 0,
+            'spawned_at': 0.0, 'last_line': line}
+
+
+def spawns(*rows):
+    return [{**row, 'of': len(rows)} for row in rows]
+
+
 class LedgerdSelfExitTests(unittest.TestCase):
     """Flash-Next SB7.2 (2026-10-29): the B3 restart's ledgerd died on EADDRINUSE (its transport set
     allow_reuse_address after the constructor bound) and the run was REFUSED for fire_d1_mutation:failed.
     The candidate stopped serving: charged, never refused. The harness's own faults still refuse."""
 
-    def score(self, tier, exits, harness_missing=('fire_d1_mutation:failed',), viz=None):
-        unavailable = {'b_events_log'}
-
+    def score(self, tier, records, harness_missing=('fire_d1_mutation:failed',)):
         def stub(name):
-            return lambda c: (base.unavail('idle latency battery never ran') if name in unavailable
+            return lambda c: (base.unavail('idle latency battery never ran') if name == 'b_events_log'
                               else base.g(1.0, 'synthetic'))
         checks = [(name, t, stub(name)) for name, t, _fn in base.SB7_CHECKS]
         with tempfile.TemporaryDirectory() as tmp, patch.object(base, 'SB7_CHECKS', checks), \
                 patch.object(base, '_nominal_console_errors', return_value=0):
-            ctx = SimpleNamespace(probes={'viz': viz or {'timedOut': False}}, root=Path(tmp),
+            ctx = SimpleNamespace(probes={'viz': {'timedOut': False}}, root=Path(tmp),
                                   fixture_seed='c1d09bb52716b03d', port_bound=True,
                                   harness_missing=list(harness_missing), sched_unreached=[], stream_head=None,
-                                  b3_result=None, ledger_self_exits=exits)
+                                  b3_result=None, ledger_spawns=records)
             return tier.evaluate(ctx)
 
-    def test_a_last_ledgerd_that_exited_on_its_own_is_charged_not_refused(self):
-        exits = [{'spawn': 1, 'of': 2, 'returncode': 1, 'spawned_at': 0.0, 'last_line': BIND_FAILED}]
-        result = self.score(score, exits)
+    # The receipt's shape: boot ledgerd killed by B3, its restart died on bind, then the error journey's
+    # own ledgerd on another port served and was SIGKILLed by the harness.
+    FLASH = spawns(spawn(0, 57533, -9), spawn(1, 57533, 1, BIND_FAILED), spawn(2, 61001, -9))
+
+    def test_a_graded_ledgerd_that_exited_on_its_own_is_charged_not_refused(self):
+        result = self.score(score, self.FLASH)
         self.assertEqual(result['harness_missing'], [])
         self.assertEqual(result['ledgerd_exit']['harness_missing_from_exit'], ['fire_d1_mutation:failed'])
         row = next(r for r in result['checks'] if r['check'] == 'b_events_log')
         self.assertEqual(row['score'], 0.0)
         self.assertNotIn('unavailable', row)
-        self.assertIn('exited on its own with code 1', row['detail'])
+        self.assertIn('port 57533) exited on its own with code 1', row['detail'])
         self.assertIn(BIND_FAILED, row['detail'])
         self.assertIn('LEDGERD EXIT: ', score.format_report(result, 'flash'))
 
     def test_harness_controls_still_refuse(self):
-        # Every ledgerd was stopped by the harness (SIGKILL reads -9, so nothing is recorded): a failed fire refuses.
-        with self.assertRaisesRegex(RuntimeError, 'missing benchmark infrastructure: fire_d1_mutation:failed'):
+        refused = 'missing benchmark infrastructure: fire_d1_mutation:failed'
+        # Every ledgerd was stopped by the harness (SIGKILL, -9): a failed fire is the harness's.
+        with self.assertRaisesRegex(RuntimeError, refused):
+            self.score(score, spawns(spawn(0, 57533, -9), spawn(1, 57533, -9)))
+        with self.assertRaisesRegex(RuntimeError, refused):
             self.score(score, [])
-        # An earlier spawn died but a later restart served: the candidate was serving, the fire is the harness's.
-        with self.assertRaisesRegex(RuntimeError, 'missing benchmark infrastructure: fire_d1_mutation:failed'):
-            self.score(score, [{'spawn': 1, 'of': 3, 'returncode': 1, 'spawned_at': 0.0, 'last_line': BIND_FAILED}])
+        # A restart died but a later restart on the graded port served: the candidate was serving.
+        with self.assertRaisesRegex(RuntimeError, refused):
+            self.score(score, spawns(spawn(0, 57533, -9), spawn(1, 57533, 1, BIND_FAILED), spawn(2, 57533, -9)))
+        # Only the error journey's own ledgerd exited: not the graded service.
+        with self.assertRaisesRegex(RuntimeError, refused):
+            self.score(score, spawns(spawn(0, 57533, -9), spawn(1, 61001, 1)))
         # A harness step the exit does not explain still refuses.
         with self.assertRaisesRegex(RuntimeError, r'missing benchmark infrastructure: arm_hold_create:failed$'):
-            self.score(score, [{'spawn': 1, 'of': 2, 'returncode': 1, 'spawned_at': 0.0, 'last_line': ''}],
-                       ['fire_d1_mutation:failed', 'arm_hold_create:failed'])
+            self.score(score, self.FLASH, ['fire_d1_mutation:failed', 'arm_hold_create:failed'])
 
     def test_sb71_keeps_refusing(self):
-        exits = [{'spawn': 1, 'of': 2, 'returncode': 1, 'spawned_at': 0.0, 'last_line': BIND_FAILED}]
         with self.assertRaisesRegex(RuntimeError, 'missing benchmark infrastructure: fire_d1_mutation:failed'):
-            self.score(score_sb71, exits)
+            self.score(score_sb71, self.FLASH)
 
     def test_gather_records_only_the_candidates_own_exits(self):
         import signal
@@ -939,11 +953,13 @@ class LedgerdSelfExitTests(unittest.TestCase):
             own.wait(timeout=10)
             os.killpg(killed.pid, signal.SIGKILL)
             killed.wait(timeout=10)
-            exits = base._ledger_self_exits([(killed, time.time()), (own, time.time()), (alive, time.time())])
+            records = base._ledger_spawn_records([(killed, 1, time.time()), (own, 1, time.time()),
+                                                  (alive, 2, time.time())])
         finally:
             os.killpg(alive.pid, signal.SIGKILL)
             alive.wait(timeout=10)
-        self.assertEqual([(e['spawn'], e['of'], e['returncode']) for e in exits], [(1, 3, 1)])
+        self.assertEqual([(r['spawn'], r['of'], r['port'], r['returncode'], r['self_exit']) for r in records],
+                         [(0, 3, 1, -9, False), (1, 3, 1, 1, True), (2, 3, 2, None, False)])
 
 if __name__ == '__main__':
     unittest.main()
