@@ -1,0 +1,45 @@
+{
+  "time": "2026-10-29T06:46:46.010571+00:00",
+  "provider": {
+    "name": "custom_controller_ui_proof_20261029",
+    "engine": "anthropic",
+    "display_name": "Controller UI proof 20261029",
+    "description": "Custom Controller UI proof 20261029 provider",
+    "api_key_env": "",
+    "base_url": "https://controller-uat.invalid",
+    "models": [
+      {
+        "name": "controller-ui-proof",
+        "context_limit": 128000,
+        "input_token_cost": null,
+        "output_token_cost": null,
+        "currency": null,
+        "supports_cache_control": null,
+        "reasoning": false
+      }
+    ],
+    "headers": null,
+    "timeout_seconds": null,
+    "supports_streaming": null,
+    "requires_auth": false,
+    "catalog_provider_id": null,
+    "base_path": null,
+    "env_vars": null,
+    "dynamic_models": null,
+    "skip_canonical_filtering": false,
+    "model_doc_link": null,
+    "setup_steps": [],
+    "fast_model": null,
+    "preserves_thinking": false
+  },
+  "delete_response": {
+    "providerId": "custom_controller_ui_proof_20261029",
+    "refresh": {
+      "started": [],
+      "skipped": []
+    }
+  },
+  "removed": true,
+  "inference_tested": false,
+  "native_ui": "Applied on the Mac; refreshed inventory Controller UI proof 20261029, Configured"
+}
