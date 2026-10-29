@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-10-29T08:29:00Z",
+  "updated_at": "2026-10-29T08:51:00Z",
   "device": {
     "name": "Zerobarat celular",
     "model": "iPhone 17 Pro Max",
@@ -32,7 +32,7 @@
     "diagnostic_limit": "Initial old-build Console stream was empty; the updated development build has a positive-control stream and nine MeshLifecycle events captured through Console actual UI."
   },
   "app_installed": true,
-  "physical_journeys": "Enrollment and old catalog visible. Old setup build lock/resume session access failed. Updated development app preserves identity but cold startup waits in embedded node.up; final qualification pending.",
+  "physical_journeys": "Same-identity automaticmesh recovery andactualsessionreadproved. Physicalsendrejectedstale_revision; no modelrun. Phone/iPad scrollfailure remainsopen. Finalnetwork/lifecyclequalificationpending.",
   "owner_action_pending": null,
   "setup_candidate": {
     "source": "15a3625e41f1de500f6b293557f06ba1b448edd7",
@@ -111,5 +111,31 @@
     "dark": "Selected Dark; background, text and tab bar changed visibly to dark appearance",
     "restoration": "System selected and actual screen verified selected System with dark system appearance",
     "limits": "Settings surface only; no claim that every transcript or management surface was visually qualified."
+  },
+  "recovery_candidate": {
+    "source": "867119541e90ad12cab50e47b929088abd51b1fa",
+    "app_path": "/tmp/goose-phone-lifecycle-867119541e90/GooseRemote.app",
+    "installed": true,
+    "install_receipt": "/tmp/goose-phone-lifecycle-867119-install.json",
+    "owner_unlocked_and_opened": true,
+    "provider_recovery_receipt": "physical-mesh-provider-absence-2026-10-29.json",
+    "observed": "10:44 catalog loaded;10:45 originalCloudcontrollertest opened and existing80facts transcript readable aftergesture. Samephoneidentity recovered automatically; separate provider receipt carries metadata."
+  },
+  "physical_send_attempt": {
+    "source": "867119541e90",
+    "session": "20261028_1",
+    "title": "Cloud controller test",
+    "provider_verified": "openrouter",
+    "model_verified": "deepseek/deepseek-v4.1-flash",
+    "original_payload": "Physical iPhone check 2026-10-29. Reply: Phone connection works.",
+    "actions": "Composer draft verified, Send pressed, actualsharing disclosure namedopenrouter, Allowsharingandsend pressed once around10:47. No retry.",
+    "actual_result": "Rejected: stale_revision: work changed; refresh before issuing this command. Visible only aftermanualscroll toconversationbottom10:51.",
+    "owner_database_result": "Zero matchinguser messages; latestmessage remained earlier80facts assistantresponse. No inference started by thisattempt.",
+    "limits": "Newcharacters subsequently appearedin retaineddraft nottyped byagent; draftnotcleared orresent."
+  },
+  "physical_scroll_failure": {
+    "initial": "Cloudcontrollertest title/composer loaded but transcriptviewport wasblank10:45; downwardgesture revealedloaded80facts lines54-77.",
+    "jump": "Jump then moved toolderlines40-62 instead oflatest.",
+    "receipt": "Rejectedreceipt belowlastmessage hiddenuntilmanualforwardscroll."
   }
 }
