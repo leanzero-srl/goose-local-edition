@@ -1,17 +1,8 @@
 import Foundation
 import Network
-import OSLog
 #if canImport(TailscaleKit)
 import TailscaleKit
 #endif
-
-// Temporary physical-device lifecycle diagnosis; records no credentials or node identity.
-enum MeshLifecycleDiagnostics {
-    private static let logger = Logger(subsystem: "net.leanzero.goose-remote", category: "MeshLifecycle")
-    static func record(_ stage: String, operation: UUID? = nil) {
-        logger.notice("stage=\(stage, privacy: .public) operation=\(operation?.uuidString ?? "none", privacy: .public)")
-    }
-}
 
 struct MeshJoinCredential: Codable, Sendable {
     let enrollmentId: UUID
@@ -88,9 +79,7 @@ actor EmbeddedMeshConnectionProvider: OwnerConnectionProvider, ControllerMeshSes
         try Task.checkCancellation()
         let operation = UUID()
         lifecycle = operation
-        MeshLifecycleDiagnostics.record("prepare-begin", operation: operation)
         await closeNode()
-        MeshLifecycleDiagnostics.record("prepare-closed-prior", operation: operation)
         guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
         let deviceId = identity.credentials.device.deviceId
         var state = try credentials.read(MeshEnrollmentState.self, account: "mesh") ??
@@ -101,12 +90,10 @@ actor EmbeddedMeshConnectionProvider: OwnerConnectionProvider, ControllerMeshSes
         try credentials.write(state, account: "mesh")
         let api = try ControllerAPI(authority: identity.authority, transport: authorityTransport)
         if let key = state.confirmedNodeKey, state.replacementEnrollmentId == nil {
-            MeshLifecycleDiagnostics.record("preflight-confirm-begin", operation: operation)
             do {
                 let confirmed = try await api.confirmMesh(enrollmentId: state.enrollmentId, nodeKey: key, token: identity.credentials.accessToken)
                 guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
                 guard confirmed.deviceId == deviceId, confirmed.role == "controller", confirmed.revokedAt == nil else { throw ControllerError.malformedResponse }
-                MeshLifecycleDiagnostics.record("preflight-confirm-end", operation: operation)
             } catch ControllerError.remote(403, "mesh_binding_unverified", _) {
                 guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
                 state.replacementEnrollmentId = UUID()
@@ -114,19 +101,16 @@ actor EmbeddedMeshConnectionProvider: OwnerConnectionProvider, ControllerMeshSes
             }
         }
         if let replacement = state.replacementEnrollmentId {
-            MeshLifecycleDiagnostics.record("replacement-join-begin", operation: operation)
             // The authority permits replacement only after its complete provider listing
             // proves this device's prior binding absent or unusable. Confirm failure alone is not proof.
             let join = try await api.meshJoin(enrollmentId: replacement, token: identity.credentials.accessToken)
             guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
-            MeshLifecycleDiagnostics.record("replacement-join-granted", operation: operation)
             // Keep the old state + stable replacement request until reset succeeds. A crash
             // or secure-write failure then retries the same receipt, never the retired node.
             if FileManager.default.fileExists(atPath: directory.path) { try FileManager.default.removeItem(at: directory) }
             state = MeshEnrollmentState(authority: identity.authority, deviceId: deviceId, enrollmentId: replacement,
                                         join: join, loginServer: join.loginServer)
             try credentials.write(state, account: "mesh")
-            MeshLifecycleDiagnostics.record("replacement-reset-complete", operation: operation)
         }
         if state.confirmedNodeKey == nil && state.join == nil {
             state.join = try await api.meshJoin(enrollmentId: state.enrollmentId, token: identity.credentials.accessToken)
@@ -154,34 +138,26 @@ actor EmbeddedMeshConnectionProvider: OwnerConnectionProvider, ControllerMeshSes
         var excluded = directory
         var values = URLResourceValues(); values.isExcludedFromBackup = true
         try excluded.setResourceValues(values)
-        MeshLifecycleDiagnostics.record("node-create", operation: operation)
         let current = try TailscaleNode(config: Configuration(hostName: "goose-controller-" + deviceId.uuidString.lowercased(), path: directory.path,
             authKey: state.join?.authKey, controlURL: loginServer.absoluteString, ephemeral: false), logger: nil)
         node = current
         do {
             try await withTaskCancellationHandler {
-                MeshLifecycleDiagnostics.record("node-up-begin", operation: operation)
                 try await current.up()
-                MeshLifecycleDiagnostics.record("node-up-end", operation: operation)
             } onCancel: {
                 // Cancelling detached up() alone leaves its Go call alive. Closing the node unblocks it.
                 Task { try? await current.close() }
             }
             guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
-            MeshLifecycleDiagnostics.record("node-status-begin", operation: operation)
             let key = try Self.nodeKey(status: await current.statusJSON())
             guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
-            MeshLifecycleDiagnostics.record("node-status-end", operation: operation)
             if let confirmed = state.confirmedNodeKey, confirmed != key { throw ControllerError.invalid("The local mesh identity changed. Explicit reenrollment is required.") }
-            MeshLifecycleDiagnostics.record("confirm-begin", operation: operation)
             let confirmed = try await api.confirmMesh(enrollmentId: state.enrollmentId, nodeKey: key, token: identity.credentials.accessToken)
             guard operation == lifecycle, !Task.isCancelled, confirmed.deviceId == deviceId, confirmed.role == "controller", confirmed.revokedAt == nil else { throw ControllerError.malformedResponse }
-            MeshLifecycleDiagnostics.record("confirm-end", operation: operation)
             state.confirmedNodeKey = key
             state.join = nil
             try credentials.write(state, account: "mesh")
         } catch {
-            MeshLifecycleDiagnostics.record("prepare-failed", operation: operation)
             if operation == lifecycle { await suspend() }
             throw error
         }
@@ -241,14 +217,11 @@ actor EmbeddedMeshConnectionProvider: OwnerConnectionProvider, ControllerMeshSes
         if let current {
             let closing = Task {
                 await pending?.value
-                MeshLifecycleDiagnostics.record("node-close-begin")
                 try? await current.close()
-                MeshLifecycleDiagnostics.record("node-close-end")
             }
             closingTask = closing
             await closing.value
         } else {
-            MeshLifecycleDiagnostics.record("node-close-join")
             await pending?.value
         }
         #endif
