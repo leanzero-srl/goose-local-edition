@@ -87,3 +87,26 @@ Run dir /Volumes/AI-workhorse/runs/2026-10-29-longctx-pld-256k (NOTES.md). One r
 Commits: `git -c user.name=leanzero.srl -c user.email=office@leanzero.net commit`, NO Co-Authored-By.
 Push: `git push -u origin HEAD:ngram-decoding`. Port 8471 only; never pkill by pattern; heavy runs via
 ~/Projects/machine-sync/bin/node-run (workhorse or gabee, not workmule).
+
+## 2026-10-29 Gauntlet sb-7.2: Qwen3.8-Flash-Next 4-bit, PLE+MTP+n-gram, workmule 256k (job 2 of the long-ctx/PLD run)
+- PUBLISHED 0.0065 (0.65 %): https://leanzero.net/agentic-benchmarks/run/brun-fba0d58e-e975-4d02-95d7-4de034b8ec22,
+  label "Qwen3.8-Flash-Next 4-bit · PLE+MTP+n-gram · workmule, 256k". Cloud qwen/qwen3.8-flash 0.6846 (brun-dce059c2).
+  Caveats (in the doc's `notes`; the run page does not render notes): text-only (cloud sent 7 images); context 262,144
+  = model max vs cloud peak 322,851, so local compacted; thinking medium; 32,768 output cap; stopped at the 150-call budget.
+- WHY so low: a CANDIDATE fault, not the harness. B3 SIGKILLs ledgerd, reaps it (score_sb8.stop waits on the child,
+  descendants killed) and restarts with the same flags (SB7 §10). The model's app/transport.py sets
+  `server.allow_reuse_address = True` AFTER `ThreadingTCPServer(...)` has already bound, so SO_REUSEADDR is never
+  applied; the restart dies on EADDRINUSE, nothing serves after sync 2, every UI/recovery row is 0 and the
+  critical multiplier is 0.028 (inner 0.2645). Reproduced in 4 of 4 scorings; with the candidate's own transport
+  the kill-and-restart fails as written and binds when the flag is set before bind (port-repro-*.py).
+- The app had REFUSED it (fire_d1_mutation:failed). Harness changes on flash-pld-bench (pushed): d5fa44f640 + e2e456e903
+  (gather records each ledgerd spawn's port and exit code; under SB7.2, CHARGE_LEDGERD_EXIT, the last ledgerd on the
+  graded port exiting on its own charges the unavailable rows 0 and clears fire_d1_mutation:failed; controls refuse),
+  7522c90b2a (that run publishes its raw graded clip), 6c05fbdddf (main.ts compares evidence_dir by realpath: a
+  profile under /tmp refused its own re-score). Tests in evals/swarm-bench/bench/test_score_sb72.py LedgerdSelfExitTests.
+  main.ts change NOT typechecked (no TypeScript in the worktree's node_modules). No board or local tree shows the
+  same signature (50 sb-7.2 board runs scanned; workhorse/laptop/Gabee trees: no Errno 48 in scorer logs).
+- Evidence: /Volumes/AI-workhorse/runs/2026-10-29-longctx-pld-256k/gauntlet/ (run tree, published scoring attempt,
+  completions, repro scripts). Cleaned: dev app quit, :8291 engine gone, ~/goose-builds/flashpld and /tmp/gflash
+  deleted, installed Goose Swarm restored on CDP 9897. KEPT on purpose: workmule ~/models-local/rapid-mlx/
+  Qwen3.8-Flash-Next-4bit (98 GB) for the vision follow-up re-run.
