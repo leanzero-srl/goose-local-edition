@@ -429,3 +429,9 @@ return. Everything in this repo exists to clear 20.06%; clearing 0.0273 only mea
 SEEN `ledgerd.py`. Coherence is free because there is one context. Parallelism destroys that coherence,
 so the fleet spends its whole budget rebuilding it IN ADVANCE, in prose — and prose can never be as good
 as looking at the code. r0 spent 258,566 characters of reasoning to write 74,963 bytes of program.
+
+## DROPPED — MiMo-V2.6-Flash MTP speculative decoding on the 2-Mac pipeline split (2026-10-29)
+Idea: draft k=3 tokens with the checkpoint's 3 MTP layers on the mule rank, verify [y,d1..d3] in one pipeline pass (branch mimo-mtp, 7ec601f24d..fe18bd2fd4, deleted). Stable (no FATAL/GPU Timeout/desync), but it FAILED the owner rule on two counts, measured live via dist_ctl at context 262144, split 19/29, same five prompts, MTP off vs on, greedy:
+greedy identity broke on 2 of 5 (long_code diverged at char 893 of 7778, qa_32k at char 378 of 483; short_edit, tool_call, image identical; MTP-off was bit-identical with itself on a rerun), so the N=k+1 verify kernels flip near-tie argmaxes.
+no speed-up: acceptance only 0.29-0.50; decode tok/s off→on short_edit 35.5→33.6, long_code 34.8→34.5, qa_32k 31.4→19.3, tool_call 36.8→41.9, image 35.8→45.1; TTFT cold 2.4→3.6 s short, 60.3→61.1 s at 30.7k; and the MTP head leaves only 0.24 GB spare on the tightest Mac (1.91 without).
+Rule: do not revive pipeline-split MTP for MiMo without (a) a verify path bit-identical to plain decode and (b) acceptance well above 0.5 on long outputs.
