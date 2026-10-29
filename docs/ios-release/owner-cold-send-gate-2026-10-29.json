@@ -1,0 +1,26 @@
+{
+  "gate_job": "laptop-20261029-111601-1870",
+  "host": "gabee",
+  "status": "passed",
+  "exit": 0,
+  "completed_local": "2026-10-29T11:27:45+0200",
+  "cli_build": "cargo build --locked --config profile.dev.package.*.strip=false -p goose-cli --bin goose",
+  "tests": {
+    "owner_unit": 20,
+    "real_acp_cold_send": 1,
+    "real_acp_permission": 1,
+    "real_acp_preflight": 1,
+    "real_acp_question": 1,
+    "frontend_extension": 2,
+    "total": 26
+  },
+  "workspace_clippy": "cargo clippy --locked --config profile.dev.package.*.strip=false --workspace --all-targets -- -D warnings",
+  "red_green_job": "laptop-20261029-111326-79c9",
+  "initial_fixture_compile_failure": "laptop-20261029-110651-f552 (no behavioral proof; corrected fixture API name)",
+  "source_hashes": {
+    "crates/goose/src/agents/agent.rs": "25d3b52a846377def7a20fd99bb1fbc37d162cb0c9f8ed7f1ed2a0779b1b335b",
+    "crates/goose/tests/acp_owner_cold_send_test.rs": "e181fdfcd2c3e823cc2061d694eed2935165c75a72e4a5e91d4d141896639d32"
+  },
+  "actual_phone_acceptance": "Pending upgraded-owner cold-session proof; do not retry original command or edit its retained draft.",
+  "source_changes": "Unchanged saved provider installs runtime only; saved extension loading does not write runtime ordering/success subset. Real changes remain revision checked. No command retry or authority relaxation."
+}

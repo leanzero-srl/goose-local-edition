@@ -1624,16 +1624,9 @@ impl Agent {
             })
             .collect::<Vec<_>>();
 
-        let results = futures::future::join_all(extension_futures).await;
-
-        // Persist once after all extensions are loaded
-        if results.iter().any(|r| r.success) {
-            if let Err(e) = self.persist_extension_state(&session_id).await {
-                warn!("Failed to persist extension state after bulk load: {}", e);
-            }
-        }
-
-        results
+        // Restoring saved configuration must not rewrite it with runtime order or
+        // discard extensions that could not load. Explicit add/remove operations persist.
+        futures::future::join_all(extension_futures).await
     }
 
     pub async fn add_extension(
@@ -3669,6 +3662,22 @@ impl Agent {
         self.grind.lock().await.clone()
     }
 
+    async fn normalized_provider_model(
+        provider_name: &str,
+        model_config: goose_providers::model::ModelConfig,
+    ) -> goose_providers::model::ModelConfig {
+        // Normalize against the provider entry so custom/declarative providers
+        // backfill `context_limit` from their known models before the config is
+        // persisted as the session source of truth; otherwise auto-compaction
+        // would fall back to DEFAULT_CONTEXT_LIMIT.
+        match crate::providers::get_from_registry(provider_name).await {
+            Ok(entry) => entry
+                .normalize_model_config(model_config.clone())
+                .unwrap_or(model_config),
+            Err(_) => model_config,
+        }
+    }
+
     pub async fn update_provider(
         &self,
         provider: Arc<dyn Provider>,
@@ -3677,16 +3686,7 @@ impl Agent {
     ) -> Result<()> {
         let provider_name = provider.get_name().to_string();
 
-        // Normalize against the provider entry so custom/declarative providers
-        // backfill `context_limit` from their known models before the config is
-        // persisted as the session source of truth; otherwise auto-compaction
-        // would fall back to DEFAULT_CONTEXT_LIMIT.
-        let model_config = match crate::providers::get_from_registry(&provider_name).await {
-            Ok(entry) => entry
-                .normalize_model_config(model_config.clone())
-                .unwrap_or(model_config),
-            Err(_) => model_config,
-        };
+        let model_config = Self::normalized_provider_model(&provider_name, model_config).await;
 
         let mut current_provider = self.provider.lock().await;
         *current_provider = Some(provider);
@@ -3872,8 +3872,24 @@ impl Agent {
                 (fallback_provider, fallback_model_config, true)
             };
 
-        self.update_provider(provider, active_model_config, &session.id)
-            .await?;
+        let active_model_config =
+            Self::normalized_provider_model(provider.get_name(), active_model_config).await;
+        let saved_provider_unchanged = session.provider_name.as_deref()
+            == Some(provider.get_name())
+            && session
+                .model_config
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()?
+                == Some(serde_json::to_value(&active_model_config)?);
+        if saved_provider_unchanged {
+            // The snapshot may predate a concurrent edit. Install its runtime without
+            // writing it back; the owner's revision check still sees that edit.
+            *self.provider.lock().await = Some(provider);
+        } else {
+            self.update_provider(provider, active_model_config, &session.id)
+                .await?;
+        }
         // Propagate session mode to the new provider
         if let Some(provider) = self.provider.lock().await.as_ref() {
             provider
