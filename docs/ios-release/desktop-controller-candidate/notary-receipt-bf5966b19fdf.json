@@ -1,0 +1,19 @@
+{
+  "sourceCommit": "bf5966b19fdf4835b8feadcbe95b2951c7f3498b",
+  "sourceTree": "67c316961e92ade0f6f10a156beeb0972f34993d",
+  "version": "3.0.134",
+  "uploadArchive": "/tmp/goose-controller-corrected-signed-bf5966b19fdf/Goose-Swarm-signed.zip",
+  "uploadArchiveSha256": "8261f27b92581b9d26c8b12bdb7e8a1f938228cb7f730a4d8f7d76f5df3b873e",
+  "preUploadReceiptSha256": "0ecf05a4e59b4dda8941f01b069fb58340c0c7a926833f9fdde965541126844b",
+  "notarized": false,
+  "uploaded": true,
+  "installed": false,
+  "notarySubmissionAttemptedAt": "2026-10-29T05:27:33.972Z",
+  "notarySubmissionId": "d4b59b60-4db2-43e9-921a-fe3bcdcc7f8f",
+  "notaryStatus": "In Progress",
+  "lastCheckedAt": "2026-10-29T05:28:36.672Z",
+  "operatorSha256": "f1f62c6b1bd9803dfef66ee113f3f7bad132c9a36d1087bbd594068f34432041",
+  "securePromptWrapperSha256": "b170e22d64a10217c3ba72e15b5a5c8a177e8671359ddcf4fa9657babb64429e",
+  "historyBaselineSha256": "2601817dbbf1696dfcb59a79aee2877f9c3a6c00da4dfb03e4b5f5f7c0c6f978",
+  "independentReview": "PASS after replacing password argv with tested secure PTY prompt"
+}
