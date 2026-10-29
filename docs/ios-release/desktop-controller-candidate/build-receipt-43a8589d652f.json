@@ -1,0 +1,62 @@
+{
+  "sourceCommit": "43a8589d652f72c145f57cbe667b0b9ec2a71976",
+  "sourceTree": "cfc2004805b779ee7e13e287c0385b46a98ddd35",
+  "inputCliSha256": "3d244ac27cf450a8619273fbeeff3a3edd392b4f85ca864a5336b147ed103d8c",
+  "signedCliSha256": "f43f47848b133350cfc037c6a3fb142683688d9410e598b2652319ee65fe460c",
+  "appVersion": "3.0.134",
+  "app": "/tmp/goose-controller-incremental-43a8589d652f/Goose Swarm.app",
+  "team": "ZZ8MTZ6NRZ",
+  "baselineArchiveSha256": "f2d7a1c2efdeaa06e63e2ea2fb7f7ea6719d24851f7309ca982b02150afc4d80",
+  "baselineSourceCommit": "57419bcc521ce6f3ef0cc00dde59b735415496c3",
+  "classification": "new whole signed desktop bundle using unchanged proven Electron resources; new source-pinned CLI",
+  "signedFingerprintSha256": "d4006d9195761c7fe98f7266d135bd3274451cf5af01473cd6ad01a461049a6b",
+  "signedArchive": "/tmp/goose-controller-incremental-43a8589d652f/Goose-Swarm-signed.zip",
+  "signedArchiveSha256": "36f291982387c88f357f077e1b2231333f42922a97a537857a6be6f1fe56cfb2",
+  "cliEquivalence": {
+    "original": {
+      "vmSize": 166903808,
+      "fieldOffset": 1952,
+      "fileOffset": 298647552,
+      "fileSize": 163292964
+    },
+    "signed": {
+      "vmSize": 164216832,
+      "fieldOffset": 1952,
+      "fileOffset": 298647552,
+      "fileSize": 163292964
+    },
+    "equivalentSha256": "257098dcf2c1801fe5c7c6e204e3278123e12b13c5a5c38658556a5f2938951b",
+    "byteLength": 461940516
+  },
+  "mainEquivalence": {
+    "original": {
+      "vmSize": 32768,
+      "fieldOffset": 600,
+      "fileOffset": 32768,
+      "fileSize": 772
+    },
+    "signed": {
+      "vmSize": 32768,
+      "fieldOffset": 600,
+      "fileOffset": 32768,
+      "fileSize": 772
+    },
+    "equivalentSha256": "f80839e46cf391f5891577a3fb269db6396cdd87b8a082d57f16b32173157ce4",
+    "byteLength": 33540
+  },
+  "changed": [
+    "Contents/MacOS/Goose Swarm",
+    "Contents/Resources/bin/goose",
+    "Contents/_CodeSignature/CodeResources"
+  ],
+  "signedAt": "2026-10-29T09:34:17.211762+00:00",
+  "notarized": false,
+  "uploaded": false,
+  "installed": false,
+  "archiveStrictSignatureVerified": true,
+  "archiveFingerprintExact": true,
+  "sourceGateJob": "laptop-20261029-111601-1870",
+  "stampedBuildJob": "laptop-20261029-113026-440f",
+  "signJob": "laptop-20261029-113206-e91a",
+  "runtimeManifestSha256": "f259e34f7713e2e8c9e6570182f08a47b3c6cd41c44b895f60dccdd4feaba712"
+}

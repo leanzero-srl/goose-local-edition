@@ -1,0 +1,18 @@
+    Finished `dev` profile [unoptimized] target(s) in 4m 58s
+    Finished `test` profile [unoptimized] target(s) in 1m 36s
+     Running unittests src/lib.rs (/Users/mihaiperdum/Projects/goose-controller-test-build/target/debug/deps/goose-cfb26a1fc12c3404)
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 2408 filtered out; finished in 1.08s
+    Finished `test` profile [unoptimized] target(s) in 5.64s
+     Running tests/acp_owner_cold_send_test.rs (/Users/mihaiperdum/Projects/goose-controller-test-build/target/debug/deps/acp_owner_cold_send_test-d88dc89fd8ffcdb9)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
+     Running tests/acp_owner_permission_test.rs (/Users/mihaiperdum/Projects/goose-controller-test-build/target/debug/deps/acp_owner_permission_test-a1b75b6958528701)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.79s
+     Running tests/acp_owner_preflight_test.rs (/Users/mihaiperdum/Projects/goose-controller-test-build/target/debug/deps/acp_owner_preflight_test-c94b8f8483dac950)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+     Running tests/acp_owner_question_test.rs (/Users/mihaiperdum/Projects/goose-controller-test-build/target/debug/deps/acp_owner_question_test-a8c62011f8c04004)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+    Finished `test` profile [unoptimized] target(s) in 3.24s
+     Running tests/agent.rs (/Users/mihaiperdum/Projects/goose-controller-test-build/target/debug/deps/agent-d302f770e6311940)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 49 filtered out; finished in 0.05s
+    Finished `dev` profile [unoptimized] target(s) in 4m 45s
+COLD_SEND_FULL_GATE_PASSED
