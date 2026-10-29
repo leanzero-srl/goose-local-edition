@@ -78,6 +78,9 @@ Every line below has file:line evidence in the T12 plan's "Local bake-off REDESI
   - the provider + host in the Benchmark form;
   - one rendered prompt showing the effort.
 
+- **STREAM BRACKET-STRIP BUG (2026-10-29, pin lz.14, found on LongCat-Flash-Lite, also in the 10-26 Qwen outputs):** `service/postprocessor.py` (~3062/3106/3471/3515) runs `sanitize_output()` on every streamed content delta, and `api/utils.py _sanitize_with()` does `.strip()` on any delta containing `<`, `[` or `]`. Tokens like ` [--` or `]\n\n\n` lose their whitespace: streamed files differ from the non-stream answer (Qwen 12 lines, LongCat 41 lines of a 182-line file). Tokens are identical to upstream mlx-lm; only the stream text is wrong. Fix: use the no-strip `sanitize_content_for_stream()` there. Check exactness with /Volumes/AI-workhorse/runs/2026-10-29-longcat-flash-lite/check_code_edit.py (stream vs non-stream).
+- **LongCat-Flash-Lite (longcat_flash_ngram) on the fork (2026-10-29):** loads and serves (38.6 GB, ~96 tok/s @8k), but tool calls come back as content (no longcat parser; port mlx_lm/tool_parsers/longcat.py), and spec decode/suffix is refused because its `ArraysCache(size=1)` (n-gram token history) is misread as a recurrent hybrid layer. Upstream `mlx_lm.load` needs `tokenizer_config={"trust_remote_code": True}`.
+
 ## MEMORY GUARD — OOM-proof, cache-invisible, device-aware (T12, 2026-10-14; fork branch `lz/memory-guard`)
 Owner asks, verbatim:
 - "the cache share or cache hitting needs to be invisible, it should just work";
