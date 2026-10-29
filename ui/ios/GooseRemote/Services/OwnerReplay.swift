@@ -1,6 +1,17 @@
 import Foundation
 
 enum OwnerReplay {
+    static func refreshed(_ current: SelectedWork, entry: CatalogEntry, pendingInputs: [PendingInput], sharing: SessionSharingDescriptor?) throws -> SelectedWork {
+        guard current.entry.work == entry.work, current.entry.storeGeneration == entry.storeGeneration,
+              entry.revision >= current.entry.revision else { throw ControllerError.malformedResponse }
+        var next = current
+        next.entry = entry
+        next.pendingInputs = pendingInputs
+        next.sharing = sharing
+        // Keep the partial's bytes and replay cursor together. Overlaying snapshot
+        // partials here would invalidate the next replay frame's byte offset.
+        return next
+    }
     static func catalog(_ change: CatalogChange, into snapshot: OwnerCatalogSnapshot) throws -> OwnerCatalogSnapshot {
         guard change.cursor.ownerNodeId == snapshot.watermark.ownerNodeId,
               change.cursor.storeGeneration == snapshot.watermark.storeGeneration,
@@ -24,6 +35,13 @@ enum OwnerReplay {
               !frame.resumeCursor.isEmpty else { throw ControllerError.malformedResponse }
         if frame.sequence <= current.streamRevision { return current }
         var next = current
+        if frame.sequence <= current.historyRevision,
+           ["message_upsert", "message_deleted", "partial_replacement", "partial_discarded"].contains(frame.type) {
+            next.streamRevision = frame.sequence
+            next.workCursor = frame.resumeCursor
+            next.entry.revision = max(next.entry.revision, frame.workRevision)
+            return next
+        }
         switch frame.type {
         case "message_upsert":
             struct Payload: Decodable { let item: HistoryItem; let previousMessageId: String? }
@@ -60,7 +78,7 @@ enum OwnerReplay {
             if next.transcript.contains(where: { $0.id == value.messageId && $0.revision >= value.messageRevision }), next.partialMessages[value.messageId] == nil { break }
             let old = next.partialMessages[value.messageId]
             guard value.offsetBytes == (try old.map { try textBytes($0.message) } ?? 0) else {
-                throw ControllerError.unavailable("Part of the live answer is missing. Refresh to restore it from the owner.")
+                throw ControllerError.replayRequired("Part of the live answer is missing. Refresh to restore it from the owner.")
             }
             let message = try merge(old?.message, chunk: value.content)
             let item = HistoryItem(messageId: value.messageId, revision: value.messageRevision, message: message)
@@ -95,6 +113,7 @@ enum OwnerReplay {
         guard page.work == current.entry.work, page.storeGeneration == current.entry.storeGeneration,
               page.revision == current.historyRevision else { throw ControllerError.malformedResponse }
         var next = current
+        var olderOrder: [String] = []
         for item in page.items {
             var id = item.messageId
             var visited = Set<String>()
@@ -102,8 +121,9 @@ enum OwnerReplay {
                 guard visited.insert(id).inserted else { throw ControllerError.malformedResponse }
                 id = replacement
             }
-            if !next.historyOrder.contains(id) { next.historyOrder.append(id) }
+            if !next.historyOrder.contains(id), !olderOrder.contains(id) { olderOrder.append(id) }
         }
+        next.historyOrder.insert(contentsOf: olderOrder, at: 0)
         for message in try TranscriptRenderer.items(page.items) {
             if let deletedAt = next.messageTombstones[message.id], message.revision <= deletedAt { continue }
             if let index = next.transcript.firstIndex(where: { $0.id == message.id }) {

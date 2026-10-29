@@ -203,7 +203,7 @@ struct CommandReceipt: Codable, Sendable {
 
 // The selected-work adapter maps the canonical Goose history contract into these display values.
 // No synthetic transcript is produced when decoding or transport fails.
-struct TranscriptItem: Codable, Identifiable, Sendable {
+struct TranscriptItem: Codable, Identifiable, Equatable, Sendable {
     let id: String
     let revision: UInt64
     let role: String
@@ -345,10 +345,10 @@ enum JSONValue: Codable, Hashable, Sendable {
 }
 
 enum ControllerError: Error, LocalizedError, Equatable {
-    case invalid(String), unsupported(String), unavailable(String), remote(Int, String, String), malformedResponse, credentialStore(Int32)
+    case invalid(String), unsupported(String), unavailable(String), replayRequired(String), remote(Int, String, String), malformedResponse, credentialStore(Int32)
     var errorDescription: String? {
         switch self {
-        case .invalid(let text), .unsupported(let text), .unavailable(let text): return text
+        case .invalid(let text), .unsupported(let text), .unavailable(let text), .replayRequired(let text): return text
         case .remote(_, _, let message): return message
         case .malformedResponse: return "The server returned an incompatible response. Refresh or update the owner Mac."
         case .credentialStore: return "Secure device storage could not be accessed. Unlock this device and try again."

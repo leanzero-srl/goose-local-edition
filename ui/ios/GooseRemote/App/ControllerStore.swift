@@ -38,6 +38,8 @@ final class ControllerStore {
     private(set) var selectedError: String?
     private(set) var selectedLoading = false
     private(set) var selectedHistoryPaused = false
+    private(set) var selectedHistoryNotice: String?
+    private(set) var selectedHistoryReset = UUID()
     private(set) var syncResults: [NodeSyncResult] = []
     private(set) var lastSync: Date?
     private(set) var syncRunning = false
@@ -268,28 +270,40 @@ final class ControllerStore {
     }
     func synchronize() async { manualSync(); await syncTask?.value }
 
-    func select(_ work: WorkRef?) async {
+    func select(_ work: WorkRef?, resetHistory: Bool = false) async {
+        let previous = work != nil && selectedRef == work ? selectedWork : nil
         sharingRequest = nil
         workTask?.cancel(); workTask = nil
         selectedRequest = UUID()
         selectedLoading = false
         selectedRef = work
         selectedHistoryPaused = false
-        selectedWork = nil
+        selectedWork = previous
+        if previous == nil { selectedHistoryNotice = nil }
         selectedError = nil
         guard let work, let entry = entries.first(where: { $0.work == work }), let host = hosts.first(where: { $0.id == work.ownerNodeId }) else { return }
-        if let saved = local?.data.selected, saved.entry.work == work { selectedWork = saved }
+        if selectedWork == nil, let saved = local?.data.selected, saved.entry.work == work { selectedWork = saved }
         let request = UUID()
         selectedRequest = request
         selectedLoading = true
         defer { if selectedRequest == request { selectedLoading = false } }
         do {
             let identity = try await validCredential()
-            let result = try await owner.selected(work: entry, host: host, credential: identity.credentials.accessToken)
+            let result: SelectedWork
+            if let previous, work.kind == .chat, previous.entry.storeGeneration == entry.storeGeneration,
+               !previous.workCursor.isEmpty, !resetHistory {
+                result = try await owner.refreshSelected(previous, host: host, credential: identity.credentials.accessToken)
+            } else {
+                result = try await owner.selected(work: entry, host: host, credential: identity.credentials.accessToken)
+            }
             guard result.entry.work == work, result.entry.storeGeneration == entry.storeGeneration else { throw ControllerError.malformedResponse }
             if selectedRequest == request {
                 try local?.cacheSelected(result)
                 selectedWork = result
+                if resetHistory || previous.map({ $0.entry.storeGeneration != result.entry.storeGeneration }) == true {
+                    selectedHistoryNotice = "The owner’s saved history changed or expired. Showing the latest messages; older history can be loaded again."
+                    selectedHistoryReset = UUID()
+                }
                 startWorkStream(host: host, request: request)
             }
         } catch { if selectedRequest == request { selectedError = error.localizedDescription } }
@@ -432,7 +446,12 @@ final class ControllerStore {
                 try local?.cacheSelected(latest)
                 selectedWork = latest
             }
-        } catch { if selectedRequest == request { selectedHistoryPaused = wasPaused }; errorMessage = error.localizedDescription }
+        } catch {
+            guard selectedRequest == request else { return }
+            selectedHistoryPaused = wasPaused
+            if Self.needsFreshHistory(error) { await select(current.entry.work, resetHistory: true) }
+            else { errorMessage = error.localizedDescription }
+        }
     }
 
     func loadDevices() async {
@@ -673,7 +692,7 @@ final class ControllerStore {
                     if frame.type == "log_updated", next.entry.work.kind != .chat, !selectedHistoryPaused {
                         try await refreshSelectedLog(host: host, request: request)
                     }
-                    if frame.type == "pending_input" {
+                    if frame.type == "pending_input", frame.sequence > selected.entry.revision {
                         Task { @MainActor [weak self] in
                             guard let self, selectedRequest == request, selectedRef == frame.work, foreground else { return }
                             await select(frame.work)
@@ -685,11 +704,24 @@ final class ControllerStore {
                 if !Task.isCancelled { scheduleReconnect("The live session disconnected.") }
             } catch {
                 if !Task.isCancelled, selectedRequest == request {
+                    if Self.needsFreshHistory(error) {
+                        Task { @MainActor [weak self] in
+                            guard let self, selectedRequest == request, selectedRef == current.entry.work else { return }
+                            await select(current.entry.work, resetHistory: true)
+                        }
+                        return
+                    }
                     selectedError = error.localizedDescription
                     await streamFailed(error, host: host)
                 }
             }
         }
+    }
+
+    private static func needsFreshHistory(_ error: Error) -> Bool {
+        if case ControllerError.replayRequired = error { return true }
+        if case ControllerError.remote(410, "snapshot_required", _) = error { return true }
+        return false
     }
 
     private func streamFailed(_ error: Error, host: HostDescriptor) async {

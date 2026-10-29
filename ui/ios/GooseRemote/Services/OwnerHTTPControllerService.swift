@@ -40,17 +40,13 @@ struct OwnerHTTPControllerService: OwnerControllerService {
     }
 
     func selected(work: CatalogEntry, host: HostDescriptor, credential: String) async throws -> SelectedWork {
-        guard work.work.ownerNodeId == host.id else { throw ControllerError.invalid("The selected session belongs to another Mac.") }
+        let snapshot = try await snapshot(work: work, host: host, credential: credential)
         let query = [URLQueryItem(name: "store_generation", value: work.storeGeneration.uuidString)]
-        let snapshot: WorkSnapshot = try await request("GET", path: workPath(work.work), query: query, host: host, credential: credential, body: Optional<String>.none)
-        guard snapshot.entry.work == work.work, snapshot.entry.storeGeneration == work.storeGeneration,
-              snapshot.historyWatermark.ownerNodeId == host.id, snapshot.historyWatermark.storeGeneration == work.storeGeneration else {
-            throw ControllerError.malformedResponse
-        }
-        let page: HistoryPage = try await request("GET", path: workPath(work.work) + "/history", query: query, host: host, credential: credential, body: Optional<String>.none)
+        let isChat = work.work.kind == .chat
+        let historyQuery = isChat ? query + [URLQueryItem(name: "cursor", value: snapshot.workCursor)] : query
+        let page: HistoryPage = try await request("GET", path: workPath(work.work) + (isChat ? "/history/latest" : "/history"), query: historyQuery, host: host, credential: credential, body: Optional<String>.none)
         try validate(page, work: snapshot.entry)
-        guard !snapshot.workCursor.isEmpty, snapshot.historyWatermark.revision >= snapshot.entry.revision,
-              page.revision >= snapshot.historyWatermark.revision else { throw ControllerError.malformedResponse }
+        guard isChat ? page.revision == snapshot.historyWatermark.revision : page.revision >= snapshot.historyWatermark.revision else { throw ControllerError.malformedResponse }
         let committed = Set(page.items.map(\.messageId))
         let partials = snapshot.liveMessages.filter { !committed.contains($0.messageId) }
         guard Set(partials.map(\.messageId)).count == partials.count else { throw ControllerError.malformedResponse }
@@ -58,6 +54,23 @@ struct OwnerHTTPControllerService: OwnerControllerService {
                      nextPageToken: page.nextPageToken, historyRevision: page.revision, workCursor: snapshot.workCursor,
                      streamRevision: snapshot.historyWatermark.revision, partialMessages: Dictionary(uniqueKeysWithValues: partials.map { ($0.messageId, $0) }),
                      historyOrder: page.items.map(\.messageId), sharing: snapshot.sharing)
+    }
+
+    func refreshSelected(_ current: SelectedWork, host: HostDescriptor, credential: String) async throws -> SelectedWork {
+        let latest = try await snapshot(work: current.entry, host: host, credential: credential)
+        return try OwnerReplay.refreshed(current, entry: latest.entry, pendingInputs: latest.pendingInputs, sharing: latest.sharing)
+    }
+
+    private func snapshot(work: CatalogEntry, host: HostDescriptor, credential: String) async throws -> WorkSnapshot {
+        guard work.work.ownerNodeId == host.id else { throw ControllerError.invalid("The selected session belongs to another Mac.") }
+        let query = [URLQueryItem(name: "store_generation", value: work.storeGeneration.uuidString)]
+        let snapshot: WorkSnapshot = try await request("GET", path: workPath(work.work), query: query, host: host, credential: credential, body: Optional<String>.none)
+        guard snapshot.entry.work == work.work, snapshot.entry.storeGeneration == work.storeGeneration,
+              snapshot.historyWatermark.ownerNodeId == host.id, snapshot.historyWatermark.storeGeneration == work.storeGeneration,
+              !snapshot.workCursor.isEmpty, snapshot.historyWatermark.revision >= snapshot.entry.revision else {
+            throw ControllerError.malformedResponse
+        }
+        return snapshot
     }
 
     func history(work: CatalogEntry, pageToken: String, host: HostDescriptor, credential: String) async throws -> HistoryPage {
@@ -116,13 +129,31 @@ struct OwnerHTTPControllerService: OwnerControllerService {
         let events = transport.events(for: request)
         return AsyncThrowingStream(bufferingPolicy: .bufferingOldest(16)) { continuation in
             let task = Task {
+                var receivedEvent = false
                 do {
                     for try await data in events {
                         let event = try ControllerCodec.decoder().decode(T.self, from: data)
+                        receivedEvent = true
                         if case .dropped = continuation.yield(event) { throw ControllerError.unavailable("The live view needs replay. Refresh to continue.") }
                     }
                     continuation.finish()
-                } catch { continuation.finish(throwing: error) }
+                } catch {
+                    // Network.framework can hide an HTTP refusal during the WebSocket
+                    // upgrade. Probe the same cursor over HTTP before deciding to reset.
+                    let typedRefusal: Bool
+                    if case ControllerError.remote = error { typedRefusal = true } else { typedRefusal = false }
+                    if let generation, !receivedEvent, !typedRefusal, !Task.isCancelled {
+                        do {
+                            let _: JSONValue = try await self.request("GET", path: String(path.dropLast("stream".count)) + "changes",
+                                query: [.init(name: "cursor", value: cursor), .init(name: "store_generation", value: generation.uuidString)],
+                                host: host, credential: credential, body: Optional<String>.none)
+                        } catch {
+                            continuation.finish(throwing: error)
+                            return
+                        }
+                    }
+                    continuation.finish(throwing: error)
+                }
             }
             continuation.onTermination = { _ in task.cancel() }
         }

@@ -9,6 +9,7 @@ struct OwnerCatalogSnapshot: Codable, Sendable {
 protocol OwnerControllerService: Sendable {
     func catalog(host: HostDescriptor, credential: String) async throws -> OwnerCatalogSnapshot
     func selected(work: CatalogEntry, host: HostDescriptor, credential: String) async throws -> SelectedWork
+    func refreshSelected(_ current: SelectedWork, host: HostDescriptor, credential: String) async throws -> SelectedWork
     func history(work: CatalogEntry, pageToken: String, host: HostDescriptor, credential: String) async throws -> HistoryPage
     func resources(host: HostDescriptor, credential: String) async throws -> ResourceSample
     func submit(_ command: WorkCommand, host: HostDescriptor, credential: String) async throws -> CommandReceipt
@@ -19,6 +20,10 @@ protocol OwnerControllerService: Sendable {
 }
 
 extension OwnerControllerService {
+    func refreshSelected(_ current: SelectedWork, host: HostDescriptor, credential: String) async throws -> SelectedWork {
+        let latest = try await selected(work: current.entry, host: host, credential: credential)
+        return try OwnerReplay.refreshed(current, entry: latest.entry, pendingInputs: latest.pendingInputs, sharing: latest.sharing)
+    }
     func changes(cursor: String, host: HostDescriptor, credential: String) async throws -> CatalogChanges { throw ControllerError.unsupported("Catalog replay is unavailable.") }
     func catalogEvents(cursor: String, host: HostDescriptor, credential: String) async throws -> AsyncThrowingStream<CatalogChange, Error> { throw ControllerError.unsupported("Live catalog is unavailable.") }
     func workEvents(work: SelectedWork, host: HostDescriptor, credential: String) async throws -> AsyncThrowingStream<WorkFrame, Error> { throw ControllerError.unsupported("Live transcript is unavailable.") }
