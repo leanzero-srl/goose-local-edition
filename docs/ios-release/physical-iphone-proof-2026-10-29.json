@@ -1,0 +1,32 @@
+{
+  "updated_at": "2026-10-29T07:37:05.797365+00:00",
+  "device": {
+    "name": "Zerobarat celular",
+    "model": "iPhone 17 Pro Max",
+    "os": "27.0.1",
+    "build": "24A446",
+    "transport": "wired",
+    "paired": true,
+    "developer_mode": "enabled"
+  },
+  "provisioning": [
+    {
+      "name": "iOS Team Provisioning Profile: net.leanzero.goose-remote",
+      "uuid": "da27f4b6-6c1a-4495-871b-da7890d58fac",
+      "team": [
+        "ZZ8MTZ6NRZ"
+      ],
+      "applicationIdentifier": "ZZ8MTZ6NRZ.net.leanzero.goose-remote",
+      "expires": "2027-10-29 07:27:56",
+      "includes_test_phone": true
+    }
+  ],
+  "evidence": {
+    "developer_mode": "devicectl device info details, 29 October 09:23 local",
+    "apple_account": "Actual Xcode Accounts pane showed owner signed in; Signing & Capabilities then offered Register Device",
+    "registration": "Register Device completed; actual Xcode panel showed Apple Development: Mihai Perdum (XMTA27328F) without registration/profile errors; decoded saved profile includes the connected phone"
+  },
+  "app_installed": false,
+  "physical_journeys": "pending final native candidate",
+  "owner_action_pending": false
+}
