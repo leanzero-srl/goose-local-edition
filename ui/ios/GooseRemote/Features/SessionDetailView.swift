@@ -9,12 +9,18 @@ private extension TranscriptItem {
     var sessionScrollTarget: SessionScrollTarget { .message(id) }
 }
 
+struct SessionTailMeasurement: Equatable {
+    let overflowPixels: Int
+    let contentHeight: CGFloat
+}
+
 struct SessionScrollState {
     var position = ScrollPosition(id: SessionScrollTarget.latest, anchor: .bottom)
     private(set) var followsLatest = true
     private(set) var loadingOlder = false
     private var olderRequest: UUID?
     private var olderFallbackID: String?
+    private var lastTailCorrection: SessionTailMeasurement?
     mutating func userScrolled(nearBottom: Bool) {
         followsLatest = nearBottom
         olderFallbackID = nil
@@ -39,11 +45,21 @@ struct SessionScrollState {
     }
     mutating func jumpToLatest() {
         followsLatest = true
+        lastTailCorrection = nil
         olderFallbackID = nil
         position.scrollTo(id: SessionScrollTarget.latest, anchor: .bottom)
     }
     mutating func followContent() {
         if shouldFollowContent { position.scrollTo(id: SessionScrollTarget.latest, anchor: .bottom) }
+    }
+    @discardableResult mutating func revealClippedTail(overflowPixels: Int, contentHeight: CGFloat, userScrolling: Bool) -> Bool {
+        if overflowPixels == 0 { lastTailCorrection = nil }
+        guard overflowPixels > 0, !userScrolling, shouldFollowContent else { return false }
+        let measurement = SessionTailMeasurement(overflowPixels: overflowPixels, contentHeight: contentHeight)
+        guard measurement != lastTailCorrection else { return false }
+        lastTailCorrection = measurement
+        followContent()
+        return true
     }
     var visibleMessageID: String? {
         guard case .message(let id) = position.viewID(type: SessionScrollTarget.self) else { return nil }
@@ -54,6 +70,7 @@ struct SessionScrollState {
 
 struct SessionDetailView: View {
     @Environment(ControllerStore.self) private var store
+    @Environment(\.displayScale) private var displayScale
     let work: WorkRef
     @State private var action: WorkAction = .send
     @State private var confirmStop = false
@@ -61,6 +78,8 @@ struct SessionDetailView: View {
     @State private var userScrolling = false
     @State private var nearBottom = true
     @State private var firstMessageBelowTop = false
+    @State private var tailOverflowPixels = 0
+    @State private var tailContentHeight: CGFloat = 0
     var body: some View {
         Group {
             if store.selectedLoading && store.selectedWork == nil { ProgressView("Loading from owner Mac").frame(maxWidth: .infinity, maxHeight: .infinity) }
@@ -82,7 +101,7 @@ struct SessionDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: work) { if store.selectedRef != work || store.selectedError != nil { await store.select(work) } }
         .onDisappear { store.endSelection(work) }
-        .onChange(of: work) { _, _ in scrolling = SessionScrollState(); firstMessageBelowTop = false }
+        .onChange(of: work) { _, _ in scrolling = SessionScrollState(); firstMessageBelowTop = false; tailOverflowPixels = 0; tailContentHeight = 0 }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -173,6 +192,14 @@ struct SessionDetailView: View {
                         }
                     }
                     Color.clear.frame(height: 1).id(SessionScrollTarget.latest).accessibilityHidden(true)
+                        .onGeometryChange(for: Int.self) { geometry in
+                            guard let bounds = geometry.bounds(of: .scrollView(axis: .vertical)) else { return 0 }
+                            let overflow = geometry.frame(in: .scrollView(axis: .vertical)).maxY - bounds.height
+                            return max(0, Int((overflow * displayScale).rounded(.up)))
+                        } action: { _, overflow in
+                            tailOverflowPixels = overflow
+                            scrolling.revealClippedTail(overflowPixels: overflow, contentHeight: tailContentHeight, userScrolling: userScrolling)
+                        }
                 }.scrollTargetLayout().padding(16).frame(maxWidth: 900)
             }
             .scrollPosition($scrolling.position, anchor: .top)
@@ -184,9 +211,14 @@ struct SessionDetailView: View {
                 nearBottom = isNearBottom
                 if userScrolling { scrolling.userScrolled(nearBottom: isNearBottom) }
             }
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, height in
+                tailContentHeight = height
+                scrolling.revealClippedTail(overflowPixels: tailOverflowPixels, contentHeight: tailContentHeight, userScrolling: userScrolling)
+            }
             .onScrollPhaseChange { _, phase in
                 userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
                 if userScrolling { scrolling.userScrolled(nearBottom: nearBottom) }
+                else if phase == .idle { scrolling.revealClippedTail(overflowPixels: tailOverflowPixels, contentHeight: tailContentHeight, userScrolling: false) }
             }
             .task(id: selected.transcript) {
                 await Task.yield()

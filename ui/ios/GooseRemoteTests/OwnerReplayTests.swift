@@ -313,6 +313,36 @@ final class OwnerReplayTests: XCTestCase {
         XCTAssertEqual(scroll.position.viewID(type: SessionScrollTarget.self), .latest, "Same-message growth must follow the actual tail through the same bound position")
     }
 
+    func testMeasuredClippedTailRenewsEvenAnExistingLatestTarget() {
+        var scroll = SessionScrollState()
+        let requested = scroll.position
+        XCTAssertTrue(scroll.revealClippedTail(overflowPixels: 333, contentHeight: 35714, userScrolling: false))
+        XCTAssertEqual(scroll.position.viewID(type: SessionScrollTarget.self), .latest)
+        XCTAssertNotEqual(scroll.position, requested, "Repeated explicit scroll intent must reach SwiftUI after lazy geometry changes")
+        let settled = scroll.position
+        XCTAssertFalse(scroll.revealClippedTail(overflowPixels: 333, contentHeight: 35714, userScrolling: false), "Idle and stale geometry must not repeat the same correction")
+        XCTAssertEqual(scroll.position, settled)
+        XCTAssertFalse(scroll.revealClippedTail(overflowPixels: 0, contentHeight: 35714, userScrolling: false))
+        XCTAssertEqual(scroll.position, settled)
+    }
+
+    func testMeasuredTailNeverOverridesReadingPagingOrUserGesture() {
+        var scroll = SessionScrollState()
+        XCTAssertFalse(scroll.revealClippedTail(overflowPixels: 333, contentHeight: 35714, userScrolling: true))
+        scroll.position = ScrollPosition(id: SessionScrollTarget.message("reading"), anchor: .center)
+        scroll.userScrolled(nearBottom: false)
+        let reading = scroll.position
+        XCTAssertFalse(scroll.revealClippedTail(overflowPixels: 333, contentHeight: 35714, userScrolling: false))
+        XCTAssertEqual(scroll.position, reading)
+        let request = scroll.beginOlder(transcriptIDs: ["reading"])
+        scroll.jumpToLatest()
+        let loading = scroll.position
+        XCTAssertFalse(scroll.revealClippedTail(overflowPixels: 333, contentHeight: 35714, userScrolling: false))
+        XCTAssertEqual(scroll.position, loading)
+        scroll.endOlder(request: request)
+        XCTAssertTrue(scroll.revealClippedTail(overflowPixels: 333, contentHeight: 35714, userScrolling: false))
+    }
+
     func testPrependAtHeaderRetainsPreviousFirstMessageOnce() {
         var scroll = SessionScrollState()
         scroll.userScrolled(nearBottom: false)
