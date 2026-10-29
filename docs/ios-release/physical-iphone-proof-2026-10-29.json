@@ -102,5 +102,14 @@
     ],
     "outcome": "Old node shutdown completed and replacement preparation started, then node.up stalled again. My iPhone identity retained. Not connection acceptance. Elapsed close interval includes background suspension and must not be reported as measured active close latency."
   },
-  "provider_diagnosis_receipt": "physical-mesh-provider-absence-2026-10-29.json"
+  "provider_diagnosis_receipt": "physical-mesh-provider-absence-2026-10-29.json",
+  "appearance_check": {
+    "source": "52d17d7cae84",
+    "observed_local": "2026-10-29T10:30:00+02:00",
+    "surface": "Physical iPhone Settings",
+    "light": "Selected Light; background, text and tab bar changed visibly to light appearance",
+    "dark": "Selected Dark; background, text and tab bar changed visibly to dark appearance",
+    "restoration": "System selected and actual screen verified selected System with dark system appearance",
+    "limits": "Settings surface only; no claim that every transcript or management surface was visually qualified."
+  }
 }
