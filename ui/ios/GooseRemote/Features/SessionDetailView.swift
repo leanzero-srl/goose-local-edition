@@ -1,22 +1,17 @@
 import SwiftUI
-#if DEBUG
-import OSLog
-#endif
 
-private func traceSessionScroll(_ event: String) {
-#if DEBUG
-    Logger(subsystem: "net.leanzero.goose-remote", category: "SessionScroll").notice("\(event, privacy: .public)")
-#endif
+enum SessionScrollTarget: Hashable {
+    case message(String)
+    case latest
 }
 
 struct SessionScrollState {
-    var position = ScrollPosition(idType: String.self, edge: .bottom)
+    var position = ScrollPosition(id: SessionScrollTarget.latest, anchor: .bottom)
     private(set) var followsLatest = true
     private(set) var loadingOlder = false
     private var olderRequest: UUID?
     private var olderFallbackID: String?
     mutating func userScrolled(nearBottom: Bool) {
-        traceSessionScroll("userScrolled nearBottom=\(nearBottom) clearingFallback=\(olderFallbackID != nil) loading=\(loadingOlder)")
         followsLatest = nearBottom
         olderFallbackID = nil
     }
@@ -25,31 +20,30 @@ struct SessionScrollState {
         olderRequest = request
         loadingOlder = true
         followsLatest = false
-        let visibleID = position.viewID(type: String.self)
+        let visibleID = visibleMessageID
         olderFallbackID = firstMessageBelowTop || visibleID.map(transcriptIDs.contains) != true ? transcriptIDs.first : nil
-        traceSessionScroll("begin firstBelowTop=\(firstMessageBelowTop) count=\(transcriptIDs.count) boundIndex=\(visibleID.flatMap(transcriptIDs.firstIndex) ?? -1) boundNil=\(visibleID == nil) userPositioned=\(position.isPositionedByUser) edgeBottom=\(position.edge == .bottom) fallback=\(olderFallbackID != nil)")
         return request
     }
     mutating func endOlder(request: UUID, didPrepend: Bool = false) {
-        traceSessionScroll("end sameRequest=\(olderRequest == request) didPrepend=\(didPrepend) follows=\(followsLatest) fallback=\(olderFallbackID != nil)")
         guard olderRequest == request else { return }
         loadingOlder = false
         olderRequest = nil
         if didPrepend, !followsLatest, let olderFallbackID {
-            let previousPosition = position
-            position.scrollTo(id: olderFallbackID, anchor: .top)
-            traceSessionScroll("restore changed=\(position != previousPosition) boundMatches=\(position.viewID(type: String.self) == olderFallbackID) userPositioned=\(position.isPositionedByUser)")
+            position.scrollTo(id: SessionScrollTarget.message(olderFallbackID), anchor: .top)
         }
         olderFallbackID = nil
     }
     mutating func jumpToLatest() {
-        traceSessionScroll("jump clearingFallback=\(olderFallbackID != nil) loading=\(loadingOlder)")
         followsLatest = true
         olderFallbackID = nil
-        position.scrollTo(edge: .bottom)
+        position.scrollTo(id: SessionScrollTarget.latest, anchor: .bottom)
     }
     mutating func followContent() {
-        if shouldFollowContent { position.scrollTo(edge: .bottom) }
+        if shouldFollowContent { position.scrollTo(id: SessionScrollTarget.latest, anchor: .bottom) }
+    }
+    var visibleMessageID: String? {
+        guard case .message(let id) = position.viewID(type: SessionScrollTarget.self) else { return nil }
+        return id
     }
     var shouldFollowContent: Bool { followsLatest && !loadingOlder }
 }
@@ -138,7 +132,6 @@ struct SessionDetailView: View {
                                     && store.selectedHistoryReset == historyReset && current?.entry.work == work
                                     && firstMessageID != nil && current?.transcript.first?.id != firstMessageID
                                     && current?.transcript.contains(where: { $0.id == firstMessageID }) == true
-                                traceSessionScroll("loaded count=\(current?.transcript.count ?? -1) previousFirstIndex=\(current?.transcript.firstIndex(where: { $0.id == firstMessageID }) ?? -1) cancelled=\(Task.isCancelled) sameSelection=\(store.selectedRef == work) sameReset=\(store.selectedHistoryReset == historyReset) sameWork=\(current?.entry.work == work) firstExists=\(firstMessageID != nil) firstChanged=\(current?.transcript.first?.id != firstMessageID) eligible=\(didPrepend)")
                                 scrolling.endOlder(request: request, didPrepend: didPrepend)
                             }
                         }.buttonStyle(StudioSecondaryButtonStyle()).disabled(store.selectedLoading)
@@ -158,20 +151,13 @@ struct SessionDetailView: View {
                                 if let timestamp = item.timestamp { Text(timestamp, style: .time).font(.caption).foregroundStyle(Studio.secondaryInk) }
                             }
                             Text(item.text).font(work.kind == .shellJob ? .system(.body, design: .monospaced) : .body).textSelection(.enabled)
-                        }.id(item.id)
-                            .onGeometryChange(for: CGRect?.self) { geometry in
-                                guard item.id == selected.transcript.last?.id else { return nil }
-                                return geometry.frame(in: .global)
-                            } action: { _, frame in
-                                if let frame { traceSessionScroll("lastRow count=\(selected.transcript.count) globalTop=\(frame.minY) globalBottom=\(frame.maxY) height=\(frame.height) width=\(frame.width)") }
-                            }
+                        }.id(SessionScrollTarget.message(item.id))
                             .onGeometryChange(for: Bool?.self) { geometry in
                                 guard item.id == selected.transcript.first?.id else { return nil }
                                 return geometry.frame(in: .scrollView(axis: .vertical)).minY >= 0
                             } action: { _, belowTop in
                                 if let belowTop {
                                     firstMessageBelowTop = belowTop
-                                    traceSessionScroll("firstRow belowTop=\(belowTop)")
                                 }
                             }
                     }
@@ -182,16 +168,8 @@ struct SessionDetailView: View {
                             if store.unfinishedCommand != nil { Button("Check delivery") { Task { await store.checkDelivery() } }.disabled(store.sending) }
                         }
                     }
+                    Color.clear.frame(height: 1).id(SessionScrollTarget.latest).accessibilityHidden(true)
                 }.scrollTargetLayout().padding(16).frame(maxWidth: 900)
-            }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { _, frame in
-                traceSessionScroll("viewport globalTop=\(frame.minY) globalBottom=\(frame.maxY) height=\(frame.height) width=\(frame.width)")
-            }
-            .onScrollGeometryChange(for: [CGFloat].self) { geometry in
-                [geometry.contentOffset.y, geometry.visibleRect.minY, geometry.visibleRect.maxY,
-                 geometry.contentSize.height, geometry.containerSize.height, geometry.contentInsets.top, geometry.contentInsets.bottom]
-            } action: { _, values in
-                traceSessionScroll("metrics offsetY=\(values[0]) visibleTop=\(values[1]) visibleBottom=\(values[2]) contentHeight=\(values[3]) containerHeight=\(values[4]) insetTop=\(values[5]) insetBottom=\(values[6])")
             }
             .scrollPosition($scrolling.position, anchor: .top)
             .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -199,20 +177,14 @@ struct SessionDetailView: View {
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentSize.height - geometry.visibleRect.maxY <= 80
             } action: { _, isNearBottom in
-                traceSessionScroll("geometry nearBottom=\(isNearBottom) userScrolling=\(userScrolling) loading=\(scrolling.loadingOlder)")
                 nearBottom = isNearBottom
                 if userScrolling { scrolling.userScrolled(nearBottom: isNearBottom) }
             }
             .onScrollPhaseChange { _, phase in
-                traceSessionScroll("phase tracking=\(phase == .tracking) interacting=\(phase == .interacting) decelerating=\(phase == .decelerating) idle=\(phase == .idle) animating=\(phase == .animating)")
                 userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
                 if userScrolling { scrolling.userScrolled(nearBottom: nearBottom) }
             }
-            .onChange(of: scrolling.position) { _, position in
-                traceSessionScroll("position count=\(selected.transcript.count) boundIndex=\(selected.transcript.firstIndex(where: { $0.id == position.viewID(type: String.self) }) ?? -1) boundNil=\(position.viewID(type: String.self) == nil) edgeBottom=\(position.edge == .bottom) userPositioned=\(position.isPositionedByUser)")
-            }
             .task(id: selected.transcript) {
-                traceSessionScroll("render count=\(selected.transcript.count) loading=\(scrolling.loadingOlder) follows=\(scrolling.shouldFollowContent)")
                 await Task.yield()
                 if !Task.isCancelled, !userScrolling { scrolling.followContent() }
             }
@@ -237,9 +209,6 @@ struct SessionDetailView: View {
             }
             if selected.entry.capabilities.contains(where: { [.send, .steer, .note].contains($0) }) {
                 composer(selected.entry)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { _, frame in
-                        traceSessionScroll("composer globalTop=\(frame.minY) globalBottom=\(frame.maxY) height=\(frame.height)")
-                    }
             } else {
                 Text("\(work.kind.title) controls are limited to the capabilities its owner advertises.")
                     .font(.caption).foregroundStyle(Studio.secondaryInk).padding(16)

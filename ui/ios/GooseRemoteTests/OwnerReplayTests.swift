@@ -281,21 +281,21 @@ final class OwnerReplayTests: XCTestCase {
         XCTAssertNotEqual([before], [grown], "The view's content trigger must detect same-ID streamed growth")
     }
 
-    func testJumpReplacesTheBoundReadingAnchorWithTheBottomEdge() {
+    func testJumpReplacesTheBoundReadingAnchorWithTheActualTailTarget() {
         var scroll = SessionScrollState()
-        XCTAssertEqual(scroll.position.edge, .bottom)
-        scroll.position.scrollTo(id: "oldest-visible", anchor: .top)
+        XCTAssertEqual(scroll.position.viewID(type: SessionScrollTarget.self), .latest)
+        scroll.position.scrollTo(id: SessionScrollTarget.message("oldest-visible"), anchor: .top)
         scroll.userScrolled(nearBottom: false)
-        XCTAssertEqual(scroll.position.viewID(type: String.self), "oldest-visible")
+        XCTAssertEqual(scroll.visibleMessageID, "oldest-visible")
         scroll.jumpToLatest()
-        XCTAssertEqual(scroll.position.edge, .bottom)
-        XCTAssertNil(scroll.position.viewID(type: String.self), "The old reading ID must not compete with the explicit jump")
+        XCTAssertEqual(scroll.position.viewID(type: SessionScrollTarget.self), .latest)
+        XCTAssertNil(scroll.visibleMessageID, "The old reading ID must not compete with the explicit jump")
         XCTAssertTrue(scroll.shouldFollowContent)
     }
 
     func testRefreshAndPrependKeepReadingPositionUntilExplicitJump() {
         var scroll = SessionScrollState()
-        scroll.position.scrollTo(id: "middle-message", anchor: .top)
+        scroll.position.scrollTo(id: SessionScrollTarget.message("middle-message"), anchor: .top)
         scroll.userScrolled(nearBottom: false)
         let readingPosition = scroll.position
         scroll.followContent()
@@ -307,10 +307,10 @@ final class OwnerReplayTests: XCTestCase {
         scroll.followContent()
         XCTAssertEqual(scroll.position, readingPosition)
         scroll.jumpToLatest()
-        XCTAssertEqual(scroll.position.edge, .bottom)
-        scroll.position.scrollTo(id: "newest-message", anchor: .top)
+        XCTAssertEqual(scroll.position.viewID(type: SessionScrollTarget.self), .latest)
+        scroll.position.scrollTo(id: SessionScrollTarget.message("newest-message"), anchor: .top)
         scroll.followContent()
-        XCTAssertEqual(scroll.position.edge, .bottom, "Same-message growth must follow through the same bound position")
+        XCTAssertEqual(scroll.position.viewID(type: SessionScrollTarget.self), .latest, "Same-message growth must follow the actual tail through the same bound position")
     }
 
     func testPrependAtHeaderRetainsPreviousFirstMessageOnce() {
@@ -318,26 +318,26 @@ final class OwnerReplayTests: XCTestCase {
         scroll.userScrolled(nearBottom: false)
         let request = scroll.beginOlder(transcriptIDs: ["previous-first", "last"])
         scroll.endOlder(request: request, didPrepend: true)
-        XCTAssertEqual(scroll.position.viewID(type: String.self), "previous-first")
-        scroll.position.scrollTo(id: "another-row", anchor: .top)
+        XCTAssertEqual(scroll.visibleMessageID, "previous-first")
+        scroll.position.scrollTo(id: SessionScrollTarget.message("another-row"), anchor: .top)
         scroll.endOlder(request: request, didPrepend: true)
-        XCTAssertEqual(scroll.position.viewID(type: String.self), "another-row")
+        XCTAssertEqual(scroll.visibleMessageID, "another-row")
     }
 
     func testPrependAtHeaderReanchorsAnAlreadyBoundFirstMessage() {
         var scroll = SessionScrollState()
-        scroll.position = ScrollPosition(id: "previous-first")
+        scroll.position = ScrollPosition(id: SessionScrollTarget.message("previous-first"))
         scroll.userScrolled(nearBottom: false)
         let headerPosition = scroll.position
         let request = scroll.beginOlder(transcriptIDs: ["previous-first", "last"], firstMessageBelowTop: true)
         scroll.endOlder(request: request, didPrepend: true)
-        XCTAssertEqual(scroll.position.viewID(type: String.self), "previous-first")
+        XCTAssertEqual(scroll.visibleMessageID, "previous-first")
         XCTAssertNotEqual(scroll.position, headerPosition, "An explicit top anchor must replace the header's tracked identity")
     }
 
     func testPrependInsideFirstMessageKeepsItsExistingPosition() {
         var scroll = SessionScrollState()
-        scroll.position = ScrollPosition(id: "first", anchor: .center)
+        scroll.position = ScrollPosition(id: SessionScrollTarget.message("first"), anchor: .center)
         scroll.userScrolled(nearBottom: false)
         let readingPosition = scroll.position
         let request = scroll.beginOlder(transcriptIDs: ["first", "last"], firstMessageBelowTop: false)
@@ -347,7 +347,7 @@ final class OwnerReplayTests: XCTestCase {
 
     func testPrependDoesNotReplaceAnExistingMessagePosition() {
         var scroll = SessionScrollState()
-        scroll.position.scrollTo(id: "middle", anchor: .center)
+        scroll.position.scrollTo(id: SessionScrollTarget.message("middle"), anchor: .center)
         scroll.userScrolled(nearBottom: false)
         let readingPosition = scroll.position
         let request = scroll.beginOlder(transcriptIDs: ["first", "middle", "last"])
@@ -362,7 +362,7 @@ final class OwnerReplayTests: XCTestCase {
             switch interruption {
             case "jump": scroll.jumpToLatest()
             case "scroll":
-                scroll.position.scrollTo(id: "reader-chosen", anchor: .center)
+                scroll.position.scrollTo(id: SessionScrollTarget.message("reader-chosen"), anchor: .center)
                 scroll.userScrolled(nearBottom: false)
             case "selection": scroll = SessionScrollState()
             default: break
