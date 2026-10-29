@@ -80,3 +80,5 @@ This installation is laptop-owned. Canonical source: `~/.claude/skills/ios-ipado
 2026-10-29: Added credential-generation recovery, ordinary authority-denial purge, real expiry proof, and embedded-framework linkage checks after live iPad token expiry exposed permanent denial and a test build omitted its optional mesh framework.
 
 2026-10-29: Added single scroll ownership, header-versus-message anchor geometry, lazy-tail measurement and clean-build viewport verification after repeated state-test passes disagreed with the actual iPad screen.
+
+2026-10-29: Added measured Xcode-managed development signing recovery: manual profile pinning failed, automatic debugging export succeeded; verify actual embedded device membership and keep setup packaging separate from final physical acceptance.

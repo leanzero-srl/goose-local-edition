@@ -1,0 +1,90 @@
+{
+  "result": "PASS",
+  "source_commit": "c1339d7c966a5b900a5e83e71e5665c6352fabf1",
+  "device_kind": "retained original-account iPad simulator",
+  "simulator_id": "F7078B46-CCF8-4779-9070-0BAFE33ADFB7",
+  "authority_device_id": "6398edbb-d0a8-4d9c-a7b4-5dcbe8cb24b5",
+  "authority_before": {
+    "captured_at": "2026-10-29T07:43:37.277Z",
+    "device_revision": 14,
+    "revoked_at": null,
+    "scope_count": 14,
+    "receipts": [
+      {
+        "revision": 12,
+        "issued_at": "2026-10-29T07:00:18.000Z",
+        "expires_at": "2026-10-29T07:15:18.000Z"
+      },
+      {
+        "revision": 13,
+        "issued_at": "2026-10-29T07:15:17.000Z",
+        "expires_at": "2026-10-29T07:30:17.000Z"
+      },
+      {
+        "revision": 14,
+        "issued_at": "2026-10-29T07:30:16.000Z",
+        "expires_at": "2026-10-29T07:45:16.000Z"
+      }
+    ]
+  },
+  "authority_after": {
+    "captured_at": "2026-10-29T07:45:52.426Z",
+    "device_revision": 15,
+    "revoked_at": null,
+    "scope_count": 14,
+    "receipts": [
+      {
+        "revision": 13,
+        "issued_at": "2026-10-29T07:15:17.000Z",
+        "expires_at": "2026-10-29T07:30:17.000Z"
+      },
+      {
+        "revision": 14,
+        "issued_at": "2026-10-29T07:30:16.000Z",
+        "expires_at": "2026-10-29T07:45:16.000Z"
+      },
+      {
+        "revision": 15,
+        "issued_at": "2026-10-29T07:45:15.000Z",
+        "expires_at": "2026-10-29T08:00:15.000Z"
+      }
+    ]
+  },
+  "interpretation": "Exactly one revision increment, 14 to 15; renewal issued one second before prior expiry. Device remains unrevoked and scope count remains 14. This capture compared counts, not individual scope names.",
+  "interaction": "Root installed c1339d in place at 09:41 and opened existing Cloud controller chat at 09:42. No refresh, session reopen or app restart during renewal. Root switched DeviceHub to the phone without backgrounding the iPad app.",
+  "native_log": {
+    "path": "/tmp/goose-ipad-c133-renewal-after.log",
+    "sha256": "0f1d6d758138f4b06cd3cd4337a8ae31a87c04ec14e616325a5865181fa9f80b",
+    "local_window": "2026-10-29 09:41:00 through 09:45:35",
+    "process_id": 84665,
+    "lines": 4441,
+    "alert_presentation_count": 0,
+    "positive_control": {
+      "path": "/tmp/goose-ipad-0931-native.log",
+      "sha256": "bd6cc989a94a7279c07e108cccc9cacfc8df87d7eecfaa978ee28bab02457f9a",
+      "same_device_prior_failure_alert_local": "2026-10-29 09:30:16.094",
+      "detected": true
+    },
+    "selected_render_local": "2026-10-29 09:45:26.774",
+    "selected_render": "count=16 loading=false follows=true",
+    "work_websocket_connected_local": "2026-10-29 09:45:27.150"
+  },
+  "visible_acceptance": {
+    "observer": "root agent via actual original-iPad accessibility UI at 09:46+ local",
+    "same_chat_selected": true,
+    "full_transcript_present": true,
+    "delivered_receipt_present": true,
+    "composer_present": true,
+    "alert_absent": true,
+    "manual_sync_or_session_reopen": false
+  },
+  "limitations": [
+    "This is original-account iPad simulator proof, not physical iPhone qualification.",
+    "Final clean scroll proof and archive remain separate."
+  ],
+  "focused_test_job": "laptop-20261029-093855-263f",
+  "focused_tests": 31,
+  "focused_failures": 0,
+  "independent_review": "native-auth-pending-review-2026-10-29.md",
+  "native_tree": "47b35a543e40a3db638074968e314f3404e83e41"
+}
