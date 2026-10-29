@@ -1,0 +1,94 @@
+{
+  "sourceCommit": "60998be32b57c414ec1fb54bd7ec6fe1a61ae2d9",
+  "sourceTree": "57749493668fd7ee51136fc3c5afc8f4359f0cad",
+  "cliSha256": "a7b13a2b2071103f5427a5d1557cd01859328a406f60f1d781391fb33dd8bcd2",
+  "app": "/tmp/goose-node-management-desktop/source/ui/desktop/out/Goose Swarm-darwin-arm64/Goose Swarm.app",
+  "asarSha256": "50b9315f1e4c97335c4f6acb143e3b8ede2032d0ee088eba1858b4129dfce624",
+  "unsignedArchive": "/tmp/goose-node-management-desktop/Goose-Swarm-unsigned.zip",
+  "unsignedArchiveSha256": "abc7f3f027df80febc0244fd1df03ef3619bbc2d03de9a739ca56f63c003b1c6",
+  "sdkManifestSha256": "7fe2c8c823b77fb150ccfcf16caeb358eadee5a1eba6b9863880bf307b2c8b50",
+  "sourceManifestSha256": "0becc1d61682a79b20bc5b00582074b35cac7d76032b94ce73493c2d892a0817",
+  "baselinePayloadManifestSha256": "d4ab25087bbf4f6dc6e485848b1d4d67c4641da2c3e7175236bef5a2744ebbb7",
+  "signedForDistribution": false,
+  "installed": false,
+  "uploaded": false,
+  "appVersion": "3.0.134",
+  "coreGate": {
+    "job": "laptop-20261029-140522-16ff",
+    "passed": 53,
+    "failed": 0,
+    "ignoredLiveProfile": 1
+  },
+  "managementGate": {
+    "job": "laptop-20261029-140522-16ff",
+    "passed": 11,
+    "failed": 0
+  },
+  "httpAndClippyGate": {
+    "job": "laptop-20261029-141039-170d",
+    "httpPassed": 12,
+    "httpFailed": 0,
+    "schema": "full features, revision and staleRevision only",
+    "workspaceAllTargetsClippyWarningsDenied": true,
+    "exit": 0
+  },
+  "sdkGate": {
+    "job": "laptop-20261029-141644-2833",
+    "passed": 7,
+    "failed": 0,
+    "typecheck": true,
+    "testTypecheck": true,
+    "exit": 0
+  },
+  "cliBuild": {
+    "job": "laptop-20261029-141929-f70c",
+    "exactRuntimeInputs": 1115,
+    "exit": 0
+  },
+  "packageGate": {
+    "job": "laptop-20261029-142342-1f6d",
+    "desktopTypecheck": true,
+    "testFiles": 19,
+    "passed": 339,
+    "failed": 0,
+    "exactTrackedSourceEntries": 5874,
+    "exit": 0,
+    "warnings": [
+      "CSS optimizer does not recognize existing ::highlight(goose-search-match)",
+      "CSS optimizer does not recognize existing ::highlight(goose-search-current)"
+    ]
+  },
+  "physicalComputeDefinitionJourney": "pending",
+  "independentReview": {
+    "verdict": "PASS for signing input only",
+    "sourceCommit": "60998be32b57c414ec1fb54bd7ec6fe1a61ae2d9",
+    "sourceTree": "57749493668fd7ee51136fc3c5afc8f4359f0cad",
+    "packageJob": "laptop-20261029-142342-1f6d",
+    "exit": 0,
+    "desktopTypecheck": "passed",
+    "desktopNodeTests": {
+      "files": 19,
+      "passed": 339,
+      "failed": 0
+    },
+    "packageReceiptSha256": "41058a277ad2562382f8429cbeda62e36899b714f8d2a759bd9ffdd6e0f3cd36",
+    "unsignedArchive": "/tmp/goose-node-management-desktop/Goose-Swarm-unsigned.zip",
+    "unsignedArchiveSha256": "abc7f3f027df80febc0244fd1df03ef3619bbc2d03de9a739ca56f63c003b1c6",
+    "cliSha256": "a7b13a2b2071103f5427a5d1557cd01859328a406f60f1d781391fb33dd8bcd2",
+    "asarSha256": "50b9315f1e4c97335c4f6acb143e3b8ede2032d0ee088eba1858b4129dfce624",
+    "sdkBuildRecordSha256": "6e0f773b4d7071680c61da3cde2e695e53fd5de5cfdbd5085088fc92e33fe341",
+    "frozenRustFilesMatchCommit": 12,
+    "warnings": "Two CSS optimizer ::highlight pseudo-element warnings; no build/test failure. Existing highlight rules were not changed by this node feature.",
+    "signed": false,
+    "installed": false,
+    "liveFeatureAcceptance": false
+  },
+  "operators": {
+    "compute-nodes-package.sh": "f810641b807d361ff5b2bbfabacd08762da72e12949e44de86797490416fa931",
+    "compute-nodes-package.py": "047fec114b4dbcb03070dae5696983a260f5c0ede16de791725225a732867915",
+    "compute-nodes-sdk-gates.sh": "be438b91e313468fbc5b7a098cb42db708cc38cf8bd4c39b8c3d9ceb9c52aef0"
+  },
+  "sdkBuildRecordSha256": "6e0f773b4d7071680c61da3cde2e695e53fd5de5cfdbd5085088fc92e33fe341",
+  "baselineSourceCommit": "43a8589d652f72c145f57cbe667b0b9ec2a71976",
+  "zeroTestFilterExcluded": "cargo test -p leanzero-link controller_management ran no tests; replaced by --test controller"
+}
