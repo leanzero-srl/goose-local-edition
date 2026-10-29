@@ -669,3 +669,49 @@ score stop the split; 5 compare per task: cloud = s12/cloud_checks.txt (0.7909),
 s13/old-local-verdict.json (0.5894); 6 publish a NEW entry (pub_local.py-style title "MiMo-V2.6-Flash MOPD
 4-bit · 2-Mac split · vision, 114k"), notes = caveats (114k not 256k; cloud 1M); 7 cleanup; touch
 <scratchpad>/ngram-go LAST.
+
+## Session 14 (2026-10-28 15:05 -> 10-29 02:40 EET): 2-row crash + token desync fixed; 256k; Gauntlet 0.6605 published
+HOLDS: s13/hold.sh on both Macs (released at the end; a stale mule marker 39898.json from the first hold removed).
+A voice-QA job (workhorse-20261028-180900-8853) ran 18:09-18:12 despite the hold: waited, not preempted.
+COMMITS (mimo-distributed): 0d398f8a70 media queue prepares once (get_nowait double prepare; test fails
+['a','a','b']); af41f7949d pipe trace accepts plain ints (all_sum(0) killed both ranks); 84d18c7744 FIX 1;
+e8f6ae9fd5 gpu_headroom_gb doc = test margin, not an owner rule; 288c838e35 FIX 2.
+FIX 1 (2-row crash, session 13's -12 / GPU Timeout): mlx_lm BatchRotatingKVCache.extend pads an empty row with
+mx.array([]) = float32 (Q-447 fixed only BatchKVCache; MiMo has 39 SWA layers). Trace (fresh load, pair.py):
+rank 1 `send (2,768,4096) float32` vs rank 0 `recv_like (2,768,4096) bfloat16` (recv buffer typed from rank 0's
+own embedding) -> next shapes unpaired -> GPU timeout. Admission DOES run on the pipeline spec (prefill is Some;
+RANK_ADMISSION only logs a HOLD); the rows==0 hold was not the cause and was not added. Proof: pair.py x3 OK on a
+fresh load (129k) + x3 on the final 262k build, 0 float32 p2p transfers.
+FIX 2 (Gauntlet run 1 crash 19:02:56Z, rank 1 GPU Timeout): the ranks sampled their own tokens. `ended` CRC
+checkpoints matched for 69 answers, then diverged at the run's first image request (uid 70 from token 9-16,
+uid 71 from token 2) -> rank 1 cached a different answer -> req-73 had a shorter cached prefix on rank 1 ->
+trace op #430,957: rank 0 `recv_like (1,103)` (last chunk) vs rank 1 `send (1,256)`. Fix: rank_pipeline_split
+wraps server._make_sampler: every rank returns all_sum(rank 0's token, zeros elsewhere). WHY the samples first
+differed on images is NOT isolated (no mx.random in the media path; M3 Ultra vs M5 Max lm_head) -> open item.
+Verified: image asks at temp 1.0 + pairs -> all ended CRCs equal; run 2 (13+ image requests, 2 compactions) clean.
+CONTEXT 262,144 (owner correction): gpu_headroom_gb 8 -> 0 in /tmp/gmimo config (it was a test margin stacked on
+the 5% reserve). Planner KV = 9 full x 4 kv x (192+128) x 2 = 23,040 B/token (matches owner arithmetic) + one
+prompt-cache copy (measured) + workspace = chunk x width x 257 (scores+softmax, measured): no planner bug.
+Split 19/29, planned 75.1 / 107.05 GB. Probes: 124,597 tok (129k load) TTFT 608 s, peaks 72.5/105.5 GB;
+210,724 tok (262k load) TTFT 962 s, 218.9 tok/s prefill, 17.7 tok/s decode, peaks 75.9 / 109.1 GB, swap flat
+on both. Gauntlet peaks rank 1 109.7 GB; swap never grew. /tmp/gmimo config KEPT at 262144 / headroom 0 /
+GOOSE_CONTEXT_LIMIT 262144 (it is the isolated test profile).
+PARITY: 9/9 PASS incl. context 262,144 >= 256k.
+GAUNTLET sb-7.2: run 1 openai-cloud-122c5484 (18:3x-21:03, died, FIX 2); run 2 openai-cloud-a16c45bf
+(21:18-02:24) SCORE 0.6605 vs cloud 0.7909 / old local 0.5894. 12 checks below cloud: v_presentation_text 0.25,
+c_webhook_discipline 0.6 (forged -> None), t_labels_culling 0.64, v_styling/t_coast_identity/b_total_field 0.75
+(total 12288 want 12289), t_brush_link/s_tower_geometry 0.78, t_vs7dbg_truth/t_pick_buffer 0.8,
+q_overview_legibility 0.83. 7 above cloud: t_stream_diff 1.0 (cloud 0), r_b6_outbox_atomic, r_notifier_exactly_once
+1.0, r_b3_sigkill_resync 0.67, p_stream_apply 0.5, j_error_state 0.3, e_stream_apply_latency 0.25. E gate FAILED
+(fraction 0.925; e_optimistic_paint 0, e_stream_apply_latency 0.25); m_committed_event_replay 0 (cloud 0 too).
+verdict copy: <scratchpad>/s14/verdict.json. Ranks stopped at scoring by s14/watch.sh (killranks by pid).
+BOARD: NEW entry "MiMo-V2.6-Flash MOPD 4-bit · 2-Mac split · vision, 256k", 66.0%,
+leanzero.net/agentic-benchmarks/run/brun-79c4f078-8a57-41e7-a610-b8261f934d6f (200 signed out). The app's publish
+card has NO notes field, so caveats live here: 256k vs cloud 1M (2 compactions); 4-bit local quant; 2nd launch
+(run 1 crashed on FIX 2); built on mimo-distributed dev build, not a release. Old entry untouched.
+CDP traps: Gauntlet Single model -> "Refresh providers" first (OpenAI hidden until 8191 answers); cdpkeys.mjs's
+focus walk misses -> s13/tools/pickprov.mjs (ArrowDown then click the option). BENCH_PHASE goes to the app
+only; scoring = <run dir>/graded-sb7-db appears. Call budget = 150 turns (bench_budget.CALL_BUDGET).
+END STATE: dev app quit by pid, installed Goose Swarm on 9897, goose-single-guard OK on both Macs, no ranks,
+no holds/markers, /tmp/goose-pipe-trace flags removed. ngram-go NOT touched.
+OPEN: why ranks' samples diverged on image requests (FIX 2 masks it); E gate (optimistic paint, stream latency).
