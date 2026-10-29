@@ -107,6 +107,12 @@ const PINNED_PROFILES: &[(&str, EngineMemoryProfile)] = &[
             floor_chunk_tokens: GUARD_FLOOR_CHUNK_TOKENS,
         },
     ),
+    (
+        "v0.14.3-lz.16-ple.1",
+        EngineMemoryProfile::Guarded {
+            floor_chunk_tokens: GUARD_FLOOR_CHUNK_TOKENS,
+        },
+    ),
 ];
 
 /// The profile of the engine `spawn_command` launches; `Err` names why it is not known (an
@@ -170,7 +176,7 @@ mod tests {
         );
     }
 
-    /// lz.12, lz.13, lz.14 and lz.14-ple.1 are the memory-guard line: the pinned launcher must be read as guarded, or goose would
+    /// lz.12, lz.13, lz.14, lz.14-ple.1 and lz.16-ple.1 are the memory-guard line: the pinned launcher must be read as guarded, or goose would
     /// pass it the prefix-cache share the guard takes as an operator cap.
     #[test]
     fn the_shipped_pin_is_the_guarded_engine() {
@@ -179,6 +185,7 @@ mod tests {
             "v0.14.3-lz.13",
             "v0.14.3-lz.14",
             "v0.14.3-lz.14-ple.1",
+            "v0.14.3-lz.16-ple.1",
         ] {
             assert_eq!(
                 profile_of_launcher(&launcher(tag)),

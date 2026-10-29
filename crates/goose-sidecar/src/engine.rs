@@ -179,6 +179,9 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.16-ple.1 (fork lz/stream-whitespace-ple 8c9927ae3) = lz.14-ple.1 + lz.16: a streamed content delta
+/// is never whitespace-stripped (it dropped the space before `[`/`<`/`&` and corrupted files written while streaming,
+/// 12 wrong lines in the 10-26 Flash code_edit), the non-streamed answer keeps its outer whitespace, LongCat tool parser.
 /// v0.14.3-lz.14-ple.1 (fork lz/qwen4-expert-offload, branch off lz.14) = lz.14 + `serve --qwen4-ple-offload`:
 /// Qwen3.8-Flash-Next's 32 GB n-gram (PLE) table stays in the checkpoint on disk and the ~16 rows a
 /// token needs are gathered from it (`crate::ple_offload`; M5 Max 128 GB: 104.25 → 72.25 GB MLX
@@ -283,7 +286,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14-ple.1",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.1",
     "rapid-mlx",
 ];
 
@@ -392,6 +395,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14-ple.1",
         "rapid-mlx",
     ],
 ];
@@ -3340,7 +3349,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14-ple.1",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.1",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -3835,7 +3844,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14-ple.1",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.1",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
