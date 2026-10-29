@@ -408,6 +408,194 @@ final class OwnerReplayTests: XCTestCase {
         await store.sceneBackground()
     }
 
+    @MainActor func testNativeTranscriptPrependRefreshGrowthAndLongFinalReceipt() async throws {
+        let (controller, window, previous) = try nativeTranscriptHost()
+        defer { window.isHidden = true; previous?.makeKey() }
+        var request = NativeTranscriptRequest(generation: 0, target: .latest)
+        let longText = String(repeating: "A complete final message line that must remain readable.\n", count: 80)
+        var rows = nativeRows(109..<237, lastText: longText)
+        controller.update(rows: rows, request: request, followsLatest: true, savedAnchor: nil)
+        let opened = await settleNative(controller) { self.nativeTailVisible(controller) }
+        XCTAssertTrue(opened, "Initial opening must realize the actual last cell")
+        XCTAssertGreaterThan(try XCTUnwrap(controller.frame(for: .message("236"))).height, controller.collectionView.bounds.height)
+        request = .init(generation: 1, target: .message("109"))
+        controller.update(rows: rows, request: request, followsLatest: false, savedAnchor: nil)
+        let readingReady = await settleNative(controller) { abs(controller.frame(for: .message("109"))?.minY ?? .infinity) < 1 }
+        XCTAssertTrue(readingReady)
+        controller.scrollViewWillBeginDragging(controller.collectionView)
+        controller.collectionView.setContentOffset(CGPoint(x: 0, y: controller.collectionView.contentOffset.y + 30), animated: false)
+        controller.scrollViewDidEndDragging(controller.collectionView, willDecelerate: false)
+        let readingOffset = try XCTUnwrap(controller.frame(for: .message("109"))).minY
+        XCTAssertLessThan(readingOffset, 0)
+        rows = nativeRows(0..<237, lastText: longText)
+        controller.update(rows: rows, request: request, followsLatest: false, savedAnchor: .init(id: .message("109"), offset: readingOffset))
+        rows = nativeRows(0..<237, lastText: longText, receipt: "Pending receipt changed before the snapshot finished")
+        controller.update(rows: rows, request: request, followsLatest: false, savedAnchor: nil)
+        let prependReady = await settleNative(controller) { abs((controller.frame(for: .message("109"))?.minY ?? .infinity) - readingOffset) < 1 }
+        XCTAssertTrue(prependReady, "Prepend must retain the exact intra-row reading offset")
+        controller.update(rows: rows, request: request, followsLatest: false, savedAnchor: nil)
+        controller.view.layoutIfNeeded()
+        XCTAssertEqual(try XCTUnwrap(controller.frame(for: .message("109"))).minY, readingOffset, accuracy: 1)
+        let previousWidth = controller.view.bounds.width
+        controller.view.bounds.size.width = previousWidth * 0.8
+        controller.view.setNeedsLayout()
+        let resizedReading = await settleNative(controller) { abs((controller.frame(for: .message("109"))?.minY ?? .infinity) - readingOffset) < 1 }
+        XCTAssertTrue(resizedReading, "Width changes must preserve the visible reading anchor")
+        XCTAssertEqual(controller.collectionView.bounds.width, previousWidth * 0.8, accuracy: 1)
+        request = .init(generation: 2, target: .latest)
+        controller.update(rows: rows, request: request, followsLatest: true, savedAnchor: nil)
+        let jumped = await settleNative(controller) { self.nativeTailVisible(controller) }
+        XCTAssertTrue(jumped, "Jump after prepend must expose the complete long final message")
+        XCTAssertLessThanOrEqual(try XCTUnwrap(controller.frame(for: .message("236"))).maxY, controller.collectionView.bounds.height + 1)
+        let oldHeight = try XCTUnwrap(controller.frame(for: .message("236"))).height
+        rows = nativeRows(0..<237, lastText: longText + longText, receipt: "Pending receipt changed before the snapshot finished")
+        controller.update(rows: rows, request: request, followsLatest: true, savedAnchor: nil)
+        let grown = await settleNative(controller) {
+            (controller.frame(for: .message("236"))?.height ?? 0) > oldHeight && self.nativeTailVisible(controller)
+        }
+        XCTAssertTrue(grown, "Retained-ID growth/receipt: oldHeight=\(oldHeight) last=\(String(describing: controller.frame(for: .message("236")))) tail=\(String(describing: controller.frame(for: .latest))) offset=\(controller.collectionView.contentOffset) content=\(controller.collectionView.contentSize) bounds=\(controller.collectionView.bounds.size)")
+        rows = nativeRows(0..<237, lastText: longText + longText, receipt: String(repeating: "Rejected command explanation. ", count: 35))
+        controller.update(rows: rows, request: request, followsLatest: true, savedAnchor: nil)
+        let receiptVisible = await settleNative(controller) {
+            (controller.frame(for: .latest)?.height ?? 0) > controller.collectionView.bounds.height && self.nativeTailVisible(controller)
+        }
+        XCTAssertTrue(receiptVisible, "A receipt taller than the viewport must expose its final paragraph; the preceding message may legitimately be offscreen")
+        controller.view.bounds.size.width = previousWidth
+        controller.view.setNeedsLayout()
+        let resizedTail = await settleNative(controller) { self.nativeTailVisible(controller) }
+        XCTAssertTrue(resizedTail, "Width changes in follow mode must keep the final receipt visible")
+    }
+
+    @MainActor func testNativeTranscriptTallHeaderPreservesExplicitPrependFallback() async throws {
+        let (controller, window, previous) = try nativeTranscriptHost()
+        defer { window.isHidden = true; previous?.makeKey() }
+        var latestViewport: NativeTranscriptViewport?
+        controller.viewportChanged = { latestViewport = $0 }
+        func withTallHeader(_ rows: [NativeTranscriptRow]) -> [NativeTranscriptRow] {
+            [.init(id: .header, version: .init(values: ["tall"]), content: AnyView(Text("Owner controls").frame(height: 1800)))] + rows.dropFirst()
+        }
+        var rows = withTallHeader(nativeRows(109..<237))
+        controller.update(rows: rows, request: .init(generation: 0, target: .message("109")), followsLatest: false, savedAnchor: nil)
+        let initial = await settleNative(controller) { controller.frame(for: .message("109")) != nil }
+        XCTAssertTrue(initial)
+        controller.scrollViewWillBeginDragging(controller.collectionView)
+        controller.collectionView.setContentOffset(.zero, animated: false)
+        controller.scrollViewDidEndDragging(controller.collectionView, willDecelerate: false)
+        let header = await settleNative(controller) { latestViewport?.anchor?.id == .header && latestViewport?.firstMessageBelowTop == true }
+        XCTAssertTrue(header)
+        var state = SessionScrollState()
+        state.position.scrollTo(id: SessionScrollTarget.message("109"), anchor: .top)
+        state.userScrolled(nearBottom: false)
+        let older = state.beginOlder(transcriptIDs: (109..<237).map(String.init), firstMessageBelowTop: latestViewport?.firstMessageBelowTop == true)
+        state.endOlder(request: older, didPrepend: true)
+        rows = withTallHeader(nativeRows(0..<237))
+        controller.update(rows: rows, request: .init(generation: state.requestGeneration, target: .message(try XCTUnwrap(state.visibleMessageID))), followsLatest: false, savedAnchor: nil)
+        let restored = await settleNative(controller) { abs(controller.frame(for: .message("109"))?.minY ?? .infinity) < 1 }
+        XCTAssertTrue(restored, "An unrealized first message below a tall header must remain the explicit prepend anchor")
+    }
+
+    @MainActor func testNativeTranscriptRecreationPreservesSavedReading() async throws {
+        for target in [NativeTranscriptID.header, .message("109")] {
+            let (controller, window, previous) = try nativeTranscriptHost()
+            defer { window.isHidden = true; previous?.makeKey() }
+            let rows = nativeRows(0..<237)
+            controller.update(rows: rows, request: .init(generation: 8, target: .latest), followsLatest: false,
+                savedAnchor: .init(id: target, offset: -30))
+            let restored = await settleNative(controller) { abs((controller.frame(for: target)?.minY ?? .infinity) + 30) < 1 }
+            XCTAssertTrue(restored, "Rebuilding after same-work credential purge must restore header/intra-row reading rather than replay a stale latest request")
+            XCTAssertFalse(nativeTailVisible(controller))
+            controller.update(rows: rows, request: .init(generation: 9, target: .latest), followsLatest: true, savedAnchor: nil)
+            let jumped = await settleNative(controller) { self.nativeTailVisible(controller) }
+            XCTAssertTrue(jumped, "A genuinely new Jump must replace the restored reading anchor")
+        }
+    }
+
+    @MainActor func testNativeTranscriptGestureCancelsPendingSnapshotAlignment() async throws {
+        let (controller, window, previous) = try nativeTranscriptHost()
+        defer { window.isHidden = true; previous?.makeKey() }
+        let rows = nativeRows(0..<237)
+        controller.update(rows: rows, request: .init(generation: 0, target: .latest), followsLatest: true, savedAnchor: nil)
+        controller.scrollViewWillBeginDragging(controller.collectionView)
+        controller.collectionView.setContentOffset(.zero, animated: false)
+        controller.view.layoutIfNeeded()
+        controller.scrollViewDidEndDragging(controller.collectionView, willDecelerate: false)
+        await Task.yield()
+        controller.view.layoutIfNeeded()
+        XCTAssertFalse(nativeTailVisible(controller), "A stale snapshot completion must not resume the cancelled bottom request")
+        controller.update(rows: rows, request: .init(generation: 1, target: .latest), followsLatest: true, savedAnchor: nil)
+        let reached = await settleNative(controller) { self.nativeTailVisible(controller) }
+        XCTAssertTrue(reached, "A later explicit Jump must still work after gesture cancellation")
+    }
+
+    @MainActor func testNativeTranscriptVirtualizesEightLoadedPages() async throws {
+        let (controller, window, previous) = try nativeTranscriptHost()
+        defer { window.isHidden = true; previous?.makeKey() }
+        let rows = nativeRows(0..<1024, scale: true)
+        let started = ContinuousClock.now
+        controller.update(rows: rows, request: .init(generation: 0, target: .latest), followsLatest: true, savedAnchor: nil)
+        let initial = await settleNative(controller) { self.nativeTailVisible(controller) }
+        let initialSeconds = Double(started.duration(to: .now).components.attoseconds) / 1e18 + Double(started.duration(to: .now).components.seconds)
+        XCTAssertTrue(initial)
+        XCTAssertLessThan(initialSeconds, 5)
+        XCTAssertLessThan(controller.collectionView.visibleCells.count, 50, "The1024-row history must stay virtualized")
+        var worst: Double = 0
+        for (generation, target) in [NativeTranscriptID.message("0"), .message("512"), .latest].enumerated() {
+            let began = ContinuousClock.now
+            controller.update(rows: rows, request: .init(generation: UInt64(generation + 1), target: target), followsLatest: target == .latest, savedAnchor: nil)
+            let reached = await settleNative(controller) {
+                guard let frame = controller.frame(for: target) else { return false }
+                return target == .latest ? self.nativeTailVisible(controller) : abs(frame.minY) < 1
+            }
+            let duration = began.duration(to: .now).components
+            worst = max(worst, Double(duration.seconds) + Double(duration.attoseconds) / 1e18)
+            XCTAssertTrue(reached)
+        }
+        XCTAssertLessThan(worst, 0.5)
+        print("NATIVE_TRANSCRIPT_SCALE rows=1024 initialSeconds=\(initialSeconds) worstNavigationSeconds=\(worst) visibleCells=\(controller.collectionView.visibleCells.count)")
+    }
+
+    @MainActor private func nativeTranscriptHost() throws -> (NativeTranscriptController, UIWindow, UIWindow?) {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.keyWindow
+        let window = UIWindow(windowScene: scene)
+        let controller = NativeTranscriptController()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.view.layoutIfNeeded()
+        return (controller, window, previous)
+    }
+    @MainActor private func settleNative(_ controller: NativeTranscriptController, _ predicate: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        repeat {
+            controller.view.layoutIfNeeded()
+            if predicate() { return true }
+            try? await Task.sleep(for: .milliseconds(20))
+        } while ContinuousClock.now < deadline
+        return predicate()
+    }
+    @MainActor private func nativeTailVisible(_ controller: NativeTranscriptController) -> Bool {
+        guard let tail = controller.frame(for: .latest) else { return false }
+        return tail.maxY > 0 && tail.maxY <= controller.collectionView.bounds.height + 1
+    }
+    @MainActor private func nativeRows(_ range: Range<Int>, lastText: String? = nil, receipt: String? = nil, scale: Bool = false) -> [NativeTranscriptRow] {
+        var rows = [NativeTranscriptRow(id: .header, version: .init(values: [String(range.lowerBound)]),
+            content: AnyView(StudioPanel { Text("Owner"); if range.lowerBound > 0 { Text("Load older messages") } }))]
+        rows += range.map { index in
+            let text: String
+            if index == range.last, let lastText { text = lastText }
+            else if scale { text = "Loaded message \(index). " + String(repeating: "A measured transcript line with enough text to wrap naturally. ", count: 1 + index % 24) }
+            else { text = representativeTranscriptShape[index].map { $0.map { String(String(repeating: "sample", count: $0 / 6 + 1).prefix($0)) }.joined(separator: " ") }.joined(separator: "\n") }
+            let item = TranscriptItem(id: String(index), revision: 1, role: "assistant", text: text, timestamp: nil)
+            return NativeTranscriptRow(id: .message(item.id), version: .init(message: item),
+                content: AnyView(StudioPanel { Text("Assistant").font(.caption.weight(.bold)); Text(text).textSelection(.enabled) }))
+        }
+        rows.append(.init(id: .latest, version: .init(values: [receipt ?? ""]), content: AnyView(VStack(spacing: 16) {
+            if let receipt { StudioPanel { Text("Rejected"); Text(receipt) } }
+            Color.clear.frame(height: 1)
+        })))
+        return rows
+    }
+
     @MainActor func testLazyTargetLookupAfterPrependProbe() async throws {
         let baseline = try await runTargetLookupProbe(combined: false, useLastMessage: false)
         let messageControl = try await runTargetLookupProbe(combined: false, useLastMessage: true)
