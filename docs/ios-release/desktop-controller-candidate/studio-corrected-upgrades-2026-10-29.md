@@ -1,0 +1,43 @@
+# Original Studio controller upgrade — 29 October 2026
+
+## Artifact and scope
+
+Both original Studio installations were upgraded by complete app replacement to controller candidate 3.0.134, source `bf5966b19fdf4835b8feadcbe95b2951c7f3498b`, tree `67c316961e92ade0f6f10a156beeb0972f34993d`. Signed ZIP SHA-256 `8261f27b92581b9d26c8b12bdb7e8a1f938228cb7f730a4d8f7d76f5df3b873e`; signed CLI `349b242b64a4a48072fbbfcecda0c9a9a2c32fef5639ae6c045003b34d7bee6f`. The artifact, receipt and signed fingerprint are retained at `/tmp/goose-controller-corrected-signed-bf5966b19fdf` on each target. No new signing or Apple upload occurred.
+
+The owner authorized these original-host upgrades when idle. The completed MiMo campaign was checked against Workhorse `~/Projects/goose-wt-mimo/HANDOFF.md` Session 14 and current processes. Its published run was `brun-79c4f078-8a57-41e7-a610-b8261f934d6f`, score 0.6605. Both hosts had zero live benchmark markers, campaign/rank/hold processes, own Link jobs or active/waiting/background/looping sessions. Their standalone Agent Work registries were absent. These were positive authenticated checks against each original backend and exact Link self identity; the released apps did not support the new controller catalog.
+
+Independent reviewer `merge_adversary` read the operators and private snapshot manifests and reran the live idle probes at 00:45:40–41 UTC. The install operator checked idle again before staging and immediately before quitting. It checked exact old app version and CLI, original process ancestry, complete incoming inventory and strict Developer ID/team signature. Normal LaunchServices started the original profile. No profile override, keyring change, permission change, quarantine removal or model request was made.
+
+## Workhorse
+
+Original app/backend `53233/53325`, released 3.0.134, CLI `38ba50802a44bbba744893273bb51ad083fbb3fd97fa1de798346f91b6eda3cc`. Exact Link self `worksmacstudio-lan-6a972f`, provider 47, IP `100.64.0.14`.
+
+Private snapshot `/Users/workhorse/.local/share/goose-upgrade-snapshots/controller-studio-20261029T004644Z`: mode 0700, 15 protected files, complete SQLite backup with integrity check OK. Original history contained 241 sessions and 802 messages. After installation, all session/message counts, session IDs, full session rows and full message rows had identical hashes. Configuration YAML values and permission settings are identical; serialization reordered lines. After supported recovery, the changed protected files were configuration serialization, product-owned `tailscaled.state`, the Link-intent `updatedAt` timestamp (intent and cause unchanged), and the controller runtime identifier. All other protected files are byte-identical. Personal `/Applications/Tailscale.app` remained absent.
+
+Guarded installation job `laptop-20261029-024854-57b4` exited 0. Whole-app swap completed at `2026-10-29T00:49:21.827687Z`; new app/backend `1513/1567`. The installed whole bundle passes strict deep Developer ID verification for team `ZZ8MTZ6NRZ`. Original app rollback is `/Users/workhorse/.local/share/goose-controller-rollbacks/38ba50802a44bbba/Goose Swarm.app`.
+
+Initial saved-login reconnect failed with `authkey already used`. This was retained as a real failure; the install did not claim connectivity. Exact private error is `/tmp/goose-controller-corrected-signed-bf5966b19fdf/reconnect-error-private.txt`. The separate `release_reconcile` lane owns supported reconnect diagnosis/recovery; installation performed no reset, provider deletion or repeated Connect attempts. The first authkey-reuse cause remains unproved; it is not described as a fixed product defect.
+
+Recovery positively proved the issued enrollment had expired, then made exactly one ordinary ACP Connect request around 01:00:42 UTC. At 01:01:04 UTC, the original app/backend remained `1513/1567`, connected with four nodes, mesh online, no error and reconnect state idle. Provider 47, user 15, IP `100.64.0.14`, machine identity and original owner registration were preserved. The product rotated the node key to digest `f1b4fac302931ab8ee04836d1e74bc5778da261975ef0b61ef7ef30d07c6ae35`. Enrollment `024cc033-4aad-4146-97ba-288f1cd3cadf` was confirmed and activated with all binding fields matching and current lease runtime `36767e2a-b331-425f-b26a-ea495edacebd`; the pending file was gone. Sanitized binding proof is private snapshot `post-recovery-binding.json`, and the one-call outcome is `expired-enrollment-connect-once.json`.
+
+Post-recovery preservation was rerun: all 241 sessions and 802 messages retain exact full-row hashes; settings values and permissions still match. The original owner `f6085e2e-82de-4b64-8fd0-24f8d6f45dad` returned a fresh error-free catalog with 165 entries and no active work. No second Connect or restart was performed.
+
+## Workmule
+
+Original app/backend `3779/3856`, released 3.0.134, same original CLI `38ba5080…`. Exact Link self `workmule-369cb5`, provider 36, IP `100.64.0.4`. The original database was valid and contained zero sessions and zero messages; no controller owner had yet been registered.
+
+Private snapshot `/Users/workmule/.local/share/goose-upgrade-snapshots/controller-studio-20261029T004642Z`: mode 0700, 8 protected files, complete SQLite backup with integrity check OK. After installation, all history counts and row hashes are identical, configuration YAML values and permission settings are identical, and personal Tailscale identity digest is unchanged (`eeb2337464f43122dd06d1bc056539e24b6e71c018eda6aa88b46ef29c0c35cc`). Only configuration line ordering and the product-owned `tailscaled.state` changed among protected files.
+
+First job `laptop-20261029-024853-ea99` refused before quitting or renaming the original app: macOS assigned a host-local `com.apple.provenance` value to the incoming bundle. Full retained inventory comparison proved the exact same replacement on all 18,475 entries (2,449 directories, 41 symlinks, 15,985 regular files), with identical path sets, bytes, modes, targets and every other xattr, including signature/security attributes. The exact observed provenance pair was `9b7f8f01aceda046aa5a4a06cc24d89be434c5696ca33006af0a7b450e2719b8` → `c6c937e06538eb4addb5056453d7b6a2cbbe81d24c4a0069feb2ae8df080aa06`. No attributes were written or removed.
+
+Reviewer independently compared both raw inventories and approved the exact-node/exact-pair comparison allowance in operator SHA `13e72255aaaf6d3c58e775efdcd1d8aef2c095b6488a4ae5088acdd15a5b3fea`. Resume reused the retained incoming app, repeated whole-inventory and strict-signature verification plus fresh idle checks, and performed no extraction or copy. Diagnostic remains `workmule-provenance-diagnostic.json` beside the artifact.
+
+Resume job `laptop-20261029-025743-cf3b` exited 0. Swap completed `2026-10-29T00:57:49.535312Z`; new original app/backend `86176/86242`. Installed whole-bundle strict Developer ID/team verification passes. Original app rollback is `/Users/workmule/.local/share/goose-controller-rollbacks/38ba50802a44bbba/Goose Swarm.app`.
+
+Saved-login reconnect succeeded: `connected`, `reconnected`, mesh online, no last error; original provider 36 and IPv4/IPv6 addresses were preserved. The product rotated its node key (before digest `c3f46e08edcf54610659e3018f2bec9fbdfc141f4c0aadd18be2cd39f69d9901`, after `4629ff5abd48e47da866191b45924969e97c3f63936e3442de18b3dcb3905ec8`). The product created owner `861657d4-f313-481d-a109-016b60826f35`, registration `83325c8c-861f-4660-9fc7-8b1068d60515`. Its fresh non-stale owner catalog contains exactly zero entries, matching the original empty history. Independent authenticated session activity at 00:59:20 UTC was zero in all seven categories. No inference was started.
+
+## Limits
+
+This receipt proves installation, normal original-profile startup, preservation and backend state. It makes no visible UI, iPad or main-branch merge claim. The coordinator’s account-wide read at 01:01:04.964 UTC confirmed all four original nodes 33/36/45/47 online, confirmed and activated, unchanged policy digest `f2c22355…`, account isolation true and zero in-flight/unexpired legacy enrollments. Actual native/iPad enrollment UI proof still awaits the locked Mac’s unlock. Both MacBooks were already upgraded and were untouched by this lane.
+
+Sanitized final installation/preservation receipts are `studio-upgrade-receipt.json` beside the artifact on each Studio; local copies are `/tmp/goose-studio-final-receipts/workhorse.json` and `/tmp/goose-studio-final-receipts/workmule.json`. Private credentials and raw profile snapshots were not copied into the repository.
