@@ -32,7 +32,7 @@
   "operator": "native-lifecycle-development-build-2026-10-29.sh",
   "operator_sha256": "b4b231303889ac8c6da71b5ec56da1471fd47114c579101b5305a9740e6322cc",
   "installation_observer": "root via supported devicectl in-place install, around10:43local",
-  "physical_execution": "Not yet attempted: Home-icon launch reached the phone lock screen. Root asked owner once to unlock/open latest app; no new sign-in code or reenrollment requested.",
+  "physical_execution": "Owner unlocked/opened the installed app. Root saw catalogs at10:44:45 and Console showed native Up completing10:44:43.249. Read-only authority/provider verification10:45:08 proves same-device membership recovery. Session and lock/resume acceptance remain root-owned.",
   "authority_before": {
     "captured_at": "2026-10-29T08:42:50.847040+00:00",
     "device": {
@@ -117,5 +117,69 @@
     ],
     "provider_node_count": 4
   },
-  "acceptance": "Pending actual app launch, same-device replacement, owner admission and lock/resume proof. Unchanged metadata is not a recovery failure because no launch occurred."
+  "acceptance": "Actual same-controller membership recovery PASS. Actual session/admission and lock/resume proof still pending.",
+  "authority_after_actual_launch": {
+    "captured_at": "2026-10-29T08:45:08.195241+00:00",
+    "device": {
+      "device_id": "333b2a27-9958-4195-8341-2256696e8287",
+      "name": "My iPhone",
+      "platform": "ios",
+      "role": "controller",
+      "revision": 3,
+      "scopes": [
+        "catalog.read",
+        "history.read",
+        "work.send",
+        "work.steer",
+        "work.stop",
+        "input.answer",
+        "resources.read",
+        "models.read",
+        "models.download",
+        "models.manage",
+        "providers.read",
+        "providers.manage",
+        "devices.read",
+        "devices.manage"
+      ],
+      "created_at": "2026-10-29T07:48:53.698Z",
+      "revoked_at": null
+    },
+    "mesh_enrollments": [
+      {
+        "enrollment_id": "ed48f07d-04da-4a89-999c-d287db99d22c",
+        "status": "revoked",
+        "created_at": 1793260134427,
+        "bound_node_id": "49",
+        "provider_present": false,
+        "provider_online": null,
+        "provider_last_seen": null,
+        "provider_expiry": null,
+        "cleanup_pending": false
+      },
+      {
+        "enrollment_id": "cd35b756-3562-410b-bd53-e0788159fc5d",
+        "status": "confirmed",
+        "created_at": 1793263473099,
+        "bound_node_id": "50",
+        "provider_present": true,
+        "provider_online": true,
+        "provider_last_seen": "2026-10-29T08:44:43.879986Z",
+        "provider_expiry": null,
+        "cleanup_pending": false
+      }
+    ],
+    "provider_node_count": 5
+  },
+  "membership_verification": {
+    "same_device_id": true,
+    "same_created_at": true,
+    "exact_same_scopes": true,
+    "device_unrevoked": true,
+    "old_missing_node_enrollment_revoked": true,
+    "new_node_id": "50",
+    "new_enrollment_status": "confirmed",
+    "new_node_online": true,
+    "backend_policy_changed": false
+  }
 }
