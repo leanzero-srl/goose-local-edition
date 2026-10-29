@@ -487,6 +487,10 @@ class Ctx:
         self.boot_error = ""
         self.boot_secs: Optional[float] = None
         self.port_bound = False
+        # Every ledgerd the gather spawned, and the ones that exited ON THEIR OWN (exit code >= 0; the
+        # harness only ever SIGKILLs, which reads -9). Filled at the end of gather.
+        self._ledger_procs: List = []
+        self.ledger_self_exits: List[Dict] = []
         self.proc_alive_5s = False
         self.root_status: Optional[int] = None
         self.boot_vendor_down_served = False   # ledgerd answered while the vendor refused
@@ -3581,7 +3585,31 @@ def _spawn_ledgerd(c: Ctx, env: Dict, db_dir: Path, port: int, nport: int,
         cwd=c.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, start_new_session=True)
     _LIVE_APP_PROCS.append(proc)
+    if isinstance(getattr(c, "_ledger_procs", None), list):
+        c._ledger_procs.append((proc, time.time()))
     return proc
+
+
+def _ledger_self_exits(spawns) -> List[Dict]:
+    """The spawned ledgerds that exited by themselves. The harness stops a service only with SIGKILL
+    (returncode -9), so a returncode >= 0 is the candidate's own exit — e.g. a restart whose bind
+    failed (Flash-Next SB7.2 2026-10-29: allow_reuse_address set after the constructor had bound)."""
+    out: List[Dict] = []
+    for index, (proc, spawned_at) in enumerate(spawns):
+        rc = proc.poll()
+        if rc is None or rc < 0:
+            continue
+        tail = ""
+        path = getattr(getattr(proc, "stdout", None), "path", None)
+        if path is not None:
+            try:
+                lines = [ln for ln in Path(path).read_text(errors="replace").splitlines() if ln.strip()]
+                tail = lines[-1][:200] if lines else ""
+            except Exception:
+                pass
+        out.append({"spawn": index, "of": len(spawns), "returncode": rc,
+                    "spawned_at": round(spawned_at, 3), "last_line": tail})
+    return out
 
 
 def _spawn_notifierd(c: Ctx, env: Dict, db_dir: Path, port: int):
@@ -4951,6 +4979,7 @@ def gather(root: Path, vendor_port: int, db_dir: Path, trace_path: Path,
             c.read_stream = reader.samples
         _kill(ledger_proc)
         _kill(notifier_proc)
+        c.ledger_self_exits = _ledger_self_exits(getattr(c, "_ledger_procs", []))
 
     if trace_path.is_file():
         c.trace = [json.loads(ln) for ln in trace_path.read_text().splitlines()

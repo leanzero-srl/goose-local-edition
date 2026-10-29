@@ -103,7 +103,7 @@ def tier_runtime():
     saved = (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
              base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT,
              sb71.CHARGE_VIZ_CAP, sb71.CHARGE_UNREACHED_FAULTS, sb71.CHARGE_DEBUG_SURFACE_ABSENT, sb71.CHARGE_COVERED_CANVAS,
-             sb71.CHARGE_MISDRAWN_SCENE)
+             sb71.CHARGE_MISDRAWN_SCENE, sb71.CHARGE_LEDGERD_EXIT)
     blocks = dict(base.ROOT_BLOCKS)
     # Without synced data there is no field to see: the visual rows are downstream of sync.
     blocks['sync_completeness'] = (*blocks['sync_completeness'],
@@ -124,13 +124,15 @@ def tier_runtime():
     sb71.CHARGE_COVERED_CANVAS = True
     # A D1 witness lost because the app draws its scene off the public layout (its own vs7dbg says so): charged.
     sb71.CHARGE_MISDRAWN_SCENE = True
+    # The candidate's last ledgerd exited on its own (e.g. a restart that could not bind): charged, never refused.
+    sb71.CHARGE_LEDGERD_EXIT = True
     try:
         yield
     finally:
         (sb71.PROBE_NAME, sb71.VERSION, base.TIER_WEIGHT_SB7, base.ROOT_BLOCKS,
          base.TH['e_stream_apply_ms_rungs'], base.DIAGNOSTIC, base.NOTIFY_PAGED, base.SB72_STRICT,
          sb71.CHARGE_VIZ_CAP, sb71.CHARGE_UNREACHED_FAULTS, sb71.CHARGE_DEBUG_SURFACE_ABSENT, sb71.CHARGE_COVERED_CANVAS,
-         sb71.CHARGE_MISDRAWN_SCENE) = saved
+         sb71.CHARGE_MISDRAWN_SCENE, sb71.CHARGE_LEDGERD_EXIT) = saved
 
 
 def _probe_preflight():
@@ -275,6 +277,7 @@ def evaluate(ctx):
         viz = ctx.probes.get('viz', {})
         observation = viz.get('sb71', {})
         cap_note, cap_missing = sb71.viz_cap_note(viz), sb71.viz_cap_missing(viz)
+        died, exit_missing = sb71.ledgerd_self_exit(ctx), sb71.ledgerd_exit_missing(ctx)
         rows = report_only_rows(rows, getattr(ctx, '_m2_half_samples', None))
         raw = base.compose_from_rows(rows + visual_rows(observation.get('checks', []), cap_note),
                                      base._nominal_console_errors(ctx), ctx)
@@ -298,6 +301,12 @@ def evaluate(ctx):
         # (2026-10-04) scored 0.1457 and was then discarded for 'fire_d1_mutation:failed' still listed here.
         result['harness_missing'] = [name for name in result.get('harness_missing') or []
                                      if name not in result['viz_cap']['harness_missing_from_cap']]
+    if died is not None:
+        # Named here as the candidate's own exit, and moved OUT of harness_missing for the same reason as the cap's.
+        result['ledgerd_exit'] = {**died, 'harness_missing_from_exit': [
+            name for name in result.get('harness_missing') or [] if name in exit_missing]}
+        result['harness_missing'] = [name for name in result.get('harness_missing') or []
+                                     if name not in exit_missing]
     result['weights'] = {'inner': TIER_WEIGHT_SB72, 'three_d_share': sum(TIER_WEIGHT_SB72[t] for t in THREE_D_TIERS),
                          'excellence': base.E_WEIGHT}
     result['thresholds_overlay'] = {'file': THRESHOLDS_FILE.name,
@@ -335,6 +344,11 @@ def format_report(result, title=''):
                 + (f"; harness steps the cap prevented: {', '.join(result['viz_cap']['harness_missing_from_cap'])}"
                    if result['viz_cap']['harness_missing_from_cap'] else '')]
                if result.get('viz_cap') else []),
+             *([f"LEDGERD EXIT: the candidate's ledgerd (spawn {result['ledgerd_exit']['spawn'] + 1} of "
+                f"{result['ledgerd_exit']['of']}) exited on its own with code {result['ledgerd_exit']['returncode']}"
+                + (f"; harness steps it prevented: {', '.join(result['ledgerd_exit']['harness_missing_from_exit'])}"
+                   if result['ledgerd_exit']['harness_missing_from_exit'] else '')]
+               if result.get('ledgerd_exit') else []),
              '3D tiers: ' + ' · '.join(f"{t} {100 * tiers[t]['mean']:.0f}% (w {tiers[t]['weight']})"
                                        for t in ('S', 'Q', 'M', 'T', 'P')),
              '', behavioral, '', 'SB7.2 visual rows (weighted):']
