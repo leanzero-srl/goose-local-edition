@@ -1,0 +1,17 @@
+{
+  "created_at": "2026-10-29T09:58:30.631938+00:00",
+  "source_commit": "43a8589d652f72c145f57cbe667b0b9ec2a71976",
+  "notary_submission": "0c590721-38ae-4ea1-ae61-6b49db1b74e7",
+  "transport_zip": "/tmp/goose-controller-stapled-43a8589d652f-gabee/Goose-Swarm-stapled.zip",
+  "transport_sha256": "5b5334eeb8356600df34254e492a32d5a07106df23d498c45b72144c1a47a852",
+  "transport_bytes": 468917515,
+  "unpacked_bytes": 1338800293,
+  "fingerprint_sha256": "1188eb96ac70157c4b75272be5ccef80e676acd5ab9b6af80b6a09ea55892792",
+  "strict_team_signature": true,
+  "stapler_validate": true,
+  "gatekeeper_accepted": true,
+  "roundtrip_fingerprint_exact": true,
+  "approved_upload_zip_unchanged": true,
+  "upload_performed": false,
+  "install_performed": false
+}
