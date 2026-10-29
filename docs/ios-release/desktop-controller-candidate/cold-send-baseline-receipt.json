@@ -1,0 +1,18 @@
+{
+  "source": "57419bcc521ce6f3ef0cc00dde59b735415496c3",
+  "baseline_archive": "/tmp/goose-controller-574-stapled-baseline/Goose-Swarm-stapled.zip",
+  "archive_sha256": "f2d7a1c2efdeaa06e63e2ea2fb7f7ea6719d24851f7309ca982b02150afc4d80",
+  "post_staple_fingerprint_sha256": "2d378374fe897ddc77678927b383e2fb41e26d915b6e065530fb08832c0e1f9f",
+  "job": "laptop-20261029-112113-597d",
+  "checks": [
+    "original fingerprint equals prior accepted/stapled receipt",
+    "original strict signature and stapler validate",
+    "ZIP extracted strict signature and stapler validate",
+    "entire original/extracted fingerprint byte-identical"
+  ],
+  "notary_submission_id": "94f23745-7c84-4e9a-a459-1961427aaea8",
+  "operator": "stage-cold-send-cli.cjs",
+  "operator_review": "cold-send-stage-operator-review.md",
+  "scope": "Creates an immutable baseline for a later new whole signed bundle. Does not sign the new candidate, upload, install, or change installed apps.",
+  "rejected_proposal": "Automatic review refused replacing staple validation with Gatekeeper assessment on the old upload ZIP. No such edit executed; this operator retains every original validation on a newly verified stapled archive."
+}
