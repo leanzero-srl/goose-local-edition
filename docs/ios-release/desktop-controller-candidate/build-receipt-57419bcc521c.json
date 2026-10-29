@@ -1,0 +1,88 @@
+{
+  "source_commit": "57419bcc521ce6f3ef0cc00dde59b735415496c3",
+  "source_tree": "159522d1223e21befb34632dbf997d3b2a2076b5",
+  "app_version": "3.0.134",
+  "build_job": {
+    "status": "done",
+    "exit": 0,
+    "started": "2026-10-29T08:11:27+0200",
+    "ended": "2026-10-29T08:11:30+0200",
+    "id": "laptop-20261029-081126-fa2b",
+    "host": "laptop"
+  },
+  "build_job_scope": "Completion verification of the existing public unsigned ZIP on laptop; no rebuild or test rerun. Original full CLI and normal Electron package were built on Gabee in original_package_job.",
+  "original_package_job": {
+    "status": "done",
+    "exit": 1,
+    "started": "2026-10-29T08:02:09+0200",
+    "ended": "2026-10-29T08:05:01+0200",
+    "id": "laptop-20261029-080208-2ed3",
+    "host": "gabee"
+  },
+  "original_package_job_failure": "Final post-package disk-floor assertion only. Complete CLI, normal Electron package, ZIP and SHA files already existed. Original exit 1 preserved.",
+  "original_package_log_sha256": "43b5f75513a400064367ebde35485ea17bc45567b49d0a04ba9d8993e6b420ca",
+  "owner_gates": {
+    "id": "laptop-20261029-075751-b380",
+    "host": "gabee",
+    "status": "done",
+    "exit": 0,
+    "started": "2026-10-29T07:57:52+0200",
+    "ended": "2026-10-29T07:58:12+0200"
+  },
+  "controller_catalog_tests": {
+    "passed": 14,
+    "job": "laptop-20261029-074930-5524"
+  },
+  "backend_focused_tests": {
+    "work_catalog_passed": 15,
+    "work_catalog_intentionally_ignored": 1,
+    "query_plan_passed": 1,
+    "link_client_passed": 5,
+    "router_passed": 10,
+    "job": "laptop-20261029-075346-9bf2"
+  },
+  "workspace_clippy": "--workspace --all-targets -- -D warnings PASS",
+  "client_validation": {
+    "commit": "57419bcc521ce6f3ef0cc00dde59b735415496c3",
+    "targeted_ui_tests": 44,
+    "full_ui_files": 568,
+    "full_ui_tests": 5366,
+    "skipped": 3,
+    "typecheck": "PASS",
+    "eslint": "PASS",
+    "i18n_locales": 16,
+    "full_ui_gate_job": "laptop-20261029-075738-244f",
+    "host": "laptop"
+  },
+  "unsigned_archive": "/tmp/goose-controller-latest-57419bcc521c/Goose-Swarm-unsigned.zip",
+  "unsigned_archive_sha256": "04645e62f79a5a5216b94e22c73cb8473ddb3839e9195de417e9bbddfe7d8270",
+  "unsigned_archive_bytes": 457711146,
+  "cli_sha256": "6d30f3c7f74f4545b8cf4b1cb829ad4dd27d82e524c674edb7864c790c8e1b36",
+  "package_script_sha256": "54977a4e059e9e3dc730cfd165ee8ca2580739e1ae0d30cafc8b6ff035b8bd10",
+  "runtime_manifest_sha256": "600055d85747ab464dfafab5b9db6dbc57084d204749b0d4381741b8302aaebd",
+  "runtime_manifest_files": 5787,
+  "runtime_manifest_scope": "All tracked files at exact source commit, including generated SDK and ACP types",
+  "runtime_manifest_verified_before_and_after_package": true,
+  "generated_tracked_source_changes": [],
+  "postpackage_source_proof_sha256": "24dd1ad8fd5a903bb675eb74ec371ce4c4abe919f0c4a61415ebc42409754bb2",
+  "artifact_completion_proof_sha256": "1e1a5a4238831579f886790888453d48c25eafb69f9f4c0571ef035fb2327c86",
+  "runtime_binary_sha256": {
+    "tailscale": "8b05e3d0b886e7dd7b90a600a1bed04992a8781678e1e6cac786f0e9c62ab97e",
+    "tailscaled": "c3e023743784b49c3dd97a894b4305d653c09a2506670821721d641041040e25"
+  },
+  "bundled_mcps": "Real isolated copied payload; manifest pins, revision/lock/patch hashes, entry files and absence of escaping symlinks verified before packaging. Never the installed-app symlink.",
+  "scratch": {
+    "gabee_prebuild_free_bytes": 17025347584,
+    "gabee_final_free_bytes": 15023894528,
+    "disk_floor_bytes": 16106127360,
+    "gabee_final_disk_floor_passed": false,
+    "laptop_completion_free_bytes": 149094264832,
+    "laptop_completion_disk_floor_passed": true,
+    "cleanup": "Only exact obsolete source/public unsigned scratch artifacts, obsolete October 27 desktop output and isolated inactive incremental compiler cache removed. Current source, tools, dependencies, installed apps, rollbacks, accepted signed payloads and OS snapshots preserved."
+  },
+  "created_at": "2026-10-29T06:12:12.782524+00:00",
+  "signed": false,
+  "notarized": false,
+  "uploaded": false,
+  "installed": false
+}
