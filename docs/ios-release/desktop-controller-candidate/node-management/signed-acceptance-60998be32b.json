@@ -1,0 +1,23 @@
+{
+  "verdict": "PASS for parent-controlled installation; installer not executed by reviewer",
+  "reviewed_at": "2026-10-29T12:38:27.426292+00:00",
+  "signing_job": "laptop-20261029-142635-5d30",
+  "exit": 0,
+  "receipt_sha256": "53da481c4ad311679f68878c8bd27961288b4975b2495e328e610365449a1f50",
+  "signed_zip_sha256": "1c05d1973d37464d1e39326aa3637e6070269a59627e65ab49ea32366e84643d",
+  "signed_cli_sha256": "3c2bf0ecb6d5cb3e4add72ee6e9c17fa096ba3bb17851e86ef887147472f187d",
+  "fingerprint_sha256": "6afcf73759b61a93c1df4f9f42ae57850adba238c7cf5a13c0d949e33ffa7c34",
+  "roundtrip_inventory_exact": true,
+  "changed_macho_compared": 29,
+  "architectures": {
+    "arm64": 27,
+    "x86_64": 2
+  },
+  "actual_helper_text_corruption_rejected": true,
+  "strict_signature_recorded": true,
+  "installer": "/tmp/goose-install-node-controller.py",
+  "installer_sha256": "3385865d7e93e299ee0c02965c3ce2c67d3a5f66a2b3d26ca0091f6b33aaaed4",
+  "notarized": false,
+  "uploaded": false,
+  "installed_by_reviewer": false
+}

@@ -1,0 +1,38 @@
+{
+  "source_commit": "60998be32b57c414ec1fb54bd7ec6fe1a61ae2d9",
+  "source_tree": "57749493668fd7ee51136fc3c5afc8f4359f0cad",
+  "cli_sha256": "a7b13a2b2071103f5427a5d1557cd01859328a406f60f1d781391fb33dd8bcd2",
+  "unsigned_archive_sha256": "abc7f3f027df80febc0244fd1df03ef3619bbc2d03de9a739ca56f63c003b1c6",
+  "app_version": "3.0.134",
+  "build_job": {
+    "id": "laptop-20261029-142342-1f6d",
+    "exit": 0,
+    "logSha256": "24021af19f1aea0081448615f3fcdcda4d0c1114ba9d89b6462478a6ebd1df42"
+  },
+  "owner_gates": {
+    "exit": 0,
+    "jobs": [
+      {
+        "id": "laptop-20261029-140522-16ff",
+        "exit": 0,
+        "logSha256": "71530a6fb36c8ff6effecdae8f14190ab48e5973c7984f5335556b2fee64194d"
+      },
+      {
+        "id": "laptop-20261029-141039-170d",
+        "exit": 0,
+        "logSha256": "9639793852656abd0d8389a06d0a179a884489e6d6e904386fdf1e22139d9788"
+      },
+      {
+        "id": "laptop-20261029-141644-2833",
+        "exit": 0,
+        "logSha256": "445993efc4823a436bf306a6dbe02dfc49df3822e8d1e5453671f1d9fea1060f"
+      },
+      {
+        "id": "laptop-20261029-141929-f70c",
+        "exit": 0,
+        "logSha256": "7627ce0afd175b205714d90796ee968dad193b7f3b8204950206a5b13ea87e62"
+      }
+    ]
+  },
+  "package_receipt_sha256": "41058a277ad2562382f8429cbeda62e36899b714f8d2a759bd9ffdd6e0f3cd36"
+}

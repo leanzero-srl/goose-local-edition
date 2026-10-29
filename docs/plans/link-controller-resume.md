@@ -1,7 +1,17 @@
 # Goose Remote continuation
 
-Updated 29 October 2026, 14:27 local. Read the new checkpoint below first; older sections retain prior receipts. Earlier failures, intermediate receipts and superseded instructions are retained in [the preceding handoff](link-controller-history-through-2026-10-29-1209.md) and its linked history; do not follow its pending jobs or obsolete approvals.
+Updated 29 October 2026, 14:42 local. Read the new checkpoint below first; older sections retain prior receipts. Earlier failures, intermediate receipts and superseded instructions are retained in [the preceding handoff](link-controller-history-through-2026-10-29-1209.md) and its linked history; do not follow its pending jobs or obsolete approvals.
 
+
+## 14:42 active checkpoint
+
+Full Electron package60998 passed desktop typecheck+339node UI tests, exactsource/SDK/runtimepayload checks and independent review; receipt/operators committedaad75e0e83. Full local signing job laptop-20261029-142635-5d30 DONE0. Signed artifact /tmp/goose-controller-corrected-signed-60998be32b57/Goose Swarm.app; ZIP SHA2561c05d1973d37464d1e39326aa3637e6070269a59627e65ab49ea32366e84643d; signedCLI3c2bf0ecb6d5cb3e4add72ee6e9c17fa096ba3bb17851e86ef887147472f187d; fingerprint6afcf73759b61a93c1df4f9f42ae57850adba238c7cf5a13c0d949e33ffa7c34. All29changedMachO compared (27arm64/2x86_64), actualcodecorruption rejected, metadata controls and ZIProundtrip strictsignature PASS. Independent signed acceptance PASS. Not uploaded/notarized/installed. Exact finalized installer /tmp/goose-install-node-controller.py SHA3385865d7e93e299ee0c02965c3ce2c67d3a5f66a2b3d26ca0091f6b33aaaed4; root read entireoperator and finalpins.
+
+Owner unlocked Mac; CUA confirmed both Mac and physicalphone accessible. Fresh originalowner catalog558/active[] and allrunning/needsYou/background/looping/notesWaiting counts0 at12:35:52UTC. OriginalappPID49814/backend49888. Private17-file snapshot /Users/mihaiperdum/.local/share/goose-upgrade-snapshots/controller-nodes-20261029T123256Z; all73326sessions/384311messages hashed with read-onlyfullrowprojection; files unchanged on preinstallrecheck. Root wrapper /tmp/goose-node-laptop-upgrade.sh runs exactpinned wholeappswap then fullhistory/settingscomparison; normalCUArelaunch remains root responsibility.
+
+ONE upgrade queued laptop-20261029-143955-562e, execsession68365, waitcap600s; first no-waitattempt refusedexit75 beforemutation. Waits behind laptop voicejobs gabee-20261029-143853-47c5 and gabee-20261029-143855-5fc7 (PIDs73576/73629), not Goose inference. Never duplicatequeue/removeholds/stopotherjobs. Inspect queue/result before nextaction. Snapshotresult /tmp/goose-node-profile-preserve-result.json. No upgrade executed at this checkpoint. On placement installer rechecks originalidle twice. Afterdone normallylaunch /Applications/Goose Swarm.app viaCUA, compare preservedidentity/login/history/settings, then phoneComputeNodes create/read/remove and desktopvisiblepersistence. Existingnative8762 alreadyinstalled; no rebuildneeded.
+
+native_jump_fix is read-only auditing remaining nudgecoverage by actualworkkind. Preliminary: chatsteeringproven; AgentWork Note requiresnexttick actualinboxack (liveproof notfound); benchmarkNote onlynativeSwarm BUILD, ordinarycloudentrants no consumer; shelljobsStoponly. Do not broaden existingchatreceipt tothese kinds. Studioscampaign untouched. New exactAppleuploadapproval waits localacceptance; old43aapproval doesnotcover60998. No new approvalasked.
 
 ## 14:27 active checkpoint
 
