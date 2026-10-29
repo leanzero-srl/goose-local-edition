@@ -324,6 +324,27 @@ final class OwnerReplayTests: XCTestCase {
         XCTAssertEqual(scroll.position.viewID(type: String.self), "another-row")
     }
 
+    func testPrependAtHeaderReanchorsAnAlreadyBoundFirstMessage() {
+        var scroll = SessionScrollState()
+        scroll.position = ScrollPosition(id: "previous-first")
+        scroll.userScrolled(nearBottom: false)
+        let headerPosition = scroll.position
+        let request = scroll.beginOlder(transcriptIDs: ["previous-first", "last"], firstMessageBelowTop: true)
+        scroll.endOlder(request: request, didPrepend: true)
+        XCTAssertEqual(scroll.position.viewID(type: String.self), "previous-first")
+        XCTAssertNotEqual(scroll.position, headerPosition, "An explicit top anchor must replace the header's tracked identity")
+    }
+
+    func testPrependInsideFirstMessageKeepsItsExistingPosition() {
+        var scroll = SessionScrollState()
+        scroll.position = ScrollPosition(id: "first", anchor: .center)
+        scroll.userScrolled(nearBottom: false)
+        let readingPosition = scroll.position
+        let request = scroll.beginOlder(transcriptIDs: ["first", "last"], firstMessageBelowTop: false)
+        scroll.endOlder(request: request, didPrepend: true)
+        XCTAssertEqual(scroll.position, readingPosition)
+    }
+
     func testPrependDoesNotReplaceAnExistingMessagePosition() {
         var scroll = SessionScrollState()
         scroll.position.scrollTo(id: "middle", anchor: .center)

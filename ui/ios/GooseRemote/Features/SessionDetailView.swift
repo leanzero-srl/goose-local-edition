@@ -20,14 +20,14 @@ struct SessionScrollState {
         followsLatest = nearBottom
         olderFallbackID = nil
     }
-    @discardableResult mutating func beginOlder(transcriptIDs: [String] = []) -> UUID {
+    @discardableResult mutating func beginOlder(transcriptIDs: [String] = [], firstMessageBelowTop: Bool = false) -> UUID {
         let request = UUID()
         olderRequest = request
         loadingOlder = true
         followsLatest = false
         let visibleID = position.viewID(type: String.self)
-        olderFallbackID = visibleID.map(transcriptIDs.contains) == true ? nil : transcriptIDs.first
-        traceSessionScroll("begin count=\(transcriptIDs.count) boundIndex=\(visibleID.flatMap(transcriptIDs.firstIndex) ?? -1) boundNil=\(visibleID == nil) userPositioned=\(position.isPositionedByUser) edgeBottom=\(position.edge == .bottom) fallback=\(olderFallbackID != nil)")
+        olderFallbackID = firstMessageBelowTop || visibleID.map(transcriptIDs.contains) != true ? transcriptIDs.first : nil
+        traceSessionScroll("begin firstBelowTop=\(firstMessageBelowTop) count=\(transcriptIDs.count) boundIndex=\(visibleID.flatMap(transcriptIDs.firstIndex) ?? -1) boundNil=\(visibleID == nil) userPositioned=\(position.isPositionedByUser) edgeBottom=\(position.edge == .bottom) fallback=\(olderFallbackID != nil)")
         return request
     }
     mutating func endOlder(request: UUID, didPrepend: Bool = false) {
@@ -36,8 +36,9 @@ struct SessionScrollState {
         loadingOlder = false
         olderRequest = nil
         if didPrepend, !followsLatest, let olderFallbackID {
+            let previousPosition = position
             position.scrollTo(id: olderFallbackID, anchor: .top)
-            traceSessionScroll("restore boundMatches=\(position.viewID(type: String.self) == olderFallbackID) userPositioned=\(position.isPositionedByUser)")
+            traceSessionScroll("restore changed=\(position != previousPosition) boundMatches=\(position.viewID(type: String.self) == olderFallbackID) userPositioned=\(position.isPositionedByUser)")
         }
         olderFallbackID = nil
     }
@@ -61,6 +62,7 @@ struct SessionDetailView: View {
     @State private var scrolling = SessionScrollState()
     @State private var userScrolling = false
     @State private var nearBottom = true
+    @State private var firstMessageBelowTop = false
     var body: some View {
         Group {
             if store.selectedLoading && store.selectedWork == nil { ProgressView("Loading from owner Mac").frame(maxWidth: .infinity, maxHeight: .infinity) }
@@ -82,7 +84,7 @@ struct SessionDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: work) { if store.selectedRef != work || store.selectedError != nil { await store.select(work) } }
         .onDisappear { store.endSelection(work) }
-        .onChange(of: work) { _, _ in scrolling = SessionScrollState() }
+        .onChange(of: work) { _, _ in scrolling = SessionScrollState(); firstMessageBelowTop = false }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -126,7 +128,7 @@ struct SessionDetailView: View {
                     }
                     if selected.hasMoreHistory {
                         Button(work.kind == .chat ? "Load older messages" : "Load older activity") {
-                            let request = scrolling.beginOlder(transcriptIDs: selected.transcript.map(\.id))
+                            let request = scrolling.beginOlder(transcriptIDs: selected.transcript.map(\.id), firstMessageBelowTop: firstMessageBelowTop)
                             let firstMessageID = selected.transcript.first?.id
                             let historyReset = store.selectedHistoryReset
                             Task {
@@ -157,6 +159,15 @@ struct SessionDetailView: View {
                             }
                             Text(item.text).font(work.kind == .shellJob ? .system(.body, design: .monospaced) : .body).textSelection(.enabled)
                         }.id(item.id)
+                            .onGeometryChange(for: Bool?.self) { geometry in
+                                guard item.id == selected.transcript.first?.id else { return nil }
+                                return geometry.frame(in: .scrollView(axis: .vertical)).minY >= 0
+                            } action: { _, belowTop in
+                                if let belowTop {
+                                    firstMessageBelowTop = belowTop
+                                    traceSessionScroll("firstRow belowTop=\(belowTop)")
+                                }
+                            }
                     }
                     if let pending = store.pendingCommands.last(where: { $0.command.work == work }) {
                         StudioPanel {
