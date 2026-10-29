@@ -1,0 +1,9 @@
+# Physical iPhone sharing disclosure
+
+Observed29October2026 at13:53 local through DeviceHub/CUA on actual iPhone00008150-000640A81442401C, native8762c69d386e and original laptop desktop43a8589d652f. Existing disposable Physical iPhone cold-send check29October was idle, with its original11:41 user/assistant exchange and Delivered receipt.
+
+Entered the disposable draft “Disclosure check only; this draft will not be sent.” Pressing Send opened Allow data sharing? before delivery. The screen visibly named the original owner Mac and explained that the message/answer and session context may be shared with configured AI providers and external tool services, including third-party AI. Sharing details were described as reported by the active session when loaded: AI provider openrouter; Tool developer; each destination explicitly not reported. The screen explained that providers may route onward, tools may contact other services and settings can change, so this is not a complete recipient list. The exact draft, Send action and selected owner were shown, followed by permission applying to this action only and separate Allow sharing and send / Do not send controls.
+
+Chose Do not send. The sheet dismissed to the same two-message conversation and idle state; the original Delivered receipt remained. Cleared the temporary draft through the ordinary text field; blank placeholder and disabled Send were visible. Allow sharing and send was never pressed. No model run was requested. The earlier owner-added draft in Cloud controller test was not touched.
+
+This establishes the actual physical pre-send disclosure and decline UI. It does not establish legal adequacy, an exhaustive provider list, or backend recipient destinations absent from the descriptor. A prior handoff said this disposable session had no extensions; that is not the current UI evidence, which reports developer. Do not repeat the no-extensions claim without fresh backend evidence.
