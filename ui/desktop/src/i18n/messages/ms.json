@@ -12343,5 +12343,20 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "Transkrip sesi"
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "Pergi ke yang terkini"
+  },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "Muatkan mesej lama"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "Memuatkan mesej lama…"
+  },
+  "controller.work.historyReset": {
+    "defaultMessage": "Sejarah yang disimpan tidak lagi sah. Mesej lama perlu dimuatkan semula."
   }
 }

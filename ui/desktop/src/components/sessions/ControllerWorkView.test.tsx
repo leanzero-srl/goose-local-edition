@@ -9,7 +9,7 @@ import ControllerWorkView from './ControllerWorkView';
 vi.mock('../../acp/controller', async (original) => ({
   ...(await original<typeof import('../../acp/controller')>()),
   controllerOpen: vi.fn(),
-  controllerHistory: vi.fn(),
+  controllerHistoryLatest: vi.fn(),
   controllerChanges: vi.fn(),
   controllerCommand: vi.fn(),
   controllerPendingCommands: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock('../../acp/sessions', () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(api.controllerOpen).mockResolvedValue(fixtureSnapshot());
-  vi.mocked(api.controllerHistory).mockResolvedValue({
+  vi.mocked(api.controllerHistoryLatest).mockResolvedValue({
     work: fixtureEntry.work,
     store_generation: 'generation-a',
     revision: 4,
@@ -337,7 +337,7 @@ describe('linked work user path', () => {
     await waitFor(() => expect(api.controllerCommand).toHaveBeenCalledTimes(1));
     const changed = { ...fixtureEntry, work: { ...fixtureEntry.work, work_id: 'other-work' } };
     vi.mocked(api.controllerOpen).mockResolvedValue({ ...fixtureSnapshot(), entry: changed });
-    vi.mocked(api.controllerHistory).mockResolvedValue({
+    vi.mocked(api.controllerHistoryLatest).mockResolvedValue({
       work: changed.work,
       store_generation: 'generation-a',
       revision: 4,

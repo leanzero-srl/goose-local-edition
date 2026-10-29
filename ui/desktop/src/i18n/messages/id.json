@@ -12343,5 +12343,20 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "Transkrip sesi"
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "Ke yang terbaru"
+  },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "Muat pesan lama"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "Memuat pesan lama…"
+  },
+  "controller.work.historyReset": {
+    "defaultMessage": "Riwayat tersimpan tidak lagi valid. Pesan lama harus dimuat ulang."
   }
 }

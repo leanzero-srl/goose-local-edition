@@ -12343,5 +12343,20 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "Bản ghi phiên"
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "Đến mới nhất"
+  },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "Tải tin nhắn cũ hơn"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "Đang tải tin nhắn cũ hơn…"
+  },
+  "controller.work.historyReset": {
+    "defaultMessage": "Lịch sử đã lưu không còn hợp lệ. Cần tải lại các tin nhắn cũ hơn."
   }
 }

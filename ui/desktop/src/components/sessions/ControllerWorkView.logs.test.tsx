@@ -16,6 +16,7 @@ vi.mock('../../acp/controller', async (original) => ({
   ...(await original<typeof import('../../acp/controller')>()),
   controllerOpen: vi.fn(),
   controllerHistory: vi.fn(),
+  controllerHistoryLatest: vi.fn(),
   controllerChanges: vi.fn(),
   controllerPendingCommands: vi.fn(),
 }));
@@ -80,7 +81,7 @@ describe('selected external log history', () => {
       expect(screen.queryByText('No log output yet.')).not.toBeInTheDocument();
       expect(screen.queryByText(/Automatic log refresh is paused/)).not.toBeInTheDocument();
 
-      const scroll = screen.getByText('Latest output').closest('article')!.parentElement!;
+      const scroll = screen.getByRole('region', { name: 'Session transcript' });
       Object.defineProperty(scroll, 'scrollHeight', {
         configurable: true,
         get: () => (screen.queryByText('Earlier output') ? 900 : 500),
@@ -189,6 +190,33 @@ describe('selected external log history', () => {
     expect(api.controllerHistory).toHaveBeenLastCalledWith(entry.work, 'generation-a', null);
   });
 
+  it('jumping from paused older output fetches the current owner tail', async () => {
+    const entry = externalEntry();
+    vi.mocked(api.controllerHistory).mockResolvedValueOnce(
+      page(entry, 'Previous tail', 100, 200, 'older')
+    );
+    renderLog(entry);
+    await screen.findByText('Previous tail');
+    const element = screen.getByRole('region', { name: 'Session transcript' });
+    Object.defineProperty(element, 'scrollHeight', { configurable: true, get: () => 900 });
+    Object.defineProperty(element, 'clientHeight', { configurable: true, get: () => 100 });
+    element.scrollTop = 25;
+    fireEvent.scroll(element);
+    vi.mocked(api.controllerHistory).mockResolvedValueOnce(page(entry, 'Earlier output', 0, 100));
+    fireEvent.click(screen.getByRole('button', { name: 'Load older output' }));
+    await screen.findByText('Earlier output');
+    vi.mocked(api.controllerHistory).mockResolvedValueOnce(
+      page(entry, 'Current owner tail', 200, 300)
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Jump to latest' }));
+    expect(await screen.findByText('Current owner tail')).toBeInTheDocument();
+    expect(api.controllerHistory).toHaveBeenCalledTimes(3);
+    expect(api.controllerHistory).toHaveBeenLastCalledWith(entry.work, 'generation-a', null);
+    expect(screen.queryByText('Earlier output')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Automatic log refresh is paused/)).not.toBeInTheDocument();
+    expect(element.scrollTop).toBe(900);
+  });
+
   it('shows empty output only after a successful empty read', async () => {
     vi.mocked(api.controllerHistory).mockRejectedValueOnce(new Error('Log file cannot be read'));
     renderLog();
@@ -240,26 +268,32 @@ describe('selected external log history', () => {
     expect(screen.getByText(/Automatic log refresh is paused/)).toBeInTheDocument();
   });
 
-  it('continues loading all chat history pages without external-log controls', async () => {
-    vi.mocked(api.controllerHistory)
-      .mockResolvedValueOnce({
-        ...page(fixtureEntry, '', 0, 0, 'chat-next'),
-        items: [fixtureMessage('chat-1', 3, 'First chat message')],
-      })
-      .mockResolvedValueOnce({
-        ...page(fixtureEntry, '', 0, 0),
-        items: [fixtureMessage('chat-2', 4, 'Second chat message')],
-      });
+  it('loads one latest chat page, then older messages only on request', async () => {
+    vi.mocked(api.controllerHistoryLatest).mockResolvedValue({
+      ...page(fixtureEntry, '', 0, 0, 'chat-older'),
+      items: [fixtureMessage('chat-2', 4, 'Latest chat message')],
+    });
+    vi.mocked(api.controllerHistory).mockResolvedValue({
+      ...page(fixtureEntry, '', 0, 0),
+      items: [fixtureMessage('chat-1', 3, 'First chat message')],
+    });
     renderLog(fixtureEntry);
-    expect(await screen.findByText('Second chat message')).toBeInTheDocument();
-    expect(screen.getByText('First chat message')).toBeInTheDocument();
-    expect(api.controllerHistory).toHaveBeenCalledTimes(2);
-    expect(api.controllerHistory).toHaveBeenLastCalledWith(
+    expect(await screen.findByText('Latest chat message')).toBeInTheDocument();
+    expect(screen.queryByText('First chat message')).not.toBeInTheDocument();
+    expect(api.controllerHistoryLatest).toHaveBeenCalledExactlyOnceWith(
       fixtureEntry.work,
       'generation-a',
-      'chat-next'
+      'cursor-4'
     );
-    expect(screen.queryByRole('button', { name: 'Load older output' })).not.toBeInTheDocument();
+    expect(api.controllerHistory).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Load older messages' }));
+    expect(await screen.findByText('First chat message')).toBeInTheDocument();
+    expect(api.controllerHistory).toHaveBeenCalledExactlyOnceWith(
+      fixtureEntry.work,
+      'generation-a',
+      'chat-older'
+    );
     expect(screen.queryByRole('button', { name: 'Refresh log' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Automatic log refresh is paused/)).not.toBeInTheDocument();
   });
 });

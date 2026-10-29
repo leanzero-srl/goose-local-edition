@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import {
   workKey,
@@ -9,6 +9,7 @@ import {
 } from '../../acp/controllerTypes';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button } from '../ui/button';
+import { useControllerTranscriptScroll } from './useControllerTranscriptScroll';
 import { useControllerWork } from './useControllerWork';
 import ControllerInput from './ControllerInput';
 import { transcriptMessage } from './controllerReplay';
@@ -21,6 +22,20 @@ const messages = defineMessages({
   load: { id: 'controller.work.load', defaultMessage: 'Loading from the owner Mac…' },
   reload: { id: 'controller.work.reload', defaultMessage: 'Reload owner state' },
   refreshLog: { id: 'controller.work.refreshLog', defaultMessage: 'Refresh log' },
+  transcript: { id: 'controller.work.transcript', defaultMessage: 'Session transcript' },
+  jumpLatest: { id: 'controller.work.jumpLatest', defaultMessage: 'Jump to latest' },
+  loadOlderMessages: {
+    id: 'controller.work.loadOlderMessages',
+    defaultMessage: 'Load older messages',
+  },
+  loadingOlderMessages: {
+    id: 'controller.work.loadingOlderMessages',
+    defaultMessage: 'Loading older messages…',
+  },
+  historyReset: {
+    id: 'controller.work.historyReset',
+    defaultMessage: 'Saved history is no longer valid. Older messages must be loaded again.',
+  },
   loadOlder: { id: 'controller.work.loadOlder', defaultMessage: 'Load older output' },
   loadingOlder: { id: 'controller.work.loadingOlder', defaultMessage: 'Loading older output…' },
   historyPaused: {
@@ -75,7 +90,10 @@ const messages = defineMessages({
 function ControllerMessage({ message }: { message: Message }) {
   const intl = useIntl();
   return (
-    <article className="p-4 rounded-xl border border-border-primary bg-background-secondary space-y-3">
+    <article
+      data-controller-message-id={message.id}
+      className="p-4 rounded-xl border border-border-primary bg-background-secondary space-y-3"
+    >
       <div className="flex gap-3 justify-between text-sm text-text-secondary">
         <span className="font-semibold text-text-primary">
           {intl.formatMessage(message.role === 'user' ? messages.user : messages.assistant)}
@@ -147,26 +165,20 @@ export default function ControllerWorkView({
       if (recovered !== null) setText((draft) => (draft === '' ? recovered : draft));
     }
   }, [work.unacceptedCommands]);
-  const transcript = useRef<HTMLDivElement>(null);
-  const olderScroll = useRef<{ height: number; top: number } | null>(null);
   const current = work.state?.entry ?? entry;
   const externalLog = current.work.kind !== 'chat';
-  useLayoutEffect(() => {
-    if (work.loadingOlder || !olderScroll.current || !transcript.current) return;
-    const { height, top } = olderScroll.current;
-    transcript.current.scrollTop = top + transcript.current.scrollHeight - height;
-    olderScroll.current = null;
-  }, [work.state?.items, work.loadingOlder]);
+  const scroll = useControllerTranscriptScroll(
+    `${identity}:${entry.store_generation}:${work.historyReset}`,
+    Boolean(work.state) && !work.loading,
+    work.state?.items,
+    work.loadingOlder
+  );
   const refresh = () => {
-    olderScroll.current = null;
+    if (externalLog) scroll.jumpLatest();
     work.reload();
   };
   const loadOlder = () => {
-    if (transcript.current)
-      olderScroll.current = {
-        height: transcript.current.scrollHeight,
-        top: transcript.current.scrollTop,
-      };
+    scroll.beforeOlder();
     void work.loadOlder();
   };
   const disabled =
@@ -232,6 +244,11 @@ export default function ControllerWorkView({
             </Button>
           </div>
         )}
+        {work.historyReset > 0 && (
+          <p role="status" className="text-sm">
+            {intl.formatMessage(messages.historyReset)}
+          </p>
+        )}
         {work.commandNotice && (
           <p role="status" className="text-sm">
             {work.commandNotice}
@@ -239,104 +256,127 @@ export default function ControllerWorkView({
         )}
       </header>
       <div
-        ref={transcript}
-        className="flex-1 min-h-0 overflow-auto p-4 space-y-4"
-        aria-live={work.historyPaused ? 'off' : 'polite'}
+        ref={scroll.transcript}
+        onScroll={scroll.onScroll}
+        className="flex-1 min-h-0 overflow-auto p-4"
+        style={{ overflowAnchor: 'none' }}
+        role="region"
+        aria-label={intl.formatMessage(messages.transcript)}
+        tabIndex={0}
+        aria-live={work.historyPaused || scroll.showLatest ? 'off' : 'polite'}
       >
-        {work.loading && <p>{intl.formatMessage(messages.load)}</p>}
-        {work.state?.deleted && <p>{intl.formatMessage(messages.deleted)}</p>}
-        {externalLog && work.state?.nextHistoryPageToken && !work.state.deleted && (
-          <Button
-            variant="outline"
-            disabled={work.loadingOlder || stale || host.availability !== 'online'}
-            onClick={loadOlder}
-          >
-            {intl.formatMessage(work.loadingOlder ? messages.loadingOlder : messages.loadOlder)}
-          </Button>
-        )}
-        {work.state?.items.map((item) => (
-          <ControllerMessage key={item.message_id} message={transcriptMessage(item)} />
-        ))}
-        {!work.loading &&
-          !work.error &&
-          work.state &&
-          work.state.items.length === 0 &&
-          !work.state.deleted &&
-          !work.state.nextHistoryPageToken && (
-            <p className="text-text-secondary">
-              {intl.formatMessage(externalLog ? messages.noOutput : messages.noMessages)}
-            </p>
+        <div ref={scroll.content} className="space-y-4">
+          {work.loading && <p>{intl.formatMessage(messages.load)}</p>}
+          {work.state?.deleted && <p>{intl.formatMessage(messages.deleted)}</p>}
+          {work.state?.nextHistoryPageToken && !work.state.deleted && (
+            <Button
+              variant="outline"
+              disabled={work.loadingOlder || stale || host.availability !== 'online'}
+              onClick={loadOlder}
+            >
+              {intl.formatMessage(
+                externalLog
+                  ? work.loadingOlder
+                    ? messages.loadingOlder
+                    : messages.loadOlder
+                  : work.loadingOlder
+                    ? messages.loadingOlderMessages
+                    : messages.loadOlderMessages
+              )}
+            </Button>
           )}
-        {work.state?.pendingInputs.map((input) => (
-          <ControllerInput
-            key={`${input.input_id}:${input.run_id}`}
-            input={input}
-            disabled={
-              Boolean(disabled) ||
-              !supports('answer_input') ||
-              unresolved ||
-              work.commands.some(
-                (item) =>
-                  item.command.action === 'answer_input' &&
-                  item.command.payload.input_id === input.input_id &&
-                  item.receipt?.state !== 'rejected'
-              )
-            }
-            onAnswer={async (option, value) => {
-              await work.send({
-                action: 'answer_input',
-                payload: { input_id: input.input_id, option_id: option.option_id, value },
-              });
-            }}
-          />
-        ))}
-        {work.commands.map((item) => (
-          <div
-            key={item.command.command_id}
-            className="border border-border-primary rounded-lg p-3 text-sm space-y-2"
-            role="status"
-          >
-            <p>
-              {item.command.action} ·{' '}
-              {item.receipt
-                ? intl.formatMessage(messages[item.receipt.state])
-                : intl.formatMessage(messages.uncertain)}
-            </p>
-            {item.receipt?.reason && <p>{item.receipt.reason}</p>}
-            {item.error && <p className="text-text-danger">{item.error}</p>}
-            {(!item.receipt || !['delivered', 'rejected'].includes(item.receipt.state)) && (
-              <Button
-                variant="outline"
-                disabled={stale || work.sending}
-                onClick={() => void work.checkReceipt(item)}
-              >
-                {intl.formatMessage(messages.check)}
-              </Button>
+          {work.state?.items.map((item) => (
+            <ControllerMessage key={item.message_id} message={transcriptMessage(item)} />
+          ))}
+          {!work.loading &&
+            !work.error &&
+            work.state &&
+            work.state.items.length === 0 &&
+            !work.state.deleted &&
+            !work.state.nextHistoryPageToken && (
+              <p className="text-text-secondary">
+                {intl.formatMessage(externalLog ? messages.noOutput : messages.noMessages)}
+              </p>
             )}
-            {!item.receipt && (
-              <Button
-                variant="outline"
-                disabled={stale || work.sending}
-                onClick={() => void work.retry(item.command).catch(() => undefined)}
-              >
-                {intl.formatMessage(messages.retry)}
-              </Button>
-            )}
-          </div>
-        ))}
-        {work.unacceptedCommands.map((command) => (
-          <details key={command.command_id} className="text-sm" open>
-            <summary>
-              {command.action} · {intl.formatMessage(messages.rejected)} ·{' '}
-              {intl.formatMessage(messages.content)}
-            </summary>
-            <pre className="whitespace-pre-wrap break-all">
-              {commandText(command) ?? JSON.stringify(command.payload, null, 2)}
-            </pre>
-          </details>
-        ))}
+          {work.state?.pendingInputs.map((input) => (
+            <ControllerInput
+              key={`${input.input_id}:${input.run_id}`}
+              input={input}
+              disabled={
+                Boolean(disabled) ||
+                !supports('answer_input') ||
+                unresolved ||
+                work.commands.some(
+                  (item) =>
+                    item.command.action === 'answer_input' &&
+                    item.command.payload.input_id === input.input_id &&
+                    item.receipt?.state !== 'rejected'
+                )
+              }
+              onAnswer={async (option, value) => {
+                await work.send({
+                  action: 'answer_input',
+                  payload: { input_id: input.input_id, option_id: option.option_id, value },
+                });
+              }}
+            />
+          ))}
+          {work.commands.map((item) => (
+            <div
+              key={item.command.command_id}
+              className="border border-border-primary rounded-lg p-3 text-sm space-y-2"
+              role="status"
+            >
+              <p>
+                {item.command.action} ·{' '}
+                {item.receipt
+                  ? intl.formatMessage(messages[item.receipt.state])
+                  : intl.formatMessage(messages.uncertain)}
+              </p>
+              {item.receipt?.reason && <p>{item.receipt.reason}</p>}
+              {item.error && <p className="text-text-danger">{item.error}</p>}
+              {(!item.receipt || !['delivered', 'rejected'].includes(item.receipt.state)) && (
+                <Button
+                  variant="outline"
+                  disabled={stale || work.sending}
+                  onClick={() => void work.checkReceipt(item)}
+                >
+                  {intl.formatMessage(messages.check)}
+                </Button>
+              )}
+              {!item.receipt && (
+                <Button
+                  variant="outline"
+                  disabled={stale || work.sending}
+                  onClick={() => void work.retry(item.command).catch(() => undefined)}
+                >
+                  {intl.formatMessage(messages.retry)}
+                </Button>
+              )}
+            </div>
+          ))}
+          {work.unacceptedCommands.map((command) => (
+            <details key={command.command_id} className="text-sm" open>
+              <summary>
+                {command.action} · {intl.formatMessage(messages.rejected)} ·{' '}
+                {intl.formatMessage(messages.content)}
+              </summary>
+              <pre className="whitespace-pre-wrap break-all">
+                {commandText(command) ?? JSON.stringify(command.payload, null, 2)}
+              </pre>
+            </details>
+          ))}
+        </div>
       </div>
       <footer className="p-4 border-t border-border-primary space-y-3">
+        {scroll.showLatest && !work.state?.deleted && (
+          <Button
+            variant="outline"
+            onClick={externalLog && work.historyPaused ? refresh : scroll.jumpLatest}
+          >
+            {intl.formatMessage(messages.jumpLatest)}
+          </Button>
+        )}
         {(supports('send') || supports('steer') || supports('note')) && (
           <textarea
             className="w-full min-h-20 resize-y rounded-lg border border-border-primary bg-background-primary p-3 text-sm"

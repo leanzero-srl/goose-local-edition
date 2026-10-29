@@ -12343,5 +12343,20 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "Transcrição da sessão"
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "Ir para o mais recente"
+  },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "Carregar mensagens anteriores"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "Carregando mensagens anteriores…"
+  },
+  "controller.work.historyReset": {
+    "defaultMessage": "O histórico salvo não é mais válido. As mensagens anteriores devem ser carregadas novamente."
   }
 }

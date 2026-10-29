@@ -54,6 +54,8 @@ export const controllerHistory = (
   store_generation: string,
   page_token: string | null
 ) => call<HistoryPage>('history', { work, store_generation, page_token });
+export const controllerHistoryLatest = (work: WorkRef, store_generation: string, cursor: string) =>
+  call<HistoryPage>('historyLatest', { work, store_generation, cursor });
 export const controllerChanges = (work: WorkRef, store_generation: string, cursor: string) =>
   call<WorkChanges>('workChanges', { work, store_generation, cursor });
 export const controllerCommand = (command: WorkCommand) =>
@@ -82,4 +84,10 @@ export function controllerErrorText(error: unknown): string {
     if (typeof detail.message === 'string') return detail.message;
   }
   return error instanceof Error ? error.message : 'The owner Mac could not be reached.';
+}
+
+export function controllerSnapshotRequired(error: unknown): boolean {
+  const detail = (error as { data?: { error?: { status?: unknown; code?: unknown } } } | null)?.data
+    ?.error;
+  return detail?.status === 410 && detail.code === 'snapshot_required';
 }

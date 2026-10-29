@@ -12343,5 +12343,20 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "セッションの会話履歴"
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "最新へ移動"
+  },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "以前のメッセージを読み込む"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "以前のメッセージを読み込み中…"
+  },
+  "controller.work.historyReset": {
+    "defaultMessage": "保存された履歴は無効になりました。以前のメッセージを再読み込みしてください。"
   }
 }

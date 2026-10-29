@@ -12343,5 +12343,20 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "会话记录"
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "跳至最新"
+  },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "加载较早的消息"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "正在加载较早的消息…"
+  },
+  "controller.work.historyReset": {
+    "defaultMessage": "已保存的历史记录不再有效。需要重新加载较早的消息。"
   }
 }

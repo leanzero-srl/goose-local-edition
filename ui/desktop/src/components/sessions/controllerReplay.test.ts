@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { addHistory, applyWorkFrame, transcriptMessage, workSnapshot } from './controllerReplay';
+import {
+  addHistory,
+  applyWorkFrame,
+  refreshWorkSnapshot,
+  transcriptMessage,
+  workSnapshot,
+} from './controllerReplay';
 import { fixtureEntry, fixtureFrame, fixtureMessage, fixtureSnapshot } from './controllerFixtures';
 
 describe('selected controller transcript replay', () => {
@@ -202,5 +208,102 @@ describe('selected controller transcript replay', () => {
     expect(state.items.map((item) => item.message_id)).toEqual(['new']);
     state = applyWorkFrame(state, fixtureFrame('message_deleted', 7, { message_id: 'new' }));
     expect(state.items).toEqual([]);
+  });
+});
+
+describe('backward chat history with ongoing replay', () => {
+  const page = (ids: string[], next: string | null = null) => ({
+    work: fixtureEntry.work,
+    store_generation: 'generation-a',
+    revision: 4,
+    items: ids.map((id) => fixtureMessage(id)),
+    next_page_token: next,
+    work_cursor: 'cursor-4',
+  });
+  it('prepends three pages in owner order when every timestamp ties', () => {
+    let state = addHistory(workSnapshot(fixtureSnapshot()), page(['e', 'f'], 'older-c'));
+    state = addHistory(state, page(['c', 'd'], 'older-a'));
+    state = addHistory(state, page(['a', 'b']));
+    expect(state.items.map((item) => item.message_id)).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+  });
+  it('reconciles renames, edits and deletes of unloaded rows before an older page arrives', () => {
+    let state = addHistory(workSnapshot(fixtureSnapshot()), page(['latest'], 'older'));
+    state = applyWorkFrame(state, fixtureFrame('message_deleted', 5, { message_id: 'removed' }));
+    state = applyWorkFrame(
+      state,
+      fixtureFrame('message_upsert', 6, {
+        item: fixtureMessage('renamed', 6),
+        previous_message_id: 'old',
+      })
+    );
+    state = applyWorkFrame(
+      state,
+      fixtureFrame('message_upsert', 7, {
+        item: fixtureMessage('newest-name', 7, 'Edited after rename'),
+        previous_message_id: 'renamed',
+      })
+    );
+    state = addHistory(state, page(['earliest', 'removed', 'old', 'sibling']));
+    expect(state.items.map((item) => item.message_id)).toEqual([
+      'earliest',
+      'newest-name',
+      'sibling',
+      'latest',
+    ]);
+    expect(transcriptMessage(state.items[1]).content).toEqual([
+      { type: 'text', text: 'Edited after rename' },
+    ]);
+    state = applyWorkFrame(
+      state,
+      fixtureFrame('message_deleted', 8, { message_id: 'newest-name' })
+    );
+    state = addHistory(state, page(['old']));
+    expect(state.items.map((item) => item.message_id)).toEqual(['earliest', 'sibling', 'latest']);
+  });
+  it('keeps a loaded renamed row in its tie position and ignores history after tombstone', () => {
+    let state = addHistory(workSnapshot(fixtureSnapshot()), page(['a', 'b', 'c']));
+    state = applyWorkFrame(
+      state,
+      fixtureFrame('message_upsert', 5, {
+        item: fixtureMessage('renamed', 5),
+        previous_message_id: 'b',
+      })
+    );
+    expect(state.items.map((item) => item.message_id)).toEqual(['a', 'renamed', 'c']);
+    state = applyWorkFrame(state, fixtureFrame('tombstone', 6, null));
+    state = addHistory(state, page(['older']));
+    expect(state.items).toEqual([]);
+    expect(state.nextHistoryPageToken).toBeNull();
+  });
+  it('refreshes partials without losing earlier history or skipping intervening durable deletes', () => {
+    let state = addHistory(workSnapshot(fixtureSnapshot()), page(['earlier'], 'older'));
+    const snapshot = workSnapshot({
+      ...fixtureSnapshot(),
+      entry: { ...fixtureEntry, revision: 8 },
+      live_messages: [fixtureMessage('live', 8, 'Current partial')],
+      history_watermark: { ...fixtureSnapshot().history_watermark, revision: 8 },
+      work_cursor: 'cursor-8',
+    });
+    state = refreshWorkSnapshot(state, snapshot);
+    expect(state.cursor).toBe('cursor-4');
+    expect(state.historyRevision).toBe(4);
+    expect(state.nextHistoryPageToken).toBe('older');
+    state = applyWorkFrame(
+      state,
+      fixtureFrame('partial_replacement', 5, {
+        message_id: 'live',
+        message_revision: 5,
+        offset_bytes: 0,
+        content: fixtureMessage('live', 5, 'Earlier partial').message,
+      })
+    );
+    state = applyWorkFrame(state, fixtureFrame('message_deleted', 6, { message_id: 'earlier' }));
+    state = applyWorkFrame(state, fixtureFrame('pending_input', 7, {}));
+    expect(state.refreshSnapshot).toBe(false);
+    expect(state.entry.revision).toBe(8);
+    expect(state.items.map((item) => item.message_id)).toEqual(['live']);
+    expect(transcriptMessage(state.items[0]).content).toEqual([
+      { type: 'text', text: 'Current partial' },
+    ]);
   });
 });

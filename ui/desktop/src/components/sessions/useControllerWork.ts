@@ -5,6 +5,8 @@ import {
   controllerCommandNotAdmitted,
   controllerErrorText,
   controllerHistory,
+  controllerHistoryLatest,
+  controllerSnapshotRequired,
   controllerOpen,
   controllerPendingCommands,
   controllerReceipt,
@@ -19,6 +21,7 @@ import {
 import {
   addHistory,
   applyWorkFrame,
+  refreshWorkSnapshot,
   workSnapshot,
   type ControllerWorkState,
 } from './controllerReplay';
@@ -26,6 +29,7 @@ import {
 export function useControllerWork(selected: CatalogEntry) {
   const [state, setState] = useState<ControllerWorkState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [historyReset, setHistoryReset] = useState(0);
   const [commandNotice, setCommandNotice] = useState<string | null>(null);
   const [unacceptedCommands, setUnacceptedCommands] = useState<WorkCommand[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,6 +39,8 @@ export function useControllerWork(selected: CatalogEntry) {
   const [commands, setCommands] = useState<Array<PendingCommand & { error?: string }>>([]);
   const [reload, setReload] = useState(0);
   const current = useRef<ControllerWorkState | null>(null);
+  const recoveryAttempted = useRef(false);
+  const resetHistory = useRef(false);
   const commandBusy = useRef(false);
   const alive = useRef(false);
   const loadOlderRequest = useRef<(() => Promise<void>) | null>(null);
@@ -43,18 +49,34 @@ export function useControllerWork(selected: CatalogEntry) {
   useEffect(() => {
     setUnacceptedCommands([]);
     setCommandNotice(null);
+    setHistoryReset(0);
+    recoveryAttempted.current = false;
   }, [identity, selected.store_generation]);
 
   useEffect(() => {
     alive.current = true;
     let cancelled = false;
+    let replayStopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let paused = false;
     let olderBusy = false;
     const externalLog = selected.work.kind !== 'chat';
     const historyTokens = new Set<string>();
-    current.current = null;
-    setState(null);
+    const previous = current.current;
+    const keepChatHistory =
+      !resetHistory.current &&
+      !externalLog &&
+      previous &&
+      !previous.deleted &&
+      workKey(previous.entry.work) === identity &&
+      previous.entry.store_generation === selected.store_generation;
+    if (keepChatHistory && previous.nextHistoryPageToken)
+      historyTokens.add(previous.nextHistoryPageToken);
+    resetHistory.current = false;
+    if (!keepChatHistory) {
+      current.current = null;
+      setState(null);
+    }
     setLoading(true);
     setLoadingOlder(false);
     setHistoryPaused(false);
@@ -103,27 +125,30 @@ export function useControllerWork(selected: CatalogEntry) {
       );
       if (!cancelled) setCommands(refreshed);
     };
-    const load = async () => {
+    const load = async (replayed?: ControllerWorkState) => {
       let next = workSnapshot(await controllerOpen(selected.work, selected.store_generation));
       if (
         workKey(next.entry.work) !== identity ||
         next.entry.store_generation !== selected.store_generation
       )
         throw new Error('The owner returned a different work identity.');
-      if (!externalLog || !paused) {
-        let token: string | null = null;
-        const seen = new Set<string>();
-        do {
-          if (cancelled) return;
-          const page = await controllerHistory(selected.work, selected.store_generation, token);
-          next = addHistory(next, page);
-          token = page.next_page_token;
-          if (token && seen.has(token)) throw new Error('History pagination did not advance.');
-          if (token) seen.add(token);
-        } while (token && !externalLog);
+      if (cancelled) return;
+      const previous =
+        current.current && (!replayed || current.current.sequence >= replayed.sequence)
+          ? current.current
+          : replayed;
+      if (!externalLog && previous && !previous.deleted && previous.historyRevision !== null) {
+        next = refreshWorkSnapshot(previous, next);
+      } else if (!externalLog || !paused) {
+        const page = externalLog
+          ? await controllerHistory(selected.work, selected.store_generation, null)
+          : await controllerHistoryLatest(selected.work, selected.store_generation, next.cursor);
+        if (!externalLog && page.revision !== next.snapshotRevision)
+          throw new Error('History did not match the selected work snapshot. Reload this work.');
+        next = addHistory(next, page);
         if (!paused) {
           historyTokens.clear();
-          for (const token of seen) historyTokens.add(token);
+          if (page.next_page_token) historyTokens.add(page.next_page_token);
         }
       }
       if (!cancelled) {
@@ -133,10 +158,10 @@ export function useControllerWork(selected: CatalogEntry) {
     };
     loadOlderRequest.current = async () => {
       const token = current.current?.nextHistoryPageToken;
-      if (!externalLog || !token || olderBusy || current.current?.deleted) return;
-      paused = true;
+      if (!token || olderBusy || current.current?.deleted) return;
+      paused = externalLog;
       olderBusy = true;
-      setHistoryPaused(true);
+      setHistoryPaused(externalLog);
       setLoadingOlder(true);
       try {
         const page = await controllerHistory(selected.work, selected.store_generation, token);
@@ -144,11 +169,19 @@ export function useControllerWork(selected: CatalogEntry) {
         if (page.next_page_token && historyTokens.has(page.next_page_token))
           throw new Error('History pagination did not advance.');
         const next = addHistory(current.current, page);
+        recoveryAttempted.current = false;
         if (page.next_page_token) historyTokens.add(page.next_page_token);
         publish(next);
         setError(null);
       } catch (failure) {
-        if (!cancelled) setError(controllerErrorText(failure));
+        if (!cancelled) {
+          if (!externalLog && !recoveryAttempted.current && controllerSnapshotRequired(failure)) {
+            resetHistory.current = true;
+            recoveryAttempted.current = true;
+            setHistoryReset((value) => value + 1);
+            setReload((value) => value + 1);
+          } else setError(controllerErrorText(failure));
+        }
       } finally {
         olderBusy = false;
         if (!cancelled) setLoadingOlder(false);
@@ -175,17 +208,31 @@ export function useControllerWork(selected: CatalogEntry) {
           for (const frame of batch.frames) next = applyWorkFrame(next, frame);
           if (!batch.resume_cursor || (batch.has_more && batch.resume_cursor === previousCursor))
             throw new Error('Work replay did not advance.');
+          recoveryAttempted.current = false;
           next = { ...next, cursor: batch.resume_cursor };
+          // Older-page requests must merge onto every consumed replay batch, including while
+          // the next batch is still in flight.
+          publish(next);
           more = batch.has_more;
         } while (more && !next.refreshSnapshot && !next.deleted);
-        if (next.refreshSnapshot) await load();
-        else publish(next);
+        if (next.refreshSnapshot) await load(next);
         await restoreCommands();
         if (!cancelled) setError(null);
       } catch (failure) {
-        if (!cancelled) setError(controllerErrorText(failure));
+        if (!cancelled) {
+          if (!externalLog && !recoveryAttempted.current && controllerSnapshotRequired(failure)) {
+            resetHistory.current = true;
+            recoveryAttempted.current = true;
+            setHistoryReset((value) => value + 1);
+            setReload((value) => value + 1);
+          } else {
+            if (controllerSnapshotRequired(failure)) replayStopped = true;
+            setError(controllerErrorText(failure));
+          }
+        }
       } finally {
-        if (!cancelled && !current.current?.deleted) timer = setTimeout(() => void poll(), 1000);
+        if (!cancelled && !replayStopped && !current.current?.deleted)
+          timer = setTimeout(() => void poll(), 1000);
       }
     };
     void (async () => {
@@ -254,7 +301,6 @@ export function useControllerWork(selected: CatalogEntry) {
             command,
           ]);
           setLoading(true);
-          current.current = null;
           setReload((value) => value + 1);
         }
         throw new Error(detail);
@@ -318,6 +364,7 @@ export function useControllerWork(selected: CatalogEntry) {
     loading,
     loadingOlder,
     historyPaused,
+    historyReset,
     sending,
     commands,
     send,

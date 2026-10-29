@@ -12343,5 +12343,20 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "Переписка сеанса"
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "К последним сообщениям"
+  },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "Загрузить предыдущие сообщения"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "Загрузка предыдущих сообщений…"
+  },
+  "controller.work.historyReset": {
+    "defaultMessage": "Сохранённая история больше недействительна. Предыдущие сообщения нужно загрузить заново."
   }
 }

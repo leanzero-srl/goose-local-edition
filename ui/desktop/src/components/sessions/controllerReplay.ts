@@ -18,6 +18,8 @@ export interface ControllerWorkState {
   cursor: string;
   sequence: number;
   historyRevision: number | null;
+  snapshotRevision: number;
+  historyChanges: Map<string, HistoryItem | null>;
   nextHistoryPageToken: string | null;
   refreshSnapshot: boolean;
   deleted: boolean;
@@ -71,6 +73,8 @@ export function workSnapshot(snapshot: WorkSnapshot): ControllerWorkState {
     cursor: snapshot.work_cursor,
     sequence: mark.revision,
     historyRevision: null,
+    snapshotRevision: mark.revision,
+    historyChanges: new Map(),
     nextHistoryPageToken: null,
     refreshSnapshot: false,
     deleted: false,
@@ -83,12 +87,17 @@ export function addHistory(state: ControllerWorkState, page: HistoryPage): Contr
     (state.historyRevision !== null && state.historyRevision !== page.revision)
   )
     throw new Error('History changed identity or watermark between pages. Reload this work.');
-  const committed = new Set(page.items.map((item) => item.message_id));
+  if (state.deleted) return state;
+  const visible = page.items.flatMap((item) => {
+    const changed = state.historyChanges.get(item.message_id);
+    return changed === null ? [] : [changed ?? item];
+  });
+  const committed = new Set(visible.map((item) => item.message_id));
   const durable = state.items.filter((item) => !state.partialIds.includes(item.message_id));
   const partials = state.items.filter((item) => state.partialIds.includes(item.message_id));
   const items =
     state.entry.work.kind === 'chat'
-      ? mergeItems(mergeItems(durable, page.items), partials)
+      ? mergeItems(mergeItems(visible, durable), partials)
       : mergeLogItems(state.items, page.items);
   return {
     ...state,
@@ -98,6 +107,34 @@ export function addHistory(state: ControllerWorkState, page: HistoryPage): Contr
     partialIds: state.partialIds.filter((id) => !committed.has(id)),
     historyRevision: page.revision,
     nextHistoryPageToken: page.next_page_token,
+  };
+}
+function historyChange(
+  state: ControllerWorkState,
+  id: string,
+  item: HistoryItem | null
+): ControllerWorkState['historyChanges'] {
+  const changes = new Map(state.historyChanges).set(id, item);
+  for (const [previous, changed] of changes) {
+    if (changed?.message_id === id) changes.set(previous, item);
+  }
+  return changes;
+}
+export function refreshWorkSnapshot(
+  previous: ControllerWorkState,
+  snapshot: ControllerWorkState
+): ControllerWorkState {
+  return {
+    ...snapshot,
+    items: mergeItems(
+      previous.items.filter((item) => !previous.partialIds.includes(item.message_id)),
+      snapshot.items
+    ),
+    cursor: previous.cursor,
+    sequence: previous.sequence,
+    historyRevision: previous.historyRevision,
+    historyChanges: previous.historyChanges,
+    nextHistoryPageToken: previous.nextHistoryPageToken,
   };
 }
 export function applyWorkFrame(state: ControllerWorkState, frame: WorkFrame): ControllerWorkState {
@@ -113,7 +150,10 @@ export function applyWorkFrame(state: ControllerWorkState, frame: WorkFrame): Co
     ...state,
     cursor: frame.resume_cursor,
     sequence: frame.sequence,
-    entry: { ...state.entry, revision: frame.work_revision, current_run_id: frame.run_id },
+    entry:
+      frame.work_revision >= state.entry.revision
+        ? { ...state.entry, revision: frame.work_revision, current_run_id: frame.run_id }
+        : state.entry,
   };
   const payload = objectValue(frame.payload);
   if (frame.type === 'tombstone')
@@ -126,7 +166,7 @@ export function applyWorkFrame(state: ControllerWorkState, frame: WorkFrame): Co
       nextHistoryPageToken: null,
       refreshSnapshot: false,
     };
-  // A complete history snapshot is authoritative even for messages absent from it. Applying an
+  // The pinned history snapshot is authoritative even for messages absent from it. Applying an
   // earlier upsert/delete can resurrect a deleted message or remove a subsequently renamed one.
   if (
     state.historyRevision !== null &&
@@ -134,13 +174,21 @@ export function applyWorkFrame(state: ControllerWorkState, frame: WorkFrame): Co
     ['message_upsert', 'message_deleted'].includes(frame.type)
   )
     return next;
+  if (state.deleted) return next;
   if (frame.type === 'message_upsert') {
     const item = payload?.item as HistoryItem | undefined;
     if (!item?.message_id) throw new Error('A transcript update omitted its message identity.');
     return {
       ...next,
+      historyChanges: historyChange(
+        { ...state, historyChanges: historyChange(state, item.message_id, item) },
+        typeof payload?.previous_message_id === 'string'
+          ? payload.previous_message_id
+          : item.message_id,
+        item
+      ),
       items: mergeItems(
-        state.items.filter((old) => old.message_id !== payload?.previous_message_id),
+        state.items.map((old) => (old.message_id === payload?.previous_message_id ? item : old)),
         [item]
       ),
       partialIds: state.partialIds.filter(
@@ -151,9 +199,15 @@ export function applyWorkFrame(state: ControllerWorkState, frame: WorkFrame): Co
   if (frame.type === 'message_deleted')
     return {
       ...next,
+      historyChanges: historyChange(state, String(payload?.message_id), null),
       items: state.items.filter((item) => item.message_id !== payload?.message_id),
       partialIds: state.partialIds.filter((id) => id !== payload?.message_id),
     };
+  if (
+    frame.sequence <= state.snapshotRevision &&
+    ['partial_discarded', 'partial_replacement'].includes(frame.type)
+  )
+    return next;
   if (frame.type === 'partial_discarded') {
     if (!Array.isArray(payload?.message_ids))
       throw new Error('A partial discard omitted its message identities.');
@@ -204,6 +258,7 @@ export function applyWorkFrame(state: ControllerWorkState, frame: WorkFrame): Co
       partialIds: [...new Set([...state.partialIds, id])],
     };
   }
+  if (frame.sequence <= state.snapshotRevision) return next;
   const entry = payload?.entry as CatalogEntry | undefined;
   if (entry) {
     if (
@@ -211,7 +266,7 @@ export function applyWorkFrame(state: ControllerWorkState, frame: WorkFrame): Co
       entry.store_generation !== state.entry.store_generation
     )
       throw new Error('A state update changed work identity.');
-    next.entry = entry;
+    if (entry.revision >= next.entry.revision) next.entry = entry;
   }
   if (entry && ['session_changed', 'run_state'].includes(frame.type)) {
     return {

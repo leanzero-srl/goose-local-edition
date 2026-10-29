@@ -12343,5 +12343,20 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "Trascrizione della sessione"
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "Vai ai più recenti"
+  },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "Carica messaggi precedenti"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "Caricamento dei messaggi precedenti…"
+  },
+  "controller.work.historyReset": {
+    "defaultMessage": "La cronologia salvata non è più valida. I messaggi precedenti devono essere ricaricati."
   }
 }

@@ -12343,5 +12343,20 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "Sitzungsverlauf"
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "Zum neuesten Beitrag"
+  },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "Ältere Nachrichten laden"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "Ältere Nachrichten werden geladen…"
+  },
+  "controller.work.historyReset": {
+    "defaultMessage": "Der gespeicherte Verlauf ist nicht mehr gültig. Ältere Nachrichten müssen erneut geladen werden."
   }
 }

@@ -1565,14 +1565,26 @@
   "controller.work.historyPaused": {
     "defaultMessage": "Automatic log refresh is paused while viewing older output."
   },
+  "controller.work.historyReset": {
+    "defaultMessage": "Saved history is no longer valid. Older messages must be loaded again."
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "Jump to latest"
+  },
   "controller.work.load": {
     "defaultMessage": "Loading from the owner Mac…"
   },
   "controller.work.loadOlder": {
     "defaultMessage": "Load older output"
   },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "Load older messages"
+  },
   "controller.work.loadingOlder": {
     "defaultMessage": "Loading older output…"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "Loading older messages…"
   },
   "controller.work.message": {
     "defaultMessage": "Message for this session on {name}"
@@ -1618,6 +1630,9 @@
   },
   "controller.work.tick": {
     "defaultMessage": "Run a tick"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "Session transcript"
   },
   "controller.work.unavailable": {
     "defaultMessage": "The owner is unavailable. Saved content may be out of date; controls are disabled."

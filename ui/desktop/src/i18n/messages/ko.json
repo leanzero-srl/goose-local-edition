@@ -12343,5 +12343,20 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "세션 대화 기록"
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "최신으로 이동"
+  },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "이전 메시지 불러오기"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "이전 메시지 불러오는 중…"
+  },
+  "controller.work.historyReset": {
+    "defaultMessage": "저장된 기록이 더 이상 유효하지 않습니다. 이전 메시지를 다시 불러와야 합니다."
   }
 }

@@ -12343,5 +12343,20 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "對話記錄"
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "跳至最新"
+  },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "載入較早的訊息"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "正在載入較早的訊息…"
+  },
+  "controller.work.historyReset": {
+    "defaultMessage": "已儲存的歷史記錄不再有效。需要重新載入較早的訊息。"
   }
 }

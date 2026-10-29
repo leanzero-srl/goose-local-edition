@@ -12343,5 +12343,20 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "सत्र का संवाद"
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "नवीनतम पर जाएँ"
+  },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "पुराने संदेश लोड करें"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "पुराने संदेश लोड हो रहे हैं…"
+  },
+  "controller.work.historyReset": {
+    "defaultMessage": "सहेजा गया इतिहास अब मान्य नहीं है। पुराने संदेश फिर से लोड करने होंगे।"
   }
 }

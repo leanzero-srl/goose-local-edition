@@ -12343,5 +12343,20 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
+  },
+  "controller.work.transcript": {
+    "defaultMessage": "Oturum dökümü"
+  },
+  "controller.work.jumpLatest": {
+    "defaultMessage": "En yeniye git"
+  },
+  "controller.work.loadOlderMessages": {
+    "defaultMessage": "Eski mesajları yükle"
+  },
+  "controller.work.loadingOlderMessages": {
+    "defaultMessage": "Eski mesajlar yükleniyor…"
+  },
+  "controller.work.historyReset": {
+    "defaultMessage": "Kayıtlı geçmiş artık geçerli değil. Eski mesajlar yeniden yüklenmelidir."
   }
 }
