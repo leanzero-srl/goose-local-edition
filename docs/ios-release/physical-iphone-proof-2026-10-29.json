@@ -166,6 +166,9 @@
     "verification": "Exactly one matching saved session, zero messages, global config unchanged, original owner had no active run.",
     "cold_requirement": "Created before desktop upgrade; normal upgrade restart must clear the loaded agent. Do not activate this session in desktop after restart before phone Send.",
     "receipt": "~/.local/share/goose-upgrade-snapshots/physical-cold-send-20261029/create-once.json",
-    "existing_draft_preserved": true
+    "existing_draft_preserved": true,
+    "prepared_phone_draft": "Reply with exactly these three words: Phone connection works.",
+    "expected_reply": "Phone connection works.",
+    "phone_ui_preparation": "11:28 physical phone catalog received the new session without manual sync. Opened correct original-owner session, verified no messages, typed exact test draft, verified complete text, restored Capture Keyboard off. Send has not been pressed."
   }
 }
