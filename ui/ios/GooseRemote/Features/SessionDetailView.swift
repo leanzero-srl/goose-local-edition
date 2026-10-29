@@ -9,13 +9,16 @@ enum SessionScrollTarget: Hashable {
     case latest
 }
 
-private extension TranscriptItem {
-    var sessionScrollTarget: SessionScrollTarget { .message(id) }
-}
+private enum SessionTranscriptRow: Identifiable {
+    case message(TranscriptItem)
+    case latest
 
-struct SessionTailMeasurement: Equatable {
-    let overflowPixels: Int
-    let contentHeight: CGFloat
+    var id: SessionScrollTarget {
+        switch self {
+        case .message(let item): .message(item.id)
+        case .latest: .latest
+        }
+    }
 }
 
 struct SessionScrollState {
@@ -24,7 +27,6 @@ struct SessionScrollState {
     private(set) var loadingOlder = false
     private var olderRequest: UUID?
     private var olderFallbackID: String?
-    private var lastTailCorrection: SessionTailMeasurement?
     func trace(_ reason: String) {
 #if DEBUG
         let target: String
@@ -68,7 +70,6 @@ struct SessionScrollState {
         trace("jump before")
         defer { trace("jump after") }
         followsLatest = true
-        lastTailCorrection = nil
         olderFallbackID = nil
         position.scrollTo(id: SessionScrollTarget.latest, anchor: .bottom)
     }
@@ -76,16 +77,6 @@ struct SessionScrollState {
         trace("followContent before")
         defer { trace("followContent after") }
         if shouldFollowContent { position.scrollTo(id: SessionScrollTarget.latest, anchor: .bottom) }
-    }
-    @discardableResult mutating func revealClippedTail(overflowPixels: Int, contentHeight: CGFloat, userScrolling: Bool) -> Bool {
-        if overflowPixels == 0 { lastTailCorrection = nil }
-        guard overflowPixels > 0, !userScrolling, shouldFollowContent else { return false }
-        let measurement = SessionTailMeasurement(overflowPixels: overflowPixels, contentHeight: contentHeight)
-        guard measurement != lastTailCorrection else { return false }
-        trace("tailCorrection overflow=\(overflowPixels) height=\(contentHeight)")
-        lastTailCorrection = measurement
-        followContent()
-        return true
     }
     var visibleMessageID: String? {
         guard case .message(let id) = position.viewID(type: SessionScrollTarget.self) else { return nil }
@@ -96,7 +87,6 @@ struct SessionScrollState {
 
 struct SessionDetailView: View {
     @Environment(ControllerStore.self) private var store
-    @Environment(\.displayScale) private var displayScale
     let work: WorkRef
     #if DEBUG
     @State private var diagnosticViewID = UUID()
@@ -107,8 +97,6 @@ struct SessionDetailView: View {
     @State private var userScrolling = false
     @State private var nearBottom = true
     @State private var firstMessageBelowTop = false
-    @State private var tailOverflowPixels = 0
-    @State private var tailContentHeight: CGFloat = 0
     var body: some View {
         Group {
             if store.selectedLoading && store.selectedWork == nil { ProgressView("Loading from owner Mac").frame(maxWidth: .infinity, maxHeight: .infinity) }
@@ -130,7 +118,7 @@ struct SessionDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: work) { if store.selectedRef != work || store.selectedError != nil { await store.select(work) } }
         .onDisappear { traceView("view disappear"); store.endSelection(work) }
-        .onChange(of: work) { _, _ in traceView("work reset before"); scrolling = SessionScrollState(); firstMessageBelowTop = false; tailOverflowPixels = 0; tailContentHeight = 0; traceView("work reset after") }
+        .onChange(of: work) { _, _ in traceView("work reset before"); scrolling = SessionScrollState(); firstMessageBelowTop = false; traceView("work reset after") }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -214,40 +202,39 @@ struct SessionDetailView: View {
                     if selected.transcript.isEmpty {
                         Notice(title: "No visible messages", message: selected.hasMoreHistory ? "There are no visible messages in this page. Load older history to continue." : "The owner returned no visible messages for this session.", icon: work.kind.icon)
                     }
-                    ForEach(selected.transcript, id: \.sessionScrollTarget) { item in
-                        StudioPanel {
-                            HStack {
-                                Text(item.role.capitalized).font(.caption.weight(.bold)).foregroundStyle(Studio.secondaryInk)
-                                Spacer()
-                                if let timestamp = item.timestamp { Text(timestamp, style: .time).font(.caption).foregroundStyle(Studio.secondaryInk) }
-                            }
-                            Text(item.text).font(work.kind == .shellJob ? .system(.body, design: .monospaced) : .body).textSelection(.enabled)
-                        }
-                            .onGeometryChange(for: Bool?.self) { geometry in
-                                guard item.id == selected.transcript.first?.id else { return nil }
-                                return geometry.frame(in: .scrollView(axis: .vertical)).minY >= 0
-                            } action: { _, belowTop in
-                                if let belowTop {
-                                    firstMessageBelowTop = belowTop
+                    ForEach(selected.transcript.map(SessionTranscriptRow.message) + [.latest]) { row in
+                        // One resolved view per ID lets the lazy layout look up offscreen targets.
+                        VStack(alignment: .leading, spacing: 16) {
+                            switch row {
+                            case .message(let item):
+                                StudioPanel {
+                                    HStack {
+                                        Text(item.role.capitalized).font(.caption.weight(.bold)).foregroundStyle(Studio.secondaryInk)
+                                        Spacer()
+                                        if let timestamp = item.timestamp { Text(timestamp, style: .time).font(.caption).foregroundStyle(Studio.secondaryInk) }
+                                    }
+                                    Text(item.text).font(work.kind == .shellJob ? .system(.body, design: .monospaced) : .body).textSelection(.enabled)
                                 }
+                                    .onGeometryChange(for: Bool?.self) { geometry in
+                                        guard item.id == selected.transcript.first?.id else { return nil }
+                                        return geometry.frame(in: .scrollView(axis: .vertical)).minY >= 0
+                                    } action: { _, belowTop in
+                                        if let belowTop {
+                                            firstMessageBelowTop = belowTop
+                                        }
+                                    }
+                            case .latest:
+                                if let pending = store.pendingCommands.last(where: { $0.command.work == work }) {
+                                    StudioPanel {
+                                        Label(pending.receipt?.state.title ?? "Checking delivery", icon: .send).font(.headline)
+                                        Text(pending.receipt?.reason ?? "Acceptance is separate from delivery. The owner’s receipt determines the result.").font(.subheadline).foregroundStyle(Studio.secondaryInk)
+                                        if store.unfinishedCommand != nil { Button("Check delivery") { Task { await store.checkDelivery() } }.disabled(store.sending) }
+                                    }
+                                }
+                                Color.clear.frame(height: 1).accessibilityHidden(true)
                             }
-                    }
-                    if let pending = store.pendingCommands.last(where: { $0.command.work == work }) {
-                        StudioPanel {
-                            Label(pending.receipt?.state.title ?? "Checking delivery", icon: .send).font(.headline)
-                            Text(pending.receipt?.reason ?? "Acceptance is separate from delivery. The owner’s receipt determines the result.").font(.subheadline).foregroundStyle(Studio.secondaryInk)
-                            if store.unfinishedCommand != nil { Button("Check delivery") { Task { await store.checkDelivery() } }.disabled(store.sending) }
                         }
                     }
-                    Color.clear.frame(height: 1).id(SessionScrollTarget.latest).accessibilityHidden(true)
-                        .onGeometryChange(for: Int.self) { geometry in
-                            guard let bounds = geometry.bounds(of: .scrollView(axis: .vertical)) else { return 0 }
-                            let overflow = geometry.frame(in: .scrollView(axis: .vertical)).maxY - bounds.height
-                            return max(0, Int((overflow * displayScale).rounded(.up)))
-                        } action: { _, overflow in
-                            tailOverflowPixels = overflow
-                            scrolling.revealClippedTail(overflowPixels: overflow, contentHeight: tailContentHeight, userScrolling: userScrolling)
-                        }
                 }.scrollTargetLayout().padding(16).frame(maxWidth: 900)
             }
             .scrollPosition(tracedPosition, anchor: .top)
@@ -261,15 +248,10 @@ struct SessionDetailView: View {
                 nearBottom = isNearBottom
                 if userScrolling { scrolling.userScrolled(nearBottom: isNearBottom) }
             }
-            .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, height in
-                tailContentHeight = height
-                scrolling.revealClippedTail(overflowPixels: tailOverflowPixels, contentHeight: tailContentHeight, userScrolling: userScrolling)
-            }
             .onScrollPhaseChange { _, phase in
                 traceView("phase \(String(describing: phase))")
                 userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
                 if userScrolling { scrolling.userScrolled(nearBottom: nearBottom) }
-                else if phase == .idle { scrolling.revealClippedTail(overflowPixels: tailOverflowPixels, contentHeight: tailContentHeight, userScrolling: false) }
             }
             .task(id: selected.transcript) {
                 traceView("content task before yield count=\(selected.transcript.count)")

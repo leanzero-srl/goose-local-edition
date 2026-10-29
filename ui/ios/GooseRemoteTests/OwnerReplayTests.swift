@@ -313,36 +313,6 @@ final class OwnerReplayTests: XCTestCase {
         XCTAssertEqual(scroll.position.viewID(type: SessionScrollTarget.self), .latest, "Same-message growth must follow the actual tail through the same bound position")
     }
 
-    func testMeasuredClippedTailRenewsEvenAnExistingLatestTarget() {
-        var scroll = SessionScrollState()
-        let requested = scroll.position
-        XCTAssertTrue(scroll.revealClippedTail(overflowPixels: 333, contentHeight: 35714, userScrolling: false))
-        XCTAssertEqual(scroll.position.viewID(type: SessionScrollTarget.self), .latest)
-        XCTAssertNotEqual(scroll.position, requested, "Repeated explicit scroll intent must reach SwiftUI after lazy geometry changes")
-        let settled = scroll.position
-        XCTAssertFalse(scroll.revealClippedTail(overflowPixels: 333, contentHeight: 35714, userScrolling: false), "Idle and stale geometry must not repeat the same correction")
-        XCTAssertEqual(scroll.position, settled)
-        XCTAssertFalse(scroll.revealClippedTail(overflowPixels: 0, contentHeight: 35714, userScrolling: false))
-        XCTAssertEqual(scroll.position, settled)
-    }
-
-    func testMeasuredTailNeverOverridesReadingPagingOrUserGesture() {
-        var scroll = SessionScrollState()
-        XCTAssertFalse(scroll.revealClippedTail(overflowPixels: 333, contentHeight: 35714, userScrolling: true))
-        scroll.position = ScrollPosition(id: SessionScrollTarget.message("reading"), anchor: .center)
-        scroll.userScrolled(nearBottom: false)
-        let reading = scroll.position
-        XCTAssertFalse(scroll.revealClippedTail(overflowPixels: 333, contentHeight: 35714, userScrolling: false))
-        XCTAssertEqual(scroll.position, reading)
-        let request = scroll.beginOlder(transcriptIDs: ["reading"])
-        scroll.jumpToLatest()
-        let loading = scroll.position
-        XCTAssertFalse(scroll.revealClippedTail(overflowPixels: 333, contentHeight: 35714, userScrolling: false))
-        XCTAssertEqual(scroll.position, loading)
-        scroll.endOlder(request: request)
-        XCTAssertTrue(scroll.revealClippedTail(overflowPixels: 333, contentHeight: 35714, userScrolling: false))
-    }
-
     func testPrependAtHeaderRetainsPreviousFirstMessageOnce() {
         var scroll = SessionScrollState()
         scroll.userScrolled(nearBottom: false)
@@ -436,6 +406,65 @@ final class OwnerReplayTests: XCTestCase {
         XCTAssertEqual(store.selectedWork?.transcript.map(\.id), ["newest"])
         XCTAssertNil(store.selectedError)
         await store.sceneBackground()
+    }
+
+    @MainActor func testLazyTargetLookupAfterPrependProbe() async throws {
+        let baseline = try await runTargetLookupProbe(combined: false, useLastMessage: false)
+        let messageControl = try await runTargetLookupProbe(combined: false, useLastMessage: true)
+        let combined = try await runTargetLookupProbe(combined: true, useLastMessage: false)
+        print("TARGET_LOOKUP baseline=\(baseline) lastMessage=\(messageControl) combined=\(combined)")
+        XCTAssertFalse(baseline, "Diagnosis requires reproducing the unresolved standalone target before attributing a cause")
+        XCTAssertTrue(messageControl, "The same lazy stack must resolve an ordinary ForEach message as a positive control")
+        XCTAssertTrue(combined, "The proposed registration must move the actual tail into the viewport")
+    }
+
+    @MainActor private func runTargetLookupProbe(combined: Bool, useLastMessage: Bool) async throws -> Bool {
+        let model = TargetLookupProbeModel(combined: combined)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.keyWindow
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: TargetLookupProbeView(model: model))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; previous?.makeKey() }
+        host.view.layoutIfNeeded()
+        func settle(_ predicate: @escaping () -> Bool) async -> Bool {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+            repeat {
+                host.view.layoutIfNeeded()
+                if predicate() { return true }
+                try? await Task.sleep(for: .milliseconds(20))
+            } while ContinuousClock.now < deadline
+            return predicate()
+        }
+        func allScrollViews(_ view: UIView) -> [UIScrollView] {
+            (view as? UIScrollView).map { [$0] } ?? view.subviews.flatMap(allScrollViews)
+        }
+        let scroll = try XCTUnwrap(allScrollViews(host.view).first)
+        model.viewportHeight = scroll.bounds.height - scroll.adjustedContentInset.top - scroll.adjustedContentInset.bottom
+        let initialTailVisible = await settle { model.tailVisible }
+        print("TARGET_LOOKUP_INITIAL combined=\(combined) messageControl=\(useLastMessage) visible=\(initialTailVisible) viewport=\(model.viewportHeight)")
+        model.firstFrame = .null
+        model.scrolling.userScrolled(nearBottom: false)
+        model.scrolling.position.scrollTo(id: SessionScrollTarget.message("109"), anchor: .top)
+        let movedAway = await settle { abs(model.firstFrame.minY) < 2 }
+        XCTAssertTrue(movedAway, "The probe must start from the previous first message, not the independent initial bottom anchor")
+        let request = model.scrolling.beginOlder(transcriptIDs: model.rows.map(String.init), firstMessageBelowTop: true)
+        model.rows = Array(0..<237)
+        model.scrolling.endOlder(request: request, didPrepend: true)
+        let prepended = await settle { abs(model.firstFrame.minY) < 2 && model.renderedCount == 237 }
+        XCTAssertTrue(prepended, "The target request requires the old first row visibly retained after the237-row prepend")
+        guard movedAway && prepended else { return false }
+        model.tailFrame = .null
+        model.lastFrame = .null
+        if useLastMessage {
+            model.scrolling.position.scrollTo(id: SessionScrollTarget.message("236"), anchor: .bottom)
+        } else {
+            model.scrolling.jumpToLatest()
+        }
+        let reached = await settle { useLastMessage ? model.lastVisible : model.tailVisible }
+        print("TARGET_LOOKUP_CASE combined=\(combined) messageControl=\(useLastMessage) reached=\(reached) tailBottom=\(model.tailFrame.maxY) lastBottom=\(model.lastFrame.maxY) viewport=\(model.viewportHeight)")
+        return reached
     }
 
     @MainActor private func historyStore(expireOlder: Bool = false) async throws -> (ControllerStore, HistoryRefreshOwner) {
@@ -543,4 +572,78 @@ private actor HistoryRefreshOwner: OwnerControllerService {
     func resources(host: HostDescriptor, credential: String) async throws -> ResourceSample { throw ControllerError.unsupported("unused") }
     func submit(_ command: WorkCommand, host: HostDescriptor, credential: String) async throws -> CommandReceipt { throw ControllerError.unsupported("unused") }
     func receipt(commandId: UUID, host: HostDescriptor, credential: String) async throws -> CommandReceipt { throw ControllerError.unsupported("unused") }
+}
+
+@MainActor @Observable private final class TargetLookupProbeModel {
+    var scrolling = SessionScrollState()
+    var rows = Array(109..<237)
+    let combined: Bool
+    @ObservationIgnored var firstFrame = CGRect.null
+    @ObservationIgnored var lastFrame = CGRect.null
+    @ObservationIgnored var tailFrame = CGRect.null
+    @ObservationIgnored var viewportHeight: CGFloat = 0
+    @ObservationIgnored var renderedCount = 0
+    init(combined: Bool) { self.combined = combined }
+    var tailVisible: Bool { tailFrame.maxY > 0 && tailFrame.maxY <= viewportHeight + 1 }
+    var lastVisible: Bool { lastFrame.maxY > 0 && lastFrame.maxY <= viewportHeight + 1 }
+}
+
+private struct TargetLookupProbeView: View {
+    @Bindable var model: TargetLookupProbeModel
+    private var targets: [SessionScrollTarget] { model.rows.map { .message(String($0)) } + [.latest] }
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    Text("Owner header").frame(height: 100)
+                    if model.rows.count == 128 { Text("Load older").frame(height: 40) }
+                    if model.combined {
+                        ForEach(targets, id: \.self) { target in row(target) }
+                    } else {
+                        ForEach(model.rows.map { SessionScrollTarget.message(String($0)) }, id: \.self) { target in row(target) }
+                        row(.message("receipt"))
+                        observedTail(Color.clear.frame(height: 1).id(SessionScrollTarget.latest).accessibilityHidden(true))
+                    }
+                }.scrollTargetLayout().padding(16).frame(maxWidth: 900)
+                    .task(id: model.rows.count) { model.renderedCount = model.rows.count }
+            }
+            .scrollPosition($model.scrolling.position, anchor: .top)
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .defaultScrollAnchor(.top, for: .sizeChanges)
+            Text("Composer").frame(height: 120)
+        }
+    }
+    private func row(_ target: SessionScrollTarget) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            switch target {
+            case .message(let id):
+                if id == "receipt" { Text("Pending command receipt").frame(height: 70) }
+                else {
+                let index = Int(id)!
+                StudioPanel {
+                    Text("Assistant").font(.caption.weight(.bold))
+                    Text("Message \(index). " + String(repeating: "A variable length synthetic transcript line. ", count: 1 + index % 31)).textSelection(.enabled)
+                }
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .scrollView(axis: .vertical)) } action: { _, frame in
+                    if index == 109 { model.firstFrame = frame; model.renderedCount = model.rows.count }
+                    if index == 236 { model.lastFrame = frame }
+                }
+                }
+            case .latest:
+                Text("Pending command receipt").frame(height: 70)
+                tail
+            }
+        }
+    }
+    private var tail: some View {
+        observedTail(Color.clear.frame(height: 1).accessibilityHidden(true))
+    }
+    private func observedTail<T: View>(_ content: T) -> some View {
+        content.onGeometryChange(for: CGRect.self) { geometry in
+                let frame = geometry.frame(in: .scrollView(axis: .vertical))
+                return CGRect(x: geometry.bounds(of: .scrollView(axis: .vertical))?.height ?? 0, y: frame.minY, width: frame.width, height: frame.height)
+            } action: { _, frame in
+                model.tailFrame = frame
+            }
+    }
 }
