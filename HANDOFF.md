@@ -39,6 +39,27 @@ Do NOT load the skills goose-mlx-inference / goose-feature-dev / node-dispatch w
   (else sqlx_macros "mis-aligned LINKEDIT").
 
 ## OPEN
+- YaRN for Qwen3.8-Flash-Next RELEASED 2026-10-29: fork tag v0.14.3-lz.16-ple.5 = v0.14.3-lz.16-ple.4 + one commit
+  (6579627b9, branch lz/qwen4-yarn). Opt-in; default rope byte-identical to ple.4 (greedy code_edit 8k f9dca5e1,
+  doc_quote 8k db086b90, MTP off, both builds). Enable with the serve flag `--qwen4-rope-scaling yarn` (= Qwen card:
+  factor 4, original 262144, ~1,048,576 advertised context), or env RAPID_MLX_QWEN4_ROPE_SCALING=yarn, or the card's
+  rope_parameters in config.json; also `yarn:<factor>`, a JSON object, `off`. Maths = transformers 5.15.1 yarn
+  (inv_freq rel err 1.3e-7, attention factor 1.13863 exact). Applies to QSA attention + its indexer (+ MTP head).
+  PROVEN MAX CONTEXT (workmule, Jundot oQ4e, --qwen4-ple-offload, MTP k=2): production 400k (needle found,
+  TTFT 1,048 s, peak 96.1 GB, swap flat). 512k = "fits, at the ceiling": needle found at 50 % and 10 % depth, peak
+  114.68 GB = mule Metal ceiling, min free 9 %; NOT for a 5 h Gauntlet with tools/images. 90 % depth at 512k not run.
+  CAVEAT: the 300k needle also passed with YaRN OFF (same sha eb646a1e) and doc_quote 300k was 7/7 verbatim on vs
+  6/7 off (one sample each): YaRN's benefit over plain extrapolation is UNPROVEN at 300k; off at 400k/512k not run.
+  Note the engine does not refuse >262k without YaRN (305k was admitted). Evidence + NOTES:
+  /Volumes/AI-workhorse/experiments/2026-10-29-qwen4-yarn/.
+  MERGE: lz/qwen4-vision-ple head is still f6cc404c8 (= ple.4), so lz/qwen4-yarn fast-forwards
+  (`git merge --ff-only origin/lz/qwen4-yarn`); after later vision commits a plain merge is clean (git merge-tree
+  checked; the change touches qwen4_exp rope construction + TextModelArgs parsing, a new qwen4_exp_rope.py, and two
+  new cli.py helpers beside the qwen4 offload ones). Pin line:
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.5",
+  plus `--qwen4-rope-scaling yarn` in goose's Flash-Next argv and the context set to 400k (409,600).
+  Pre-existing on ple.4 (not YaRN): 10 tests in tests/test_qsa_block_sparse.py, test_qsa_indexed_splitk.py,
+  test_qwen4_fused_gdn_decode.py, test_mtp_cli_wiring.py fail (fakes lack the new rope_positions kwarg, etc.).
 - Live CDP check of a packaged build from this branch (saved profile -> engine env/argv) NOT done.
 - Engine fix RELEASED 2026-10-29 (fork, NOT pinned anywhere yet): streaming whitespace bug (every streamed content
   delta holding < [ ] was .strip()-ed: " [--" -> "[--", "]\n\n" -> "]") + non-stream outer trim + LongCat tool parser.
