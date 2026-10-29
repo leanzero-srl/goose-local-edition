@@ -1,6 +1,10 @@
 # Goose Remote release preparation
 
-Updated 2026-10-27. This is the internal release record, not a submission or a readiness claim. The delivery ledger remains [link-controller-progress.md](../plans/link-controller-progress.md).
+Updated 2026-10-29. This is the internal release record, not a submission or a readiness claim. The delivery ledger remains [link-controller-progress.md](../plans/link-controller-progress.md).
+
+## Current candidate
+
+The29October latest-history fix supersedes the native source/package described historically below. New signed development archive `/tmp/goose-remote-latest-409bda24e9.xcarchive` built successfully; [verification](latest-history-verification-2026-10-29.md) records source, tests, signatures and remaining live UI/export work. It has not been exported or uploaded. Original-account iPad session send/steer/background and remote model download passed before this correction; actual corrected scrolling remains pending. Desktop source57419bcc is being repackaged. Apple's Accepted ticket for the olderbf5966 desktop build remains valid only for that artifact. Organization membership still reports Individual on29October.
 
 ## Identity and artifacts
 
