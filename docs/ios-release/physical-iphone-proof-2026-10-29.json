@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-10-29T07:37:05.797365+00:00",
+  "updated_at": "2026-10-29T07:43:12.377438+00:00",
   "device": {
     "name": "Zerobarat celular",
     "model": "iPhone 17 Pro Max",
@@ -24,9 +24,36 @@
   "evidence": {
     "developer_mode": "devicectl device info details, 29 October 09:23 local",
     "apple_account": "Actual Xcode Accounts pane showed owner signed in; Signing & Capabilities then offered Register Device",
-    "registration": "Register Device completed; actual Xcode panel showed Apple Development: Mihai Perdum (XMTA27328F) without registration/profile errors; decoded saved profile includes the connected phone"
+    "registration": "Register Device completed; actual Xcode panel showed Apple Development: Mihai Perdum (XMTA27328F) without registration/profile errors; decoded saved profile includes the connected phone",
+    "installation": "devicectl installed net.leanzero.goose-remote successfully; physical Device Hub screen is locked"
   },
-  "app_installed": false,
-  "physical_journeys": "pending final native candidate",
-  "owner_action_pending": false
+  "app_installed": true,
+  "physical_journeys": "pending phone unlock and normal Link enrollment; final native update follows UI fixes",
+  "owner_action_pending": "unlock phone and open installed Goose Remote",
+  "setup_candidate": {
+    "source": "15a3625e41f1de500f6b293557f06ba1b448edd7",
+    "purpose": "physical enrollment setup; superseded UI corrections pending",
+    "ipa_sha256": "763c0e0a7604602009ff0611dfb2b3a329c9ce4d21337329ec874134e5791b73",
+    "profile_uuid": "da27f4b6-6c1a-4495-871b-da7890d58fac",
+    "phone_included": true,
+    "strict_signature": true,
+    "mesh_linked": true,
+    "app_path": "/tmp/goose-phone-setup-install-15a3625e41/Payload/GooseRemote.app",
+    "version": "1.0.0",
+    "build": "1"
+  },
+  "export_attempts": [
+    {
+      "job": "laptop-20261029-093835-f01e",
+      "exit": 70,
+      "reason": "Xcode-managed profile rejected for manually managed export; preserved failure"
+    },
+    {
+      "job": "laptop-20261029-094102-8f69",
+      "exit": 0,
+      "method": "debugging",
+      "signingStyle": "automatic",
+      "upload": false
+    }
+  ]
 }
