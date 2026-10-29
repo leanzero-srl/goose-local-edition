@@ -573,9 +573,14 @@ def encode_recorded_media(ctx, root):
     media = observation.get('media')
     if media is None and CHARGE_VIZ_CAP and viz.get('timedOut') is True:
         media = capped_recording_manifest(root)
-        if media is not None:
-            viz.setdefault('sb71', observation)
-            observation['media'] = media
+    elif media is None and ledgerd_self_exit(ctx) is not None:
+        # The viz probe met a page nobody served (the candidate's ledgerd had exited) and ended before
+        # finalizeMedia; its raw recording of that graded session is the run's one graded clip.
+        media = capped_recording_manifest(root, 'Full original graded browser recording (the candidate\'s '
+                                          'ledgerd had exited, so the probe ended early)')
+    if media is not None and 'media' not in observation:
+        viz.setdefault('sb71', observation)
+        observation['media'] = media
     if media is None:
         return
     manifest = Path(root) / media['manifest']
@@ -589,7 +594,7 @@ def encode_recorded_media(ctx, root):
         manifest.write_text(json.dumps({key: value for key, value in media.items() if key != 'manifest'}, indent=2))
 
 
-def capped_recording_manifest(root):
+def capped_recording_manifest(root, selection='Full original graded browser recording (probe stopped at its cap)'):
     """SB7.2 (CHARGE_VIZ_CAP): the probe was killed at its cap before finalizeMedia wrote the manifest, but
     Playwright's raw recording of the graded session is on disk. Write the manifest finalizeMedia would have
     written (no phase clock: the probe died before reporting it) so the run publishes with its one graded clip.
@@ -604,7 +609,7 @@ def capped_recording_manifest(root):
     manifest = {'schemaVersion': 1, 'scorerVersion': 'sb-7.1', 'recording': 'graded-browser',
                 'videos': [{'file': rel, 'caption': 'Original graded browser recording; publication encoding pending',
                             'mimeType': 'video/webm', 'scenario': 'viz', 'sha256': hashlib.sha256(data).hexdigest(),
-                            'bytes': len(data), 'selection': 'Full original graded browser recording (probe stopped at its cap)',
+                            'bytes': len(data), 'selection': selection,
                             'publishable': len(data) <= 4 * 1024 * 1024, 'sourceInterval': None,
                             'recordingClock': None, 'sourceFile': rel}],
                 'errors': []}

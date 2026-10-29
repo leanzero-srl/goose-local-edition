@@ -941,6 +941,24 @@ class LedgerdSelfExitTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'missing benchmark infrastructure: fire_d1_mutation:failed'):
             self.score(score_sb71, self.FLASH)
 
+    def test_the_raw_graded_recording_publishes_when_the_graded_ledgerd_exited(self):
+        for records, expect in ((self.FLASH, True), (spawns(spawn(0, 57533, -9), spawn(1, 57533, -9)), False)):
+            with self.subTest(expect=expect), tempfile.TemporaryDirectory() as tmp, score.tier_runtime(), \
+                    patch.object(score_sb71.subprocess, 'run') as run:
+                raw = Path(tmp) / 'bench-media' / 'raw'
+                raw.mkdir(parents=True)
+                (raw / 'page@x.webm').write_bytes(b'webm')
+                ctx = SimpleNamespace(probes={'viz': {'navigationError': 'net::ERR_CONNECTION_REFUSED'}},
+                                      ledger_spawns=records)
+                score_sb71.encode_recorded_media(ctx, tmp)
+                manifest = Path(tmp) / 'bench-media' / 'media-manifest.json'
+                self.assertEqual(manifest.exists(), expect)
+                self.assertEqual(run.called, expect)
+                if expect:
+                    video = json.loads(manifest.read_text())['videos'][0]
+                    self.assertIn("ledgerd had exited", video['selection'])
+                    self.assertEqual(ctx.probes['viz']['sb71']['media']['manifest'], 'bench-media/media-manifest.json')
+
     def test_gather_records_only_the_candidates_own_exits(self):
         import signal
         import subprocess
