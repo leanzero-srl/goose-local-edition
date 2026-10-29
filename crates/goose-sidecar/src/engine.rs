@@ -419,6 +419,16 @@ pub const MTP_SIDECAR_FILE: &str = "mtp.safetensors";
 /// engine can serve and must not turn MTP on.
 pub const IN_SHARD_MTP_FAMILIES: [&str; 1] = ["qwen4_exp"];
 
+/// Vision checkpoints whose images the pinned engine reads ON ITS TEXT LANE (fork
+/// v0.14.3-lz.16-ple.2, lane reason `text_lane_vision`, rapid_mlx/models/qwen4_exp_vision.py):
+/// image requests keep MTP, prompt lookup, the PLE offload, continuous batching and the prefix
+/// cache, so goose does not pin `--text-only` for them. The engine's own rule
+/// (`api/utils.py` `text_lane_vision_supported`) is mirrored in [`text_lane_vision`]: the family,
+/// a `vision_config` without `language_model_only`, and the tower's tensors in the shard index.
+/// Every other vision checkpoint still gets `--text-only` by default: its images would route it
+/// to the engine's serialized single-request MLLM lane.
+pub const TEXT_LANE_VISION_FAMILIES: [&str; 1] = ["qwen4_exp"];
+
 /// The MTP draft depth for Qwen3.8-Flash-Next (`qwen4_exp`). The engine accepts only 1 or 2 for
 /// this family and exits 2 on anything else (cli.py `_resolve_mtp_depth_for_model`); an explicit
 /// 2 also turns on its indexed-QSA split-K verify. Measured 2026-10-26 on workmule (M5 Max 128 GB,
@@ -468,8 +478,10 @@ pub struct ModelProfile {
     /// Directory of an mlx-lm LoRA/DoRA adapter to fuse at load (`--adapter-path`);
     /// `~` expands. Validated at argv build: missing files fail the mount.
     pub adapter_path: Option<String>,
-    /// `Some(false)` lets a vision-bearing checkpoint take the engine's MLLM lane;
-    /// `None`/`Some(true)` pin it to the text lane (`--text-only`). No effect on a
+    /// `Some(true)` pins a vision-bearing checkpoint to the text-only lane (`--text-only`: images
+    /// become a named notice); `Some(false)` never passes it (the engine may then route the
+    /// checkpoint to its MLLM lane). `None` = auto: `--text-only` unless the engine reads this
+    /// checkpoint's images on its text lane ([`TEXT_LANE_VISION_FAMILIES`]). No effect on a
     /// checkpoint whose config.json declares no vision.
     pub text_only: Option<bool>,
     /// Request-side reasoning switch, sent as `chat_template_kwargs.enable_thinking` on every turn
@@ -692,6 +704,9 @@ pub struct ModelDirFacts {
     /// checkpoint — either way the engine's auto-detection may route it to the serialized
     /// single-request MLLM lane unless `--text-only` pins the text lane.
     pub vision_bearing: bool,
+    /// The pinned engine serves this checkpoint's images on its text lane
+    /// ([`TEXT_LANE_VISION_FAMILIES`]), so auto never passes `--text-only`.
+    pub text_lane_vision: bool,
 }
 
 impl ModelDirFacts {
@@ -724,11 +739,43 @@ pub fn inspect_model_dir(dir: &Path) -> ModelDirFacts {
     } else {
         None
     };
+    let vision_bearing = config.as_ref().is_some_and(config_declares_vision);
     ModelDirFacts {
         mtp_head,
         mtp_depth: mtp_head.map_or(0, |_| mtp_depth_for(dir, model_type)),
-        vision_bearing: config.as_ref().is_some_and(config_declares_vision),
+        vision_bearing,
+        text_lane_vision: vision_bearing
+            && config.as_ref().is_some_and(|c| text_lane_vision(dir, c)),
     }
+}
+
+/// The engine's `text_lane_vision_supported` rule, read from the same files: a
+/// [`TEXT_LANE_VISION_FAMILIES`] model type, a `vision_config` without `language_model_only`, and
+/// `model.visual.*` / `vision_tower.*` keys in the shard index (headers only).
+fn text_lane_vision(dir: &Path, config: &serde_json::Value) -> bool {
+    let family = config
+        .get("model_type")
+        .and_then(|v| v.as_str())
+        .is_some_and(|t| TEXT_LANE_VISION_FAMILIES.contains(&t));
+    let tower_declared = config.get("vision_config").is_some_and(|v| !v.is_null())
+        && !config
+            .get("language_model_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+    if !family || !tower_declared {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(dir.join("model.safetensors.index.json")) else {
+        return false;
+    };
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|index| index.get("weight_map").cloned())
+        .and_then(|m| m.as_object().cloned())
+        .is_some_and(|m| {
+            m.keys()
+                .any(|k| k.starts_with("model.visual.") || k.starts_with("vision_tower."))
+        })
 }
 
 /// Whether the checkpoint's own weights carry `mtp.*` tensors: the shard index's `weight_map`
@@ -984,7 +1031,7 @@ pub fn build_serve_command(
         argv.push("--speculative-config".to_string());
         argv.push(mtp_speculative_config(&model_path, &facts));
     }
-    if facts.vision_bearing && profile.text_only.unwrap_or(true) {
+    if facts.vision_bearing && profile.text_only.unwrap_or(!facts.text_lane_vision) {
         argv.push("--text-only".to_string());
     }
     if let Some(raw) = profile.adapter_path.as_deref() {
@@ -3740,6 +3787,68 @@ mod tests {
         );
     }
 
+    /// Qwen3.8-Flash-Next-4bit's config.json shape (read 2026-10-29): qwen4_exp, a vision_config,
+    /// language_model_only false; its index carries 501 `model.visual.*` tensors and the MTP head.
+    const FLASH_VISION_CONFIG: &str = r#"{"model_type":"qwen4_exp","architectures":["Qwen4ExpForConditionalGeneration"],"language_model_only":false,"image_token_id":248056,"vision_config":{"depth":27},"text_config":{"mtp_num_hidden_layers":1}}"#;
+
+    #[test]
+    fn flash_with_its_vision_tower_reads_images_on_the_text_lane_with_mtp() {
+        let (_root, settings) = model_dir_with(FLASH_VISION_CONFIG, &[]);
+        write_index(
+            &settings,
+            &[
+                "model.language_model.layers.0.self_attn.q_proj.weight",
+                "model.visual.blocks.0.attn.qkv.weight",
+                "mtp.fc.weight",
+            ],
+        );
+        let facts = inspect_model_dir(&expand_tilde(&settings.models_dir).join("pub/model"));
+        assert!(facts.vision_bearing && facts.text_lane_vision, "{facts:?}");
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(!argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+        assert!(argv.iter().any(|a| a == "--speculative-config"), "{argv:?}");
+    }
+
+    #[test]
+    fn flash_text_only_true_still_pins_the_text_only_lane() {
+        let (_root, mut settings) = model_dir_with(FLASH_VISION_CONFIG, &[]);
+        write_index(&settings, &["model.visual.blocks.0.attn.qkv.weight"]);
+        settings.model_profiles.insert(
+            "pub/model".to_string(),
+            ModelProfile {
+                text_only: Some(true),
+                ..Default::default()
+            },
+        );
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+    }
+
+    #[test]
+    fn text_only_stays_forced_where_images_would_cost_the_fast_lane() {
+        // A Flash quant with no tower tensors (the mlx-community text-only shape), a Flash that
+        // declares language_model_only, and a qwen3_5 vision checkpoint: images would land on
+        // the serialized MLLM lane or on no tower at all, so auto keeps --text-only.
+        let (_root, settings) = model_dir_with(FLASH_VISION_CONFIG, &[]);
+        write_index(&settings, &["model.language_model.layers.0.self_attn.q_proj.weight"]);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+
+        let lm_only = FLASH_VISION_CONFIG.replace(
+            r#""language_model_only":false"#,
+            r#""language_model_only":true"#,
+        );
+        let (_root, settings) = model_dir_with(&lm_only, &[]);
+        write_index(&settings, &["model.visual.blocks.0.attn.qkv.weight"]);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+
+        let (_root, settings) = model_dir_with(QWEN3_5_VISION_CONFIG, &[]);
+        write_index(&settings, &["model.visual.blocks.0.attn.qkv.weight"]);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+    }
+
     #[test]
     fn text_only_false_lets_a_vision_checkpoint_take_the_mllm_lane() {
         let (_root, mut settings) = model_dir_with(QWEN3_5_VISION_CONFIG, &[]);
@@ -3766,7 +3875,8 @@ mod tests {
             ModelDirFacts {
                 mtp_head: None,
                 mtp_depth: 0,
-                vision_bearing: true
+                vision_bearing: true,
+                text_lane_vision: false,
             }
         );
     }

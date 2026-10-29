@@ -1605,7 +1605,7 @@ function LaneFields({
       </LaneRow>
       <LaneRow
         label="Text-only lane"
-        note="On: a vision-bearing checkpoint (qwen3_5 with a vision config) is pinned to the text lane, which batches. Off: the engine may route it to its serialized single-request vision lane."
+        note="On: a vision-bearing checkpoint (qwen3_5 with a vision config) is pinned to the text lane, which batches. A Qwen3.8-Flash checkpoint with its vision tower reads images on that same text lane, so it keeps MTP and batching with images. Off: the engine may route a vision checkpoint to its serialized single-request vision lane."
       >
         <StudioSwitch
           checked={textLane}
