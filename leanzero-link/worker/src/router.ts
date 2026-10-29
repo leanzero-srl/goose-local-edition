@@ -5,6 +5,7 @@ import { handleVerify } from "./handlers/verify";
 import { preflightResponse, withCorsHeaders } from "./lib/cors";
 import type { Deps } from "./lib/deps";
 import { jsonResponse } from "./lib/http";
+import { handleController } from "./controller/routes";
 
 interface Route {
   method: string;
@@ -19,6 +20,7 @@ const ROUTES: Record<string, Route> = {
 };
 
 export async function handleRequest(request: Request, deps: Deps): Promise<Response> {
+  if (new URL(request.url).pathname.startsWith("/v1/controller/")) return handleController(request, deps);
   const origin = request.headers.get("Origin");
   const allowed = deps.config.allowedOrigins;
   if (request.method === "OPTIONS") {

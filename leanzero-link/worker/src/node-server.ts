@@ -7,6 +7,8 @@ import type { Deps, KVStore } from "./lib/deps";
 import { createFsKvStore, type FsKvStore } from "./lib/fs-kv";
 import { generateOtp } from "./lib/otp";
 import { handleRequest } from "./router";
+import { SqliteDeviceRegistry } from "./controller/node-registry";
+import type { DeviceRegistryStore } from "./controller/registry-store";
 
 // Self-hosted Node adapter: the same handleRequest(request, deps) the Cloudflare
 // Worker serves, but the deps are built from process.env + a filesystem KV, and the
@@ -24,10 +26,11 @@ function defaultKvDir(): string {
   return process.env.LINK_KV_DIR ?? join(homedir(), ".leanzero", "link-kv");
 }
 
-export function buildDeps(kv: KVStore): Deps {
+export function buildDeps(kv: KVStore, deviceRegistry?: DeviceRegistryStore): Deps {
   const config = parseConfig(process.env);
   return {
     kv,
+    deviceRegistry,
     fetchFn: (url, init) => fetch(url, init),
     now: () => Date.now(),
     randomOtp: generateOtp,
@@ -185,7 +188,7 @@ function startExpirySweeps(kv: FsKvStore, now: () => number, log: (event: string
 function main(): void {
   const port = Number(process.env.PORT ?? DEFAULT_PORT);
   const kv = createFsKvStore(defaultKvDir(), { log: jsonLog });
-  const deps = buildDeps(kv);
+  const deps = buildDeps(kv, new SqliteDeviceRegistry(join(defaultKvDir(), "controller-registry.sqlite")));
   logConfigWarnings(deps.config, jsonLog);
   startExpirySweeps(kv, deps.now, jsonLog);
   const server = createNodeServer(deps, port);

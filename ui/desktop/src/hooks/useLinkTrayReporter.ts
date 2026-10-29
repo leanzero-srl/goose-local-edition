@@ -3,6 +3,7 @@ import type { IpcRendererEvent } from 'electron';
 import type { IntlShape } from 'react-intl';
 import { useIntl } from '../i18n';
 import {
+  LINK_CHANGED_EVENT,
   leanzeroLinkConnect,
   leanzeroLinkNodes,
   leanzeroLinkStatus,
@@ -32,6 +33,17 @@ import type { MacsTrayReport } from '../utils/macsTrayReport';
 export const LINK_TRAY_SETTLING_POLL_MS = 3000;
 /** The steady cadence once the state has settled; focus and every tray-menu open read at once. */
 export const LINK_TRAY_POLL_MS = 30000;
+/**
+ * After a Connect/Disconnect the roster keeps changing for a few seconds (peer rows turn online as
+ * their liveness dials and first polls land), so the tray reads at the settling cadence for this
+ * long instead of taking one read and then waiting 30 s.
+ */
+export const LINK_TRAY_AFTER_CHANGE_MS = 12000;
+
+/** Delay before the next tray read: settling cadence while moving or shortly after a change. */
+export function linkTrayReadDelayMs(settling: boolean, now: number, settleUntil: number): number {
+  return settling || now < settleUntil ? LINK_TRAY_SETTLING_POLL_MS : LINK_TRAY_POLL_MS;
+}
 
 /** Still moving: a connect in flight, or a launch reconnect that has not reported an outcome. */
 export function linkStateSettling(state: LinkState): boolean {
@@ -120,6 +132,7 @@ export function useLinkTrayReporter(enabled: boolean): void {
     let disposed = false;
     let reading = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let settleUntil = 0;
     const schedule = (ms: number) => {
       if (disposed) return;
       if (timer) clearTimeout(timer);
@@ -145,10 +158,16 @@ export function useLinkTrayReporter(enabled: boolean): void {
       } finally {
         reading = false;
       }
-      schedule(settling ? LINK_TRAY_SETTLING_POLL_MS : LINK_TRAY_POLL_MS);
+      schedule(linkTrayReadDelayMs(settling, Date.now(), settleUntil));
     };
     void read();
     const onWake = () => void read();
+    // A Connect/Disconnect from any screen (the Link tab sends no IPC wake): read now, then keep
+    // the settling cadence while the peer rows fill in.
+    const onLinkChanged = () => {
+      settleUntil = Date.now() + LINK_TRAY_AFTER_CHANGE_MS;
+      void read();
+    };
     const onAction = (_event: IpcRendererEvent, ...args: unknown[]) => {
       if (args[0] !== 'connect') return;
       leanzeroLinkConnect()
@@ -160,12 +179,14 @@ export function useLinkTrayReporter(enabled: boolean): void {
     window.electron.on('mlx-distributed-wake', onWake);
     window.electron.on('link-tray-action', onAction);
     window.addEventListener('focus', onWake);
+    window.addEventListener(LINK_CHANGED_EVENT, onLinkChanged);
     return () => {
       disposed = true;
       if (timer) clearTimeout(timer);
       window.electron.off('mlx-distributed-wake', onWake);
       window.electron.off('link-tray-action', onAction);
       window.removeEventListener('focus', onWake);
+      window.removeEventListener(LINK_CHANGED_EVENT, onLinkChanged);
     };
   }, [enabled]);
 }

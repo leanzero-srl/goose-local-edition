@@ -389,6 +389,9 @@
   "benchmarkSection.askAbout": {
     "defaultMessage": "Начать ИИ-сессию об этом запуске"
   },
+  "benchmarkSection.build": {
+    "defaultMessage": "Сборка {index}"
+  },
   "benchmarkSection.cannotDeleteNoId": {
     "defaultMessage": "У этой сессии ещё нет id запуска — он появляется через несколько мгновений после старта"
   },
@@ -430,6 +433,9 @@
   },
   "benchmarkSection.title": {
     "defaultMessage": "Benchmark"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 сборки"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Расширение обновлено"
@@ -1286,6 +1292,9 @@
   "confirmCloseRun.body": {
     "defaultMessage": "Закрытие этого окна останавливает запуск: бэкенд окна освобождается, а движку swarm под ним подаётся сигнал на завершение."
   },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "Продолжить ответ"
+  },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "Продолжить выполнение"
   },
@@ -1295,17 +1304,17 @@
   "confirmCloseRun.stopAndClose": {
     "defaultMessage": "Остановить запуск и закрыть"
   },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "Остановить ответ и закрыть"
+  },
   "confirmCloseRun.stopping": {
     "defaultMessage": "Остановка запуска…"
   },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "Остановка ответа…"
+  },
   "confirmCloseRun.title": {
     "defaultMessage": "В этом окне выполняется запуск swarm"
-  },
-  "confirmCloseRun.warning": {
-    "defaultMessage": "Предупреждение"
-  },
-  "confirmCloseRun.turnTitle": {
-    "defaultMessage": "Чат в этом окне ещё отвечает"
   },
   "confirmCloseRun.turnBody": {
     "defaultMessage": "Закрытие этого окна останавливает ответ: чат был отправлен из этого окна, и его ответ обрывается там, где он сейчас."
@@ -1313,14 +1322,11 @@
   "confirmCloseRun.turnLine": {
     "defaultMessage": "Чат: {name}"
   },
-  "confirmCloseRun.keepAnswering": {
-    "defaultMessage": "Продолжить ответ"
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "Чат в этом окне ещё отвечает"
   },
-  "confirmCloseRun.stopAnswerAndClose": {
-    "defaultMessage": "Остановить ответ и закрыть"
-  },
-  "confirmCloseRun.stoppingAnswer": {
-    "defaultMessage": "Остановка ответа…"
+  "confirmCloseRun.warning": {
+    "defaultMessage": "Предупреждение"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Нет"
@@ -2120,11 +2126,29 @@
   "engineGlance.chat": {
     "defaultMessage": "Чат · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Закрыть плавающее окно до запуска чего-то нового"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Свернуть в пилюлю"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Скрыть этот сбой — он появится снова, только если движок снова упадёт"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Плавающее окно скрыто до запуска чего-то нового"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "Вернуть его можно в Настройки › Приложение — там же его можно выключить."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "Вернуть его можно через значок goose в строке меню или в Настройки › Приложение — там же его можно выключить."
+  },
   "engineGlance.expand": {
     "defaultMessage": "Показать всю карточку"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Показывать плашку, когда goose свёрнут"
   },
   "engineGlance.forming": {
     "defaultMessage": "Что пишет · {count, plural, one {# вызов инструмента} few {# вызова инструментов} many {# вызовов инструментов} other {# вызова инструментов}}"
@@ -2137,6 +2161,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Скрыть эту карточку — вернуть её можно внизу боковой панели или в Настройки › Приложение"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Закройте здесь — окно вернётся, когда запустится что-то новое"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Понятно"
@@ -2285,23 +2312,32 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "Живая карточка движка в малом размере: что он читает или пишет, как быстро и какой чат обслуживает. Нажмите, чтобы открыть движок."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Поверх рабочего стола"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Когда goose в фоне"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Всегда, когда движок работает"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Выкл."
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Выключено, пока вы не отметите. Небольшая плашка поверх других приложений, в углу, куда вы её перетащите. goose открывает только её кнопка ⤢; перетаскивание лишь двигает её, а ✕ скрывает её до начала новой задачи, запуска или разделения."
+  },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Показывать плавающую плашку активности, когда goose свёрнут или в фоне"
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Когда показывать"
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Вы закрыли его — скрыто до запуска чего-то нового."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "В боковой панели"
   },
   "engineGlanceSettings.inAppDesc": {
     "defaultMessage": "Внизу боковой панели, под вашими сессиями. Скройте её прямо на карточке; вернуть её можно строкой, которая остаётся на её месте, или здесь."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "Показать снова"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "Движок с первого взгляда"
@@ -2609,6 +2645,117 @@
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "Подключиться к серверу goose, запущенному в другом месте (требуется перезапуск приложения)"
   },
+  "forgeSeries.between": {
+    "defaultMessage": "Сборка 1 завершена. Подготовка сборки 2."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Сборка {index} из 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls} вызовов на сборку"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Останавливает текущую сборку и предотвращает запуск следующей. Готовые оценки и доказательства сохраняются; отмена ничего не публикует."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "Отменить этот бенчмарк из двух сборок?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "Последовательность из двух сборок отменена"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Последовательность из двух сборок отменена."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "Проверка двух сборок…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Отменена"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Не завершена"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Две сборки завершены."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Опубликовать оставшуюся сборку"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "Последовательность из двух сборок не завершилась"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "Последовательность из двух сборок не завершилась."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Обе сборки завершены"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "Приложение закрылось до завершения двух сборок. Сохранённые доказательства остаются доступны."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Одно действие «Запустить» запускает две независимые сборки в этом приложении. Вторая начинается после оценки первой; у каждой сохраняются собственные доказательства."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Опубликовано на leanzero.net"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Локальная медиана {median} · диапазон {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Нет ответа на публикацию"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Оценённых сборок пока нет."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Подготовка сборки {index} из 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Одна оценённая сборка даёт предварительный результат. Медиана двух сборок недоступна."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "Опубликовать 2 сборки"
+  },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Опубликовать сборки по отдельности"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Заголовок публикации"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Публикация сборки {index} из 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "Ожидание запуска"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "Запустить 2 сборки"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Сборка {index} из 2 выполняется"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Оценена"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "Приложение последовательно выполняет две новые сборки с одинаковыми моделью, задачей и настройками. У каждой сохраняются собственная оценка и доказательства."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Не запущена"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Две независимые сборки"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "Не удалось прочитать сохранённые доказательства двух сборок. Отдельные сборки остаются доступны."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Открыть доказательства сборки {index}"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "Для публикации нужны две завершённые сопоставимые сборки и их собственные доказательства."
+  },
   "formingPanel.callChars": {
     "defaultMessage": "{chars} симв."
   },
@@ -2750,6 +2897,9 @@
   "freeMemory.nuclearTotal": {
     "defaultMessage": "Отмечено: <b>{gb} ГБ</b>"
   },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Только на {mac}"
+  },
   "freeMemory.protectedChip": {
     "defaultMessage": "Защищено"
   },
@@ -2770,9 +2920,6 @@
   },
   "freeMemory.remoteQuitOff": {
     "defaultMessage": "{mac} не разрешает другим Mac завершать свои приложения и выгружать серверы моделей, поэтому отсюда можно освободить только память самого goose. Чтобы разрешить, откройте goose на {mac}, перейдите в Настройки › Приложение и включите «Разрешить связанным Mac завершать приложения на этом Mac». Или завершите их прямо на {mac}."
-  },
-  "freeMemory.onlyThere": {
-    "defaultMessage": "Только на {mac}"
   },
   "freeMemory.title": {
     "defaultMessage": "Освободить память на {mac}"
@@ -4292,14 +4439,14 @@
   "macLoad.policy": {
     "defaultMessage": "Пока кто-то работает за этим Mac"
   },
-  "macLoad.policyHint": {
-    "defaultMessage": "Занятость измеряется: память выше порога, свободные слоты для тяжёлых задач, нагрузка на ядро. Человек за клавиатурой учитывается только при равенстве."
-  },
   "macLoad.policy.allow": {
     "defaultMessage": "Принимать задания"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Отклонять задания"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "Занятость измеряется: память выше порога, свободные слоты для тяжёлых задач, нагрузка на ядро. Человек за клавиатурой учитывается только при равенстве."
   },
   "macLoad.queueNoTry": {
     "defaultMessage": "Ещё не предлагалось ни одному Mac: впереди ждёт другое задание."
@@ -4327,6 +4474,27 @@
   },
   "macLoad.state": {
     "defaultMessage": "Состояние"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "Отмена…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Ожидает, №{position} в очереди"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Где запускать мои задания"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Сначала мой Mac"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Сначала другие Mac"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Запускается на этом Mac, если есть место, иначе на другом Mac с наибольшим запасом, иначе ждёт в очереди."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "Запускается на другом Mac с наибольшим запасом, иначе на этом Mac, иначе ждёт в очереди. Этот Mac остаётся свободным."
   },
   "macLoad.title": {
     "defaultMessage": "Нагрузка"
@@ -5630,6 +5798,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Не удалось прочитать настройки движка."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Прочитать снова"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Остановить"
   },
@@ -5710,6 +5881,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Ранг {rank} разделения {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Ранг {rank} разделения другого Mac · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Обслуживает слои {first}–{last} для {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Обслуживает слои {first}–{last} для другого Mac · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Ранг {rank} разделения {requester} · {model}"
@@ -5938,6 +6118,9 @@
   },
   "mlxSetup.step2": {
     "defaultMessage": "Модели"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Чтение ваших Mac…"
   },
   "mlxSetup.step2Done": {
     "defaultMessage": "На ваших Mac: {count}"
@@ -6206,6 +6389,9 @@
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Остановлен"
   },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Остановлен вне goose"
+  },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Недоступен"
   },
@@ -6362,6 +6548,9 @@
   "modelCustomFields.above": {
     "defaultMessage": "Наибольшее значение — {max}."
   },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Пользовательские поля: выберите ID модели, чтобы увидеть её настройки."
+  },
   "modelCustomFields.below": {
     "defaultMessage": "Наименьшее значение — {min}."
   },
@@ -6379,6 +6568,9 @@
   },
   "modelCustomFields.modelDefault": {
     "defaultMessage": "По умолчанию у модели ({value})"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Пользовательские поля: {provider} не объявляет полей для «{model}», поэтому модель работает со значениями провайдера по умолчанию."
   },
   "modelCustomFields.notANumber": {
     "defaultMessage": "Введите число."
@@ -6917,6 +7109,9 @@
   "myMacs.reconnecting": {
     "defaultMessage": "Переподключение… (потерян контакт с goose этого Mac)"
   },
+  "myMacs.runJob": {
+    "defaultMessage": "Запустить задание…"
+  },
   "myMacs.saveFailed": {
     "defaultMessage": "Переключатель не сохранён"
   },
@@ -6931,6 +7126,9 @@
   },
   "myMacs.title": {
     "defaultMessage": "Мои Mac"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "обновлено {seconds} с назад"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -6968,30 +7166,6 @@
   "needsYouCard.closeNotice": {
     "defaultMessage": "Закрыть уведомление"
   },
-  "needsYouCard.queued": {
-    "defaultMessage": "В очереди · ответ уйдёт, когда этот ход закончится"
-  },
-  "needsYouCard.queuedChip": {
-    "defaultMessage": "В очереди"
-  },
-  "needsYouCard.sending": {
-    "defaultMessage": "Отправка вашего ответа…"
-  },
-  "needsYouCard.stack": {
-    "defaultMessage": "{count, plural, one {Нужен ваш ответ · # вопрос} few {Нужен ваш ответ · # вопроса} many {Нужен ваш ответ · # вопросов} other {Нужен ваш ответ · # вопроса}}"
-  },
-  "needsYouCard.stackQueued": {
-    "defaultMessage": "В очереди: {count}"
-  },
-  "needsYouCard.unsentAnswer": {
-    "defaultMessage": "Ваш ответ: {answer}"
-  },
-  "needsYouCard.unsentClosed": {
-    "defaultMessage": "Не отправлено — вопрос закрыли раньше, чем ушёл ваш ответ из очереди."
-  },
-  "needsYouCard.unsentFailed": {
-    "defaultMessage": "Не отправлено — не удалось сохранить ваш ответ из очереди: {error}"
-  },
   "needsYouCard.dismiss": {
     "defaultMessage": "Закрыть"
   },
@@ -7010,11 +7184,35 @@
   "needsYouCard.position": {
     "defaultMessage": "{index} из {total}"
   },
+  "needsYouCard.queued": {
+    "defaultMessage": "В очереди · ответ уйдёт, когда этот ход закончится"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "В очереди"
+  },
   "needsYouCard.recommended": {
     "defaultMessage": "Рекомендуется"
   },
+  "needsYouCard.sending": {
+    "defaultMessage": "Отправка вашего ответа…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, one {Нужен ваш ответ · # вопрос} few {Нужен ваш ответ · # вопроса} many {Нужен ваш ответ · # вопросов} other {Нужен ваш ответ · # вопроса}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "В очереди: {count}"
+  },
   "needsYouCard.title": {
     "defaultMessage": "Нужен ваш ответ"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Ваш ответ: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Не отправлено — вопрос закрыли раньше, чем ушёл ваш ответ из очереди."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Не отправлено — не удалось сохранить ваш ответ из очереди: {error}"
   },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Сохранённая модель движка MLX обслуживает {served}; этому узлу нужна {wanted}. Выберите модель в Providers."
@@ -9614,6 +9812,72 @@
   "responseStyle.detailedLabel": {
     "defaultMessage": "Подробный"
   },
+  "runJob.best": {
+    "defaultMessage": "Лучший Mac"
+  },
+  "runJob.close": {
+    "defaultMessage": "Закрыть"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Команда} other {Промпт}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Тяжёлое задание"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Mac выполняет столько тяжёлых заданий (сборки, рендеры, обучение), сколько позволяют его слоты и память."
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (используется)"
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "задания на этом Mac выключены"
+  },
+  "runJob.kind": {
+    "defaultMessage": "Тип"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "Промпт"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Shell-команда"
+  },
+  "runJob.mem": {
+    "defaultMessage": "Нужная память (ГБ, необязательно)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Сейчас ни один Mac не может принять это задание."
+  },
+  "runJob.none": {
+    "defaultMessage": "Сейчас ни один ваш Mac не принимает задания. Включите «Выполнять задания от других Mac» на том Mac, который должен их выполнять."
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Лучшие сейчас: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Не отправлено: {reason}"
+  },
+  "runJob.submit": {
+    "defaultMessage": "Запустить задание"
+  },
+  "runJob.target": {
+    "defaultMessage": "Где запустить"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Ограничение времени (секунды, необязательно)"
+  },
+  "runJob.title": {
+    "defaultMessage": "Запустить задание на…"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Сейчас ни на одном Mac нет места. Если запустить, задание подождёт в очереди на этом Mac и начнётся на первом Mac, где появится место."
+  },
   "scheduleDetailView.actions": {
     "defaultMessage": "Действия"
   },
@@ -11720,29 +11984,29 @@
   "unansweredPrompt.appClosed": {
     "defaultMessage": "Ход завершился без ответа — возможно, приложение закрылось, пока goose работал."
   },
-  "unansweredPrompt.failed": {
-    "defaultMessage": "Ход завершился ошибкой до ответа."
-  },
-  "unansweredPrompt.failedWithReason": {
-    "defaultMessage": "Ход завершился ошибкой до ответа: {reason}"
-  },
-  "unansweredPrompt.resend": {
-    "defaultMessage": "Отправить снова"
-  },
-  "unansweredPrompt.title": {
-    "defaultMessage": "goose остановился, не ответив на это"
-  },
   "unansweredPrompt.continue": {
     "defaultMessage": "Продолжить"
   },
   "unansweredPrompt.continueMessage": {
     "defaultMessage": "Продолжи с того места, где остановился."
   },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "Ход завершился ошибкой до ответа."
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "Ход завершился ошибкой до ответа: {reason}"
+  },
   "unansweredPrompt.midway": {
     "defaultMessage": "goose остановился на полпути"
   },
   "unansweredPrompt.midwayAppClosed": {
     "defaultMessage": "goose остановился на полпути — приложение закрылось, пока он работал"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "Отправить снова"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose остановился, не ответив на это"
   },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Отмена"
@@ -11908,245 +12172,5 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
-  },
-  "engineGlance.close": {
-    "defaultMessage": "Закрыть плавающее окно до конца сеанса"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Закройте его здесь — оно не вернётся, пока вы его не покажете"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Плавающее окно скрыто до конца сеанса"
-  },
-  "engineGlance.dismissed.way": {
-    "defaultMessage": "Вернуть его можно в Настройки › Приложение — там же его можно выключить."
-  },
-  "engineGlance.dismissed.wayTray": {
-    "defaultMessage": "Вернуть его можно через значок goose в строке меню или в Настройки › Приложение — там же его можно выключить."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Небольшое окно поверх других приложений, в углу, куда вы его перетащите. Оно никогда не забирает фокус и выводит goose на передний план, только когда вы что-то в нём открываете. Кнопка закрытия скрывает его до конца этого сеанса."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Вы его закрыли — оно скрыто, пока вы его не вернёте."
-  },
-  "engineGlanceSettings.showAgain": {
-    "defaultMessage": "Показать снова"
-  },
-  "benchmarkSection.build": {
-    "defaultMessage": "Сборка {index}"
-  },
-  "benchmarkSection.twoBuilds": {
-    "defaultMessage": "2 сборки"
-  },
-  "forgeSeries.between": {
-    "defaultMessage": "Сборка 1 завершена. Подготовка сборки 2."
-  },
-  "forgeSeries.build": {
-    "defaultMessage": "Сборка {index} из 2"
-  },
-  "forgeSeries.callBudget": {
-    "defaultMessage": "{calls} вызовов на сборку"
-  },
-  "forgeSeries.cancelDetail": {
-    "defaultMessage": "Останавливает текущую сборку и предотвращает запуск следующей. Готовые оценки и доказательства сохраняются; отмена ничего не публикует."
-  },
-  "forgeSeries.cancelTitle": {
-    "defaultMessage": "Отменить этот бенчмарк из двух сборок?"
-  },
-  "forgeSeries.cancelled": {
-    "defaultMessage": "Последовательность из двух сборок отменена"
-  },
-  "forgeSeries.cancelledStatus": {
-    "defaultMessage": "Последовательность из двух сборок отменена."
-  },
-  "forgeSeries.checking": {
-    "defaultMessage": "Проверка двух сборок…"
-  },
-  "forgeSeries.childCancelled": {
-    "defaultMessage": "Отменена"
-  },
-  "forgeSeries.childFailed": {
-    "defaultMessage": "Не завершена"
-  },
-  "forgeSeries.completeStatus": {
-    "defaultMessage": "Две сборки завершены."
-  },
-  "forgeSeries.continuePublish": {
-    "defaultMessage": "Опубликовать оставшуюся сборку"
-  },
-  "forgeSeries.failed": {
-    "defaultMessage": "Последовательность из двух сборок не завершилась"
-  },
-  "forgeSeries.failedStatus": {
-    "defaultMessage": "Последовательность из двух сборок не завершилась."
-  },
-  "forgeSeries.finished": {
-    "defaultMessage": "Обе сборки завершены"
-  },
-  "forgeSeries.interrupted": {
-    "defaultMessage": "Приложение закрылось до завершения двух сборок. Сохранённые доказательства остаются доступны."
-  },
-  "forgeSeries.intro": {
-    "defaultMessage": "Одно действие «Запустить» запускает две независимые сборки в этом приложении. Вторая начинается после оценки первой; у каждой сохраняются собственные доказательства."
-  },
-  "forgeSeries.live": {
-    "defaultMessage": "Опубликовано на leanzero.net"
-  },
-  "forgeSeries.median": {
-    "defaultMessage": "Локальная медиана {median} · диапазон {min}–{max}"
-  },
-  "forgeSeries.noResponse": {
-    "defaultMessage": "Нет ответа на публикацию"
-  },
-  "forgeSeries.noScore": {
-    "defaultMessage": "Оценённых сборок пока нет."
-  },
-  "forgeSeries.preparing": {
-    "defaultMessage": "Подготовка сборки {index} из 2"
-  },
-  "forgeSeries.provisional": {
-    "defaultMessage": "Одна оценённая сборка даёт предварительный результат. Медиана двух сборок недоступна."
-  },
-  "forgeSeries.publish": {
-    "defaultMessage": "Опубликовать 2 сборки"
-  },
-  "forgeSeries.publishSeparately": {
-    "defaultMessage": "Опубликовать сборки по отдельности"
-  },
-  "forgeSeries.publishTitle": {
-    "defaultMessage": "Заголовок публикации"
-  },
-  "forgeSeries.publishing": {
-    "defaultMessage": "Публикация сборки {index} из 2…"
-  },
-  "forgeSeries.queued": {
-    "defaultMessage": "Ожидание запуска"
-  },
-  "forgeSeries.run": {
-    "defaultMessage": "Запустить 2 сборки"
-  },
-  "forgeSeries.running": {
-    "defaultMessage": "Сборка {index} из 2 выполняется"
-  },
-  "forgeSeries.scored": {
-    "defaultMessage": "Оценена"
-  },
-  "forgeSeries.settings": {
-    "defaultMessage": "Приложение последовательно выполняет две новые сборки с одинаковыми моделью, задачей и настройками. У каждой сохраняются собственная оценка и доказательства."
-  },
-  "forgeSeries.skipped": {
-    "defaultMessage": "Не запущена"
-  },
-  "forgeSeries.title": {
-    "defaultMessage": "Две независимые сборки"
-  },
-  "forgeSeries.unreadable": {
-    "defaultMessage": "Не удалось прочитать сохранённые доказательства двух сборок. Отдельные сборки остаются доступны."
-  },
-  "forgeSeries.view": {
-    "defaultMessage": "Открыть доказательства сборки {index}"
-  },
-  "forgeSeries.waitingPublish": {
-    "defaultMessage": "Для публикации нужны две завершённые сопоставимые сборки и их собственные доказательства."
-  },
-  "modelCustomFields.awaitingModel": {
-    "defaultMessage": "Пользовательские поля: выберите ID модели, чтобы увидеть её настройки."
-  },
-  "modelCustomFields.noFields": {
-    "defaultMessage": "Пользовательские поля: {provider} не объявляет полей для «{model}», поэтому модель работает со значениями провайдера по умолчанию."
-  },
-  "macLoad.stateCancelling": {
-    "defaultMessage": "Отмена…"
-  },
-  "macLoad.stateWaiting": {
-    "defaultMessage": "Ожидает, №{position} в очереди"
-  },
-  "macLoad.strategy": {
-    "defaultMessage": "Где запускать мои задания"
-  },
-  "macLoad.strategy.localFirst": {
-    "defaultMessage": "Сначала мой Mac"
-  },
-  "macLoad.strategy.selfish": {
-    "defaultMessage": "Сначала другие Mac"
-  },
-  "macLoad.strategyHint.localFirst": {
-    "defaultMessage": "Запускается на этом Mac, если есть место, иначе на другом Mac с наибольшим запасом, иначе ждёт в очереди."
-  },
-  "macLoad.strategyHint.selfish": {
-    "defaultMessage": "Запускается на другом Mac с наибольшим запасом, иначе на этом Mac, иначе ждёт в очереди. Этот Mac остаётся свободным."
-  },
-  "myMacs.runJob": {
-    "defaultMessage": "Запустить задание…"
-  },
-  "runJob.title": {
-    "defaultMessage": "Запустить задание на…"
-  },
-  "runJob.willQueue": {
-    "defaultMessage": "Сейчас ни на одном Mac нет места. Если запустить, задание подождёт в очереди на этом Mac и начнётся на первом Mac, где появится место."
-  },
-  "runJob.target": {
-    "defaultMessage": "Где запустить"
-  },
-  "runJob.best": {
-    "defaultMessage": "Лучший Mac"
-  },
-  "runJob.ranking": {
-    "defaultMessage": "Лучшие сейчас: {macs}"
-  },
-  "runJob.refusal": {
-    "defaultMessage": "{mac}: {reason}"
-  },
-  "runJob.verdictLine": {
-    "defaultMessage": "{mac}: {verdict}"
-  },
-  "runJob.inUse": {
-    "defaultMessage": "{name} (используется)"
-  },
-  "runJob.noPlace": {
-    "defaultMessage": "Сейчас ни один Mac не может принять это задание."
-  },
-  "runJob.none": {
-    "defaultMessage": "Сейчас ни один ваш Mac не принимает задания. Включите «Выполнять задания от других Mac» на том Mac, который должен их выполнять."
-  },
-  "runJob.jobsOff": {
-    "defaultMessage": "задания на этом Mac выключены"
-  },
-  "runJob.kind": {
-    "defaultMessage": "Тип"
-  },
-  "runJob.kindShell": {
-    "defaultMessage": "Shell-команда"
-  },
-  "runJob.kindPrompt": {
-    "defaultMessage": "Промпт"
-  },
-  "runJob.command": {
-    "defaultMessage": "{kind, select, shell {Команда} other {Промпт}}"
-  },
-  "runJob.heavy": {
-    "defaultMessage": "Тяжёлое задание"
-  },
-  "runJob.heavyHint": {
-    "defaultMessage": "Mac выполняет столько тяжёлых заданий (сборки, рендеры, обучение), сколько позволяют его слоты и память."
-  },
-  "runJob.mem": {
-    "defaultMessage": "Нужная память (ГБ, необязательно)"
-  },
-  "runJob.timeout": {
-    "defaultMessage": "Ограничение времени (секунды, необязательно)"
-  },
-  "runJob.submit": {
-    "defaultMessage": "Запустить задание"
-  },
-  "runJob.close": {
-    "defaultMessage": "Закрыть"
-  },
-  "runJob.refused": {
-    "defaultMessage": "Не отправлено: {reason}"
-  },
-  "myMacs.updatedAgo": {
-    "defaultMessage": "обновлено {seconds} с назад"
   }
 }

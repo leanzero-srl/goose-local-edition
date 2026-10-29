@@ -389,6 +389,9 @@
   "benchmarkSection.askAbout": {
     "defaultMessage": "开始一个关于此次运行的 AI 会话"
   },
+  "benchmarkSection.build": {
+    "defaultMessage": "构建 {index}"
+  },
   "benchmarkSection.cannotDeleteNoId": {
     "defaultMessage": "此会话还没有运行 id —— 它会在启动后不久出现"
   },
@@ -430,6 +433,9 @@
   },
   "benchmarkSection.title": {
     "defaultMessage": "Benchmark"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 次构建"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "扩展已更新"
@@ -1286,6 +1292,9 @@
   "confirmCloseRun.body": {
     "defaultMessage": "关闭此窗口会停止本次运行:窗口的后端将被释放,其下的 swarm 引擎会收到退出信号。"
   },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "继续回答"
+  },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "继续运行"
   },
@@ -1295,17 +1304,17 @@
   "confirmCloseRun.stopAndClose": {
     "defaultMessage": "停止运行并关闭"
   },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "停止回答并关闭"
+  },
   "confirmCloseRun.stopping": {
     "defaultMessage": "正在停止运行…"
   },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "正在停止回答…"
+  },
   "confirmCloseRun.title": {
     "defaultMessage": "此窗口中有一个 swarm 运行正在进行"
-  },
-  "confirmCloseRun.warning": {
-    "defaultMessage": "警告"
-  },
-  "confirmCloseRun.turnTitle": {
-    "defaultMessage": "此窗口中的一个对话仍在回答"
   },
   "confirmCloseRun.turnBody": {
     "defaultMessage": "关闭此窗口会停止回答:该对话是从此窗口发送的,它的回复会停在当前位置。"
@@ -1313,14 +1322,11 @@
   "confirmCloseRun.turnLine": {
     "defaultMessage": "对话:{name}"
   },
-  "confirmCloseRun.keepAnswering": {
-    "defaultMessage": "继续回答"
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "此窗口中的一个对话仍在回答"
   },
-  "confirmCloseRun.stopAnswerAndClose": {
-    "defaultMessage": "停止回答并关闭"
-  },
-  "confirmCloseRun.stoppingAnswer": {
-    "defaultMessage": "正在停止回答…"
+  "confirmCloseRun.warning": {
+    "defaultMessage": "警告"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "否"
@@ -2120,11 +2126,29 @@
   "engineGlance.chat": {
     "defaultMessage": "聊天 · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "关闭浮动窗口，直到有新任务开始"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "缩成胶囊"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "忽略此故障 — 仅在引擎再次失败时才会重新出现"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "浮动窗口已隐藏，直到有新任务开始"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "可在 设置 › 应用 中重新显示，也可以在那里将它关闭。"
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "可通过菜单栏中的 goose 图标或 设置 › 应用 重新显示，也可以在设置中将它关闭。"
+  },
   "engineGlance.expand": {
     "defaultMessage": "显示完整卡片"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "goose 最小化时显示悬浮胶囊"
   },
   "engineGlance.forming": {
     "defaultMessage": "正在写的内容 · {count, plural, other {# 个工具调用}}"
@@ -2137,6 +2161,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "隐藏此卡片 — 可在侧边栏底部或 设置 › 应用 中恢复"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "在此关闭——有新任务开始时它会回来"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "知道了"
@@ -2285,23 +2312,32 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "引擎实时卡片的小尺寸版：正在读或写什么、速度多快、服务哪个聊天。点击即可打开引擎。"
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "悬浮在桌面上"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "当 goose 在后台时"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "只要引擎在工作"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "关闭"
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "勾选前保持关闭。一个小胶囊浮在其他应用之上，位于你拖到的角落。只有它的 ⤢ 按钮会打开 goose；拖动只会移动它，✕ 会将其隐藏，直到新的任务、运行或拆分开始。"
+  },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "goose 最小化或在后台时显示悬浮活动胶囊"
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "何时悬浮"
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "你已关闭它——在有新任务开始前保持隐藏。"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "在侧边栏中"
   },
   "engineGlanceSettings.inAppDesc": {
     "defaultMessage": "在侧边栏底部、会话列表下方。可直接在卡片上隐藏；之后可通过它留在原处的那一行或在这里恢复。"
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "重新显示"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "引擎一览"
@@ -2609,6 +2645,117 @@
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "连接到运行在其他位置的 goose 服务器（需要重启应用）"
   },
+  "forgeSeries.between": {
+    "defaultMessage": "构建 1 已完成。正在准备构建 2。"
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "构建 {index} / 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "每次构建可调用 {calls} 次"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "停止当前构建并阻止下一次构建启动。已完成的评分和证据会保留；取消不会发布任何内容。"
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "取消这项包含两次构建的基准测试？"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "两次构建的连续执行已取消"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "两次构建的连续执行已取消。"
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "正在检查两次构建…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "已取消"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "未完成"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "两次构建已完成。"
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "发布剩余构建"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "两次构建的连续执行未完成"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "两次构建的连续执行未完成。"
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "两次构建均已完成"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "应用在两次构建完成前已退出。已保存的证据会保留。"
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "在本应用中点击一次运行即可启动两次独立构建。第一次评分后开始第二次；每次都保留自己的证据。"
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "已在 leanzero.net 发布"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "本地中位数 {median} · 范围 {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "发布未收到响应"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "目前还没有已评分的构建。"
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "正在准备构建 {index} / 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "只有一次已评分构建时结果为暂定结果。无法提供两次构建的中位数。"
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "发布 2 次构建"
+  },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "分别发布构建"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "发布标题"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "正在发布构建 {index} / 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "等待启动"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "运行 2 次构建"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "构建 {index} / 2 正在运行"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "已评分"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "应用使用相同模型、任务和设置连续执行两次全新构建。每次保留自己的评分和证据。"
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "未启动"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "两次独立构建"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "无法读取已保存的两次构建证据。各次构建仍可单独查看。"
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "打开构建 {index} 的证据"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "发布需要两次已完成且可比较的构建，以及各自的原生证据。"
+  },
   "formingPanel.callChars": {
     "defaultMessage": "{chars} 个字符"
   },
@@ -2750,6 +2897,9 @@
   "freeMemory.nuclearTotal": {
     "defaultMessage": "已勾选:<b>{gb} GB</b>"
   },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "仅在 {mac} 上"
+  },
   "freeMemory.protectedChip": {
     "defaultMessage": "受保护"
   },
@@ -2770,9 +2920,6 @@
   },
   "freeMemory.remoteQuitOff": {
     "defaultMessage": "{mac} 不允许其他 Mac 退出它的应用或卸载它的模型服务器，因此从这里只能释放 goose 自己的内存。要允许，请在 {mac} 上打开 goose，前往 设置 › 应用，开启“允许已连接的 Mac 退出这台 Mac 上的应用”。或者直接在 {mac} 上退出它们。"
-  },
-  "freeMemory.onlyThere": {
-    "defaultMessage": "仅在 {mac} 上"
   },
   "freeMemory.title": {
     "defaultMessage": "释放 {mac} 上的内存"
@@ -4292,14 +4439,14 @@
   "macLoad.policy": {
     "defaultMessage": "有人使用这台 Mac 时"
   },
-  "macLoad.policyHint": {
-    "defaultMessage": "忙碌以实测为准：高于下限的内存、空闲的重任务槽位、每核负载。有人在用键盘只用于打破平局。"
-  },
   "macLoad.policy.allow": {
     "defaultMessage": "接受任务"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "拒绝任务"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "忙碌以实测为准：高于下限的内存、空闲的重任务槽位、每核负载。有人在用键盘只用于打破平局。"
   },
   "macLoad.queueNoTry": {
     "defaultMessage": "尚未分配给任何 Mac：前面有任务在等待。"
@@ -4327,6 +4474,27 @@
   },
   "macLoad.state": {
     "defaultMessage": "状态"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "正在取消…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "等待中，排第 {position} 位"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "我的任务在哪里运行"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "先用我的 Mac"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "先用其他 Mac"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "这台 Mac 有空间就在这里运行，否则在空间最多的其他 Mac 上运行，都没有就在队列中等待。"
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "在空间最多的其他 Mac 上运行，否则在这台 Mac 上运行，都没有就在队列中等待。让这台 Mac 保持空闲。"
   },
   "macLoad.title": {
     "defaultMessage": "负载"
@@ -5630,6 +5798,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "无法读取引擎设置。"
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "重新读取"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "停止"
   },
@@ -5710,6 +5881,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "{requester} 拆分的第 {rank} 个分片 · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "另一台 Mac 拆分中的第 {rank} 级 · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "正在为 {requester} 运行第 {first}–{last} 层 · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "正在为另一台 Mac 运行第 {first}–{last} 层 · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} 拆分的第 {rank} 个分片 · {model}"
@@ -5938,6 +6118,9 @@
   },
   "mlxSetup.step2": {
     "defaultMessage": "模型"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "正在读取你的 Mac…"
   },
   "mlxSetup.step2Done": {
     "defaultMessage": "你的 Mac 上有 {count} 个"
@@ -6206,6 +6389,9 @@
   "mlxStateTile.state.stopped": {
     "defaultMessage": "已停止"
   },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "在 goose 之外被停止"
+  },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "无法访问"
   },
@@ -6362,6 +6548,9 @@
   "modelCustomFields.above": {
     "defaultMessage": "最大值为 {max}。"
   },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "自定义字段：选择一个模型 ID 以查看它接受的设置。"
+  },
   "modelCustomFields.below": {
     "defaultMessage": "最小值为 {min}。"
   },
@@ -6379,6 +6568,9 @@
   },
   "modelCustomFields.modelDefault": {
     "defaultMessage": "模型默认值（{value}）"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "自定义字段：{provider} 没有为“{model}”声明任何字段，因此它以提供商的默认值运行。"
   },
   "modelCustomFields.notANumber": {
     "defaultMessage": "请输入数字。"
@@ -6917,6 +7109,9 @@
   "myMacs.reconnecting": {
     "defaultMessage": "正在重新连接…（与这台 Mac 的 goose 失去联系）"
   },
+  "myMacs.runJob": {
+    "defaultMessage": "运行任务…"
+  },
   "myMacs.saveFailed": {
     "defaultMessage": "开关未保存"
   },
@@ -6931,6 +7126,9 @@
   },
   "myMacs.title": {
     "defaultMessage": "我的 Mac"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "{seconds} 秒前更新"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -6968,30 +7166,6 @@
   "needsYouCard.closeNotice": {
     "defaultMessage": "关闭此提示"
   },
-  "needsYouCard.queued": {
-    "defaultMessage": "已排队 · 本轮结束时回答"
-  },
-  "needsYouCard.queuedChip": {
-    "defaultMessage": "已排队"
-  },
-  "needsYouCard.sending": {
-    "defaultMessage": "正在发送你的回答…"
-  },
-  "needsYouCard.stack": {
-    "defaultMessage": "{count, plural, other {需要你 · # 个问题}}"
-  },
-  "needsYouCard.stackQueued": {
-    "defaultMessage": "{count} 个已排队"
-  },
-  "needsYouCard.unsentAnswer": {
-    "defaultMessage": "你的回答：{answer}"
-  },
-  "needsYouCard.unsentClosed": {
-    "defaultMessage": "未发送——排队的回答发出之前，这个问题已关闭。"
-  },
-  "needsYouCard.unsentFailed": {
-    "defaultMessage": "未发送——无法保存你排队的回答：{error}"
-  },
   "needsYouCard.dismiss": {
     "defaultMessage": "忽略"
   },
@@ -7010,11 +7184,35 @@
   "needsYouCard.position": {
     "defaultMessage": "第 {index} / {total} 个"
   },
+  "needsYouCard.queued": {
+    "defaultMessage": "已排队 · 本轮结束时回答"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "已排队"
+  },
   "needsYouCard.recommended": {
     "defaultMessage": "推荐"
   },
+  "needsYouCard.sending": {
+    "defaultMessage": "正在发送你的回答…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, other {需要你 · # 个问题}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} 个已排队"
+  },
   "needsYouCard.title": {
     "defaultMessage": "需要你"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "你的回答：{answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "未发送——排队的回答发出之前，这个问题已关闭。"
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "未发送——无法保存你排队的回答：{error}"
   },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX 引擎保存的模型提供 {served}；此节点需要 {wanted}。请在 Providers 中选择模型。"
@@ -9614,6 +9812,72 @@
   "responseStyle.detailedLabel": {
     "defaultMessage": "详细"
   },
+  "runJob.best": {
+    "defaultMessage": "最佳 Mac"
+  },
+  "runJob.close": {
+    "defaultMessage": "关闭"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {命令} other {提示}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "重型任务"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "一台 Mac 能同时运行的重任务（构建、渲染、训练）数量取决于它的槽位和内存。"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name}（使用中）"
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "此 Mac 已关闭作业"
+  },
+  "runJob.kind": {
+    "defaultMessage": "类型"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "提示"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Shell 命令"
+  },
+  "runJob.mem": {
+    "defaultMessage": "所需内存（GB，可选）"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "目前没有 Mac 能接受此任务。"
+  },
+  "runJob.none": {
+    "defaultMessage": "你的 Mac 目前都不接受任务。请在要运行任务的 Mac 上打开“运行其他 Mac 发来的任务”。"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "当前最佳：{macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}：{reason}"
+  },
+  "runJob.refused": {
+    "defaultMessage": "未发送：{reason}"
+  },
+  "runJob.submit": {
+    "defaultMessage": "运行任务"
+  },
+  "runJob.target": {
+    "defaultMessage": "运行位置"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "时间限制（秒，可选）"
+  },
+  "runJob.title": {
+    "defaultMessage": "在…上运行任务"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}：{verdict}"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "现在没有 Mac 有空间。运行后它会在这台 Mac 的队列中等待，并在第一台有空间的 Mac 上启动。"
+  },
   "scheduleDetailView.actions": {
     "defaultMessage": "操作"
   },
@@ -11720,29 +11984,29 @@
   "unansweredPrompt.appClosed": {
     "defaultMessage": "这一轮没有回复就结束了——可能是 goose 工作时应用被关闭了。"
   },
-  "unansweredPrompt.failed": {
-    "defaultMessage": "这一轮在回复之前失败了。"
-  },
-  "unansweredPrompt.failedWithReason": {
-    "defaultMessage": "这一轮在回复之前失败了：{reason}"
-  },
-  "unansweredPrompt.resend": {
-    "defaultMessage": "重新发送"
-  },
-  "unansweredPrompt.title": {
-    "defaultMessage": "goose 在回答这条之前停止了"
-  },
   "unansweredPrompt.continue": {
     "defaultMessage": "继续"
   },
   "unansweredPrompt.continueMessage": {
     "defaultMessage": "从刚才停下的地方继续。"
   },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "这一轮在回复之前失败了。"
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "这一轮在回复之前失败了：{reason}"
+  },
   "unansweredPrompt.midway": {
     "defaultMessage": "goose 中途停止了"
   },
   "unansweredPrompt.midwayAppClosed": {
     "defaultMessage": "goose 中途停止了——应用在它工作时被关闭了"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "重新发送"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose 在回答这条之前停止了"
   },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "取消"
@@ -11908,245 +12172,5 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
-  },
-  "engineGlance.close": {
-    "defaultMessage": "在本次会话中关闭悬浮窗口"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "在这里关闭，直到你把它调回来"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "悬浮窗口已在本次会话中隐藏"
-  },
-  "engineGlance.dismissed.way": {
-    "defaultMessage": "可在 设置 › 应用 中重新显示，也可以在那里将它关闭。"
-  },
-  "engineGlance.dismissed.wayTray": {
-    "defaultMessage": "可通过菜单栏中的 goose 图标或 设置 › 应用 重新显示，也可以在设置中将它关闭。"
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "一个浮在其他应用之上的小窗口，停在你拖到的角落。它从不抢占焦点，只有当你从中打开内容时才会把 goose 带到前台。点击关闭按钮后，它会在本次会话剩余时间内隐藏。"
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "你已将它关闭——在你调回之前保持隐藏。"
-  },
-  "engineGlanceSettings.showAgain": {
-    "defaultMessage": "重新显示"
-  },
-  "benchmarkSection.build": {
-    "defaultMessage": "构建 {index}"
-  },
-  "benchmarkSection.twoBuilds": {
-    "defaultMessage": "2 次构建"
-  },
-  "forgeSeries.between": {
-    "defaultMessage": "构建 1 已完成。正在准备构建 2。"
-  },
-  "forgeSeries.build": {
-    "defaultMessage": "构建 {index} / 2"
-  },
-  "forgeSeries.callBudget": {
-    "defaultMessage": "每次构建可调用 {calls} 次"
-  },
-  "forgeSeries.cancelDetail": {
-    "defaultMessage": "停止当前构建并阻止下一次构建启动。已完成的评分和证据会保留；取消不会发布任何内容。"
-  },
-  "forgeSeries.cancelTitle": {
-    "defaultMessage": "取消这项包含两次构建的基准测试？"
-  },
-  "forgeSeries.cancelled": {
-    "defaultMessage": "两次构建的连续执行已取消"
-  },
-  "forgeSeries.cancelledStatus": {
-    "defaultMessage": "两次构建的连续执行已取消。"
-  },
-  "forgeSeries.checking": {
-    "defaultMessage": "正在检查两次构建…"
-  },
-  "forgeSeries.childCancelled": {
-    "defaultMessage": "已取消"
-  },
-  "forgeSeries.childFailed": {
-    "defaultMessage": "未完成"
-  },
-  "forgeSeries.completeStatus": {
-    "defaultMessage": "两次构建已完成。"
-  },
-  "forgeSeries.continuePublish": {
-    "defaultMessage": "发布剩余构建"
-  },
-  "forgeSeries.failed": {
-    "defaultMessage": "两次构建的连续执行未完成"
-  },
-  "forgeSeries.failedStatus": {
-    "defaultMessage": "两次构建的连续执行未完成。"
-  },
-  "forgeSeries.finished": {
-    "defaultMessage": "两次构建均已完成"
-  },
-  "forgeSeries.interrupted": {
-    "defaultMessage": "应用在两次构建完成前已退出。已保存的证据会保留。"
-  },
-  "forgeSeries.intro": {
-    "defaultMessage": "在本应用中点击一次运行即可启动两次独立构建。第一次评分后开始第二次；每次都保留自己的证据。"
-  },
-  "forgeSeries.live": {
-    "defaultMessage": "已在 leanzero.net 发布"
-  },
-  "forgeSeries.median": {
-    "defaultMessage": "本地中位数 {median} · 范围 {min}–{max}"
-  },
-  "forgeSeries.noResponse": {
-    "defaultMessage": "发布未收到响应"
-  },
-  "forgeSeries.noScore": {
-    "defaultMessage": "目前还没有已评分的构建。"
-  },
-  "forgeSeries.preparing": {
-    "defaultMessage": "正在准备构建 {index} / 2"
-  },
-  "forgeSeries.provisional": {
-    "defaultMessage": "只有一次已评分构建时结果为暂定结果。无法提供两次构建的中位数。"
-  },
-  "forgeSeries.publish": {
-    "defaultMessage": "发布 2 次构建"
-  },
-  "forgeSeries.publishSeparately": {
-    "defaultMessage": "分别发布构建"
-  },
-  "forgeSeries.publishTitle": {
-    "defaultMessage": "发布标题"
-  },
-  "forgeSeries.publishing": {
-    "defaultMessage": "正在发布构建 {index} / 2…"
-  },
-  "forgeSeries.queued": {
-    "defaultMessage": "等待启动"
-  },
-  "forgeSeries.run": {
-    "defaultMessage": "运行 2 次构建"
-  },
-  "forgeSeries.running": {
-    "defaultMessage": "构建 {index} / 2 正在运行"
-  },
-  "forgeSeries.scored": {
-    "defaultMessage": "已评分"
-  },
-  "forgeSeries.settings": {
-    "defaultMessage": "应用使用相同模型、任务和设置连续执行两次全新构建。每次保留自己的评分和证据。"
-  },
-  "forgeSeries.skipped": {
-    "defaultMessage": "未启动"
-  },
-  "forgeSeries.title": {
-    "defaultMessage": "两次独立构建"
-  },
-  "forgeSeries.unreadable": {
-    "defaultMessage": "无法读取已保存的两次构建证据。各次构建仍可单独查看。"
-  },
-  "forgeSeries.view": {
-    "defaultMessage": "打开构建 {index} 的证据"
-  },
-  "forgeSeries.waitingPublish": {
-    "defaultMessage": "发布需要两次已完成且可比较的构建，以及各自的原生证据。"
-  },
-  "modelCustomFields.awaitingModel": {
-    "defaultMessage": "自定义字段：选择一个模型 ID 以查看它接受的设置。"
-  },
-  "modelCustomFields.noFields": {
-    "defaultMessage": "自定义字段：{provider} 没有为“{model}”声明任何字段，因此它以提供商的默认值运行。"
-  },
-  "macLoad.stateCancelling": {
-    "defaultMessage": "正在取消…"
-  },
-  "macLoad.stateWaiting": {
-    "defaultMessage": "等待中，排第 {position} 位"
-  },
-  "macLoad.strategy": {
-    "defaultMessage": "我的任务在哪里运行"
-  },
-  "macLoad.strategy.localFirst": {
-    "defaultMessage": "先用我的 Mac"
-  },
-  "macLoad.strategy.selfish": {
-    "defaultMessage": "先用其他 Mac"
-  },
-  "macLoad.strategyHint.localFirst": {
-    "defaultMessage": "这台 Mac 有空间就在这里运行，否则在空间最多的其他 Mac 上运行，都没有就在队列中等待。"
-  },
-  "macLoad.strategyHint.selfish": {
-    "defaultMessage": "在空间最多的其他 Mac 上运行，否则在这台 Mac 上运行，都没有就在队列中等待。让这台 Mac 保持空闲。"
-  },
-  "myMacs.runJob": {
-    "defaultMessage": "运行任务…"
-  },
-  "runJob.title": {
-    "defaultMessage": "在…上运行任务"
-  },
-  "runJob.willQueue": {
-    "defaultMessage": "现在没有 Mac 有空间。运行后它会在这台 Mac 的队列中等待，并在第一台有空间的 Mac 上启动。"
-  },
-  "runJob.target": {
-    "defaultMessage": "运行位置"
-  },
-  "runJob.best": {
-    "defaultMessage": "最佳 Mac"
-  },
-  "runJob.ranking": {
-    "defaultMessage": "当前最佳：{macs}"
-  },
-  "runJob.refusal": {
-    "defaultMessage": "{mac}：{reason}"
-  },
-  "runJob.verdictLine": {
-    "defaultMessage": "{mac}：{verdict}"
-  },
-  "runJob.inUse": {
-    "defaultMessage": "{name}（使用中）"
-  },
-  "runJob.noPlace": {
-    "defaultMessage": "目前没有 Mac 能接受此任务。"
-  },
-  "runJob.none": {
-    "defaultMessage": "你的 Mac 目前都不接受任务。请在要运行任务的 Mac 上打开“运行其他 Mac 发来的任务”。"
-  },
-  "runJob.jobsOff": {
-    "defaultMessage": "此 Mac 已关闭作业"
-  },
-  "runJob.kind": {
-    "defaultMessage": "类型"
-  },
-  "runJob.kindShell": {
-    "defaultMessage": "Shell 命令"
-  },
-  "runJob.kindPrompt": {
-    "defaultMessage": "提示"
-  },
-  "runJob.command": {
-    "defaultMessage": "{kind, select, shell {命令} other {提示}}"
-  },
-  "runJob.heavy": {
-    "defaultMessage": "重型任务"
-  },
-  "runJob.heavyHint": {
-    "defaultMessage": "一台 Mac 能同时运行的重任务（构建、渲染、训练）数量取决于它的槽位和内存。"
-  },
-  "runJob.mem": {
-    "defaultMessage": "所需内存（GB，可选）"
-  },
-  "runJob.timeout": {
-    "defaultMessage": "时间限制（秒，可选）"
-  },
-  "runJob.submit": {
-    "defaultMessage": "运行任务"
-  },
-  "runJob.close": {
-    "defaultMessage": "关闭"
-  },
-  "runJob.refused": {
-    "defaultMessage": "未发送：{reason}"
-  },
-  "myMacs.updatedAgo": {
-    "defaultMessage": "{seconds} 秒前更新"
   }
 }

@@ -2126,14 +2126,17 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Close the floating window for this session"
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Close the floating window until something new starts"
   },
   "engineGlance.collapse": {
     "defaultMessage": "Shrink to a pill"
   },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Floating window hidden for this session"
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Dismiss this failure — it comes back only if the engine fails again"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Floating window hidden until something new starts"
   },
   "engineGlance.dismissed.way": {
     "defaultMessage": "Bring it back from Settings › App, where you can also turn it off."
@@ -2143,6 +2146,9 @@
   },
   "engineGlance.expand": {
     "defaultMessage": "Show the whole card"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Float a pill when goose is minimized"
   },
   "engineGlance.forming": {
     "defaultMessage": "{count,plural,one{What it’s writing · # tool call} other{What it’s writing · # tool calls}}"
@@ -2156,8 +2162,8 @@
   "engineGlance.hide": {
     "defaultMessage": "Hide this card — bring it back from the foot of the sidebar or Settings › App"
   },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Close it here until you bring it back"
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Close it here — it comes back when something new starts"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Got it"
@@ -2306,23 +2312,23 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "The Engine's live card, small: what it is reading or writing, how fast, and which chat it serves. Click it to open the Engine."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Floating on the desktop"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "While goose is in the background"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Whenever the engine works"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Off"
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Off unless you tick it. A small pill over your other apps, in a corner you drag it to. Only its ⤢ button opens goose; dragging just moves it, and its ✕ hides it until a new job, run or split starts."
   },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "A small window over your other apps, in a corner you drag it to. It never takes focus, and brings goose forward only when you open something from it. Its close button hides it for the rest of this session."
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Show a floating activity pill when goose is minimized or in the background"
   },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "You closed it — hidden until you bring it back."
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "When it floats"
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "You closed it — hidden until something new starts."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "In the sidebar"
@@ -5792,6 +5798,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Could not read the engine settings."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Read again"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Stop"
   },
@@ -5872,6 +5881,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Rank {rank} of {requester}''s split · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Rank {rank} of another Mac's split · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Serving layers {first}–{last} for {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Serving layers {first}–{last} for another Mac · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rank {rank} of {requester}''s split · {model}"
@@ -6106,6 +6124,9 @@
   },
   "mlxSetup.step2Next": {
     "defaultMessage": "Get a model"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Reading your Macs…"
   },
   "mlxSetup.step3": {
     "defaultMessage": "Run it"
@@ -6367,6 +6388,9 @@
   },
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Stopped"
+  },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Stopped outside goose"
   },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Unreachable"

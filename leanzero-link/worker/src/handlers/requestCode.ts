@@ -1,3 +1,5 @@
+import { reserveAccountOperation } from "../controller/account-lifecycle";
+import { ControllerError } from "../controller/registry";
 import { resolveClientIp } from "../lib/clientIp";
 import { EMAIL_RATE_LIMIT, IP_RATE_LIMIT, OTP_TTL_SECONDS, RATE_WINDOW_SECONDS } from "../lib/config";
 import type { Deps } from "../lib/deps";
@@ -32,6 +34,13 @@ export async function handleRequestCode(request: Request, deps: Deps): Promise<R
   if (email === null) {
     return jsonResponse(400, { error: "invalid email" });
   }
+  let release: () => Promise<void>;
+  try { const operation = await reserveAccountOperation(deps, email, true); release = operation.release; deps = operation.deps; }
+  catch (error) {
+    if (error instanceof ControllerError) return jsonResponse(error.status, { error: error.code });
+    return jsonResponse(503, { error: "account authority unavailable" });
+  }
+  try {
   // The ip bucket is checked BEFORE the email bucket so one exhausted source cannot keep
   // burning a victim's 3-per-hour email budget with requests that would be refused anyway.
   const client = resolveClientIp(request);
@@ -71,4 +80,5 @@ export async function handleRequestCode(request: Request, deps: Deps): Promise<R
   await deps.kv.put(otpKey(email), JSON.stringify(record), { expirationTtl: OTP_TTL_SECONDS });
   deps.log("otp_issued", { email });
   return jsonResponse(200, { ok: true, email, expiresInSeconds: OTP_TTL_SECONDS });
+  } finally { await release(); }
 }

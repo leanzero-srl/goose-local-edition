@@ -108,7 +108,9 @@ export function glancePush(
   return {
     engine: buildEngineGlance(snapshot, { distributed: null, remote: null, served: [], ...options }),
     sessions,
-    prefs: { ...DEFAULT_GLANCE_PREFS, ...prefs },
+    // Opted in to the floating window, so its rules are what a fixture exercises; the opt-in itself
+    // is tested with `desktopOptIn: false` (engineGlanceDesktop.test.ts).
+    prefs: { ...DEFAULT_GLANCE_PREFS, desktopOptIn: true, ...prefs },
     desktopDismissed: false,
   };
 }

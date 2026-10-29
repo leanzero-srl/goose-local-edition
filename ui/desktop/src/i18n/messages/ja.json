@@ -389,6 +389,9 @@
   "benchmarkSection.askAbout": {
     "defaultMessage": "このランについてAIセッションを開始"
   },
+  "benchmarkSection.build": {
+    "defaultMessage": "ビルド {index}"
+  },
   "benchmarkSection.cannotDeleteNoId": {
     "defaultMessage": "このセッションにはまだランIDがありません — 起動から少し経つと表示されます"
   },
@@ -430,6 +433,9 @@
   },
   "benchmarkSection.title": {
     "defaultMessage": "Benchmark"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 回のビルド"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "拡張機能を更新しました"
@@ -1286,6 +1292,9 @@
   "confirmCloseRun.body": {
     "defaultMessage": "このウィンドウを閉じるとランは停止します。ウィンドウのバックエンドが解放され、その下で動く swarm エンジンに終了が通知されます。"
   },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "応答を続ける"
+  },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "実行を続ける"
   },
@@ -1295,17 +1304,17 @@
   "confirmCloseRun.stopAndClose": {
     "defaultMessage": "ランを停止して閉じる"
   },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "応答を停止して閉じる"
+  },
   "confirmCloseRun.stopping": {
     "defaultMessage": "ランを停止しています…"
   },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "応答を停止しています…"
+  },
   "confirmCloseRun.title": {
     "defaultMessage": "このウィンドウで swarm のランが実行中です"
-  },
-  "confirmCloseRun.warning": {
-    "defaultMessage": "警告"
-  },
-  "confirmCloseRun.turnTitle": {
-    "defaultMessage": "このウィンドウのチャットはまだ応答中です"
   },
   "confirmCloseRun.turnBody": {
     "defaultMessage": "このウィンドウを閉じると応答は停止します。チャットはこのウィンドウから送信されており、その返信はその時点で終わります。"
@@ -1313,14 +1322,11 @@
   "confirmCloseRun.turnLine": {
     "defaultMessage": "チャット: {name}"
   },
-  "confirmCloseRun.keepAnswering": {
-    "defaultMessage": "応答を続ける"
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "このウィンドウのチャットはまだ応答中です"
   },
-  "confirmCloseRun.stopAnswerAndClose": {
-    "defaultMessage": "応答を停止して閉じる"
-  },
-  "confirmCloseRun.stoppingAnswer": {
-    "defaultMessage": "応答を停止しています…"
+  "confirmCloseRun.warning": {
+    "defaultMessage": "警告"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "いいえ"
@@ -2120,11 +2126,29 @@
   "engineGlance.chat": {
     "defaultMessage": "チャット · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "新しい処理が始まるまでフローティングウィンドウを閉じる"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "ピルに縮小"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "この失敗を閉じる — エンジンが再び失敗した場合にのみ再表示されます"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "新しい処理が始まるまでフローティングウィンドウを非表示にしました"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "設定 › アプリ から再表示できます。そこでオフにすることもできます。"
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "メニューバーの goose アイコン、または 設定 › アプリ から再表示できます。設定ではオフにすることもできます。"
+  },
   "engineGlance.expand": {
     "defaultMessage": "カード全体を表示"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "goose を最小化したときにピルを表示"
   },
   "engineGlance.forming": {
     "defaultMessage": "書いている内容 · {count, plural, other {ツール呼び出し # 件}}"
@@ -2137,6 +2161,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "このカードを隠す — サイドバーの下部か 設定 › アプリ から戻せます"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "ここで閉じられます — 新しい処理が始まると戻ります"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "OK"
@@ -2285,23 +2312,32 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "エンジンのライブカードの小型版：何を読み書きしているか、速度、どのチャットに応答しているか。クリックでエンジンを開きます。"
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "デスクトップに浮かべる"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "goose がバックグラウンドのとき"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "エンジンが動いているときは常に"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "オフ"
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "チェックするまでオフです。ほかのアプリの上に小さなピルを表示し、ドラッグした隅に置きます。goose を開くのは ⤢ ボタンだけです。ドラッグは移動するだけで、✕ を押すと新しいジョブ、実行、分割が始まるまで隠れます。"
+  },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "goose を最小化したとき、またはバックグラウンドのときにフローティングのアクティビティピルを表示"
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "表示するタイミング"
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "閉じました — 新しい処理が始まるまで非表示です。"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "サイドバー内"
   },
   "engineGlanceSettings.inAppDesc": {
     "defaultMessage": "サイドバーの下部、セッション一覧の下に表示。カード自体から隠せます。隠したあとは、その場所に残る行か、ここから戻せます。"
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "再表示"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "エンジンをひと目で"
@@ -2609,6 +2645,117 @@
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "別の場所で実行中の goose サーバーに接続します（アプリの再起動が必要）"
   },
+  "forgeSeries.between": {
+    "defaultMessage": "ビルド 1 が完了しました。ビルド 2 を準備しています。"
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "ビルド {index} / 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "ビルドごとに {calls} 回の呼び出し"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "実行中のビルドを停止し、次のビルドの開始を防ぎます。完了したスコアと証拠は保持され、キャンセルによって公開されることはありません。"
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "この 2 回のビルドのベンチマークをキャンセルしますか？"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "2 回のビルドの連続実行がキャンセルされました"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "2 回のビルドの連続実行がキャンセルされました。"
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "2 回のビルドを確認中…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "キャンセル済み"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "未完了"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "2 回のビルドが完了しました。"
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "残りのビルドを公開"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "2 回のビルドの連続実行が完了しませんでした"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "2 回のビルドの連続実行が完了しませんでした。"
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "両方のビルドが完了しました"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "両方のビルドが完了する前にアプリが終了しました。保存済みの証拠は保持されています。"
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "このアプリで一度「実行」を押すと、独立したビルドを 2 回開始します。最初の採点後に 2 回目が始まり、それぞれの証拠が保持されます。"
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "leanzero.net で公開済み"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "ローカル中央値 {median} · 範囲 {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "公開への応答がありません"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "採点済みのビルドはまだありません。"
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "ビルド {index} / 2 を準備中"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "採点済みのビルドが 1 回だけの場合は暫定結果です。2 回のビルドの中央値は利用できません。"
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "2 回のビルドを公開"
+  },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "ビルドを別々に公開"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "公開タイトル"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "ビルド {index} / 2 を公開中…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "開始待ち"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "2 回のビルドを実行"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "ビルド {index} / 2 を実行中"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "採点済み"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "アプリは同じモデル、タスク、設定で新しいビルドを 2 回連続して実行します。それぞれのスコアと証拠が保持されます。"
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "未開始"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "2 回の独立したビルド"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "保存済みの 2 回のビルドの証拠を読み込めませんでした。個別のビルドは引き続き利用できます。"
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "ビルド {index} の証拠を開く"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "公開には、比較可能な 2 回の完了済みビルドと、それぞれのネイティブな証拠が必要です。"
+  },
   "formingPanel.callChars": {
     "defaultMessage": "{chars} 文字"
   },
@@ -2750,6 +2897,9 @@
   "freeMemory.nuclearTotal": {
     "defaultMessage": "チェック済み: <b>{gb} GB</b>"
   },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "{mac} でのみ"
+  },
   "freeMemory.protectedChip": {
     "defaultMessage": "保護"
   },
@@ -2770,9 +2920,6 @@
   },
   "freeMemory.remoteQuitOff": {
     "defaultMessage": "{mac} は他の Mac によるアプリの終了やモデルサーバーのアンロードを許可していないため、ここからは goose 自身のメモリだけを解放できます。許可するには、{mac} で goose を開き、設定 › アプリ で「リンクされた Mac がこの Mac のアプリを終了できるようにする」をオンにしてください。または {mac} 上で直接終了してください。"
-  },
-  "freeMemory.onlyThere": {
-    "defaultMessage": "{mac} でのみ"
   },
   "freeMemory.title": {
     "defaultMessage": "{mac} のメモリを解放"
@@ -4292,14 +4439,14 @@
   "macLoad.policy": {
     "defaultMessage": "誰かがこの Mac を使っているとき"
   },
-  "macLoad.policyHint": {
-    "defaultMessage": "ビジーは計測値で判断します：下限を超えるメモリ、空いている重いジョブ枠、コアあたりの負荷。キーボードを使っている人は同点時の判断にだけ使います。"
-  },
   "macLoad.policy.allow": {
     "defaultMessage": "ジョブを受ける"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "ジョブを断る"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "ビジーは計測値で判断します：下限を超えるメモリ、空いている重いジョブ枠、コアあたりの負荷。キーボードを使っている人は同点時の判断にだけ使います。"
   },
   "macLoad.queueNoTry": {
     "defaultMessage": "まだどの Mac にも割り当てていません: 前のジョブが待機中です。"
@@ -4327,6 +4474,27 @@
   },
   "macLoad.state": {
     "defaultMessage": "状態"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "キャンセル中…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "待機中、{position} 番目"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "ジョブの実行先"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "自分の Mac を優先"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "他の Mac を優先"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "空きがあればこの Mac で、なければ最も空きのある他の Mac で実行し、どちらもなければキューで待ちます。"
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "最も空きのある他の Mac で、なければこの Mac で実行し、どちらもなければキューで待ちます。この Mac を空けておけます。"
   },
   "macLoad.title": {
     "defaultMessage": "負荷"
@@ -5630,6 +5798,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "エンジン設定を読み取れませんでした。"
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "再読み込み"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "停止"
   },
@@ -5710,6 +5881,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "{requester} の分割のランク {rank} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "別の Mac の分割のランク {rank} · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "{requester} のためにレイヤー {first}–{last} を担当中 · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "別の Mac のためにレイヤー {first}–{last} を担当中 · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} の分割のランク {rank} · {model}"
@@ -5938,6 +6118,9 @@
   },
   "mlxSetup.step2": {
     "defaultMessage": "モデル"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Mac を読み込み中…"
   },
   "mlxSetup.step2Done": {
     "defaultMessage": "Mac 上に {count} 個"
@@ -6206,6 +6389,9 @@
   "mlxStateTile.state.stopped": {
     "defaultMessage": "停止"
   },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "goose の外部で停止"
+  },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "到達不能"
   },
@@ -6362,6 +6548,9 @@
   "modelCustomFields.above": {
     "defaultMessage": "最大値は {max} です。"
   },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "カスタムフィールド: モデル ID を選ぶと、受け付ける設定が表示されます。"
+  },
   "modelCustomFields.below": {
     "defaultMessage": "最小値は {min} です。"
   },
@@ -6379,6 +6568,9 @@
   },
   "modelCustomFields.modelDefault": {
     "defaultMessage": "モデルのデフォルト ({value})"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "カスタムフィールド: {provider} は「{model}」に対してフィールドを宣言していないため、プロバイダーの既定値で実行されます。"
   },
   "modelCustomFields.notANumber": {
     "defaultMessage": "数値を入力してください。"
@@ -6917,6 +7109,9 @@
   "myMacs.reconnecting": {
     "defaultMessage": "再接続中…(この Mac の goose との接続が切れました)"
   },
+  "myMacs.runJob": {
+    "defaultMessage": "ジョブを実行…"
+  },
   "myMacs.saveFailed": {
     "defaultMessage": "スイッチを保存できませんでした"
   },
@@ -6931,6 +7126,9 @@
   },
   "myMacs.title": {
     "defaultMessage": "マイ Mac"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "{seconds}秒前に更新"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -6968,30 +7166,6 @@
   "needsYouCard.closeNotice": {
     "defaultMessage": "この通知を閉じる"
   },
-  "needsYouCard.queued": {
-    "defaultMessage": "キュー内 · このターンが終わったら回答します"
-  },
-  "needsYouCard.queuedChip": {
-    "defaultMessage": "キュー内"
-  },
-  "needsYouCard.sending": {
-    "defaultMessage": "回答を送信しています…"
-  },
-  "needsYouCard.stack": {
-    "defaultMessage": "{count, plural, other {あなたの対応が必要 · 質問 # 件}}"
-  },
-  "needsYouCard.stackQueued": {
-    "defaultMessage": "{count} 件がキュー内"
-  },
-  "needsYouCard.unsentAnswer": {
-    "defaultMessage": "あなたの回答: {answer}"
-  },
-  "needsYouCard.unsentClosed": {
-    "defaultMessage": "未送信 — キュー内の回答が送られる前に、この質問は閉じられました。"
-  },
-  "needsYouCard.unsentFailed": {
-    "defaultMessage": "未送信 — キュー内の回答を保存できませんでした: {error}"
-  },
   "needsYouCard.dismiss": {
     "defaultMessage": "閉じる"
   },
@@ -7010,11 +7184,35 @@
   "needsYouCard.position": {
     "defaultMessage": "{index} / {total}"
   },
+  "needsYouCard.queued": {
+    "defaultMessage": "キュー内 · このターンが終わったら回答します"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "キュー内"
+  },
   "needsYouCard.recommended": {
     "defaultMessage": "おすすめ"
   },
+  "needsYouCard.sending": {
+    "defaultMessage": "回答を送信しています…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, other {あなたの対応が必要 · 質問 # 件}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} 件がキュー内"
+  },
   "needsYouCard.title": {
     "defaultMessage": "あなたの対応が必要"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "あなたの回答: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "未送信 — キュー内の回答が送られる前に、この質問は閉じられました。"
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "未送信 — キュー内の回答を保存できませんでした: {error}"
   },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX エンジンの保存済みモデルは {served} を提供しています。このノードは {wanted} を必要とします。Providers でモデルを選んでください。"
@@ -9614,6 +9812,72 @@
   "responseStyle.detailedLabel": {
     "defaultMessage": "詳細"
   },
+  "runJob.best": {
+    "defaultMessage": "最適な Mac"
+  },
+  "runJob.close": {
+    "defaultMessage": "閉じる"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {コマンド} other {プロンプト}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "重いジョブ"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Mac は、スロットとメモリが許す数だけ重いジョブ（ビルド、レンダリング、学習）を実行します。"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name}（使用中）"
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "この Mac ではジョブがオフです"
+  },
+  "runJob.kind": {
+    "defaultMessage": "種類"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "プロンプト"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "シェルコマンド"
+  },
+  "runJob.mem": {
+    "defaultMessage": "必要なメモリ（GB、任意）"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "現在このジョブを受けられる Mac はありません。"
+  },
+  "runJob.none": {
+    "defaultMessage": "現在ジョブを受け付けている Mac はありません。実行させたい Mac で「他の Mac から送られたジョブを実行」をオンにしてください。"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "現在の最適順: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "runJob.refused": {
+    "defaultMessage": "送信されませんでした: {reason}"
+  },
+  "runJob.submit": {
+    "defaultMessage": "ジョブを実行"
+  },
+  "runJob.target": {
+    "defaultMessage": "実行先"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "制限時間（秒、任意）"
+  },
+  "runJob.title": {
+    "defaultMessage": "ジョブの実行先…"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "今は空きのある Mac がありません。実行するとこの Mac のキューで待ち、最初に空いた Mac で開始します。"
+  },
   "scheduleDetailView.actions": {
     "defaultMessage": "操作"
   },
@@ -11720,29 +11984,29 @@
   "unansweredPrompt.appClosed": {
     "defaultMessage": "このターンは返答なしで終わりました — goose の作業中にアプリが閉じた可能性があります。"
   },
-  "unansweredPrompt.failed": {
-    "defaultMessage": "このターンは返答の前に失敗しました。"
-  },
-  "unansweredPrompt.failedWithReason": {
-    "defaultMessage": "このターンは返答の前に失敗しました: {reason}"
-  },
-  "unansweredPrompt.resend": {
-    "defaultMessage": "再送信"
-  },
-  "unansweredPrompt.title": {
-    "defaultMessage": "goose はこれに答える前に止まりました"
-  },
   "unansweredPrompt.continue": {
     "defaultMessage": "続行"
   },
   "unansweredPrompt.continueMessage": {
     "defaultMessage": "中断したところから続けてください。"
   },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "このターンは返答の前に失敗しました。"
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "このターンは返答の前に失敗しました: {reason}"
+  },
   "unansweredPrompt.midway": {
     "defaultMessage": "goose は途中で止まりました"
   },
   "unansweredPrompt.midwayAppClosed": {
     "defaultMessage": "goose は途中で止まりました — 作業中にアプリが閉じました"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "再送信"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose はこれに答える前に止まりました"
   },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "キャンセル"
@@ -11908,245 +12172,5 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
-  },
-  "engineGlance.close": {
-    "defaultMessage": "このセッションの間、フローティングウィンドウを閉じる"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "ここで閉じると、戻すまで表示されません"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "このセッションの間、フローティングウィンドウを隠しました"
-  },
-  "engineGlance.dismissed.way": {
-    "defaultMessage": "設定 › アプリ から再表示できます。そこでオフにすることもできます。"
-  },
-  "engineGlance.dismissed.wayTray": {
-    "defaultMessage": "メニューバーの goose アイコン、または 設定 › アプリ から再表示できます。設定ではオフにすることもできます。"
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "ほかのアプリの上に浮かぶ小さなウィンドウで、ドラッグした隅に置かれます。フォーカスを奪うことはなく、そこから何かを開いたときだけ goose を前面に出します。閉じるボタンを押すと、このセッションの残りの間は隠れます。"
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "閉じられています — 再表示するまで隠れたままです。"
-  },
-  "engineGlanceSettings.showAgain": {
-    "defaultMessage": "再表示"
-  },
-  "benchmarkSection.build": {
-    "defaultMessage": "ビルド {index}"
-  },
-  "benchmarkSection.twoBuilds": {
-    "defaultMessage": "2 回のビルド"
-  },
-  "forgeSeries.between": {
-    "defaultMessage": "ビルド 1 が完了しました。ビルド 2 を準備しています。"
-  },
-  "forgeSeries.build": {
-    "defaultMessage": "ビルド {index} / 2"
-  },
-  "forgeSeries.callBudget": {
-    "defaultMessage": "ビルドごとに {calls} 回の呼び出し"
-  },
-  "forgeSeries.cancelDetail": {
-    "defaultMessage": "実行中のビルドを停止し、次のビルドの開始を防ぎます。完了したスコアと証拠は保持され、キャンセルによって公開されることはありません。"
-  },
-  "forgeSeries.cancelTitle": {
-    "defaultMessage": "この 2 回のビルドのベンチマークをキャンセルしますか？"
-  },
-  "forgeSeries.cancelled": {
-    "defaultMessage": "2 回のビルドの連続実行がキャンセルされました"
-  },
-  "forgeSeries.cancelledStatus": {
-    "defaultMessage": "2 回のビルドの連続実行がキャンセルされました。"
-  },
-  "forgeSeries.checking": {
-    "defaultMessage": "2 回のビルドを確認中…"
-  },
-  "forgeSeries.childCancelled": {
-    "defaultMessage": "キャンセル済み"
-  },
-  "forgeSeries.childFailed": {
-    "defaultMessage": "未完了"
-  },
-  "forgeSeries.completeStatus": {
-    "defaultMessage": "2 回のビルドが完了しました。"
-  },
-  "forgeSeries.continuePublish": {
-    "defaultMessage": "残りのビルドを公開"
-  },
-  "forgeSeries.failed": {
-    "defaultMessage": "2 回のビルドの連続実行が完了しませんでした"
-  },
-  "forgeSeries.failedStatus": {
-    "defaultMessage": "2 回のビルドの連続実行が完了しませんでした。"
-  },
-  "forgeSeries.finished": {
-    "defaultMessage": "両方のビルドが完了しました"
-  },
-  "forgeSeries.interrupted": {
-    "defaultMessage": "両方のビルドが完了する前にアプリが終了しました。保存済みの証拠は保持されています。"
-  },
-  "forgeSeries.intro": {
-    "defaultMessage": "このアプリで一度「実行」を押すと、独立したビルドを 2 回開始します。最初の採点後に 2 回目が始まり、それぞれの証拠が保持されます。"
-  },
-  "forgeSeries.live": {
-    "defaultMessage": "leanzero.net で公開済み"
-  },
-  "forgeSeries.median": {
-    "defaultMessage": "ローカル中央値 {median} · 範囲 {min}–{max}"
-  },
-  "forgeSeries.noResponse": {
-    "defaultMessage": "公開への応答がありません"
-  },
-  "forgeSeries.noScore": {
-    "defaultMessage": "採点済みのビルドはまだありません。"
-  },
-  "forgeSeries.preparing": {
-    "defaultMessage": "ビルド {index} / 2 を準備中"
-  },
-  "forgeSeries.provisional": {
-    "defaultMessage": "採点済みのビルドが 1 回だけの場合は暫定結果です。2 回のビルドの中央値は利用できません。"
-  },
-  "forgeSeries.publish": {
-    "defaultMessage": "2 回のビルドを公開"
-  },
-  "forgeSeries.publishSeparately": {
-    "defaultMessage": "ビルドを別々に公開"
-  },
-  "forgeSeries.publishTitle": {
-    "defaultMessage": "公開タイトル"
-  },
-  "forgeSeries.publishing": {
-    "defaultMessage": "ビルド {index} / 2 を公開中…"
-  },
-  "forgeSeries.queued": {
-    "defaultMessage": "開始待ち"
-  },
-  "forgeSeries.run": {
-    "defaultMessage": "2 回のビルドを実行"
-  },
-  "forgeSeries.running": {
-    "defaultMessage": "ビルド {index} / 2 を実行中"
-  },
-  "forgeSeries.scored": {
-    "defaultMessage": "採点済み"
-  },
-  "forgeSeries.settings": {
-    "defaultMessage": "アプリは同じモデル、タスク、設定で新しいビルドを 2 回連続して実行します。それぞれのスコアと証拠が保持されます。"
-  },
-  "forgeSeries.skipped": {
-    "defaultMessage": "未開始"
-  },
-  "forgeSeries.title": {
-    "defaultMessage": "2 回の独立したビルド"
-  },
-  "forgeSeries.unreadable": {
-    "defaultMessage": "保存済みの 2 回のビルドの証拠を読み込めませんでした。個別のビルドは引き続き利用できます。"
-  },
-  "forgeSeries.view": {
-    "defaultMessage": "ビルド {index} の証拠を開く"
-  },
-  "forgeSeries.waitingPublish": {
-    "defaultMessage": "公開には、比較可能な 2 回の完了済みビルドと、それぞれのネイティブな証拠が必要です。"
-  },
-  "modelCustomFields.awaitingModel": {
-    "defaultMessage": "カスタムフィールド: モデル ID を選ぶと、受け付ける設定が表示されます。"
-  },
-  "modelCustomFields.noFields": {
-    "defaultMessage": "カスタムフィールド: {provider} は「{model}」に対してフィールドを宣言していないため、プロバイダーの既定値で実行されます。"
-  },
-  "macLoad.stateCancelling": {
-    "defaultMessage": "キャンセル中…"
-  },
-  "macLoad.stateWaiting": {
-    "defaultMessage": "待機中、{position} 番目"
-  },
-  "macLoad.strategy": {
-    "defaultMessage": "ジョブの実行先"
-  },
-  "macLoad.strategy.localFirst": {
-    "defaultMessage": "自分の Mac を優先"
-  },
-  "macLoad.strategy.selfish": {
-    "defaultMessage": "他の Mac を優先"
-  },
-  "macLoad.strategyHint.localFirst": {
-    "defaultMessage": "空きがあればこの Mac で、なければ最も空きのある他の Mac で実行し、どちらもなければキューで待ちます。"
-  },
-  "macLoad.strategyHint.selfish": {
-    "defaultMessage": "最も空きのある他の Mac で、なければこの Mac で実行し、どちらもなければキューで待ちます。この Mac を空けておけます。"
-  },
-  "myMacs.runJob": {
-    "defaultMessage": "ジョブを実行…"
-  },
-  "runJob.title": {
-    "defaultMessage": "ジョブの実行先…"
-  },
-  "runJob.willQueue": {
-    "defaultMessage": "今は空きのある Mac がありません。実行するとこの Mac のキューで待ち、最初に空いた Mac で開始します。"
-  },
-  "runJob.target": {
-    "defaultMessage": "実行先"
-  },
-  "runJob.best": {
-    "defaultMessage": "最適な Mac"
-  },
-  "runJob.ranking": {
-    "defaultMessage": "現在の最適順: {macs}"
-  },
-  "runJob.refusal": {
-    "defaultMessage": "{mac}: {reason}"
-  },
-  "runJob.verdictLine": {
-    "defaultMessage": "{mac}: {verdict}"
-  },
-  "runJob.inUse": {
-    "defaultMessage": "{name}（使用中）"
-  },
-  "runJob.noPlace": {
-    "defaultMessage": "現在このジョブを受けられる Mac はありません。"
-  },
-  "runJob.none": {
-    "defaultMessage": "現在ジョブを受け付けている Mac はありません。実行させたい Mac で「他の Mac から送られたジョブを実行」をオンにしてください。"
-  },
-  "runJob.jobsOff": {
-    "defaultMessage": "この Mac ではジョブがオフです"
-  },
-  "runJob.kind": {
-    "defaultMessage": "種類"
-  },
-  "runJob.kindShell": {
-    "defaultMessage": "シェルコマンド"
-  },
-  "runJob.kindPrompt": {
-    "defaultMessage": "プロンプト"
-  },
-  "runJob.command": {
-    "defaultMessage": "{kind, select, shell {コマンド} other {プロンプト}}"
-  },
-  "runJob.heavy": {
-    "defaultMessage": "重いジョブ"
-  },
-  "runJob.heavyHint": {
-    "defaultMessage": "Mac は、スロットとメモリが許す数だけ重いジョブ（ビルド、レンダリング、学習）を実行します。"
-  },
-  "runJob.mem": {
-    "defaultMessage": "必要なメモリ（GB、任意）"
-  },
-  "runJob.timeout": {
-    "defaultMessage": "制限時間（秒、任意）"
-  },
-  "runJob.submit": {
-    "defaultMessage": "ジョブを実行"
-  },
-  "runJob.close": {
-    "defaultMessage": "閉じる"
-  },
-  "runJob.refused": {
-    "defaultMessage": "送信されませんでした: {reason}"
-  },
-  "myMacs.updatedAgo": {
-    "defaultMessage": "{seconds}秒前に更新"
   }
 }

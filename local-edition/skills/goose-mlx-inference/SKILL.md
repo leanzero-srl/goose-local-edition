@@ -1,6 +1,6 @@
 ---
 name: goose-mlx-inference
-description: THE source of truth for running ANY local model through goose with the LeanZero MLX engine (Rapid-MLX fork; current pin = ENGINE_LAUNCHER in crates/goose-sidecar/src/engine.rs) on the laptop, the workhorse or Gabee's Mac — which provider (swarm/omlx for chat, built-in openai at the loopback endpoint for benchmarks; never a custom provider or proxy), the app's engine argv (--text-only, MTP, prefix cache), thinking/effort, long-context caching. LOAD IT BEFORE launching rapid-mlx by hand, writing a proxy or custom provider, or running Gauntlet / Forge 1.0 / Forge 2.0 against a local, candidate or fine-tuned model. Also: operate and evolve the engine itself (crates/goose-sidecar, the MLX window, the fork, the engine bake-off), goose's DISTRIBUTED engine (JACCL/ring split, qwen4_exp pipeline, Flash, rank launcher/supervisor) and REMOTE SINGLE (the engine on a LeanZero Link peer); dated record in references/. The raw two-Mac MLX/JACCL layer underneath is the mlx-jaccl-cluster skill.
+description: THE source of truth for running ANY local model through goose with the LeanZero MLX engine (Rapid-MLX fork; current pin = ENGINE_LAUNCHER in crates/goose-sidecar/src/engine.rs) on the laptop, the workhorse or Gabee's Mac — which provider (swarm/omlx for chat, built-in openai at the loopback endpoint for benchmarks; never a custom provider or proxy), the app's engine argv (--text-only, MTP, prefix cache), thinking/effort, long-context caching. LOAD IT BEFORE preparing ANY model for use or benchmark (its MODEL READINESS GATE: right build, vision/MTP/n-gram served end to end, max measured context incl. YaRN), before launching rapid-mlx by hand, writing a proxy or custom provider, or running Gauntlet / Forge 1.0 / Forge 2.0 against a local, candidate or fine-tuned model. Also: operate and evolve the engine itself (crates/goose-sidecar, the MLX window, the fork, the engine bake-off), goose's DISTRIBUTED engine (JACCL/ring split, qwen4_exp pipeline, Flash, rank launcher/supervisor) and REMOTE SINGLE (the engine on a LeanZero Link peer); dated record in references/. The raw two-Mac MLX/JACCL layer underneath is the mlx-jaccl-cluster skill.
 ---
 
 # goose-mlx-inference
@@ -17,6 +17,66 @@ which stays permanently. It supersedes only `crates/goose-local-inference` (the 
 workload: the SWARM (N concurrent long-context tool-calling agents). Plan of record:
 `~/.claude/plans/i-want-you-to-enumerated-hejlsberg.md`. Campaign state: `local-edition/mlx/NOW.md`.
 
+## MODEL READINESS GATE — use every model to the fullest on our machines (MANDATORY; owner 2026-10-29)
+Run this BEFORE any local benchmark (Gauntlet / Forge) AND before putting a model into use (a new default, a swarm
+role, a published profile, an article). Owner: *"always check and ensure that the context is being taken care of
+before doing a local benchmark or preparing a model for usage ... use this same process we did now to always ensure
+we're using our models with our machinery to the fullest"*.
+WHY (2026-10-27/29, each step cost a 3-6 h run or a public number):
+- MiMo ran at goose's default 128k although the split had been proven to 275k (0.5894 vs cloud 0.7909).
+- An 8 GB "headroom" invented by an agent was reported to the owner as his rule.
+- Qwen3.8-Flash-Next ran the Gauntlet BLIND. The build (`rapid-mlx/...-4bit`) said "text-only, vision tower not enabled",
+  the engine pinned its alias text-only, and goose forced `--text-only`. It was published at 0.0065, then hidden.
+- That build was also the leanest quant in existence: only the router gates were at 8-bit.
+- Nobody had checked that the open model reaches 1M with YaRN while our engine ignored rope_scaling.
+Write the answers into the run's NOTES.md / parity file. A step that cannot pass is a CAVEAT next to the score, never silence.
+
+1. **Is this the right build?** (research first; record a row in the topic's RESEARCH-LEDGER)
+   - Provenance: who converted it, from which upstream repo, and on what date. Pin the HF commit.
+   - Alternatives: list every MLX build (official, mlx-community, Jundot/oMLX, unsloth, lmstudio-community). Compare
+     downloads/likes, the quant recipe (are the sensitive layers at 8-bit or bf16: router/gates, shared experts,
+     linear-attention/GDN projections, embed, lm_head, MTP head), imatrix calibration, and reported problems. Read the
+     card's own "Status" line: "experimental", "text-only" and "not enabled" are red flags.
+   - Tokenizer, chat_template and generation_config must be byte-identical to the official repo. Sample a few norm
+     tensors against the official bf16 (catches the "+1 folded twice" class of bug).
+   - Verify every file's sha256 against HF after the download.
+   - Pick the best build that keeps everything below. Delete the loser by exact path (the drive is not a backup).
+2. **Does it keep every capability the model has, and do WE serve them?**
+   - From config.json + the safetensors index: modalities (vision_config / audio / video plus their tower tensors),
+     MTP head (mtp.safetensors or in-shard), PLE/n-gram tables, thinking.
+   - Then prove each one END TO END on our engine, not from the card:
+     - `/v1/models` advertises vision under the served name;
+     - a real image gets a correct description;
+     - the MTP and prompt-lookup counters move in `/v1/status`;
+     - PLE offload shows in Metal active memory.
+   - `--text-only` is a FAIL for any model with a tower, unless the engine truly cannot serve it on the fast lane. Then
+     fix the engine (lz.16-ple.2+ shows the pattern: TEXT_LANE_VISION_FAMILIES).
+3. **Context: the largest the model AND the machine can actually hold.**
+   - Native `max_position_embeddings`, plus any rope_scaling / YaRN in the official card. Does our engine implement it
+     (grep the model file)? Cloud Qwen3.8-Flash = 1M via YaRN. Open weights are 262k native.
+   - The cloud's real need: peak prompt_tokens in the cloud run's telemetry (Gauntlet sb-7.2 peaked at 322,851).
+   - KV arithmetic from config.json: full-attention layers × KV heads × (k_dim+v_dim) × bytes. Examples:
+     Flash-Next 24.6 KB/token; MiMo 23 KB/token. Linear/SWA layers are constant.
+   - Measure, don't predict. Run a needle + doc_quote at stepped lengths (e.g. 128k / 262k / 300k / 400k / 512k) on
+     the target Mac. Record TTFT, peak Metal GB and swap per step; stop a step before swap grows.
+   - Operating point = the largest step whose MEASURED peak stays clear of the Metal ceiling. Ceilings: workmule
+     ~115 GB, workhorse ~77 GB, laptop ~115 GB, Gabee ~48 GB. Example 2026-10-29: Flash 400k peaked 96 GB on the mule
+     = production; 512k at 114.7 GB = "fits, at the ceiling", not used for a 5 h run.
+   - Every margin names its origin (owner rule vs mine).
+   - Never leave goose's default context (128k) on a model proven for more.
+4. **Speed levers on, and proven lossless:** MTP, prompt lookup (n-gram), PLE offload, prefix cache.
+   - A/B each lever with greedy, at 8k and at the operating context. code_edit must be byte-identical. A lever that
+     changes greedy output, or does not speed anything up, stays OFF and gets a ledger line (see MiMo MTP on the split,
+     dropped 2026-10-29).
+   - Streamed output must equal the non-streamed bytes (the lz.16 whitespace bug corrupted every streamed file write
+     before 2026-10-29).
+5. **Machinery:** pick the Mac or split from the measured peak in step 3 (node-probe headroom; Studios first). One Goose
+   app per Mac. The model copy sits on that Mac's internal disk or on the HARD NFS mount.
+6. **Benchmark only:** print the parity table vs the cloud entrant (context, vision, thinking actually sent, sampling,
+   tool parser, output cap ≥ the cloud's longest reply, timeouts) and get every row PASS before pressing Run. See
+   goose-benchmark-iteration "LOCAL-MODEL RUNS". After publishing, re-open the run page and check that the caveats are
+   on it.
+
 ## RUNNING A LOCAL MODEL — ground truth (read this FIRST; 2026-10-14)
 Written after a session ran the T12 Forge 2.0 bake-off on Gabee's Mac HEADLESSLY without loading this skill: it tried
 provider `omlx` (refused by the bench fence), hand-launched Rapid-MLX with its own flags, wrote a custom provider and a
@@ -29,7 +89,9 @@ Every line below has file:line evidence in the T12 plan's "Local bake-off REDESI
   `rapid-mlx[mtp] @ …Rapid-MLX@v0.14.3-lz.10`). The installed app's pin:
   `strings "/Applications/Goose Swarm.app/Contents/Resources/bin/goose" | grep -o 'Rapid-MLX@[^ "]*'`.
 - **The engine is mounted BY THE APP, never typed.** `build_serve_command` (engine.rs ~651-750) passes:
-  - `--text-only` for any vision-declared checkpoint (every Qwen3.8 hybrid). Without it the model lands on the multimodal
+  - `--text-only` for any vision-declared checkpoint (every Qwen3.8 hybrid) EXCEPT a qwen4_exp checkpoint with its tower
+    tensors in the index (Qwen3.8-Flash-Next: `TEXT_LANE_VISION_FAMILIES`, pin >= lz.16-ple.2, 2026-10-29): that one reads
+    images on the text lane with MTP/PLD/PLE/batching/prefix cache kept. For the others: without it the model lands on the multimodal
     lane: 1 sequence, `--cache-memory-*` ignored, snapshots over `APC_MEMORY_MAX_GB` (default 5.2 GiB on 64 GB)
     silently skipped.
   - `--max-concurrent-requests 8`, `--enable-prefix-cache --cache-memory-percent 0.35 --hybrid-cache-entries 24`.
@@ -77,7 +139,7 @@ Every line below has file:line evidence in the T12 plan's "Local bake-off REDESI
   - `run_build.py` headless;
   - editing the model's chat template (`pin_medium.py` was a pilot hack; restore `*.orig-xhigh`).
   If the app cannot do it, the fix is in goose or the fork, released and installed.
-- **Before any local-model run, write down:**
+- **Before any local-model run, pass the MODEL READINESS GATE (top of this file) and write down:**
   - the app version;
   - the engine argv from `ps`;
   - whether `mtp.safetensors` exists;
@@ -669,6 +731,80 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   side call held 42 s longer.
 - Q-503: goose read free memory with host_statistics64, which macOS rate-limits for non-Apple processes (a cached
   copy returned as success). memory.rs now reads the vm.page_* counters live through sysctl.
+
+### MiMo-V2.6-Flash on the mlx_lm pipeline split: correct usage + prompt cache (2026-10-27, mimo-distributed b8bb49344)
+- Model `mlx-community/MiMo-V2.6-Flash-RL-mxfp4-q8` (167 GB, mimo_v2, 48 layers: 9 full attention + 39 SWA window 128,
+  attention sinks on SWA). Ranks run `mlx_lm.server --pipeline` under goose's TENSOR wrapper (rank_wrapper.py +
+  rank_pipeline_split.py) in the pipeline env (`~/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12`, mlx_lm 0.31.3 +
+  vendored mimo_v2). NOT pipeline_qwen4_serve.
+- Correct usage (HF card + Xiaomi docs mimo.mi.com "model hyperparameters", updated 2026-10-20): temperature 1.0,
+  top_p 0.95 (Xiaomi's API forces them); thinking ON by default (`enable_thinking=False` renders `<think></think>`;
+  thinking on renders a bare `<|im_start|>assistant\n` and the model writes `<think>` itself); history assistant rows
+  render `<think>{reasoning_content}</think>`; tool calls = qwen3_coder XML with NO newline
+  (`<tool_call><function=N><parameter=p>v</parameter></function></tool_call>`); eos 151643/151645/151672;
+  generation_config `max_new_tokens 2048` (vLLM trap: becomes the default cap; goose's rank_budget ignores it, good).
+- What goose already did right: sampling from generation_config (rank_sampling: temp 1.0 / top_p 0.95; `do_sample:false`
+  is a bool and ignored, correct); reasoning parsed by mlx_lm's state machine (`<think>` single tokens, delta field
+  `reasoning`, goose reads it); goose sends `reasoning_content` back (preserve_thinking_context = !is_direct_openai_host).
+- Mismatches FIXED: (1) tool parser json_tools -> qwen3_coder (95784b84b, the live agent). (2) THINKING: the rank turned
+  thinking OFF on every tool-bearing request (single-engine rule Q-135) and goose's `openai` bench provider sends no
+  effort (T12 G1 still unmerged, lives on t12/local-bench-fidelity) -> a local MiMo Gauntlet was a NON-thinking run vs a
+  cloud baseline that thought (OpenRouter 10-02: 265k reasoning tokens). Now `TOOL_TURNS_THINK` (rank_thinking.py, set
+  by rank_pipeline_split.py): tool turns keep the template's default (on); pins and tool-less helper calls stay off.
+  (3) CACHE: see below.
+- Prompt cache design (mlx_lm 0.31.3 LRUPromptCache): a RotatingKVCache past its window is NOT trimmable, and a cache is
+  trimmable only if every layer is, so a longer entry is never trimmed back; reuse is exact or a stored strict prefix
+  (segment-end snapshots + the prompt+answer entry). A restored ring holds exactly the trailing window before that
+  point (extract() rolls a rotated ring to temporal order and drops left padding), so a hit == cold, by design. Ranks
+  evict alike via the weighted nbytes (rank_pipeline_split.py). NO gap for append-only chats: a "fix" that cut
+  tail-less thinking-on prompts at their last message (b47a3ef8f) was REVERTED (312cf5a3e) after the real-mlx_lm test
+  showed upstream already reuses prompt[k-1]-1 tokens per step with the cut off (an entry the next request extends);
+  the cut only doubled snapshots. Guard: launch.rs `a_thinking_mimo_chat_without_a_tail_reads_its_conversation_
+  through_real_mlx_lm` (tiny gemma3_text, rings window 8, MiMo template fixture, thinking on, tools, no tail):
+  cached_tokens == what the LRU itself restores, == prompt[k-1]-1, rings restored past the window, warm == cold logits.
+- "cached_tokens 3 of 15,597" (live 16k direct prompt) is NOT a broken counter: a one-shot prompt is cold by
+  construction; 3 = mlx_lm's system segment (rendered WITHOUT tools, MiMo puts the tools system block first). Through
+  goose (omlx, transient tail) the live split read 19,608 of 19,902 (llm_request logs, cache_read_input_tokens).
+- LIVE (2026-10-27 13:20, split 18/30, served window 118,016, client scratchpad p1/cachetest.py): 10,177-token prompt
+  cold TTFT 23.6 s -> repeat 0.15 s (cached 10,176), greedy outputs identical; a second conversation cold 25.7 s ->
+  0.48 s, identical; agent chat (tools, thinking on, 3 calls) every turn cached = previous prompt - 1, all answers
+  correct incl. a table row 4k tokens back. Verdict: reuse real, counter right, SWA restore exact.
+- A shared prefix INSIDE one user message is never reused (no snapshot inside a message): test cache reuse with
+  multi-turn appends, not "same table, different question in the same message".
+- Cloud baselines on the board: Gauntlet sb-7.2 0.7909 (2026-10-02, OpenRouter xiaomi/mimo-v2.6-flash, 2.1 h, 131
+  requests, 37M in / 36.5M cached / 400k out); Forge 2.0 0.5283 median of 2 (0.5538 / 0.5028, 2026-10-11).
+- Tests: cargo test -p goose-sidecar 501 lib + integration green on the laptop (node-run), fmt clean.
+- 2026-10-27 LOCAL GAUNTLET sb-7.2 (split 18/30, window 119,808, dev app 3.0.132 @ 9411914e0f): 0.5894 vs cloud
+  0.7909 (raw 0.8083 vs 0.838; admission ceiling 0.599 from s_visible_surface 109/120 pixels). 130 calls, 4h32m + 9.5
+  min scoring, 5 compactions (cloud 0 at 1M), decode 27.4 tok/s. Losses are all 3D pixel geometry; backend checks beat
+  cloud. TRAPS: (1) the bench's `openai` entrant at a loopback engine never asked /v1/models before sending an image ->
+  404 "Only 'text' content type is supported" killed run 1 at 2h08m; fixed 9411914e0f (placeholder + one retry without
+  images + permanent-4xx marker). (2) The mlx-community quant is TEXT-ONLY (no vision tower), cloud lists image input:
+  a vision-parity caveat on every local score; mlx-vlm has mimo_v2 vision, our split cannot serve it. (3) goose
+  compacts at ~0.88 of the served window: set the split to >= 256k AND GOOSE_CONTEXT_LIMIT before a parity run.
+  Pre-flight: ~/goose-builds/loop-state/local-parity/parity_check.py (PASS/FAIL table). Plan: goose-wt-mimo
+  HANDOFF.md "Session 12 plan". Run brun-0312730b was published before the owner's hold; removal is his call.
+
+### MiMo-V2.6 VISION on the split — Session 12 (2026-10-27, goose mimo-distributed 1a2b0b8267, fork lz-pipeline-qwen4.16)
+- MODEL NOW: EigenLabs/MiMo-V2.6-Flash-MOPD-MLX-4bit-mtp (171 GB, MOPD = what Xiaomi's API and so the cloud baseline
+  serve since 2026-09-25; text quant identical to the old mlx-community RL mxfp4-q8, which is DELETED). mlx-vlm key layout:
+  language_model.* + vision_tower.* (1.457 GB bf16) + audio_encoder/speech_embeddings (0.277) + MTP (1.976 bf16).
+- HOW IT WORKS: LM positions are plain 1-D (HF modeling, SGLang, vLLM: arange, no M-RoPE). Rank 0 (HTTP) encodes images
+  with the fork's mimo_v2_media ViT, each <|image_pad|> becomes N hash-derived MARKER ids (unused vocab rows >= 151680) so
+  the prompt cache never mixes images; features ship once per image inside the pickled request to the LAST pipeline rank
+  (it runs layer 0), which swaps marker rows before layer 0. rank_media.py does the mlx_lm.server wiring; /v1/models then
+  declares "vision","video" and goose's providers send image parts (no provider change).
+- Image tokens = (H/16)(W/16)/4 after smart_resize to multiples of 32, Xiaomi pixels 8192..8388608 (config.json
+  processor_config, NOT the converted build's preprocessor_config). Video: SGLang layout <|mimo_video_start|> + per frame
+  pair "MM:SS"<|vision_start|>pads<|vision_end|> + <|mimo_video_end|>, 1 fps, 8..3600 frames.
+- TRAP normalisation: upstream preprocessor_config + vLLM say ImageNet (default), SGLang/mlx-vlm/EigenLabs say CLIP.
+  GOOSE_MIMO_IMAGE_NORM=clip|imagenet; settle with a live colour A/B.
+- TRAP planner: omni names broke layer_index (everything became "shared" = charged to every rank); layer_split.rs now
+  strips language_model., charges vision to rank 0 only, audio/MTP nowhere.
+- PARITY: torch-CPU HF reference vs ours, float32 cosine >= 0.99998 per layer up to 1,900 patches, bf16 0.990-0.9999
+  (torch bf16 0.993-0.9999); tests/mimo_media/vision_parity.py (prep/ref/cmp, ref python = venvs/voice-qa).
+- Knobs: GOOSE_MIMO_MEDIA=0, GOOSE_MIMO_IMAGE_MAX_PIXELS, GOOSE_MIMO_VIDEO_MAX_TOKENS (16384), GOOSE_MIMO_VISION_BITS (0/8).
+- NOT DONE: live run (Macs busy with voice), audio (plan in HANDOFF Session 12), MTP. HANDOFF.md "Session 12 vision".
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
@@ -1635,3 +1771,82 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   - Release build: on the workhorse in the worktree with `target` symlinked to ~/Projects/goose/target (copy-binary reads
     ./target), `source bin/activate-hermit; (cd ui/desktop && pnpm install --frozen-lockfile); just release-notarized <v>`,
     then commit notes + package.json, tag v<v>, push, `just publish-release <v> docs/releases/<notes>.md`.
+- **2026-10-29 — qwen4_exp VISION WIRED ON THE TEXT LANE: tag v0.14.3-lz.16-ple.2 (fork lz/qwen4-vision-ple 1d4f4072d =
+  lz.16-ple.1 + d8b7523b7 + 1d4f4072d), pinned on goose flash-pld-bench 80c696b3ee (goose b4b55fe7df stops passing --text-only
+  for it).** HOW: image pads become ids IMAGE_ID_BASE(2^24) + slot*2^14 + k (slot = content-hash registry, process-local);
+  the decoder maps them to image_token_id for embed/PLE/MTP and scatters the tower's features (mlx_vlm 0.7.1
+  qwen4_exp VisionModel + Qwen3VLProcessor, tower 0.42 GiB); per-row ImageSpans ride the QSA cache meta/extract/merge/
+  filter/trim and give multimodal RoPE; image-bearing prefix entries are never saved to disk. Lane reason
+  `text_lane_vision`, /v1/models capabilities include "vision" (goose's openai provider then sends images),
+  /v1/status text_lane_vision {images_registered, images_encoded, image_requests, features_cached}; off with
+  RAPID_MLX_TEXT_LANE_VISION=0 or --text-only. Tests: tests/test_qwen4_exp_text_lane_vision.py (16).
+  LIVE (workhorse, runs/2026-10-29-flash-vision): screenshot/chart/parrot/zebra/two images/follow-up/3 concurrent all
+  read correct. TRAP: code_edit 8k sha 5aea271218556eef is the PRE-lz.16 (whitespace-stripped stream) output; on
+  lz.16-ple.1 and ple.2 it is f9dca5e177ca568e (EXACT vs the expected rename, check_code_edit.py). TRAP: greedy prose is
+  not byte-repeatable run to run on Flash + MTP even text-only on the base (first divergence ~250 chars), so 'same
+  request twice differs' is not a vision bug. TRAP: on the 96 GB workhorse the memory guard skips every image-bearing
+  prefix store (idle room 1.2 GB), so prove the image prefix cache on a 128 GB Mac.
+  - SAME DAY: tag v0.14.3-lz.16-ple.3 (aafee8699, goose pin 144db445cf) = ple.2 + /v1/models lists "vision" behind
+    an is_text_only alias. TRAP: aliases.json qwen3.8-flash-next-4bit pins is_text_only; goose serves under the alias's
+    hf_path, so ple.2 listed [text,tools,experimental] and goose's openai provider sent PLACEHOLDERS for every image
+    while the tower was attached. A proof under --served-model-name default cannot see this: always prove under the
+    name goose serves. Mule (128 GB) proof: follow-up turn cached_tokens 768, parrot repeat byte-identical, 0 skipped
+    prefix stores. The rapid-mlx/Qwen3.8-Flash-Next-4bit build was deleted 10-29 (owner); a new build replaces it.
+  - SAME DAY: tag v0.14.3-lz.16-ple.4 (f6cc404c8) loads Jundot/Qwen3.8-Flash-Next-oQ4e-mtp (oMLX, the new build):
+    PLE tables spelled `language_model.model.layers.1.ple.ple_embedding.ngram_embedding.shards.K` (raw HF: `model.language_model
+    ...shard_K`), 4-bit g32 BF16; MTP head mixed (8-bit attn/hyper-connections/fc_*, 4-bit split switch_mlp experts, BF16
+    router) -> quantized per checkpoint tensor; `...ngram_embedding.weight_scale` = 1.0 (folded FP8 scale) dropped; Qwen's
+    preprocessor allows 16.7M px/image -> text lane caps 1,003,520 (RAPID_MLX_TEXT_LANE_MAX_PIXELS). Dry check recipe:
+    zeros-of-header-shapes through Model.sanitize + nn.quantize(config predicate) vs tree_flatten (2954 = 2954, MTP 76 = 76).
+    Live mule: all image checks correct, MTP + PLD active, PLE offload 77.1 GB active. Evidence workmule:/tmp/gvision/proof/out/j2,
+    runs/2026-10-29-flash-vision/HANDOFF.md.
+- **2026-10-29 — STREAMING WHITESPACE BUG FIXED + LONGCAT TOOL PARSER: tags v0.14.3-lz.16 (= lz.15 + fix, fork
+  lz/stream-whitespace b328262b8) and v0.14.3-lz.16-ple.1 (= lz.16 merged with lz.14-ple.1, lz/stream-whitespace-ple
+  8c9927ae3). NOT pinned yet (goose main still lz.14; pin lines in goose-wt-ngram HANDOFF.md).**
+  - BUG (every local model, every pin up to lz.15): service/postprocessor.py ran every streamed content delta through
+    sanitize_output, whose _sanitize_with did pattern.sub(...).strip() on any text holding < [ ]. Deltas " [--",
+    "]\n\n\n" lost their whitespace: streamed file writes came out with joined words and missing blank lines.
+    FIX: all 10 delta sites use sanitize_content_for_stream (markers only, whitespace kept); sanitize_output returns the
+    text unchanged when it removed nothing; clean_output_text/strip_thinking_tags no longer trim the non-stream answer, so
+    stream and non-stream are the SAME BYTES. Tests: tests/test_stream_whitespace_fidelity.py (14 fail on lz.15).
+  - LONGCAT (Flash-Lite, model_type longcat_flash_ngram): new `longcat` tool parser (Flint/Xing reading rules on the
+    <longcat_tool_call>/<longcat_arg_key>/<longcat_arg_value> wire, string values byte-identical), auto-selected by
+    model_auto_config from model_type + template. tests/test_longcat_tool_parser.py.
+  - LIVE (workhorse, code_edit 8k greedy, runs/2026-10-29-stream-whitespace-fix): Qwen3.5-9B-4bit base stream 7351 vs
+    7357 chars, fix byte-equal; LongCat base 41 wrong streamed lines, fix stream EXACT = non-stream EXACT; LongCat
+    tool_calls null before, read_file {path, max_lines 20} after, stream and non-stream. Fork suite vs lz.15: identical
+    failure set (150 = 150).
+  - LEFT: LongCat SuffixDecoding stays refused ("model is hybrid"): enrich_model_config sees its ArraysCache(size=1),
+    which holds the n-gram token history; a verify step would feed draft tokens into it and nothing rolls it back on
+    rejection, so the refusal is the SAFE outcome even if the label is wrong. Making suffix/PLD work needs a trimmable
+    n-gram context cache. LongCat thinking (<longcat_think>) has no reasoning parser yet.
+- **MELLUM LOCAL (JetBrains/Mellum2.1-12B-A2.5B-Thinking, `mellum`, Apache-2.0, 12B total / ~2.5B active; 2026-10-19;
+  fork `lz/mellum-lz12` 435781119b82ab1b1f6ecd730c438429c30b3ffc = v0.14.3-lz.12 + one commit; pushed, NOT released):**
+  - Why it could not load: the engine's mlx-lm is 0.31.3 (no `mellum` module; 0.32.2 ships `mlx_lm/models/mellum.py`).
+    transformers 5.15.1 in the engine env DOES know `mellum`, so tokenizer/AutoConfig need no fallback (no
+    `_VENDORED_MODEL_TYPES` entry, unlike Xing).
+  - Port: `rapid_mlx/models/mellum.py` = mlx-lm 0.32.2 file verbatim (sha256 3c4936de…) with its four relative imports made
+    absolute; all helpers identical in 0.31.3 (yarn reads the same keys; the config's attention_factor 1.2773 equals the
+    yarn mscale). Registered in `_register_vendored_archs` with the find_spec defer-to-native probe. Architecture: 28
+    layers, 3 sliding(1024, RotatingKVCache) : 1 full (yarn x16 from 8k -> 131k), 64 experts top-8 softmax, GQA 32/4,
+    qk-norm. Sliding is picked up by the generic layer_types detection (snapshot path); not hybrid.
+  - Checkpoint stores experts per expert (`mlp.experts.N.{gate,up,down}_proj.weight`), which sanitize stacks; transformers 5
+    holds them FUSED in memory (`experts.gate_up_proj` [E,2I,H]) — a parity test must split that first.
+  - TOOL WIRE: Hermes `<tool_call>\n{"name": …, "arguments": {…}}\n</tool_call>` -> parser `hermes`; reasoning `qwen3`
+    (model opens `<think>` itself; template renders `<think>\n\n</think>` when enable_thinking is false). auto-config block
+    in model_auto_config.py. Boot log: `tool_call_parser=hermes, reasoning_parser=qwen3, is_hybrid=False`, profile
+    "pure attention, throttle OFF, spec decode OK".
+  - Proof: parity vs transformers 5.15.1 MellumForCausalLM (tiny random, fp32, window 8, 39 tokens) max |dlogit| 2.4e-07,
+    top-1 39/39; cached decode == full forward (`RAPID_MLX_MELLUM_REFERENCE=1 PYTHONPATH=<wt>:/tmp/xingref/pyext <engine
+    py> -m pytest tests/test_mellum_model.py`). auto-config + kv-estimation + xing suites 411 passed; hermes/vendored/
+    reasoning set 193 passed, 1 failed = same gpt_oss_puzzle loader failure on the base.
+  - Real-model smoke (workhorse M3 Ultra 96 GB, bf16 weights 24.3 GB, app argv on :8199): smoke.py 3/3 + text PASS both
+    without effort and at `--effort medium`. WITHOUT effort the model emits NO reasoning (0 chars on all 4 cases: the
+    engine's thinking-off-on-tools default) — that is what an app run gets today (T12 G1 gap). At medium: 1,313-2,522
+    reasoning chars per write call, 4.8-8.4 s. Speed (thinking off, 1 request): 2,137-token prompt prefill 1,484 tok/s,
+    decode 95.5 tok/s; 33,903-token prompt prefill 2,236 tok/s (TTFT 15.2 s), decode 88.4 tok/s. Metal peak 26.33 GB
+    after the 34k prompt (active 25.66 GB). Evidence: /Volumes/AI-workhorse/experiments/2026-10-19-model-review/mellum-smoke/.
+  - WEIGHTS: the original bf16 at `/Volumes/AI-workhorse/models/goose/JetBrains/Mellum2.1-12B-A2.5B-Thinking` (24 GB, 5
+    shards). In the app: `~/goose-builds/loop-state/engine-wrap-mellum.sh` (loop-state eb77c93) as
+    `mlx_engine.spawn_command` with the app QUIT; remove after. Public-repo hook: Rapid-MLX refuses AI credit lines in
+    commit messages.

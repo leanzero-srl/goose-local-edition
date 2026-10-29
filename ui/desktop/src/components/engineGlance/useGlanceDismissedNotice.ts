@@ -5,8 +5,8 @@ import { ENGINE_GLANCE_DISMISSED_CHANNEL, isGlanceDismissedNotice } from '../../
 
 const i18n = defineMessages({
   title: {
-    id: 'engineGlance.dismissed.title',
-    defaultMessage: 'Floating window hidden for this session',
+    id: 'engineGlance.dismissed.untilNew',
+    defaultMessage: 'Floating window hidden until something new starts',
   },
   wayTray: {
     id: 'engineGlance.dismissed.wayTray',

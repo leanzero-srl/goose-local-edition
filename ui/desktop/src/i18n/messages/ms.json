@@ -389,6 +389,9 @@
   "benchmarkSection.askAbout": {
     "defaultMessage": "Mulakan sesi AI tentang larian ini"
   },
+  "benchmarkSection.build": {
+    "defaultMessage": "Binaan {index}"
+  },
   "benchmarkSection.cannotDeleteNoId": {
     "defaultMessage": "Sesi ini belum mempunyai id larian — ia muncul sebentar selepas dilancarkan"
   },
@@ -430,6 +433,9 @@
   },
   "benchmarkSection.title": {
     "defaultMessage": "Benchmark"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 binaan"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Sambungan Dikemas Kini"
@@ -1286,6 +1292,9 @@
   "confirmCloseRun.body": {
     "defaultMessage": "Menutup tetingkap ini menghentikan larian: backend tetingkap dilepaskan dan enjin swarm di bawahnya diberi isyarat untuk keluar."
   },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "Teruskan menjawab"
+  },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "Teruskan larian"
   },
@@ -1295,17 +1304,17 @@
   "confirmCloseRun.stopAndClose": {
     "defaultMessage": "Hentikan larian dan tutup"
   },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "Hentikan jawapan dan tutup"
+  },
   "confirmCloseRun.stopping": {
     "defaultMessage": "Menghentikan larian…"
   },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "Menghentikan jawapan…"
+  },
   "confirmCloseRun.title": {
     "defaultMessage": "Larian swarm sedang aktif dalam tetingkap ini"
-  },
-  "confirmCloseRun.warning": {
-    "defaultMessage": "Amaran"
-  },
-  "confirmCloseRun.turnTitle": {
-    "defaultMessage": "Satu sembang dalam tetingkap ini masih menjawab"
   },
   "confirmCloseRun.turnBody": {
     "defaultMessage": "Menutup tetingkap ini menghentikan jawapan: sembang dihantar dari tetingkap ini, dan balasannya berakhir di situ."
@@ -1313,14 +1322,11 @@
   "confirmCloseRun.turnLine": {
     "defaultMessage": "Sembang: {name}"
   },
-  "confirmCloseRun.keepAnswering": {
-    "defaultMessage": "Teruskan menjawab"
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "Satu sembang dalam tetingkap ini masih menjawab"
   },
-  "confirmCloseRun.stopAnswerAndClose": {
-    "defaultMessage": "Hentikan jawapan dan tutup"
-  },
-  "confirmCloseRun.stoppingAnswer": {
-    "defaultMessage": "Menghentikan jawapan…"
+  "confirmCloseRun.warning": {
+    "defaultMessage": "Amaran"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Tidak"
@@ -2120,11 +2126,29 @@
   "engineGlance.chat": {
     "defaultMessage": "Sembang · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Tutup tetingkap terapung sehingga sesuatu yang baharu bermula"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Kecilkan menjadi pil"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Tutup kegagalan ini — ia hanya kembali jika enjin gagal lagi"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Tetingkap terapung disembunyikan sehingga sesuatu yang baharu bermula"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "Paparkan semula dari Tetapan › Aplikasi, tempat anda juga boleh mematikannya."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "Paparkan semula dari ikon goose di bar menu atau dari Tetapan › Aplikasi, tempat anda juga boleh mematikannya."
+  },
   "engineGlance.expand": {
     "defaultMessage": "Tunjukkan kad penuh"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Apungkan pil apabila goose diminimumkan"
   },
   "engineGlance.forming": {
     "defaultMessage": "Apa yang sedang ditulis · {count, plural, other {# panggilan alat}}"
@@ -2137,6 +2161,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Sembunyikan kad ini — kembalikan dari bahagian bawah bar sisi atau Tetapan › Aplikasi"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Tutup di sini — ia kembali apabila sesuatu yang baharu bermula"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Faham"
@@ -2285,23 +2312,32 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "Kad langsung Enjin, versi kecil: apa yang dibaca atau ditulis, berapa pantas, dan sembang mana yang dilayan. Klik untuk membuka Enjin."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Terapung di desktop"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Semasa goose di latar belakang"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Setiap kali enjin bekerja"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Mati"
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Mati melainkan anda menandakannya. Pil kecil di atas aplikasi lain, di sudut tempat anda menyeretnya. Hanya butang ⤢ membuka goose; menyeret hanya mengalihkannya, dan ✕ menyembunyikannya sehingga kerja, larian atau pecahan baharu bermula."
+  },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Tunjukkan pil aktiviti terapung apabila goose diminimumkan atau di latar belakang"
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Bila ia terapung"
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Anda menutupnya — disembunyikan sehingga sesuatu yang baharu bermula."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Di bar sisi"
   },
   "engineGlanceSettings.inAppDesc": {
     "defaultMessage": "Di bahagian bawah bar sisi, di bawah sesi anda. Sembunyikannya dari kad itu sendiri; ia kembali dari baris yang ditinggalkan di tempatnya, atau dari sini."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "Paparkan semula"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "Enjin sepintas lalu"
@@ -2609,6 +2645,117 @@
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "Sambung ke pelayan goose yang berjalan di tempat lain (memerlukan memulakan semula aplikasi)"
   },
+  "forgeSeries.between": {
+    "defaultMessage": "Binaan 1 selesai. Menyediakan binaan 2."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Binaan {index} daripada 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls} panggilan setiap binaan"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Menghentikan binaan aktif dan menghalang binaan berikutnya daripada bermula. Skor dan bukti yang telah selesai dikekalkan; pembatalan tidak menerbitkan apa-apa."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "Batalkan penanda aras dua binaan ini?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "Urutan dua binaan dibatalkan"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Urutan dua binaan dibatalkan."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "Menyemak kedua-dua binaan…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Dibatalkan"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Tidak selesai"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Dua binaan selesai."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Terbitkan binaan yang tinggal"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "Urutan dua binaan tidak selesai"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "Urutan dua binaan tidak selesai."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Kedua-dua binaan selesai"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "Aplikasi ditutup sebelum kedua-dua binaan selesai. Bukti tersimpan dikekalkan."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Satu tindakan Jalankan memulakan dua binaan bebas dalam aplikasi ini. Binaan kedua bermula selepas yang pertama dinilai; setiap satu menyimpan buktinya sendiri."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Diterbitkan di leanzero.net"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Median tempatan {median} · julat {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Tiada respons penerbitan"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Belum ada binaan yang dinilai."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Menyediakan binaan {index} daripada 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Satu binaan yang dinilai bersifat sementara. Median dua binaan belum tersedia."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "Terbitkan 2 binaan"
+  },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Terbitkan binaan secara berasingan"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Tajuk penerbitan"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Menerbitkan binaan {index} daripada 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "Menunggu untuk bermula"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "Jalankan 2 binaan"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Binaan {index} daripada 2 sedang berjalan"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Dinilai"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "Aplikasi menjalankan dua binaan baharu secara berturutan dengan model, tugas dan tetapan yang sama. Setiap satu menyimpan skor dan buktinya sendiri."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Tidak bermula"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Dua binaan bebas"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "Bukti tersimpan bagi dua binaan tidak dapat dibaca. Binaan individu masih tersedia."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Buka bukti binaan {index}"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "Penerbitan memerlukan dua binaan lengkap yang boleh dibandingkan bersama bukti asalnya."
+  },
   "formingPanel.callChars": {
     "defaultMessage": "{chars} aksara"
   },
@@ -2750,6 +2897,9 @@
   "freeMemory.nuclearTotal": {
     "defaultMessage": "Ditanda: <b>{gb} GB</b>"
   },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Hanya pada {mac}"
+  },
   "freeMemory.protectedChip": {
     "defaultMessage": "Dilindungi"
   },
@@ -2770,9 +2920,6 @@
   },
   "freeMemory.remoteQuitOff": {
     "defaultMessage": "{mac} tidak membenarkan Mac lain menutup aplnya atau menyahmuat pelayan modelnya, jadi dari sini hanya memori goose sendiri boleh dikosongkan. Untuk membenarkannya, buka goose pada {mac}, pergi ke Tetapan › Aplikasi dan hidupkan “Benarkan Mac terpaut menutup apl pada Mac ini”. Atau tutup apl itu terus pada {mac}."
-  },
-  "freeMemory.onlyThere": {
-    "defaultMessage": "Hanya pada {mac}"
   },
   "freeMemory.title": {
     "defaultMessage": "Bebaskan memori pada {mac}"
@@ -4292,14 +4439,14 @@
   "macLoad.policy": {
     "defaultMessage": "Semasa seseorang menggunakan Mac ini"
   },
-  "macLoad.policyHint": {
-    "defaultMessage": "Sibuk bermaksud diukur: memori di atas had, slot berat yang kosong, beban setiap teras. Orang di papan kekunci hanya memutuskan apabila seri."
-  },
   "macLoad.policy.allow": {
     "defaultMessage": "Terima kerja"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Tolak kerja"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "Sibuk bermaksud diukur: memori di atas had, slot berat yang kosong, beban setiap teras. Orang di papan kekunci hanya memutuskan apabila seri."
   },
   "macLoad.queueNoTry": {
     "defaultMessage": "Belum ditawarkan kepada mana-mana Mac: kerja di hadapannya masih menunggu."
@@ -4327,6 +4474,27 @@
   },
   "macLoad.state": {
     "defaultMessage": "Keadaan"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "Membatalkan…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Menunggu, giliran ke-{position}"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Tempat kerja saya berjalan"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Mac saya dahulu"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Mac lain dahulu"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Berjalan pada Mac ini jika ada ruang, jika tidak pada Mac lain yang paling lapang, jika tidak menunggu dalam baris gilir."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "Berjalan pada Mac lain yang paling lapang, jika tidak pada Mac ini, jika tidak menunggu dalam baris gilir. Mac ini kekal lapang."
   },
   "macLoad.title": {
     "defaultMessage": "Beban"
@@ -5630,6 +5798,9 @@
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Tidak dapat membaca tetapan enjin."
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Baca semula"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Hentikan"
   },
@@ -5710,6 +5881,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Kedudukan {rank} pembahagian {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Kedudukan {rank} pembahagian Mac lain · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Melayan lapisan {first}–{last} untuk {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Melayan lapisan {first}–{last} untuk Mac lain · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Kedudukan {rank} pembahagian {requester} · {model}"
@@ -5938,6 +6118,9 @@
   },
   "mlxSetup.step2": {
     "defaultMessage": "Model"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Membaca Mac anda…"
   },
   "mlxSetup.step2Done": {
     "defaultMessage": "{count} pada Mac anda"
@@ -6206,6 +6389,9 @@
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Berhenti"
   },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Dihentikan di luar goose"
+  },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Tidak dapat dicapai"
   },
@@ -6362,6 +6548,9 @@
   "modelCustomFields.above": {
     "defaultMessage": "Nilai tertinggi ialah {max}."
   },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Medan tersuai: pilih ID model untuk melihat tetapan yang diterimanya."
+  },
   "modelCustomFields.below": {
     "defaultMessage": "Nilai terendah ialah {min}."
   },
@@ -6379,6 +6568,9 @@
   },
   "modelCustomFields.modelDefault": {
     "defaultMessage": "Lalai model ({value})"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Medan tersuai: {provider} tidak mengisytiharkan sebarang medan untuk “{model}”, jadi ia berjalan pada lalai penyedia."
   },
   "modelCustomFields.notANumber": {
     "defaultMessage": "Masukkan nombor."
@@ -6917,6 +7109,9 @@
   "myMacs.reconnecting": {
     "defaultMessage": "Menyambung semula… (hilang hubungan dengan goose Mac ini)"
   },
+  "myMacs.runJob": {
+    "defaultMessage": "Jalankan kerja…"
+  },
   "myMacs.saveFailed": {
     "defaultMessage": "Suis tidak disimpan"
   },
@@ -6931,6 +7126,9 @@
   },
   "myMacs.title": {
     "defaultMessage": "Mac Saya"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "dikemas kini {seconds} saat lalu"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -6968,30 +7166,6 @@
   "needsYouCard.closeNotice": {
     "defaultMessage": "Tutup notis ini"
   },
-  "needsYouCard.queued": {
-    "defaultMessage": "Dalam baris gilir · dijawab apabila giliran ini tamat"
-  },
-  "needsYouCard.queuedChip": {
-    "defaultMessage": "Dalam baris gilir"
-  },
-  "needsYouCard.sending": {
-    "defaultMessage": "Menghantar jawapan anda…"
-  },
-  "needsYouCard.stack": {
-    "defaultMessage": "{count, plural, other {Memerlukan anda · # soalan}}"
-  },
-  "needsYouCard.stackQueued": {
-    "defaultMessage": "{count} dalam baris gilir"
-  },
-  "needsYouCard.unsentAnswer": {
-    "defaultMessage": "Jawapan anda: {answer}"
-  },
-  "needsYouCard.unsentClosed": {
-    "defaultMessage": "Tidak dihantar — soalan ini ditutup sebelum jawapan anda dalam baris gilir sempat dihantar."
-  },
-  "needsYouCard.unsentFailed": {
-    "defaultMessage": "Tidak dihantar — jawapan anda dalam baris gilir tidak dapat disimpan: {error}"
-  },
   "needsYouCard.dismiss": {
     "defaultMessage": "Abaikan"
   },
@@ -7010,11 +7184,35 @@
   "needsYouCard.position": {
     "defaultMessage": "{index} daripada {total}"
   },
+  "needsYouCard.queued": {
+    "defaultMessage": "Dalam baris gilir · dijawab apabila giliran ini tamat"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "Dalam baris gilir"
+  },
   "needsYouCard.recommended": {
     "defaultMessage": "Disyorkan"
   },
+  "needsYouCard.sending": {
+    "defaultMessage": "Menghantar jawapan anda…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, other {Memerlukan anda · # soalan}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} dalam baris gilir"
+  },
   "needsYouCard.title": {
     "defaultMessage": "Memerlukan anda"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Jawapan anda: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Tidak dihantar — soalan ini ditutup sebelum jawapan anda dalam baris gilir sempat dihantar."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Tidak dihantar — jawapan anda dalam baris gilir tidak dapat disimpan: {error}"
   },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Model tersimpan enjin MLX menyajikan {served}; nod ini mahukan {wanted}. Pilih model dalam Providers."
@@ -9614,6 +9812,72 @@
   "responseStyle.detailedLabel": {
     "defaultMessage": "Terperinci"
   },
+  "runJob.best": {
+    "defaultMessage": "Mac terbaik"
+  },
+  "runJob.close": {
+    "defaultMessage": "Tutup"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Arahan} other {Prompt}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Kerja berat"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Sebuah Mac menjalankan kerja berat (binaan, render, latihan) sebanyak slot dan memori yang ada padanya."
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (sedang digunakan)"
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "kerja dimatikan pada Mac ini"
+  },
+  "runJob.kind": {
+    "defaultMessage": "Jenis"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "Prompt"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Arahan shell"
+  },
+  "runJob.mem": {
+    "defaultMessage": "Memori yang diperlukan (GB, pilihan)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Tiada Mac boleh menerima kerja ini sekarang."
+  },
+  "runJob.none": {
+    "defaultMessage": "Tiada Mac anda yang menerima kerja sekarang. Hidupkan “Jalankan kerja yang dihantar Mac lain” pada Mac yang patut menjalankannya."
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Terbaik sekarang: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Tidak dihantar: {reason}"
+  },
+  "runJob.submit": {
+    "defaultMessage": "Jalankan kerja"
+  },
+  "runJob.target": {
+    "defaultMessage": "Jalankan pada"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Had masa (saat, pilihan)"
+  },
+  "runJob.title": {
+    "defaultMessage": "Jalankan kerja pada…"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Tiada Mac yang ada ruang sekarang. Jika dijalankan, ia menunggu dalam baris gilir Mac ini dan bermula pada Mac pertama yang ada ruang."
+  },
   "scheduleDetailView.actions": {
     "defaultMessage": "Tindakan"
   },
@@ -11720,29 +11984,29 @@
   "unansweredPrompt.appClosed": {
     "defaultMessage": "Giliran ini berakhir tanpa balasan — aplikasi mungkin tertutup semasa goose sedang bekerja."
   },
-  "unansweredPrompt.failed": {
-    "defaultMessage": "Giliran ini gagal sebelum ada balasan."
-  },
-  "unansweredPrompt.failedWithReason": {
-    "defaultMessage": "Giliran ini gagal sebelum ada balasan: {reason}"
-  },
-  "unansweredPrompt.resend": {
-    "defaultMessage": "Hantar semula"
-  },
-  "unansweredPrompt.title": {
-    "defaultMessage": "goose berhenti sebelum menjawab ini"
-  },
   "unansweredPrompt.continue": {
     "defaultMessage": "Teruskan"
   },
   "unansweredPrompt.continueMessage": {
     "defaultMessage": "Teruskan dari tempat terakhir."
   },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "Giliran ini gagal sebelum ada balasan."
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "Giliran ini gagal sebelum ada balasan: {reason}"
+  },
   "unansweredPrompt.midway": {
     "defaultMessage": "goose berhenti di tengah jalan"
   },
   "unansweredPrompt.midwayAppClosed": {
     "defaultMessage": "goose berhenti di tengah jalan — aplikasi tertutup semasa goose sedang bekerja"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "Hantar semula"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose berhenti sebelum menjawab ini"
   },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Batal"
@@ -11908,245 +12172,5 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
-  },
-  "engineGlance.close": {
-    "defaultMessage": "Tutup tetingkap terapung untuk sesi ini"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Tutup di sini sehingga anda memaparkannya semula"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Tetingkap terapung disembunyikan untuk sesi ini"
-  },
-  "engineGlance.dismissed.way": {
-    "defaultMessage": "Paparkan semula dari Tetapan › Aplikasi, tempat anda juga boleh mematikannya."
-  },
-  "engineGlance.dismissed.wayTray": {
-    "defaultMessage": "Paparkan semula dari ikon goose di bar menu atau dari Tetapan › Aplikasi, tempat anda juga boleh mematikannya."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Tetingkap kecil di atas aplikasi lain anda, di sudut tempat anda menyeretnya. Ia tidak pernah mengambil fokus, dan hanya membawa goose ke hadapan apabila anda membuka sesuatu daripadanya. Butang tutupnya menyembunyikannya untuk baki sesi ini."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Anda telah menutupnya — tersembunyi sehingga anda memaparkannya semula."
-  },
-  "engineGlanceSettings.showAgain": {
-    "defaultMessage": "Paparkan semula"
-  },
-  "benchmarkSection.build": {
-    "defaultMessage": "Binaan {index}"
-  },
-  "benchmarkSection.twoBuilds": {
-    "defaultMessage": "2 binaan"
-  },
-  "forgeSeries.between": {
-    "defaultMessage": "Binaan 1 selesai. Menyediakan binaan 2."
-  },
-  "forgeSeries.build": {
-    "defaultMessage": "Binaan {index} daripada 2"
-  },
-  "forgeSeries.callBudget": {
-    "defaultMessage": "{calls} panggilan setiap binaan"
-  },
-  "forgeSeries.cancelDetail": {
-    "defaultMessage": "Menghentikan binaan aktif dan menghalang binaan berikutnya daripada bermula. Skor dan bukti yang telah selesai dikekalkan; pembatalan tidak menerbitkan apa-apa."
-  },
-  "forgeSeries.cancelTitle": {
-    "defaultMessage": "Batalkan penanda aras dua binaan ini?"
-  },
-  "forgeSeries.cancelled": {
-    "defaultMessage": "Urutan dua binaan dibatalkan"
-  },
-  "forgeSeries.cancelledStatus": {
-    "defaultMessage": "Urutan dua binaan dibatalkan."
-  },
-  "forgeSeries.checking": {
-    "defaultMessage": "Menyemak kedua-dua binaan…"
-  },
-  "forgeSeries.childCancelled": {
-    "defaultMessage": "Dibatalkan"
-  },
-  "forgeSeries.childFailed": {
-    "defaultMessage": "Tidak selesai"
-  },
-  "forgeSeries.completeStatus": {
-    "defaultMessage": "Dua binaan selesai."
-  },
-  "forgeSeries.continuePublish": {
-    "defaultMessage": "Terbitkan binaan yang tinggal"
-  },
-  "forgeSeries.failed": {
-    "defaultMessage": "Urutan dua binaan tidak selesai"
-  },
-  "forgeSeries.failedStatus": {
-    "defaultMessage": "Urutan dua binaan tidak selesai."
-  },
-  "forgeSeries.finished": {
-    "defaultMessage": "Kedua-dua binaan selesai"
-  },
-  "forgeSeries.interrupted": {
-    "defaultMessage": "Aplikasi ditutup sebelum kedua-dua binaan selesai. Bukti tersimpan dikekalkan."
-  },
-  "forgeSeries.intro": {
-    "defaultMessage": "Satu tindakan Jalankan memulakan dua binaan bebas dalam aplikasi ini. Binaan kedua bermula selepas yang pertama dinilai; setiap satu menyimpan buktinya sendiri."
-  },
-  "forgeSeries.live": {
-    "defaultMessage": "Diterbitkan di leanzero.net"
-  },
-  "forgeSeries.median": {
-    "defaultMessage": "Median tempatan {median} · julat {min}–{max}"
-  },
-  "forgeSeries.noResponse": {
-    "defaultMessage": "Tiada respons penerbitan"
-  },
-  "forgeSeries.noScore": {
-    "defaultMessage": "Belum ada binaan yang dinilai."
-  },
-  "forgeSeries.preparing": {
-    "defaultMessage": "Menyediakan binaan {index} daripada 2"
-  },
-  "forgeSeries.provisional": {
-    "defaultMessage": "Satu binaan yang dinilai bersifat sementara. Median dua binaan belum tersedia."
-  },
-  "forgeSeries.publish": {
-    "defaultMessage": "Terbitkan 2 binaan"
-  },
-  "forgeSeries.publishSeparately": {
-    "defaultMessage": "Terbitkan binaan secara berasingan"
-  },
-  "forgeSeries.publishTitle": {
-    "defaultMessage": "Tajuk penerbitan"
-  },
-  "forgeSeries.publishing": {
-    "defaultMessage": "Menerbitkan binaan {index} daripada 2…"
-  },
-  "forgeSeries.queued": {
-    "defaultMessage": "Menunggu untuk bermula"
-  },
-  "forgeSeries.run": {
-    "defaultMessage": "Jalankan 2 binaan"
-  },
-  "forgeSeries.running": {
-    "defaultMessage": "Binaan {index} daripada 2 sedang berjalan"
-  },
-  "forgeSeries.scored": {
-    "defaultMessage": "Dinilai"
-  },
-  "forgeSeries.settings": {
-    "defaultMessage": "Aplikasi menjalankan dua binaan baharu secara berturutan dengan model, tugas dan tetapan yang sama. Setiap satu menyimpan skor dan buktinya sendiri."
-  },
-  "forgeSeries.skipped": {
-    "defaultMessage": "Tidak bermula"
-  },
-  "forgeSeries.title": {
-    "defaultMessage": "Dua binaan bebas"
-  },
-  "forgeSeries.unreadable": {
-    "defaultMessage": "Bukti tersimpan bagi dua binaan tidak dapat dibaca. Binaan individu masih tersedia."
-  },
-  "forgeSeries.view": {
-    "defaultMessage": "Buka bukti binaan {index}"
-  },
-  "forgeSeries.waitingPublish": {
-    "defaultMessage": "Penerbitan memerlukan dua binaan lengkap yang boleh dibandingkan bersama bukti asalnya."
-  },
-  "modelCustomFields.awaitingModel": {
-    "defaultMessage": "Medan tersuai: pilih ID model untuk melihat tetapan yang diterimanya."
-  },
-  "modelCustomFields.noFields": {
-    "defaultMessage": "Medan tersuai: {provider} tidak mengisytiharkan sebarang medan untuk “{model}”, jadi ia berjalan pada lalai penyedia."
-  },
-  "macLoad.stateCancelling": {
-    "defaultMessage": "Membatalkan…"
-  },
-  "macLoad.stateWaiting": {
-    "defaultMessage": "Menunggu, giliran ke-{position}"
-  },
-  "macLoad.strategy": {
-    "defaultMessage": "Tempat kerja saya berjalan"
-  },
-  "macLoad.strategy.localFirst": {
-    "defaultMessage": "Mac saya dahulu"
-  },
-  "macLoad.strategy.selfish": {
-    "defaultMessage": "Mac lain dahulu"
-  },
-  "macLoad.strategyHint.localFirst": {
-    "defaultMessage": "Berjalan pada Mac ini jika ada ruang, jika tidak pada Mac lain yang paling lapang, jika tidak menunggu dalam baris gilir."
-  },
-  "macLoad.strategyHint.selfish": {
-    "defaultMessage": "Berjalan pada Mac lain yang paling lapang, jika tidak pada Mac ini, jika tidak menunggu dalam baris gilir. Mac ini kekal lapang."
-  },
-  "myMacs.runJob": {
-    "defaultMessage": "Jalankan kerja…"
-  },
-  "runJob.title": {
-    "defaultMessage": "Jalankan kerja pada…"
-  },
-  "runJob.willQueue": {
-    "defaultMessage": "Tiada Mac yang ada ruang sekarang. Jika dijalankan, ia menunggu dalam baris gilir Mac ini dan bermula pada Mac pertama yang ada ruang."
-  },
-  "runJob.target": {
-    "defaultMessage": "Jalankan pada"
-  },
-  "runJob.best": {
-    "defaultMessage": "Mac terbaik"
-  },
-  "runJob.ranking": {
-    "defaultMessage": "Terbaik sekarang: {macs}"
-  },
-  "runJob.refusal": {
-    "defaultMessage": "{mac}: {reason}"
-  },
-  "runJob.verdictLine": {
-    "defaultMessage": "{mac}: {verdict}"
-  },
-  "runJob.inUse": {
-    "defaultMessage": "{name} (sedang digunakan)"
-  },
-  "runJob.noPlace": {
-    "defaultMessage": "Tiada Mac boleh menerima kerja ini sekarang."
-  },
-  "runJob.none": {
-    "defaultMessage": "Tiada Mac anda yang menerima kerja sekarang. Hidupkan “Jalankan kerja yang dihantar Mac lain” pada Mac yang patut menjalankannya."
-  },
-  "runJob.jobsOff": {
-    "defaultMessage": "kerja dimatikan pada Mac ini"
-  },
-  "runJob.kind": {
-    "defaultMessage": "Jenis"
-  },
-  "runJob.kindShell": {
-    "defaultMessage": "Arahan shell"
-  },
-  "runJob.kindPrompt": {
-    "defaultMessage": "Prompt"
-  },
-  "runJob.command": {
-    "defaultMessage": "{kind, select, shell {Arahan} other {Prompt}}"
-  },
-  "runJob.heavy": {
-    "defaultMessage": "Kerja berat"
-  },
-  "runJob.heavyHint": {
-    "defaultMessage": "Sebuah Mac menjalankan kerja berat (binaan, render, latihan) sebanyak slot dan memori yang ada padanya."
-  },
-  "runJob.mem": {
-    "defaultMessage": "Memori yang diperlukan (GB, pilihan)"
-  },
-  "runJob.timeout": {
-    "defaultMessage": "Had masa (saat, pilihan)"
-  },
-  "runJob.submit": {
-    "defaultMessage": "Jalankan kerja"
-  },
-  "runJob.close": {
-    "defaultMessage": "Tutup"
-  },
-  "runJob.refused": {
-    "defaultMessage": "Tidak dihantar: {reason}"
-  },
-  "myMacs.updatedAgo": {
-    "defaultMessage": "dikemas kini {seconds} saat lalu"
   }
 }

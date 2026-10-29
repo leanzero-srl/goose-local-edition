@@ -17,6 +17,7 @@ import { createWebSocketStream } from './createWebSocketStream';
 import { requestAcpElicitation } from './elicitationRequests';
 import { requestAcpPermission } from './permissionRequests';
 import { requestAcpRecipeParams } from './recipeParamRequests';
+import { withTimeLimit } from '../utils/timeLimit';
 
 type InitializedAcpClient = {
   client: GooseClient;
@@ -153,21 +154,6 @@ function monitorConnection(client: GooseClient): void {
   client.closed.then(connectionEnded, connectionEnded);
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const timeout = new Promise<T>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timeoutId !== null) {
-      clearTimeout(timeoutId);
-    }
-  }
-}
-
 async function initializeConnection(): Promise<InitializedAcpClient> {
   const wsUrl = await window.electron.getAcpUrl();
   if (!wsUrl) {
@@ -178,7 +164,7 @@ async function initializeConnection(): Promise<InitializedAcpClient> {
   const client = new GooseClient(createClientCallbacks(), stream);
 
   try {
-    const initializeResponse = await withTimeout(
+    const initializeResponse = await withTimeLimit(
       client.initialize({
         protocolVersion: PROTOCOL_VERSION,
         clientCapabilities: {

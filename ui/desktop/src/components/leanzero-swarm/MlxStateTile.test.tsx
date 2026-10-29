@@ -1135,3 +1135,29 @@ describe('MlxStateTile — the engine-phase palette, one colour per state', () =
     expect(screen.getByTestId('mlx-state-badge').className).toContain('bg-lz-phase-idle');
   });
 });
+
+describe('MlxStateTile — 3.0.132: an engine stopped from outside goose is a stop, not a failure', () => {
+  it('stoppedBy outside reads "Stopped outside goose" in the stopped phase colour, never red', () => {
+    const { unmount } = tile({ state: 'stopped', stoppedBy: 'outside', cost: null });
+    const badge = screen.getByTestId('mlx-state-badge');
+    expect(within(badge).getByRole('status')).toHaveTextContent('Stopped outside goose');
+    const outsidePhase = badge.dataset.phase;
+    unmount();
+    tile({ state: 'stopped', cost: null });
+    const plain = screen.getByTestId('mlx-state-badge');
+    expect(within(plain).getByRole('status')).toHaveTextContent(/^Stopped$/);
+    // Same neutral colour as any stop.
+    expect(outsidePhase).toBe(plain.dataset.phase);
+    expect(outsidePhase).not.toBe('failed');
+  });
+
+  it('other stoppers keep the plain word', () => {
+    for (const by of ['owner', 'linkedMac', 'notStarted']) {
+      const { unmount } = tile({ state: 'stopped', stoppedBy: by, cost: null });
+      expect(within(screen.getByTestId('mlx-state-badge')).getByRole('status')).toHaveTextContent(
+        /^Stopped$/
+      );
+      unmount();
+    }
+  });
+});

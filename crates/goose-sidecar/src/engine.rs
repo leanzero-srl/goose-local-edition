@@ -464,6 +464,17 @@ impl ModelProfile {
     }
 }
 
+/// `model_id` in `models_dir`, assessed alone (never a walk of every model): a status poll asks
+/// this for the selected model several times a second.
+fn find_local_model(models_dir: &Path, model_id: &str) -> Result<LocalModel> {
+    hf::local_model(models_dir, model_id)?.with_context(|| {
+        format!(
+            "model '{model_id}' not found in {} (download it first)",
+            models_dir.display()
+        )
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EngineSettings {
@@ -1259,6 +1270,11 @@ pub struct EngineStatus {
     /// `machine_load_error` says why the lock could not be read.
     pub machine_load: Option<LoadHolder>,
     pub machine_load_error: Option<String>,
+    /// While `state` is "stopped" because something OUTSIDE goose stopped the engine (a SIGTERM
+    /// or SIGINT no goose path sent, see `SidecarExit::stopped_outside_goose`): what ended, in a
+    /// neutral sentence. A stop is not a failure. `None` in every other case.
+    #[serde(default)]
+    pub stopped_outside: Option<String>,
 }
 
 /// A mount in flight, measured — never a guessed percentage.
@@ -1479,6 +1495,20 @@ fn engine_exit_message(exit: &crate::SidecarExit) -> String {
     )
 }
 
+/// A supervised engine something outside goose stopped (`SidecarExit::stopped_outside_goose`), in
+/// one neutral sentence: which model, which process, the OS's own words.
+fn outside_stop_message(model_id: &str, exit: &crate::SidecarExit) -> String {
+    let pid = exit
+        .pid
+        .map(|pid| format!(" (pid {pid})"))
+        .unwrap_or_default();
+    format!(
+        "stopped outside goose: the engine process{pid} serving '{model_id}' ended with {} after \
+         a stop signal no goose path sent (another process or a terminal) — Mount starts it again",
+        exit.status
+    )
+}
+
 pub struct MlxEngineManager {
     state: Arc<Mutex<ManagerState>>,
     settings: StdMutex<EngineSettings>,
@@ -1665,19 +1695,7 @@ impl MlxEngineManager {
     }
 
     fn local_model(&self, settings: &EngineSettings, model_id: &str) -> Result<LocalModel> {
-        hf::validate_model_id(model_id)?;
-        let models_dir = expand_tilde(&settings.models_dir);
-        let models = hf::list_local_models(&models_dir)?;
-        let model = models
-            .into_iter()
-            .find(|m| m.id == model_id)
-            .with_context(|| {
-                format!(
-                    "model '{model_id}' not found in {} (download it first)",
-                    models_dir.display()
-                )
-            })?;
-        Ok(model)
+        find_local_model(&expand_tilde(&settings.models_dir), model_id)
     }
 
     /// The one fit rule (`crate::fit`) for `model_id` on this Mac right now — the verdict the mount
@@ -1686,7 +1704,15 @@ impl MlxEngineManager {
     /// when it is this model).
     pub async fn mount_fit(&self, model_id: &str) -> Result<FitVerdict> {
         let settings = self.settings();
-        let model = self.local_model(&settings, model_id)?;
+        // Off the async thread: the assessment stats every file of the model, and on a Mac
+        // whose models live on the NFS-linked SSD a busy server makes each stat wait.
+        let model = {
+            let models_dir = expand_tilde(&settings.models_dir);
+            let id = model_id.to_string();
+            tokio::task::spawn_blocking(move || find_local_model(&models_dir, &id))
+                .await
+                .context("model assessment task")??
+        };
         self.judge_model(&settings, &model).await
     }
 
@@ -2331,6 +2357,7 @@ impl MlxEngineManager {
             load: None,
             machine_load: None,
             machine_load_error: None,
+            stopped_outside: None,
         };
         match self
             .load_lock_path()
@@ -2378,6 +2405,15 @@ impl MlxEngineManager {
                     // supervisor is kept, so a Mount of the same model restarts it through
                     // the crash breaker; nothing restarts on its own.
                     match sidecar.exited().await {
+                        Ok(Some(exit)) if exit.stopped_outside_goose() => {
+                            // A stop from outside goose (`kill -TERM`, Ctrl-C) is a stop: the
+                            // engine reads stopped, never failed. The supervisor is kept, so a
+                            // Mount restarts it as before.
+                            status.state = "stopped".to_string();
+                            status.model_id = None;
+                            status.stopped_outside = Some(outside_stop_message(model_id, &exit));
+                            None
+                        }
                         Ok(Some(exit)) => {
                             status.state = "failed".to_string();
                             status.last_error = Some(engine_exit_message(&exit));
@@ -3964,6 +4000,58 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert_eq!(seen.len(), 2);
         let words = seen[1].outcome.clone().unwrap_err();
         assert!(words.contains("ValueError: no weights"), "{words}");
+    }
+
+    /// 3.0.132: an agent's `kill -TERM` on an idle engine left the sidebar red "Failed … exit
+    /// status: 143 — no goose path stopped it" for hours. A stop signal no goose path sent — the
+    /// signal itself, or the 143 a launcher turns it into — reads STOPPED, with neutral words and
+    /// no error; a SIGKILL stays failed (the test above); a Mount starts it again.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_engine_stopped_from_outside_goose_reads_stopped_not_failed() {
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/small");
+        // The launcher's way (uvx): it turns the SIGTERM into exit code 143.
+        let as_143 = tmp.path().join("exit-143");
+        let manager = test_manager();
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port: free_port(),
+            spawn_command: vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                format!(
+                    "import os, signal, sys\n\
+                     if os.path.exists({flag:?}):\n    signal.signal(signal.SIGTERM, lambda *a: os._exit(143))\n\
+                     {ARGV_FAKE_ENGINE}",
+                    flag = as_143.to_string_lossy()
+                ),
+            ],
+            ..Default::default()
+        });
+        for (how, expect_status) in [("the signal", "signal: 15"), ("exit code 143", "143")] {
+            if how == "exit code 143" {
+                std::fs::write(&as_143, b"").unwrap();
+            }
+            manager.mount("pub/small").await.unwrap();
+            let up = settle(&manager).await;
+            assert_eq!(up.state, "running", "{how}: {:?}", up.last_error);
+            let pid = up.pid.unwrap();
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+            wait_exited(pid).await;
+            let stopped = manager.status().await;
+            assert_eq!(stopped.state, "stopped", "{how}: {:?}", stopped.last_error);
+            assert_eq!(stopped.last_error, None, "{how}");
+            let words = stopped.stopped_outside.unwrap_or_default();
+            assert!(words.starts_with("stopped outside goose"), "{how}: {words}");
+            assert!(words.contains(expect_status), "{how}: {words}");
+            assert!(words.contains("pub/small"), "{how}: {words}");
+        }
+        manager.mount("pub/small").await.unwrap();
+        let again = settle(&manager).await;
+        assert_eq!(again.state, "running", "{:?}", again.last_error);
+        assert_eq!(again.stopped_outside, None);
+        manager.unmount().await.unwrap();
     }
 
     /// Q-256: a Mount that finds its supervised engine dead restarts it through the supervisor —

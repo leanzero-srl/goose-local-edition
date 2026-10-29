@@ -1593,12 +1593,7 @@ async fn run_cli(
     argv: Vec<String>,
     wait: Duration,
 ) -> Result<Output, MeshError> {
-    let mut cmd = Command::new(&argv[0]);
-    cmd.args(&argv[1..])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    let mut cmd = cli_command(&argv);
     let program = argv[0].clone();
     match tokio::time::timeout(wait, cmd.output()).await {
         Err(_) => Err(MeshError::CliTimeout { what, waited: wait }),
@@ -1609,6 +1604,24 @@ async fn run_cli(
         }),
         Ok(Ok(output)) => Ok(output),
     }
+}
+
+/// The `tailscale` CLI command for `argv`. SSH_CLIENT / SSH_CONNECTION are removed: the CLI
+/// reads them as "this shell came in over Tailscale" and, when `up` would toggle SSH (a fresh
+/// state), asks "Continue?" — with no TTY that is `aborted, no changes made`. This tailscaled is
+/// the app's own userspace mesh, never the transport of anyone's SSH session, and an app started
+/// over ssh (`ssh mac 'open -a "Goose Swarm"'` hands the app the session's environment) failed
+/// every connect that way on Gabee, 2026-10-27.
+fn cli_command(argv: &[String]) -> Command {
+    let mut cmd = Command::new(&argv[0]);
+    cmd.args(&argv[1..])
+        .env_remove("SSH_CLIENT")
+        .env_remove("SSH_CONNECTION")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    cmd
 }
 
 fn cli_failure_text(output: &Output) -> String {
@@ -1666,7 +1679,25 @@ fn stderr_tail_string(tail: &Arc<StdMutex<VecDeque<String>>>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_connect_failure, prepare_state_dir, AuthKeySweep};
+    use super::{cli_command, is_connect_failure, prepare_state_dir, AuthKeySweep};
+
+    #[test]
+    fn the_tailscale_cli_never_sees_an_ssh_session() {
+        let cmd = cli_command(&["tailscale".to_string(), "up".to_string()]);
+        let removed: Vec<String> = cmd
+            .as_std()
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(key, _)| key.to_string_lossy().into_owned())
+            .collect();
+        assert!(removed.contains(&"SSH_CLIENT".to_string()), "{removed:?}");
+        assert!(
+            removed.contains(&"SSH_CONNECTION".to_string()),
+            "{removed:?}"
+        );
+        // Control: nothing else is stripped (HOME, the proxy road etc. pass through).
+        assert_eq!(removed.len(), 2, "{removed:?}");
+    }
 
     /// A pid that certainly belonged to a process which has exited and been reaped.
     fn reaped_pid() -> u32 {
