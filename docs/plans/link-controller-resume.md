@@ -1,7 +1,17 @@
 # Goose Remote continuation
 
-Updated 29 October 2026, 14:14 local. Read the new checkpoint below first; older sections retain prior receipts. Earlier failures, intermediate receipts and superseded instructions are retained in [the preceding handoff](link-controller-history-through-2026-10-29-1209.md) and its linked history; do not follow its pending jobs or obsolete approvals.
+Updated 29 October 2026, 14:27 local. Read the new checkpoint below first; older sections retain prior receipts. Earlier failures, intermediate receipts and superseded instructions are retained in [the preceding handoff](link-controller-history-through-2026-10-29-1209.md) and its linked history; do not follow its pending jobs or obsolete approvals.
 
+
+## 14:27 active checkpoint
+
+Compute-node source is committed as60998be32b57c414ec1fb54bd7ec6fe1a61ae2d9/tree57749493668fd7ee51136fc3c5afc8f4359f0cad. Independent source review PASS; core53, management11, HTTP12, SDK7 passed, full workspace/all-targets Clippy -D warnings passed. Build evidence committed1aa88e7489 at docs/ios-release/mobile-compute-node-build-gates-2026-10-29.json. Final CLI job laptop-20261029-141929-f70c DONE0; exact stamped CLI /tmp/goose-node-management-cli-60998be32b57/goose-gated SHA256a7b13a2b2071103f5427a5d1557cd01859328a406f60f1d781391fb33dd8bcd2. All1115 tracked runtime inputs matched committed Git objects. Do not rebuild or repeat these gates.
+
+ONE fresh Electron package job laptop-20261029-142342-1f6d is running at /tmp/goose-node-management-desktop. Packaging has finished; source5874/blob/mode, SDKdist, immutable baseline and copied packaged runtime payload checks passed; final ZIP/receipt pending. native_jump_fix owns packaging. native_auth_review is independently checking resulting artifact before root signing. No node-feature signing/installation/upload yet.
+
+Reviewed all-Mach-O signing operator/comparator/control copies committed5b5084d9e6 under docs/ios-release/desktop-controller-candidate/node-management. Root reviewed exact minimal comparator change and actual positive/corruption controls. Use /tmp/goose-node-management-sign-only.cjs only after final actual package acceptance, with concrete gate/build receipt and a fresh stage. New /tmp/goose-install-node-controller.py is a reviewed draft with execution-blocking PENDING pins; set/review exact final artifact pins before use. It verifies old43a entire bundle and two idle checks, preserves rollback and exact process identities. Root's /tmp/goose-node-profile-preserve.py copies17 known private files locally with restricted modes and reads complete session/message row hashes; no DBcopy, profile write or secret transfer. Reviewer approved it; root added exact helper SHA and config-copy/hash consistency assertions. It has not executed.
+
+Mac locked at14:20 CUA check. Owner async unlock question sent once at14:26; do not repeat it or bypass lock. Hold app swap until normal visible relaunch can be performed. Existing original appPID49814/backend49888 at14:24; always refresh before any action. Native8762 remains installed on physical phone and original enrolled iPad simulator. Actual phone create/read/remove remains pending; prior nudging/download/provider receipts remain valid within their recorded scope. No inference repeated. Studios/main/public release constraints below remain unchanged.
 
 ## 14:14 active checkpoint
 
