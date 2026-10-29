@@ -179,6 +179,9 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.16-ple.4 (fork lz/qwen4-vision-ple f6cc404c8) = ple.3 + mlx-vlm/oMLX Flash-Next builds load
+/// (Jundot/Qwen3.8-Flash-Next-oQ4e-mtp: PLE `shards.K` + quant layout from shapes, mixed-precision MTP head, folded
+/// FP8 PLE scale) and the text lane caps images at 1,003,520 px.
 /// v0.14.3-lz.16-ple.3 (fork lz/qwen4-vision-ple aafee8699) = ple.2 + `/v1/models` lists "vision" for that text lane
 /// behind the `is_text_only` qwen3.8-flash-next-4bit alias (goose serves it under the alias's hf_path; ple.2 listed
 /// text only there, so the openai provider sent placeholders).
@@ -292,7 +295,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.3",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.4",
     "rapid-mlx",
 ];
 
@@ -419,6 +422,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.2",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.3",
         "rapid-mlx",
     ],
 ];
@@ -3414,7 +3423,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.3",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.4",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -3737,7 +3746,8 @@ mod tests {
     #[test]
     fn the_real_flash_checkpoint_gets_the_measured_mtp_argv() {
         let models_dir = "/Volumes/AI-workhorse/models/goose";
-        let model_id = "rapid-mlx/Qwen3.8-Flash-Next-4bit";
+        // The 2026-10-29 build (rapid-mlx/Qwen3.8-Flash-Next-4bit was deleted that day).
+        let model_id = "Jundot/Qwen3.8-Flash-Next-oQ4e-mtp";
         let dir = Path::new(models_dir).join(model_id);
         if !dir.join("model.safetensors.index.json").is_file() {
             eprintln!("skipped: {} is not reachable", dir.display());
@@ -3746,6 +3756,7 @@ mod tests {
         let facts = inspect_model_dir(&dir);
         assert_eq!(facts.mtp_head, Some(MtpHead::InShard));
         assert_eq!(facts.mtp_depth, 2);
+        assert!(facts.vision_bearing && facts.text_lane_vision, "{facts:?}");
         let settings = EngineSettings {
             models_dir: models_dir.to_string(),
             ..Default::default()
@@ -3756,6 +3767,7 @@ mod tests {
             Some(r#"{"method":"mtp","num_speculative_tokens":2}"#),
             "{argv:?}"
         );
+        assert!(!argv.iter().any(|a| a == "--text-only"), "{argv:?}");
         assert_eq!(
             prompt_lookup_lane(&settings, model_id),
             PromptLookupLane::Mtp
@@ -3975,7 +3987,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.3",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.4",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
