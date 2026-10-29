@@ -17,6 +17,7 @@ struct ManagementView: View {
                 if let error = model.error { Section { Text(error).foregroundStyle(Studio.dangerInk).textSelection(.enabled) } }
                 ManagementStatusView(model: model)
                 if kind == .models { models(model) }
+                else if kind == .nodes { ComputeNodesSection(model: model, host: host) }
                 else if kind == .providers {
                     Section("Providers") {
                         ForEach(model.providers) { provider in
@@ -35,7 +36,7 @@ struct ManagementView: View {
             .task {
                 do {
                     if model == nil { model = try store.managementModel(for: host) }
-                    await model?.load(providersOnly: kind == .providers)
+                    await model?.load(kind: kind)
                     while !Task.isCancelled {
                         try await Task.sleep(for: .seconds(2))
                         if let model, !model.trackedRepo.isEmpty { await model.refreshProgress() }
@@ -43,7 +44,7 @@ struct ManagementView: View {
                 } catch is CancellationError { }
                 catch { setupError = error.localizedDescription }
             }
-            .refreshable { await model?.load(providersOnly: kind == .providers); await model?.refreshProgress() }
+            .refreshable { await model?.load(kind: kind); await model?.refreshProgress() }
             .confirmationDialog("Cancel this download on \(host.name)?", isPresented: $cancelDownload, titleVisibility: .visible) {
                 Button("Cancel download", role: .destructive) {
                     if let model { Task { await downloadAction(.downloadCancel, model: model) } }
@@ -116,7 +117,7 @@ struct ManagementStatusView: View {
             }
         }.confirmationDialog("Clear this saved request?", isPresented: $dismissUnknown, titleVisibility: .visible) {
             Button("Clear saved request", role: .destructive) { Task { await model.dismissUnknownRequest() } }
-        } message: { Text("The Mac may already have applied it. Check the Mac's models or provider settings first. Clearing only removes this phone's retry record; it does not undo work on the Mac.") }
+        } message: { Text("The Mac may already have applied it. Check the Mac's models, providers or compute nodes first. Clearing only removes this phone's retry record; it does not undo work on the Mac.") }
     }
 }
 

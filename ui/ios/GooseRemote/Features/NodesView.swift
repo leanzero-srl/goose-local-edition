@@ -68,13 +68,13 @@ struct NodeDetailView: View {
             Section("Manage this Mac") {
                 NavigationLink { ManagementView(kind: .models, host: host) } label: { Label("Models & downloads", icon: .download) }
                 NavigationLink { ManagementView(kind: .providers, host: host) } label: { Label("Providers", icon: .cloud) }
-                NavigationLink { AddMacView() } label: { Label("Node setup", icon: .laptop) }
+                NavigationLink { ManagementView(kind: .nodes, host: host) } label: { Label("Compute nodes", icon: .laptop) }
             }.listRowBackground(Studio.surface)
         }.navigationTitle(host.name).studioScreen()
     }
 }
 
 enum ManagementKind {
-    case models, providers, setup
-    var title: String { switch self { case .models: "Models & downloads"; case .providers: "Providers"; case .setup: "Node setup" } }
+    case models, providers, nodes
+    var title: String { switch self { case .models: "Models & downloads"; case .providers: "Providers"; case .nodes: "Compute nodes" } }
 }

@@ -23,6 +23,8 @@ actor ManagementServiceProbe: OwnerManagementService {
     var downloadMissing = false
     var invalidRepository = false
     var changedGeneration = false
+    var nodesUnsupported = false
+    var nodeReads = 0
     var onManage: (@MainActor @Sendable () -> Void)?
     init(device: UUID, storage: MemoryCredentials) { self.device = device; self.storage = storage }
     func configure(lose: Bool = false, wrongDevice: Bool = false, state: ReceiptState = .delivered) {
@@ -30,6 +32,7 @@ actor ManagementServiceProbe: OwnerManagementService {
     }
     func setOnManage(_ callback: @escaping @MainActor @Sendable () -> Void) { onManage = callback }
     func changeGeneration() { changedGeneration = true }
+    func rejectNodes() { nodesUnsupported = true }
     func rejectRepository() { invalidRepository = true }
     func setDownloadMissing() { downloadMissing = true }
     func models(host: HostDescriptor, credential: String) async throws -> ManagedModels { .init(models: [], diskAvailableBytes: 10, diskTotalBytes: 100) }
@@ -38,6 +41,12 @@ actor ManagementServiceProbe: OwnerManagementService {
         return .init(state: "downloading", totalBytes: 100, downloadedBytes: 20, currentFile: "weights", error: nil)
     }
     func providers(host: HostDescriptor, credential: String) async throws -> [ManagedProvider] { [] }
+    func nodes(host: HostDescriptor, credential: String) async throws -> ManagedComputeNodes {
+        if nodesUnsupported { throw ControllerError.remote(404, "not_found", "Missing route") }
+        nodeReads += 1
+        let nodes: [ManagedComputeNode] = state == .delivered && requests.last?.action == .nodeCreate ? [.init(id: "test-node", name: "Test", kind: "cloud", model: "claude-test", provider: "anthropic", macs: [], editable: true, definitionRevision: "revision-a")] : []
+        return .init(nodes: nodes, providers: [], localModels: [], supportedKinds: ["cloud", "endpoint", "mlx"], capabilities: ["node_create", "node_remove"])
+    }
     func manage(_ command: ManagementCommand, host: HostDescriptor, credential: String) async throws -> ManagementReceipt {
         let saved = try storage.read([PendingManagement].self, account: ManagementModel.outboxAccount) ?? []
         guard saved.contains(where: { $0.command.commandId == command.commandId }) else { throw ControllerError.invalid("Sent before durable save") }
@@ -197,4 +206,126 @@ actor ManagementServiceProbe: OwnerManagementService {
         XCTAssertEqual(requests.first?.url?.path, "/v1/controller/management/providers")
         XCTAssertEqual(requests.first?.value(forHTTPHeaderField: "Authorization"), "Bearer token")
     }
+    func testComputeNodeWireUsesOwnerRouteAndDecodesRevision() async throws {
+        let data = Data(#"{"nodes":[{"id":"test-node","name":"Test","kind":"cloud","model":"claude-test","provider":"anthropic","macs":[],"editable":true,"definition_revision":"revision-a"}],"providers":[{"id":"anthropic","display_name":"Anthropic","models":["claude-test"]}],"local_models":["org/local-model"],"supported_kinds":["cloud","endpoint","mlx"],"capabilities":["node_create","node_remove"]}"#.utf8)
+        let transport = ScriptedTransport([.response(200, data)])
+        let service = OwnerHTTPControllerService(connections: FixedOwnerConnection(endpoint: endpoint, transport: transport))
+        let result = try await service.nodes(host: context.host, credential: "token")
+        XCTAssertEqual(result.nodes.first?.definitionRevision, "revision-a")
+        XCTAssertEqual(result.providers.first?.displayName, "Anthropic")
+        XCTAssertEqual(result.localModels, ["org/local-model"])
+        let requests = await transport.requests
+        XCTAssertEqual(requests.first?.url?.path, "/v1/controller/management/nodes")
+        XCTAssertEqual(requests.first?.value(forHTTPHeaderField: "Authorization"), "Bearer token")
+    }
+    func testLegacyOwnerNodeRouteExplainsUpgradeWithoutSendingMutation() async throws {
+        let storage = MemoryCredentials()
+        let probe = ManagementServiceProbe(device: device, storage: storage)
+        await probe.rejectNodes()
+        let model = model(probe, storage)
+        await model.load(kind: .nodes)
+        XCTAssertNil(model.nodes)
+        XCTAssertEqual(model.error, "Update Goose Swarm on this Mac to manage compute nodes from your controller.")
+        let sent = await probe.requests
+        XCTAssertTrue(sent.isEmpty)
+    }
+    func testNodeCreateLostAcknowledgementKeepsExactOwnerPayloadAndId() async throws {
+        let storage = MemoryCredentials()
+        let probe = ManagementServiceProbe(device: device, storage: storage)
+        await probe.configure(lose: true)
+        let first = model(probe, storage)
+        let payload: JSONValue = .object(["id": .string("test-node"), "name": .string("Test"), "kind": .string("cloud"), "provider": .string("anthropic"), "model": .string("claude-test")])
+        await first.perform(.nodeCreate, target: "Test", payload: payload)
+        let original = try XCTUnwrap(first.pending?.command)
+        let reopened = model(probe, storage)
+        await reopened.load(kind: .nodes)
+        XCTAssertEqual(reopened.pending?.command.commandId, original.commandId)
+        await probe.configure()
+        await reopened.retry()
+        let sent = await probe.requests
+        XCTAssertEqual(sent.count, 2)
+        XCTAssertEqual(try ControllerCodec.encoder().encode(sent[0]), try ControllerCodec.encoder().encode(sent[1]))
+        XCTAssertEqual(sent[1].action, .nodeCreate)
+        XCTAssertEqual(sent[1].ownerNodeId, owner)
+        XCTAssertEqual(reopened.receipt?.state, .delivered)
+        XCTAssertNil(reopened.pending)
+    }
+    func testNodeRemovalRetainsExpectedDefinitionAcrossUnknownDelivery() async throws {
+        let storage = MemoryCredentials()
+        let probe = ManagementServiceProbe(device: device, storage: storage)
+        await probe.configure(state: .outcomeUnknown)
+        let model = model(probe, storage)
+        let payload: JSONValue = .object(["id": .string("test-node"), "expected_definition_revision": .string("revision-a")])
+        await model.perform(.nodeRemove, target: "Test", payload: payload)
+        XCTAssertNotNil(model.pending)
+        let encoded = try ControllerCodec.encoder().encode(XCTUnwrap(model.pending?.command))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let fields = try XCTUnwrap(json["payload"] as? [String: String])
+        XCTAssertEqual(fields, ["id": "test-node", "expected_definition_revision": "revision-a"])
+        XCTAssertEqual(json["action"] as? String, "node_remove")
+        let sent = await probe.requests
+        XCTAssertEqual(sent.count, 1)
+    }
+    func testNodeDraftOnlyAllowsAdvertisedModelsAndNoExecutionFields() throws {
+        let inventory = ManagedComputeNodes(nodes: [], providers: [.init(id: "anthropic", displayName: "Anthropic", models: ["claude-test"])], localModels: ["org/local-model"], supportedKinds: ["cloud", "endpoint", "mlx"], capabilities: ["node_create"])
+        var draft = ComputeNodeDraft(id: "test-node", name: " Test ", kind: "cloud", provider: "anthropic", model: "claude-test")
+        var encoded = try ControllerCodec.encoder().encode(draft.payload(in: inventory))
+        var fields = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: String])
+        XCTAssertEqual(fields, ["id": "test-node", "name": "Test", "kind": "cloud", "provider": "anthropic", "model": "claude-test"])
+        draft.model = "not-advertised"
+        XCTAssertThrowsError(try draft.payload(in: inventory))
+        draft.kind = "mlx"; draft.model = "org/local-model"
+        encoded = try ControllerCodec.encoder().encode(draft.payload(in: inventory))
+        fields = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: String])
+        XCTAssertEqual(fields, ["id": "test-node", "name": "Test", "kind": "mlx", "model": "org/local-model"])
+        draft.name = "  "
+        XCTAssertThrowsError(try draft.payload(in: inventory))
+    }
+
+    func testAcceptedNodeCreationRefreshesOnlyAfterFinalDeliveryCheck() async throws {
+        let storage = MemoryCredentials()
+        let probe = ManagementServiceProbe(device: device, storage: storage)
+        let model = model(probe, storage)
+        await model.load(kind: .nodes)
+        XCTAssertEqual(model.nodes?.nodes.count, 0)
+        await probe.configure(state: .accepted)
+        await model.perform(.nodeCreate, target: "Test", payload: .object(["id": .string("test-node")]))
+        XCTAssertEqual(model.receipt?.state, .accepted)
+        XCTAssertEqual(model.nodes?.nodes.count, 0)
+        var reads = await probe.nodeReads
+        XCTAssertEqual(reads, 1)
+        await probe.configure(state: .delivered)
+        await model.checkReceipt()
+        XCTAssertEqual(model.nodes?.nodes.map(\.id), ["test-node"])
+        XCTAssertNil(model.pending)
+        reads = await probe.nodeReads
+        XCTAssertEqual(reads, 2)
+        let sent = await probe.requests
+        XCTAssertEqual(sent.count, 1, "Receipt lookup must not resend the creation")
+    }
+    func testAppliedNodeWithFailedInventoryRefreshCannotShowStaleList() async throws {
+        let storage = MemoryCredentials()
+        let probe = ManagementServiceProbe(device: device, storage: storage)
+        let model = model(probe, storage)
+        await model.load(kind: .nodes)
+        await probe.configure(state: .accepted)
+        await model.perform(.nodeRemove, target: "Test", payload: .object(["id": .string("test-node"), "expected_definition_revision": .string("revision-a")]))
+        await probe.configure(state: .delivered)
+        await probe.rejectNodes()
+        await model.checkReceipt()
+        XCTAssertEqual(model.receipt?.state, .delivered)
+        XCTAssertNil(model.pending)
+        XCTAssertNil(model.nodes)
+        XCTAssertTrue(model.error?.contains("The Mac applied the request") == true)
+    }
+    func testNodeDraftRejectsRemovedCapabilityAndRemovedProviderModel() throws {
+        let draft = ComputeNodeDraft(id: "test-node", name: "Test", kind: "cloud", provider: "anthropic", model: "claude-test")
+        let enabled = ManagedComputeNodes(nodes: [], providers: [.init(id: "anthropic", displayName: "Anthropic", models: ["claude-test"])], localModels: [], supportedKinds: ["cloud"], capabilities: ["node_create"])
+        XCTAssertNoThrow(try draft.payload(in: enabled))
+        let disabled = ManagedComputeNodes(nodes: [], providers: enabled.providers, localModels: [], supportedKinds: ["cloud"], capabilities: [])
+        XCTAssertThrowsError(try draft.payload(in: disabled))
+        let disappeared = ManagedComputeNodes(nodes: [], providers: [.init(id: "anthropic", displayName: "Anthropic", models: [])], localModels: [], supportedKinds: ["cloud"], capabilities: ["node_create"])
+        XCTAssertThrowsError(try draft.payload(in: disappeared))
+    }
+
 }

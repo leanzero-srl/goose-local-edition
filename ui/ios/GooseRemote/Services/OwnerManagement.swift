@@ -33,9 +33,32 @@ struct ManagedProvider: Decodable, Identifiable, Sendable {
     let fields: [Field]
     var id: String { providerId }
 }
+struct ManagedComputeNode: Decodable, Identifiable, Sendable {
+    let id: String
+    let name: String
+    let kind: String
+    let model: String?
+    let provider: String?
+    let macs: [String]
+    let editable: Bool
+    let definitionRevision: String
+}
+struct ManagedNodeProvider: Decodable, Identifiable, Sendable {
+    let id: String
+    let displayName: String
+    let models: [String]
+}
+struct ManagedComputeNodes: Decodable, Sendable {
+    let nodes: [ManagedComputeNode]
+    let providers: [ManagedNodeProvider]
+    let localModels: [String]
+    let supportedKinds: [String]
+    let capabilities: [String]
+}
 enum ManagementAction: String, Codable, Sendable {
     case download, downloadCancel = "download_cancel", downloadPause = "download_pause", downloadResume = "download_resume"
     case providerConfigure = "provider_configure", providerCreate = "provider_create"
+    case nodeCreate = "node_create", nodeRemove = "node_remove"
 }
 struct ManagementCommand: Codable, Sendable {
     let commandId: UUID
@@ -68,6 +91,7 @@ protocol OwnerManagementService: Sendable {
     func models(host: HostDescriptor, credential: String) async throws -> ManagedModels
     func download(repo: String, host: HostDescriptor, credential: String) async throws -> ManagedDownload
     func providers(host: HostDescriptor, credential: String) async throws -> [ManagedProvider]
+    func nodes(host: HostDescriptor, credential: String) async throws -> ManagedComputeNodes
     func manage(_ command: ManagementCommand, host: HostDescriptor, credential: String) async throws -> ManagementReceipt
     func managementReceipt(id: UUID, host: HostDescriptor, credential: String) async throws -> ManagementReceipt
 }
@@ -85,6 +109,9 @@ extension OwnerHTTPControllerService: OwnerManagementService {
         let response: Response = try await request("GET", path: "management/providers", host: host, credential: credential, body: Optional<String>.none)
         guard response.providers.allSatisfy({ $0.fields.allSatisfy { !$0.secret || $0.value == nil } }) else { throw ControllerError.malformedResponse }
         return response.providers
+    }
+    func nodes(host: HostDescriptor, credential: String) async throws -> ManagedComputeNodes {
+        try await request("GET", path: "management/nodes", host: host, credential: credential, body: Optional<String>.none)
     }
     func manage(_ command: ManagementCommand, host: HostDescriptor, credential: String) async throws -> ManagementReceipt {
         guard command.ownerNodeId == host.id else { throw ControllerError.invalid("This command belongs to another Mac.") }

@@ -5,6 +5,7 @@ import Observation
 final class ManagementModel {
     private(set) var models: ManagedModels?
     private(set) var providers: [ManagedProvider] = []
+    private(set) var nodes: ManagedComputeNodes?
     private(set) var progress: ManagedDownload?
     private(set) var progressAt: Date?
     private(set) var trackedRepo = ""
@@ -12,6 +13,7 @@ final class ManagementModel {
     private(set) var receipt: ManagementReceipt?
     private(set) var busy = false
     private(set) var receiptMissing = false
+    private var refreshedNodeCommand: UUID?
     var canDismissRequest: Bool { receipt?.state == .outcomeUnknown || receiptMissing }
     var error: String?
     private let service: any OwnerManagementService
@@ -25,14 +27,18 @@ final class ManagementModel {
          isCurrent: @escaping @MainActor (UUID) -> Bool) {
         self.service = service; self.storage = storage; self.context = context; self.isCurrent = isCurrent
     }
-    func load(providersOnly: Bool = false) async {
+    func load(kind: ManagementKind = .models) async {
         guard !busy else { return }
         busy = true; defer { busy = false }
         do {
             let current = try await context()
             let items = try storage.read([PendingManagement].self, account: Self.outboxAccount) ?? []
             pending = items.first { $0.deviceId == current.identity.credentials.device.id && $0.command.ownerNodeId == current.host.id }
-            if providersOnly {
+            if kind == .nodes {
+                let next = try await service.nodes(host: current.host, credential: current.identity.credentials.accessToken)
+                guard isCurrent(current.identity.credentials.device.id) else { throw CancellationError() }
+                nodes = next
+            } else if kind == .providers {
                 let next = try await service.providers(host: current.host, credential: current.identity.credentials.accessToken)
                 guard isCurrent(current.identity.credentials.device.id) else { throw CancellationError() }
                 providers = next
@@ -42,7 +48,16 @@ final class ManagementModel {
                 models = next
             }
             error = nil
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            if kind == .nodes {
+                nodes = nil
+                if case ControllerError.remote(let status, _, _) = error, [404, 501].contains(status) {
+                    self.error = "Update Goose Swarm on this Mac to manage compute nodes from your controller."
+                    return
+                }
+            }
+            self.error = error.localizedDescription
+        }
     }
     func watch(repo: String) async {
         selectRepo(repo)
@@ -109,6 +124,7 @@ final class ManagementModel {
             guard pending.deviceId == current.identity.credentials.device.id, pending.command.ownerNodeId == current.host.id else { throw CancellationError() }
             let next = try await service.managementReceipt(id: pending.command.commandId, host: current.host, credential: current.identity.credentials.accessToken)
             try accept(next, pending: pending)
+            try await refreshNodes(after: next, current: current)
             error = nil
         } catch {
             if case ControllerError.remote(404, "command_missing", _) = error, isCurrent(pending.deviceId) { receiptMissing = true }
@@ -134,6 +150,7 @@ final class ManagementModel {
         do {
             let next = try await service.manage(pending.command, host: current.host, credential: current.identity.credentials.accessToken)
             try accept(next, pending: pending)
+            try await refreshNodes(after: next, current: current)
         } catch {
             // These typed validation failures happen before admission for this immutable payload.
             if case ControllerError.remote(400, let code, _) = error,
@@ -144,6 +161,20 @@ final class ManagementModel {
                 self.pending = nil
             }
             throw error
+        }
+    }
+    private func refreshNodes(after receipt: ManagementReceipt, current: ManagementContext) async throws {
+        guard receipt.state == .delivered, [.nodeCreate, .nodeRemove].contains(receipt.action),
+              refreshedNodeCommand != receipt.commandId else { return }
+        do {
+            let next = try await service.nodes(host: current.host, credential: current.identity.credentials.accessToken)
+            guard isCurrent(current.identity.credentials.device.id) else { throw CancellationError() }
+            nodes = next
+            refreshedNodeCommand = receipt.commandId
+        } catch {
+            guard isCurrent(current.identity.credentials.device.id) else { throw CancellationError() }
+            nodes = nil
+            throw ControllerError.unavailable("The Mac applied the request, but its node list could not be refreshed. Return to Compute nodes and refresh. \(error.localizedDescription)")
         }
     }
     private func accept(_ next: ManagementReceipt, pending: PendingManagement) throws {
