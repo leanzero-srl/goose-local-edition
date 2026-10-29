@@ -1,0 +1,64 @@
+{
+  "captured_at": "2026-10-29T08:23:46.714166Z",
+  "method": "Read-only authority SQLite mode=ro/query_only, then existing authenticated Headscale GET /api/v1/node. Credentials remained in process memory and were not printed.",
+  "provider_node_count": 4,
+  "phone": {
+    "authority_device_id": "333b2a27-9958-4195-8341-2256696e8287",
+    "authority_enrollment_status": "confirmed",
+    "bound_provider_node_id": "49",
+    "provider_node_present": false
+  },
+  "same_account_positive_control": {
+    "authority_device_id": "6398edbb-d0a8-4d9c-a7b4-5dcbe8cb24b5",
+    "bound_provider_node_id": "48",
+    "provider_node_present": true,
+    "online": true,
+    "last_seen": "2026-10-29T08:15:16.060401Z",
+    "expiry": null
+  },
+  "primary_server_log": {
+    "host": "workhorse",
+    "path": "/Users/workhorse/.leanzero/headscale/serve.log",
+    "phone_node_events": [
+      {
+        "local_time": "2026-10-29T09:48:57+02:00",
+        "event": "node connected",
+        "node_id": 49
+      },
+      {
+        "local_time": "2026-10-29T09:49:06+02:00",
+        "event": "node connected",
+        "node_id": 49
+      },
+      {
+        "local_time": "2026-10-29T09:50:45+02:00",
+        "event": "node disconnected",
+        "node_id": 49
+      },
+      {
+        "local_time": "2026-10-29T10:06:23+02:00",
+        "event": "cleaning up node that has been offline for too long",
+        "node_id": 49,
+        "offline_duration_ms": 900000
+      }
+    ]
+  },
+  "native_physical_trace": {
+    "source": "52d17d7cae84",
+    "observed_by": "root via Console physical phone, no UI/background actions during capture",
+    "last_stage": "node-up-begin",
+    "operation": "3CB42D25-2A2B-401E-925A-46AB7A70D4E1",
+    "local_time": "2026-10-29T10:21:23.532784+02:00",
+    "unchanged_through_local": "2026-10-29T10:26:00+02:00",
+    "event_count": 9
+  },
+  "causal_scope": "Provider deletion explains the current cold-start wait: saved confirmed enrollment suppresses authKey and pinned tsnet.Up waits indefinitely in NeedsLogin. It does NOT explain initial09:51 nil-node stall, which preceded10:06 deletion. Lifecycle safety-net physical acceptance remains separate.",
+  "source_contract": {
+    "pinned_tailscale_version": "v1.104.1",
+    "up": "tsnet.Server.Up observes IPN events until Running; TODO explicitly leaves NeedsLogin and NeedsMachineAuth without terminal error; wrapper uses context.Background.",
+    "mint": "MeshProvider.mint requests ephemeral:true; native ephemeral:false does not prove a non-ephemeral provider registration.",
+    "existing_recovery": "MeshService.join accepts new enrollmentID for the same authorized device only after complete provider account snapshot shows prior confirmed binding absent/unusable. Still-present node rejects already_enrolled. No broader policy change is required."
+  },
+  "live_mutations": false,
+  "reenrollment_performed": false
+}
