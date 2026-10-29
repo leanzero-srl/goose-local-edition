@@ -57,6 +57,8 @@ final class ControllerStore {
     @ObservationIgnored private let transport: any HTTPTransport
     @ObservationIgnored private let mesh: (any ControllerMeshSession)?
     @ObservationIgnored private var syncTask: Task<Void, Never>?
+    @ObservationIgnored private var syncRequest = UUID()
+    @ObservationIgnored private var meshSuspension: Task<Void, Never>?
     @ObservationIgnored private var catalogTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var workTask: Task<Void, Never>?
     @ObservationIgnored private var reconnectTask: Task<Void, Never>?
@@ -236,20 +238,38 @@ final class ControllerStore {
     }
 
     func manualSync() {
-        guard syncTask == nil, authenticated else { return }
+        guard foreground, syncTask == nil, authenticated else { return }
         stopStreams()
         syncRunning = true
         connection = .loading
+        let request = UUID()
+        syncRequest = request
+        MeshLifecycleDiagnostics.record("sync-begin", operation: request)
         syncTask = Task { @MainActor [self] in
-            defer { syncTask = nil; syncRunning = false }
+            defer {
+                MeshLifecycleDiagnostics.record("sync-end", operation: request)
+                if syncRequest == request { syncTask = nil; syncRunning = false }
+            }
             var epoch = accessEpoch
             do {
+                MeshLifecycleDiagnostics.record("sync-wait-shutdown", operation: request)
+                await meshSuspension?.value
+                try Task.checkCancellation()
+                guard foreground, syncRequest == request else { return }
                 let identity = try await validCredential()
+                try Task.checkCancellation()
+                guard foreground, syncRequest == request else { return }
                 epoch = accessEpoch
+                MeshLifecycleDiagnostics.record("sync-prepare-begin", operation: request)
                 try await mesh?.prepare(identity: identity)
+                MeshLifecycleDiagnostics.record("sync-prepare-end", operation: request)
+                try Task.checkCancellation()
+                guard foreground, syncRequest == request else { return }
                 let api = try ControllerAPI(authority: identity.authority, transport: transport)
+                MeshLifecycleDiagnostics.record("sync-hosts-begin", operation: request)
                 let page = try await api.hosts(token: identity.credentials.accessToken)
                 guard !Task.isCancelled, epoch == accessEpoch else { throw CancellationError() }
+                MeshLifecycleDiagnostics.record("sync-hosts-end", operation: request)
                 guard Set(page.hosts.map(\.id)).count == page.hosts.count else { throw ControllerError.malformedResponse }
                 hosts = page.hosts
                 try local?.retainOwners(Set(page.hosts.map(\.id)))
@@ -562,6 +582,7 @@ final class ControllerStore {
                 if FileManager.default.fileExists(atPath: state.path) { try FileManager.default.removeItem(at: state) }
             } else { throw ControllerError.unavailable("Local storage is unavailable. Unlock this device and retry cleanup.") }
         } catch { if failure == nil { failure = error } }
+        await meshSuspension?.value
         do { try await mesh?.removeLocalIdentity() }
         catch { if failure == nil { failure = error } }
         if let failure { throw failure }
@@ -804,8 +825,9 @@ final class ControllerStore {
         let pendingSync = syncTask
         credentialSyncTask = Task { @MainActor [weak self] in
             await pendingSync?.value
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
             _ = try? await refreshTask?.value
+            guard !Task.isCancelled else { return }
             credentialSyncTask = nil
             guard !Task.isCancelled, foreground, authenticated else { return }
             manualSync()
@@ -872,22 +894,36 @@ final class ControllerStore {
         selectedRef = nil; selectedWork = nil; selectedError = nil
     }
     func sceneActive() {
+        MeshLifecycleDiagnostics.record("scene-active")
         foreground = true
-        let pending = syncTask
         Task { @MainActor [weak self] in
-            await pending?.value
             guard let self, foreground else { return }
             if accountDeletion?.blocksAccountAccess == true { await checkAccountDeletion() }
             else if authenticated { manualSync() }
         }
     }
     func sceneBackground() async {
+        MeshLifecycleDiagnostics.record("scene-background")
         sharingRequest = nil
         foreground = false
         stopStreams()
         credentialSyncTask?.cancel(); credentialSyncTask = nil
-        syncTask?.cancel()
+        syncTask?.cancel(); syncTask = nil
+        syncRequest = UUID()
+        syncRunning = false
+        accessEpoch = UUID()
+        selectedRequest = UUID()
+        selectedLoading = false
         selectedError = selectedWork == nil ? nil : "Reconnect to refresh this saved view."
-        await mesh?.suspend()
+        let pending = meshSuspension
+        let mesh = mesh
+        let suspension = Task {
+            await pending?.value
+            MeshLifecycleDiagnostics.record("background-shutdown-begin")
+            await mesh?.suspend()
+            MeshLifecycleDiagnostics.record("background-shutdown-end")
+        }
+        meshSuspension = suspension
+        await suspension.value
     }
 }

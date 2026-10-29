@@ -1,8 +1,17 @@
 import Foundation
 import Network
+import OSLog
 #if canImport(TailscaleKit)
 import TailscaleKit
 #endif
+
+// Temporary physical-device lifecycle diagnosis; records no credentials or node identity.
+enum MeshLifecycleDiagnostics {
+    private static let logger = Logger(subsystem: "net.leanzero.goose-remote", category: "MeshLifecycle")
+    static func record(_ stage: String, operation: UUID? = nil) {
+        logger.notice("stage=\(stage, privacy: .public) operation=\(operation?.uuidString ?? "none", privacy: .public)")
+    }
+}
 
 struct MeshJoinCredential: Codable, Sendable {
     let enrollmentId: UUID
@@ -65,6 +74,7 @@ actor EmbeddedMeshConnectionProvider: OwnerConnectionProvider, ControllerMeshSes
     private var lifecycle = UUID()
     #if canImport(TailscaleKit)
     private var node: TailscaleNode?
+    private var closingTask: Task<Void, Never>?
     #endif
 
     init(credentials: any CredentialStorage = KeychainStore(), authorityTransport: any HTTPTransport = SecureHTTPTransport(), directory: URL) {
@@ -74,9 +84,14 @@ actor EmbeddedMeshConnectionProvider: OwnerConnectionProvider, ControllerMeshSes
     }
 
     func prepare(identity: CredentialEnvelope) async throws {
+        try Task.checkCancellation()
         #if canImport(TailscaleKit)
-        await suspend()
-        let operation = lifecycle
+        let operation = UUID()
+        lifecycle = operation
+        MeshLifecycleDiagnostics.record("prepare-begin", operation: operation)
+        await closeNode()
+        MeshLifecycleDiagnostics.record("prepare-closed-prior", operation: operation)
+        guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
         let deviceId = identity.credentials.device.deviceId
         var state = try credentials.read(MeshEnrollmentState.self, account: "mesh") ??
             MeshEnrollmentState(authority: identity.authority, deviceId: deviceId, enrollmentId: UUID())
@@ -88,7 +103,7 @@ actor EmbeddedMeshConnectionProvider: OwnerConnectionProvider, ControllerMeshSes
         if state.confirmedNodeKey == nil && state.join == nil {
             state.join = try await api.meshJoin(enrollmentId: state.enrollmentId, token: identity.credentials.accessToken)
             state.loginServer = state.join?.loginServer
-            guard operation == lifecycle else { throw CancellationError() }
+            guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
             try credentials.write(state, account: "mesh")
         }
         guard let loginServer = state.loginServer else { throw ControllerError.invalid("Mesh enrollment has no verified authority. Remove local access and enroll again.") }
@@ -98,25 +113,34 @@ actor EmbeddedMeshConnectionProvider: OwnerConnectionProvider, ControllerMeshSes
         var excluded = directory
         var values = URLResourceValues(); values.isExcludedFromBackup = true
         try excluded.setResourceValues(values)
+        MeshLifecycleDiagnostics.record("node-create", operation: operation)
         let current = try TailscaleNode(config: Configuration(hostName: "goose-controller-" + deviceId.uuidString.lowercased(), path: directory.path,
             authKey: state.join?.authKey, controlURL: loginServer.absoluteString, ephemeral: false), logger: nil)
         node = current
         do {
             try await withTaskCancellationHandler {
+                MeshLifecycleDiagnostics.record("node-up-begin", operation: operation)
                 try await current.up()
+                MeshLifecycleDiagnostics.record("node-up-end", operation: operation)
             } onCancel: {
                 // Cancelling detached up() alone leaves its Go call alive. Closing the node unblocks it.
                 Task { try? await current.close() }
             }
             guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
+            MeshLifecycleDiagnostics.record("node-status-begin", operation: operation)
             let key = try Self.nodeKey(status: await current.statusJSON())
+            guard operation == lifecycle, !Task.isCancelled else { throw CancellationError() }
+            MeshLifecycleDiagnostics.record("node-status-end", operation: operation)
             if let confirmed = state.confirmedNodeKey, confirmed != key { throw ControllerError.invalid("The local mesh identity changed. Explicit reenrollment is required.") }
+            MeshLifecycleDiagnostics.record("confirm-begin", operation: operation)
             let confirmed = try await api.confirmMesh(enrollmentId: state.enrollmentId, nodeKey: key, token: identity.credentials.accessToken)
-            guard operation == lifecycle, confirmed.deviceId == deviceId, confirmed.role == "controller", confirmed.revokedAt == nil else { throw ControllerError.malformedResponse }
+            guard operation == lifecycle, !Task.isCancelled, confirmed.deviceId == deviceId, confirmed.role == "controller", confirmed.revokedAt == nil else { throw ControllerError.malformedResponse }
+            MeshLifecycleDiagnostics.record("confirm-end", operation: operation)
             state.confirmedNodeKey = key
             state.join = nil
             try credentials.write(state, account: "mesh")
         } catch {
+            MeshLifecycleDiagnostics.record("prepare-failed", operation: operation)
             if operation == lifecycle { await suspend() }
             throw error
         }
@@ -164,12 +188,28 @@ actor EmbeddedMeshConnectionProvider: OwnerConnectionProvider, ControllerMeshSes
     }
     func suspend() async {
         lifecycle = UUID()
+        await closeNode()
+    }
+    private func closeNode() async {
         transports.values.forEach { $0.1.close() }
         transports.removeAll()
         #if canImport(TailscaleKit)
         let current = node
         node = nil
-        try? await current?.close()
+        let pending = closingTask
+        if let current {
+            let closing = Task {
+                await pending?.value
+                MeshLifecycleDiagnostics.record("node-close-begin")
+                try? await current.close()
+                MeshLifecycleDiagnostics.record("node-close-end")
+            }
+            closingTask = closing
+            await closing.value
+        } else {
+            MeshLifecycleDiagnostics.record("node-close-join")
+            await pending?.value
+        }
         #endif
     }
     func removeLocalIdentity() async throws {

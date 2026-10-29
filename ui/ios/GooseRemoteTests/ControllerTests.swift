@@ -720,3 +720,137 @@ private actor RecoveryOwner: OwnerControllerService {
     func submit(_ command: WorkCommand, host: HostDescriptor, credential: String) async throws -> CommandReceipt { throw ControllerError.unsupported("unused") }
     func receipt(commandId: UUID, host: HostDescriptor, credential: String) async throws -> CommandReceipt { throw ControllerError.unsupported("unused") }
 }
+
+@MainActor final class ControllerLifecycleTests: XCTestCase {
+    private func fixture(authority: LifecycleAuthority, mesh: LifecycleMesh) throws -> (ControllerStore, URL) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let storage = MemoryCredentials()
+        let device = DeviceRecord(deviceId: UUID(), name: "Phone", platform: "ios", role: "controller", revision: 1, scopes: [], createdAt: Date(), revokedAt: nil)
+        try storage.write(CredentialEnvelope(authority: URL(string: "https://link.example")!, credentials: .init(accessToken: "access", tokenType: "Bearer", expiresAt: .distantFuture, refreshToken: "refresh", device: device)), account: "device")
+        return (ControllerStore(credentials: storage, transport: authority, directory: directory, mesh: mesh), directory)
+    }
+    private func settle() async { for _ in 0..<100 { await Task.yield() } }
+    private func finished(_ store: ControllerStore) async {
+        let done = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in MainActor.assumeIsolated { !store.syncRunning } }, object: nil)
+        await fulfillment(of: [done], timeout: 3)
+    }
+
+    func testCancelledEmbeddedPrepareDoesNotEnrollOrPersistMeshState() async throws {
+        let storage = MemoryCredentials()
+        let authority = ScriptedTransport([])
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mesh = EmbeddedMeshConnectionProvider(credentials: storage, authorityTransport: authority, directory: directory)
+        let device = DeviceRecord(deviceId: UUID(), name: "Phone", platform: "ios", role: "controller", revision: 1, scopes: [], createdAt: Date(), revokedAt: nil)
+        let identity = CredentialEnvelope(authority: URL(string: "https://link.example")!, credentials: .init(accessToken: "access", tokenType: "Bearer", expiresAt: .distantFuture, refreshToken: "refresh", device: device))
+        let gate = LifecycleAuthority(heldReads: [1])
+        let prepare = Task {
+            _ = try await gate.data(for: URLRequest(url: identity.authority))
+            try await mesh.prepare(identity: identity)
+        }
+        await fulfillment(of: [gate.firstRead], timeout: 3)
+        prepare.cancel()
+        await gate.release(1)
+        do { try await prepare.value; XCTFail("Cancelled preparation must not enroll") }
+        catch is CancellationError { }
+        catch { XCTFail("Expected cancellation, received \(error)") }
+        let requests = await authority.requests
+        XCTAssertTrue(requests.isEmpty)
+        XCTAssertNil(try storage.read(MeshEnrollmentState.self, account: "mesh"))
+    }
+
+    func testResumeDoesNotWaitForCancelledSyncAndLateCompletionCannotClearReplacement() async throws {
+        let authority = LifecycleAuthority(heldReads: [1, 2])
+        let mesh = LifecycleMesh()
+        let (store, directory) = try fixture(authority: authority, mesh: mesh)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        store.manualSync()
+        await fulfillment(of: [authority.firstRead], timeout: 3)
+        await store.sceneBackground()
+        store.sceneActive()
+        await fulfillment(of: [authority.secondRead], timeout: 3)
+        await authority.release(1)
+        await settle()
+        XCTAssertTrue(store.syncRunning, "A cancelled predecessor must not clear the replacement sync's busy state")
+        await authority.release(2)
+        await finished(store)
+        XCTAssertFalse(store.syncRunning)
+        XCTAssertEqual(store.connection, .connected)
+        await store.sceneBackground()
+    }
+
+    func testResumeWaitsForBackgroundMeshShutdownBeforePreparing() async throws {
+        let authority = LifecycleAuthority(heldReads: [])
+        let mesh = LifecycleMesh(holdSuspend: true)
+        let (store, directory) = try fixture(authority: authority, mesh: mesh)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.synchronize()
+        let background = Task { await store.sceneBackground() }
+        await fulfillment(of: [mesh.suspending], timeout: 3)
+        store.sceneActive()
+        await settle()
+        let preparationsBeforeClose = await mesh.preparations
+        XCTAssertEqual(preparationsBeforeClose, 1, "Foreground must not reopen the same mesh state while its prior node is closing")
+        await mesh.releaseSuspend()
+        await background.value
+        await fulfillment(of: [authority.secondRead], timeout: 3)
+        await finished(store)
+        XCTAssertFalse(store.syncRunning)
+        await store.sceneBackground()
+    }
+
+    func testBackgroundRejectsManualSyncUntilForegroundReturns() async throws {
+        let authority = LifecycleAuthority(heldReads: [])
+        let mesh = LifecycleMesh()
+        let (store, directory) = try fixture(authority: authority, mesh: mesh)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.sceneBackground()
+        store.manualSync()
+        await settle()
+        let reads = await authority.reads
+        XCTAssertEqual(reads, 0)
+        XCTAssertFalse(store.syncRunning)
+        store.sceneActive()
+        await fulfillment(of: [authority.firstRead], timeout: 3)
+        await finished(store)
+        XCTAssertEqual(store.connection, .connected)
+        await store.sceneBackground()
+    }
+}
+
+private actor LifecycleAuthority: HTTPTransport {
+    nonisolated let firstRead = XCTestExpectation(description: "first hosts read")
+    nonisolated let secondRead = XCTestExpectation(description: "replacement hosts read")
+    private let heldReads: Set<Int>
+    private var gates: [Int: CheckedContinuation<Void, Never>] = [:]
+    private var released: Set<Int> = []
+    private(set) var reads = 0
+    init(heldReads: Set<Int>) { self.heldReads = heldReads }
+    func release(_ read: Int) { released.insert(read); gates.removeValue(forKey: read)?.resume() }
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        reads += 1
+        let read = reads
+        if read == 1 { firstRead.fulfill() }
+        if read == 2 { secondRead.fulfill() }
+        // A transport callback may arrive after cancellation; the store must fence it.
+        if heldReads.contains(read), !released.contains(read) { await withCheckedContinuation { gates[read] = $0 } }
+        return (try ControllerCodec.encoder().encode(HostPage(revision: UInt64(read), hosts: [])), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    }
+}
+
+private actor LifecycleMesh: ControllerMeshSession {
+    nonisolated let suspending = XCTestExpectation(description: "mesh shutdown pending")
+    private(set) var preparations = 0
+    private var holdSuspend: Bool
+    private var gate: CheckedContinuation<Void, Never>?
+    init(holdSuspend: Bool = false) { self.holdSuspend = holdSuspend }
+    func prepare(identity: CredentialEnvelope) async throws { preparations += 1 }
+    func suspend() async {
+        if holdSuspend {
+            suspending.fulfill()
+            await withCheckedContinuation { gate = $0 }
+        }
+    }
+    func releaseSuspend() { holdSuspend = false; gate?.resume(); gate = nil }
+    func removeLocalIdentity() async throws { await suspend() }
+}
