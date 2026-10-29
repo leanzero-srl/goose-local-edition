@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-10-29T08:23:00Z",
+  "updated_at": "2026-10-29T08:29:00Z",
   "device": {
     "name": "Zerobarat celular",
     "model": "iPhone 17 Pro Max",
@@ -83,5 +83,24 @@
       "10:21:23.532784 node-up-begin"
     ],
     "result": "As10:22 no subsequent MeshLifecycle stage; actual phone remains Syncing fleet / Checking your Macs. The blocking await is now localized to node.up on cold launch; its underlying cause remains under investigation."
-  }
+  },
+  "development_background_reopen": {
+    "source": "52d17d7cae84",
+    "action": "Actual Device Hub Home then Goose Remote icon; no credential reset or forced process termination",
+    "stages": [
+      "10:28:26.058660 scene-background",
+      "10:28:26.064481 background-shutdown-begin",
+      "10:28:26.064539 node-close-begin",
+      "10:28:32.851452 node-close-end",
+      "10:28:32.889997 background-shutdown-end",
+      "10:28:33.095860 scene-active",
+      "10:28:33.116520 sync-begin 0A9E6AC1-FBD0-4F0B-9CAF-7FC383633014",
+      "10:28:33.125001 sync-wait-shutdown",
+      "10:28:33.125006 sync-prepare-begin",
+      "10:28:33.134784 node-create 118B85A9-5526-4BC5-9175-A87DD37F74BB",
+      "10:28:33.139755 node-up-begin"
+    ],
+    "outcome": "Old node shutdown completed and replacement preparation started, then node.up stalled again. My iPhone identity retained. Not connection acceptance. Elapsed close interval includes background suspension and must not be reported as measured active close latency."
+  },
+  "provider_diagnosis_receipt": "physical-mesh-provider-absence-2026-10-29.json"
 }
