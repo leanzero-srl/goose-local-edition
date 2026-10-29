@@ -1,6 +1,6 @@
 # Goose Remote continuation
 
-Updated 29 October 2026, 01:02 UTC (03:02 local). This current summary supersedes historical statuses below in git history and older receipts.
+Updated 29 October 2026, morning. The current update below supersedes historical pending statuses retained later in this record.
 
 ## Authority and non-negotiable constraints
 
@@ -9,6 +9,18 @@ Updated 29 October 2026, 01:02 UTC (03:02 local). This current summary supersede
 - Execution remains on the session's original Mac; controllers only view/control it. Controllers must not enter inference pools.
 - Apple seller must become LEANZERO S.R.L. before publication. Conversion was last confirmed pending; browser login later expired. No App Store upload/submission occurred.
 - New 3.0.134 Apple notarization upload was rejected by automatic approval review because earlier explicit approval named 3.0.132. A question for ZIP3d124c48 was subsequently presented, then owner was told to HOLD it because the steering fix changes the payload. Do not upload that superseded ZIP or apply its answer to another artifact. Finish corrected signed ZIP before new exact-artifact approval.
+
+## Current update: Apple accepted; native control proved; history fix active
+
+Owner explicitly approved corrected ZIP8261f27b. Apple accepted submission d4b59b60-4db2-43e9-921a-fe3bcdcc7f8f at05:32UTC. Staged app stapled; signature/stapler/Gatekeeper passed. Commits3d50a09809/efd3c050f5, receipt `docs/ios-release/desktop-controller-candidate/notarization-bf5966b19fdf.md`. No repeat upload. This receipt covers bf5966 only, not subsequent source fixes. No App Store submission occurred.
+
+Mac unlocked; actual desktop result and native iPad view/send/active-steer/background/reconnect/manual-sync/resources passed on the original account. Independent receipts and visible observations: `ipad-live-journeys-2026-10-29.md` and `ipad-live-proof-2026-10-29.json` in that candidate directory. Retained iPad enrollment worked without OTP. No local inference. Earlier strict exact-string desktop assertion remains failed, not rewritten.
+
+A release blocker emerged: native opens oldest first page and lacks latest positioning; desktop drains every page. Work is actively implementing bounded latest-first history with signed snapshot/backward cursors and both clients' scroll/replay handling. Current shared contract `/tmp/goose-latest-history-plan.md`. Three lanes own Rust backend/ACP, desktop, native separately. Main remains unmerged; new source needs appropriate gates/builds/UI proof. Do not call old notarized artifact proof of this correction.
+
+Current iPad remote download test: small public `mlx-community/SmolLM-135M-Instruct-4bit` requested on original laptop, whose models directory is the NFS-mounted AI-workhorse SSD; guard passed353GiB free. No model load. Native showed accepted/download progress; final completion is not yet recorded. Do not repeat the request. Workhorse form was not submitted because its configured destination was internal disk. Existing provider/node configurations preserved.
+
+The prior heartbeat was deleted when only unlock was pending. This turn is active user-authorized continuation; no replacement heartbeat exists. Goal API previously paused, no tool can resume it. Organization seller and physical-device/review/support/privacy/marketing release work remain.
 
 ## Latest: all four original Macs upgraded and connected
 

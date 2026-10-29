@@ -1,0 +1,360 @@
+{
+  "captured_at": "2026-10-29T05:34:15.222297+00:00",
+  "session": {
+    "id": "20261028_1",
+    "name": "Cloud controller test",
+    "provider_name": "openrouter",
+    "model": "deepseek/deepseek-v4.1-flash"
+  },
+  "owner": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+  "work": {
+    "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+    "kind": "chat",
+    "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020"
+  },
+  "commands": [
+    {
+      "command": {
+        "command_id": "4c1599ec-5ecc-43a7-8b8b-376bc38efe29",
+        "work": {
+          "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+          "kind": "chat",
+          "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020"
+        },
+        "expected_store_generation": "ac8c3df7-ac2d-4604-b1bb-12ae9ada465b",
+        "expected_revision": 73746,
+        "expected_run_id": null,
+        "action": "send",
+        "payload": {
+          "content": [
+            {
+              "type": "text",
+              "text": "This is a cloud-only test from the iPad controller. Reply with the single sentence “iPad control confirmed.” Use this session’s configured OpenRouter provider. Do not use tools, change files or load local models."
+            }
+          ]
+        }
+      },
+      "receipt": {
+        "command_id": "4c1599ec-5ecc-43a7-8b8b-376bc38efe29",
+        "work": {
+          "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+          "kind": "chat",
+          "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020"
+        },
+        "authenticated_device_id": "6398edbb-d0a8-4d9c-a7b4-5dcbe8cb24b5",
+        "revision": 73746,
+        "state": "delivered",
+        "run_id": "948bce51-b609-4f4c-b93b-52e6bbd5a1e5",
+        "message_id": "controller_0d133a33-717e-4396-9d0c-28c5f83eb7d5_6398edbb-d0a8-4d9c-a7b4-5dcbe8cb24b5_4c1599ec-5ecc-43a7-8b8b-376bc38efe29",
+        "input_id": null,
+        "checkpoint_id": null,
+        "reason": null,
+        "updated_at": "2026-10-29T05:27:20.397399Z"
+      },
+      "exact_payload_occurrences": 1,
+      "row_id": 779292
+    },
+    {
+      "command": {
+        "command_id": "0baf8ffb-a260-4185-86bf-99b2eb4f8306",
+        "work": {
+          "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+          "kind": "chat",
+          "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020"
+        },
+        "expected_store_generation": "ac8c3df7-ac2d-4604-b1bb-12ae9ada465b",
+        "expected_revision": 73765,
+        "expected_run_id": null,
+        "action": "send",
+        "payload": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Cloud-only iPad steering test. Without tools, files or local models, write 300 numbered short observations about trees, one per line. Follow the next remote instruction when it arrives."
+            }
+          ]
+        }
+      },
+      "receipt": {
+        "command_id": "0baf8ffb-a260-4185-86bf-99b2eb4f8306",
+        "work": {
+          "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+          "kind": "chat",
+          "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020"
+        },
+        "authenticated_device_id": "6398edbb-d0a8-4d9c-a7b4-5dcbe8cb24b5",
+        "revision": 73765,
+        "state": "delivered",
+        "run_id": "4f94a8b5-d14b-4706-b48f-b258be10b22a",
+        "message_id": "controller_0d133a33-717e-4396-9d0c-28c5f83eb7d5_6398edbb-d0a8-4d9c-a7b4-5dcbe8cb24b5_0baf8ffb-a260-4185-86bf-99b2eb4f8306",
+        "input_id": null,
+        "checkpoint_id": null,
+        "reason": null,
+        "updated_at": "2026-10-29T05:30:22.446563Z"
+      },
+      "exact_payload_occurrences": 1,
+      "row_id": 779295
+    },
+    {
+      "command": {
+        "command_id": "32a05343-3cfa-495c-8aa5-dd252aadc456",
+        "work": {
+          "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+          "kind": "chat",
+          "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020"
+        },
+        "expected_store_generation": "ac8c3df7-ac2d-4604-b1bb-12ae9ada465b",
+        "expected_revision": 73949,
+        "expected_run_id": "4f94a8b5-d14b-4706-b48f-b258be10b22a",
+        "action": "steer",
+        "payload": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Stop the current list. Start your reply with “iPad steering confirmed.” Then write 80 numbered short facts about trees. Use only the configured cloud provider, with no tools, file changes or local models."
+            }
+          ]
+        }
+      },
+      "receipt": {
+        "command_id": "32a05343-3cfa-495c-8aa5-dd252aadc456",
+        "work": {
+          "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+          "kind": "chat",
+          "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020"
+        },
+        "authenticated_device_id": "6398edbb-d0a8-4d9c-a7b4-5dcbe8cb24b5",
+        "revision": 73949,
+        "state": "delivered",
+        "run_id": "4f94a8b5-d14b-4706-b48f-b258be10b22a",
+        "message_id": "controller_0d133a33-717e-4396-9d0c-28c5f83eb7d5_6398edbb-d0a8-4d9c-a7b4-5dcbe8cb24b5_32a05343-3cfa-495c-8aa5-dd252aadc456",
+        "input_id": null,
+        "checkpoint_id": null,
+        "reason": null,
+        "updated_at": "2026-10-29T05:29:55.192574Z"
+      },
+      "exact_payload_occurrences": 1,
+      "row_id": 779298
+    }
+  ],
+  "assistant_responses": [
+    {
+      "message_id": "gen-1793251626-sLoBRCR97oBPBII0iE2b",
+      "timestamp": "2026-10-29 05:27:20",
+      "sha256": "c103c3c405c602adaeb2f616b5daa576d4a6c8c7ec7b46e98def86e4c2a7a325",
+      "prefix": "iPad control confirmed.",
+      "suffix": "iPad control confirmed.",
+      "numbered_items": 0,
+      "content_types": [
+        "thinking",
+        "text"
+      ]
+    },
+    {
+      "message_id": "gen-1793251741-qX0qDxGWalHVIaRg3nr2",
+      "timestamp": "2026-10-29 05:29:55",
+      "sha256": "606ee4ecf652d16ae2722e1edae4f08fa4d1dc6415e3752690e684510db61ad4",
+      "prefix": "1. Trees are the oldest living things on Earth.\n2. A single oak can host over 50",
+      "suffix": "3. Diagnose the ground before you prune the sky.\n174. Topping a tree is not pruning.\n175. It creates",
+      "numbered_items": 175,
+      "content_types": [
+        "thinking",
+        "text"
+      ]
+    },
+    {
+      "message_id": "gen-1793251798-H3Kkq7u3suU8dNDSyHT2",
+      "timestamp": "2026-10-29 05:30:22",
+      "sha256": "9006350f1d8b866d8b4bb57460d701a8bb0fc171bde7259f4da150bec4e18c5c",
+      "prefix": "iPad steering confirmed.\n\n1. Trees are woody plants that live for many years.\n2.",
+      "suffix": "easure seasons by light and cold, not by calendars.\n80. A forest is the result of patience and luck.",
+      "numbered_items": 80,
+      "content_types": [
+        "thinking",
+        "text"
+      ]
+    }
+  ],
+  "checks": {
+    "all_three_delivered_once": true,
+    "delivered_receipts_read_from_original_owner_database": true,
+    "live_history_contains_each_controller_message": true,
+    "first_list_interrupted_mid_item_175_before_300": true,
+    "steer_targets_original_active_run": true,
+    "replacement_has_exactly_items_1_through_80": true,
+    "no_tool_calls_in_three_turns": true,
+    "final_owner_idle_no_run": true,
+    "session_direct_openrouter": true,
+    "openrouter_host_override_absent_process_and_global_config": true
+  },
+  "endpoint_source": "src/providers/openrouter.rs defaults to https://openrouter.ai when OPENROUTER_HOST absent",
+  "snapshot": {
+    "entry": {
+      "work": {
+        "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+        "kind": "chat",
+        "work_id": "c787fd2d-0909-4f49-9e85-bd48a684f020"
+      },
+      "store_generation": "ac8c3df7-ac2d-4604-b1bb-12ae9ada465b",
+      "revision": 74052,
+      "title": "Cloud controller test",
+      "state": "idle",
+      "current_run_id": null,
+      "updated_at": "2026-10-29T05:30:22Z"
+    },
+    "sharing": {
+      "provenance": "live",
+      "provider": {
+        "name": "openrouter",
+        "origin": null
+      },
+      "tools": [
+        {
+          "name": "Extension Manager",
+          "transport": "platform",
+          "origin": null
+        },
+        {
+          "name": "LeanZero Documents",
+          "transport": "stdio",
+          "origin": null
+        },
+        {
+          "name": "LeanZero Web Search",
+          "transport": "stdio",
+          "origin": null
+        },
+        {
+          "name": "analyze",
+          "transport": "platform",
+          "origin": null
+        },
+        {
+          "name": "apps",
+          "transport": "platform",
+          "origin": null
+        },
+        {
+          "name": "chatrecall",
+          "transport": "platform",
+          "origin": null
+        },
+        {
+          "name": "developer",
+          "transport": "builtin",
+          "origin": null
+        },
+        {
+          "name": "ledger",
+          "transport": "platform",
+          "origin": null
+        },
+        {
+          "name": "memory",
+          "transport": "builtin",
+          "origin": null
+        },
+        {
+          "name": "needs_you",
+          "transport": "platform",
+          "origin": null
+        },
+        {
+          "name": "notes",
+          "transport": "platform",
+          "origin": null
+        },
+        {
+          "name": "playwright",
+          "transport": "stdio",
+          "origin": null
+        },
+        {
+          "name": "recall",
+          "transport": "platform",
+          "origin": null
+        },
+        {
+          "name": "skills",
+          "transport": "platform",
+          "origin": null
+        },
+        {
+          "name": "summon",
+          "transport": "platform",
+          "origin": null
+        },
+        {
+          "name": "tom",
+          "transport": "platform",
+          "origin": null
+        }
+      ],
+      "limitations": [
+        "provider_routing_not_reported",
+        "tool_destinations_dynamic",
+        "provider_destination_unavailable"
+      ]
+    },
+    "history_watermark": {
+      "owner_node_id": "83b81dd1-ec2c-485a-89ec-2d9d43a93d90",
+      "store_generation": "ac8c3df7-ac2d-4604-b1bb-12ae9ada465b",
+      "revision": 74052
+    },
+    "pending_input_count": 0,
+    "live_message_count": 0
+  },
+  "receipt_facade_readback": [
+    {
+      "command_id": "4c1599ec-5ecc-43a7-8b8b-376bc38efe29",
+      "rpc_error": {
+        "code": -32603,
+        "message": "Internal error",
+        "data": {
+          "error": {
+            "code": "command_not_found",
+            "message": "The owner refused the request (404)",
+            "retryable": false,
+            "status": 404
+          }
+        }
+      }
+    },
+    {
+      "command_id": "0baf8ffb-a260-4185-86bf-99b2eb4f8306",
+      "rpc_error": {
+        "code": -32603,
+        "message": "Internal error",
+        "data": {
+          "error": {
+            "code": "command_not_found",
+            "message": "The owner refused the request (404)",
+            "retryable": false,
+            "status": 404
+          }
+        }
+      }
+    },
+    {
+      "command_id": "32a05343-3cfa-495c-8aa5-dd252aadc456",
+      "rpc_error": {
+        "code": -32603,
+        "message": "Internal error",
+        "data": {
+          "error": {
+            "code": "command_not_found",
+            "message": "The owner refused the request (404)",
+            "retryable": false,
+            "status": 404
+          }
+        }
+      }
+    }
+  ],
+  "scope": "Read-only owner receipt/history and session DB verification; parent supplies actual native iPad/desktop UI observations. No work commands, inference, configuration writes or source changes were made by this probe.",
+  "limitations": [
+    "Controller receipt facade returned typed command_not_found / owner 404 for all three iPad commands when read through this local inspection connection. Original owner database provides primary delivered receipts; no facade receipt success or cause for the facade refusal is claimed.",
+    "Provider destination uses direct OpenRouter session/live sharing plus absent host override and default source; no network packet capture was performed.",
+    "Native UI/background observations belong to parent lane. Tree statements are model test output, not fact checked content."
+  ]
+}
