@@ -52,5 +52,21 @@
       "Credential expiry was not independently established",
       "No new inference"
     ]
+  },
+  "ipad_simulator_followup": {
+    "device": "F7078B46-CCF8-4779-9070-0BAFE33ADFB7",
+    "date": "2026-10-29",
+    "time_local": "14:02-14:05",
+    "source_commit": "8762c69d386e6da8e719cc4599f7efe0b43d3afd",
+    "app_path": "/tmp/goose-latest-native-derived/Build/Products/Debug-iphonesimulator/GooseRemote.app",
+    "bundle_id": "net.leanzero.goose-remote",
+    "real_link_authority_verified": true,
+    "strict_signature_and_linked_mesh_verified": true,
+    "saved_enrollment_and_catalog_retained": true,
+    "compute_nodes_row_visible": true,
+    "old43a_owner_update_required_visible": true,
+    "no_create_control_on_old_owner": true,
+    "physical_ipad": false,
+    "real_node_created": false
   }
 }
