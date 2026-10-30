@@ -81,3 +81,10 @@
   hit once (strip=false flag fixes it). Gemma on the SSD, sha match, laptop copy deleted. Laptop disk was 15 GB free
   (target/) -> 24 GB. Packaging (debug goose-cli + pnpm package) on the laptop: node-run workhorse-20261030-162344-da9d.
   Fork suite head arm at shard 40/86 (memory-guard shards take 9 min each).
+- 16:32 PACKAGE BLOCKER found + fixed: `pnpm run package` refused "Packaged benchmark differs from release manifest:
+  bench/score_sb7.py" - main carries the unreleased SB7.2 ledgerd self-exit charge (d5fa44f640/e2e456e903/7522c90b2a,
+  2026-10-29) without a manifest refreeze. Per goose-benchmark-iteration release recipe: scorer tests 184 passed;
+  admission (score_sb72.admit) and run_build/bench_isolation unchanged -> no site sync, no empty-entrant e2e; sb7.2
+  refrozen in a clean worktree (7b20f73052), forge2 already matches; sb7.1/forge manifests are old receipts, not shipped.
+  key_connection test fails 3/3 isolated on the laptop (kernel RST on a full backlog) = environment, untouched file.
+  Repackaging (node-run workhorse-20261030-163030-1a49).
