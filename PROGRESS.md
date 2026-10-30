@@ -122,3 +122,11 @@
   Gabee restored (installed Goose, single-guard OK). main fast-forwarded to 59f33e5223 (release: 3.0.135);
   `just release-notarized 3.0.135` running as a local nohup on the workhorse (~/goose-builds/release-3.0.135.log,
   VIGIL-3.0.135.md, vigil-3.0.135.out).
+- 20:20 RELEASED v3.0.135: https://github.com/leanzero-srl/goose-local-edition/releases/tag/v3.0.135 (tag at
+  59f33e5223; main 89481fa4df adds the build-regenerated Cargo.lock/openapi.json and a notes correction). Notarized
+  build 19:34-20:02 on the workhorse (spctl Notarized Developer ID, stapled DMG, zips equal, latest-mac.yml 3.0.135).
+  Installed on Gabee and the workhorse (install_goose_release.sh); INSTALLED-app live check on Gabee (isolated
+  profile): default lane media on, audio/video play, 2-min audio pre-pass 4 pieces 12.5 s, video 10.8 s, image 1.7 s,
+  9 main requests with 0 media parts, metal peak 15.07 GB; the 4B answer gave the train a wrong time once although the
+  transcript had 7:15 (notes say so). Evidence .../packaged-app-gabee-3.0.135/installed-3.0.135/. Independent check
+  agent running. Laptop gets 3.0.135 by auto-update (not installed by hand: owner at the keyboard).
