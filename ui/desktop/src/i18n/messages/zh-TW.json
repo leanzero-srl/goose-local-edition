@@ -5987,6 +5987,81 @@
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} 在這台 Mac 上需要 {need} GB，現在可供它使用的空閒為 {free} GB — 還差 {short} GB。"
   },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "自動"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "自動：此 Mac 上關閉"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "自動：此 Mac 上開啟"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "將 n-gram 表保留在磁碟上"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "在 Qwen3.8-Flash-Next（M5 Max 128 GB）上實測：佔用記憶體從 104 GB 降到 72 GB，解碼速度相差幾個百分點以內，回答相同。"
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "模型不再把 32 GB 的 n-gram 表放在記憶體中，而是從 SSD 讀取每個 token 所需的幾列。當模型否則無法放入此 Mac 時，自動會開啟。在下次掛載時生效。"
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "關"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "開"
+  },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "自動"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "留空的數字保留引擎預設值。在 MTP 內,31、63 或 95 可填滿完整的 32 列驗證區塊。下次掛載時生效。"
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "它將 linear-attention 或 SSM 層與 attention 混合,且在沒有 MTP 頭的情況下執行。引擎拒絕在循環層上使用 suffix decoding,而 prompt lookup 只在 MTP 內執行。"
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "MTP 內"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "最長草稿(token)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "最長 n-gram"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "最短 n-gram"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "在 Qwen3.8-27B Q8 上測得:程式碼編輯從 42.8 提升到 134.8 tok/s,99% 的複製被接受;摘要和聊天沒有提升。"
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "將提示中已有的後續內容作為 MTP 內的長草稿複製,並像其他草稿一樣驗證,因此輸出仍是模型自己的。自動保持引擎的系列預設值(Qwen3.5/3.6/3.8 為開啟)。"
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Prompt lookup 需要模型的資料夾來選擇通道,而此模型不在模型資料夾中。"
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "關閉"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "開啟"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup(n-gram)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "在沒有 MTP 的情況下執行,因此該選項驅動引擎的 suffix decoder:僅限 greedy 取樣,一次一個請求。自動保持關閉;在 Mellum 上測得較慢,請比較後再開啟。"
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "此模型無法使用:{reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose 無法判斷此模型是否為純 attention({error})。"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "取消"
   },
