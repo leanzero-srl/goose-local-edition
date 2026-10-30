@@ -607,9 +607,11 @@ impl OpenAiProvider {
         messages: &[Message],
         options: OpenAiFormatOptions,
     ) -> OpenAiFormatOptions {
-        let carries_media = messages
-            .iter()
-            .any(|m| m.content.iter().any(|c| matches!(c, MessageContent::Media(_))));
+        let carries_media = messages.iter().any(|m| {
+            m.content
+                .iter()
+                .any(|c| matches!(c, MessageContent::Media(_)))
+        });
         if !carries_media || !self.asks_engine_for_image_input() {
             return options;
         }
@@ -2891,13 +2893,20 @@ mod media_input_tests {
 
     #[test]
     fn media_is_withheld_only_when_the_engine_lists_capabilities_without_it() {
-        let listing = |caps: serde_json::Value| json!({"data": [{"id": "m", "capabilities": caps}]});
+        let listing =
+            |caps: serde_json::Value| json!({"data": [{"id": "m", "capabilities": caps}]});
         assert_eq!(
             withheld_media(&listing(json!(["text", "vision", "video", "audio"])), "m"),
             (false, false)
         );
-        assert_eq!(withheld_media(&listing(json!(["text", "vision", "video"])), "m"), (true, false));
+        assert_eq!(
+            withheld_media(&listing(json!(["text", "vision", "video"])), "m"),
+            (true, false)
+        );
         assert_eq!(withheld_media(&listing(json!(["text"])), "m"), (true, true));
-        assert_eq!(withheld_media(&json!({"data": [{"id": "m"}]}), "m"), (false, false));
+        assert_eq!(
+            withheld_media(&json!({"data": [{"id": "m"}]}), "m"),
+            (false, false)
+        );
     }
 }

@@ -815,17 +815,15 @@ fn extract_first_line_number(text: &str) -> Option<usize> {
 /// blob resource the desktop sent it in (ACP has no video block).
 fn media_content_block(media: &MediaContent) -> ContentBlock {
     match media.kind {
-        MediaKind::Audio => {
-            ContentBlock::Audio(AudioContent::new(media.data.clone(), media.mime_type.clone()))
-        }
+        MediaKind::Audio => ContentBlock::Audio(AudioContent::new(
+            media.data.clone(),
+            media.mime_type.clone(),
+        )),
         MediaKind::Video => ContentBlock::Resource(EmbeddedResource::new(
             EmbeddedResourceResource::BlobResourceContents(
                 BlobResourceContents::new(
                     media.data.clone(),
-                    format!(
-                        "attachment:///{}",
-                        media.name.as_deref().unwrap_or("video")
-                    ),
+                    format!("attachment:///{}", media.name.as_deref().unwrap_or("video")),
                 )
                 .mime_type(media.mime_type.clone()),
             ),
@@ -5575,7 +5573,9 @@ mod attached_media_tests {
         assert_eq!(video.mime_type, "video/mp4");
         assert_eq!(video.name.as_deref(), Some("clip.mp4"));
         assert_eq!(
-            attached_media_from_blob(&blob(Some("audio/wav"))).unwrap().kind,
+            attached_media_from_blob(&blob(Some("audio/wav")))
+                .unwrap()
+                .kind,
             MediaKind::Audio
         );
         assert!(attached_media_from_blob(&blob(Some("application/pdf"))).is_none());
@@ -5585,7 +5585,9 @@ mod attached_media_tests {
     #[test]
     fn a_prompt_with_audio_and_a_video_blob_carries_both_as_media_and_replays_them() {
         let prompt = vec![
-            ContentBlock::Text(agent_client_protocol::schema::v1::TextContent::new("listen")),
+            ContentBlock::Text(agent_client_protocol::schema::v1::TextContent::new(
+                "listen",
+            )),
             ContentBlock::Audio(AudioContent::new("UklGRg==", "audio/wav")),
             ContentBlock::Resource(EmbeddedResource::new(
                 EmbeddedResourceResource::BlobResourceContents(
@@ -5604,7 +5606,13 @@ mod attached_media_tests {
             })
             .collect();
         assert_eq!(media.len(), 2);
-        assert!(matches!(media_content_block(media[0]), ContentBlock::Audio(_)));
-        assert!(matches!(media_content_block(media[1]), ContentBlock::Resource(_)));
+        assert!(matches!(
+            media_content_block(media[0]),
+            ContentBlock::Audio(_)
+        ));
+        assert!(matches!(
+            media_content_block(media[1]),
+            ContentBlock::Resource(_)
+        ));
     }
 }

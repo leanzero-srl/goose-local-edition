@@ -6,9 +6,9 @@ use crate::formats::unparsed_tool_call::{
     settle_reply, settle_text, RefusedToolCall, UnparsedCallHold,
 };
 use crate::images::{
-    convert_media,
-    attached_image_label, convert_image, detect_image_path, load_image_file, path_image_label,
-    tool_image_label, withheld_image_placeholder, ImageFormat, ImageReport, WithheldImage,
+    attached_image_label, convert_image, convert_media, detect_image_path, load_image_file,
+    path_image_label, tool_image_label, withheld_image_placeholder, ImageFormat, ImageReport,
+    WithheldImage,
 };
 use crate::json::{parse_tool_arguments, truncation_error_message};
 use crate::mcp_utils::extract_text_from_resource;
@@ -7658,8 +7658,12 @@ mod text_only_engine_tests {
 
     fn formatted_media(options: OpenAiFormatOptions) -> (Value, ImageReport) {
         let mut report = ImageReport::default();
-        let spec =
-            format_messages_reporting_images(&media_history(), &ImageFormat::OpenAi, options, &mut report);
+        let spec = format_messages_reporting_images(
+            &media_history(),
+            &ImageFormat::OpenAi,
+            options,
+            &mut report,
+        );
         (spec[0]["content"].clone(), report)
     }
 
@@ -7674,7 +7678,10 @@ mod text_only_engine_tests {
             content[2],
             json!({"type": "video_url", "video_url": {"url": "data:video/mp4;base64,AAAA"}})
         );
-        assert_eq!((report.audio_sent, report.video_sent, report.media_withheld), (1, 1, 0));
+        assert_eq!(
+            (report.audio_sent, report.video_sent, report.media_withheld),
+            (1, 1, 0)
+        );
     }
 
     #[test]
@@ -7686,7 +7693,10 @@ mod text_only_engine_tests {
         assert_eq!(content[1]["type"], "input_audio");
         assert_eq!(content[2]["type"], "text");
         assert!(content[2]["text"].as_str().unwrap().contains("clip.mp4"));
-        assert_eq!((report.audio_sent, report.video_sent, report.media_withheld), (1, 0, 1));
+        assert_eq!(
+            (report.audio_sent, report.video_sent, report.media_withheld),
+            (1, 0, 1)
+        );
 
         let (content, report) = formatted_media(OpenAiFormatOptions {
             text_only_engine: true,

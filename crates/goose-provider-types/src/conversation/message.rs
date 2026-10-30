@@ -263,8 +263,14 @@ impl MediaContent {
             MediaKind::Video => "video",
         };
         match &self.name {
-            Some(name) => format!("[Attached {what}: {name} ({}) - this model cannot take {what} input]", self.mime_type),
-            None => format!("[Attached {what} ({}) - this model cannot take {what} input]", self.mime_type),
+            Some(name) => format!(
+                "[Attached {what}: {name} ({}) - this model cannot take {what} input]",
+                self.mime_type
+            ),
+            None => format!(
+                "[Attached {what} ({}) - this model cannot take {what} input]",
+                self.mime_type
+            ),
         }
     }
 }
