@@ -536,3 +536,12 @@ Moved verbatim from SKILL.md on 2026-10-30 (skills audit). Read by section; the 
 - **2026-10-30 — skills audit restructure:** SKILL.md became a ~130-line CORE card; every section moved verbatim to references/ (coverage proven by machine-sync bin/skill-coverage). The description was trimmed to <= 1,024 chars (Anthropic skill limit); the old one, kept for the record:
   THE source of truth for running ANY local model through goose with the LeanZero MLX engine (Rapid-MLX fork; current pin = ENGINE_LAUNCHER in crates/goose-sidecar/src/engine.rs) on the laptop, the workhorse or Gabee's Mac — which provider (swarm/omlx for chat, built-in openai at the loopback endpoint for benchmarks; never a custom provider or proxy), the app's engine argv (--text-only, MTP, prefix cache), thinking/effort, long-context caching. LOAD IT BEFORE preparing ANY model for use or benchmark (its MODEL READINESS GATE: right build, vision/MTP/n-gram served end to end, max measured context incl. YaRN), before launching rapid-mlx by hand, writing a proxy or custom provider, or running Gauntlet / Forge 1.0 / Forge 2.0 against a local, candidate or fine-tuned model. Also: operate and evolve the engine itself (crates/goose-sidecar, the MLX window, the fork, the engine bake-off), goose's DISTRIBUTED engine (JACCL/ring split, qwen4_exp pipeline, Flash, rank launcher/supervisor) and REMOTE SINGLE (the engine on a LeanZero Link peer); dated record in references/. The raw two-Mac MLX/JACCL layer underneath is the mlx-jaccl-cluster skill.
 - 2026-10-30 omni media: gemma-4-e4b-it-8bit hears audio + watches video-as-frames on mlx-vlm 0.7.1; Qwen3-Omni vision needs mlx-vlm >=0.7.11 (whole pin); fork lz/omni-media wires input_audio + video frames (references/omni-media.md).
+
+## 2026-10-30 (session 2) - OMNI MEDIA: lz.19 tagged, app probe found the 8,192-token media cap
+- Fork v0.14.3-lz.19 = lz/omni-media 813e97e0b (pushed); goose pin bumped on branch omni-media (not released).
+  The lz.18 bump never appended lz.17 to SUPERSEDED_ENGINE_LAUNCHERS: fixed + a test that every older PINNED_PROFILES
+  tag is a superseded launcher.
+- Fork suite head vs base (laptop, method of the lz.14 entry + pytest-timeout installed --no-deps into the side pyext):
+  only real new failure = stream_chat reading self._is_mllm on test-built engines (fixed b25e42091).
+- Packaged app on Gabee: default --text-only withholds media; on the MLLM lane goose's ~21k-token prompt trips the
+  8,192 media cap; measured memory table in references/omni-media.md. Next: goose media pre-pass.
