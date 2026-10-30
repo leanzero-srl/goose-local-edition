@@ -1,5 +1,14 @@
 # Remote single, the hidden caps, Q-85 / Q-142 / Q-508 (merged from the global copy, 2026-10-03)
 
+## Contents
+- Remote single — the single engine on a Link peer, chat routed there (placement phase 3, 2026-09-24)
+- 2026-09-25 — the hidden generation caps (Q-65 class): split 512, single engine 32768 — both removed
+- 2026-09-26 — Q-85: `</parameter>\n!` residue in tool args (single engine) — engine-side skeleton guard (lz.6)
+- 2026-09-26 — Q-142: split prompt cache vs goose's turn-context block (fixed a8a26ea84, awaiting live prove)
+- 2026-09-29 — Q-508: the split names conversations by goose's session id (branch q508, not merged)
+- 2026-10-26 — workmule (M5 Max 128 GB, macOS 27.0.1, LocalHostName Work-Mule-Studio) joins as a goose node
+
+
 Until 2026-10-03 there were TWO diverged copies of this skill: this repo copy (the larger, maintained by the
 goose agents) and `~/.claude/skills/goose-mlx-inference` (workhorse-owned). The repo copy is now the only
 home and the global path is a symlink to it. These sections existed ONLY in the global copy and are kept

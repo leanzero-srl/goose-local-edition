@@ -23,7 +23,9 @@ use crate::machine::{
     self, LoadClaim, LoadHolder, LoadLock, LoadLockAttempt, LoadLockHeld, OtherEngine,
 };
 use crate::model_identity::{NodeModel, ServedNames};
+use crate::ple_offload;
 use crate::port_holder;
+use crate::prompt_lookup::{self, PromptLookupLane, PromptLookupProfile};
 use crate::{
     measure, port_has_listener, sidecar_marker, Ensured, MemoryReading, PortHolder,
     RestartLoadFailed, Sidecar, SidecarConfig, StartCancel, StartCancelled, StartupWatch, GIB,
@@ -177,6 +179,42 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.19 (fork lz/omni-media 813e97e0b) = lz.18 + audio and video input on the MLLM lane (fork
+/// api/media_parts.py: `input_audio` parts become files for mlx_vlm.prepare_inputs(audio=), `video_url` parts become
+/// sampled JPEG frames, /v1/models tags `audio` / `video`; measured on gemma-4-e4b-it-8bit).
+/// v0.14.3-lz.18 (fork lz/qwen4-pld-sampled 10f0ef3eb) = lz.17 + qwen4_exp prompt lookup under sampling (fork
+/// 201b0bf62: drafts are copied when temperature > 0, lossless, 1.6x on Flash code edits at temperature 1.0).
+/// v0.14.3-lz.17 (fork lz/release-lz17 5ab6da823) = ple.6 as ONE line again: the plain lz.N line (lz.16 stream
+/// whitespace fix) and the qwen4 PLE line (offload, vision, YaRN, reclaim) are the same commit history; the only
+/// change past ple.6 is the merged PLE offload perf doc (no code).
+/// v0.14.3-lz.16-ple.6 (fork lz/qwen4-cache-reclaim) = ple.5 + the memory guard calibrates in a goose session and
+/// reclaims before it refuses: prefix-hit steps enter the peak fit (copy measured), a flat full-chunk group votes
+/// a = 0, a turn that fits alone but not beside its own hit's copy is re-prefilled cold instead of refused (the
+/// workmule Gauntlet refused 241,320 tokens on ple.5), and a boundary copy the turn end cannot rebuild (qwen4_exp
+/// layout) plans under the device ceiling and evicts the own older resume point it supersedes instead of being
+/// skipped (on 4e9d739 the hit stuck at 200,785 tokens from 213k on).
+/// v0.14.3-lz.16-ple.5 (fork 6579627b9) = ple.4 + opt-in qwen4_exp YaRN rope scaling past the native 262,144
+/// positions (`--qwen4-rope-scaling yarn`, profile `rope_scaling`): measured on the workmule with the Jundot oQ4e build,
+/// needles at 300k / 400k / 512k found, peak Metal 94.0 / 96.1 / 114.7 GB.
+/// v0.14.3-lz.16-ple.4 (fork lz/qwen4-vision-ple f6cc404c8) = ple.3 + mlx-vlm/oMLX Flash-Next builds load
+/// (Jundot/Qwen3.8-Flash-Next-oQ4e-mtp: PLE `shards.K` + quant layout from shapes, mixed-precision MTP head, folded
+/// FP8 PLE scale) and the text lane caps images at 1,003,520 px.
+/// v0.14.3-lz.16-ple.3 (fork lz/qwen4-vision-ple aafee8699) = ple.2 + `/v1/models` lists "vision" for that text lane
+/// behind the `is_text_only` qwen3.8-flash-next-4bit alias (goose serves it under the alias's hf_path; ple.2 listed
+/// text only there, so the openai provider sent placeholders).
+/// v0.14.3-lz.16-ple.2 (fork lz/qwen4-vision-ple 1d4f4072d) = lz.16-ple.1 + qwen4_exp images on the text lane
+/// (lane reason `text_lane_vision`): Qwen3.8-Flash-Next reads images with MTP, prompt lookup, the PLE offload,
+/// continuous batching and the prefix cache kept; `/v1/models` lists "vision" for it ([`TEXT_LANE_VISION_FAMILIES`]).
+/// v0.14.3-lz.16-ple.1 (fork lz/stream-whitespace-ple 8c9927ae3) = lz.14-ple.1 + lz.16: a streamed content delta
+/// is never whitespace-stripped (it dropped the space before `[`/`<`/`&` and corrupted files written while streaming,
+/// 12 wrong lines in the 10-26 Flash code_edit), the non-streamed answer keeps its outer whitespace, LongCat tool parser.
+/// v0.14.3-lz.14-ple.1 (fork lz/qwen4-expert-offload, branch off lz.14) = lz.14 + `serve --qwen4-ple-offload`:
+/// Qwen3.8-Flash-Next's 32 GB n-gram (PLE) table stays in the checkpoint on disk and the ~16 rows a
+/// token needs are gathered from it (`crate::ple_offload`; M5 Max 128 GB: 104.25 → 72.25 GB MLX
+/// active, decode within a few % of resident, greedy output identical). Off unless the flag is
+/// sent; the tag's routed-expert offload flags (`--qwen4-expert-*`) are unfinished and goose never
+/// sends them. Memory-guard line: no `--cache-memory-percent` (Guarded row).
+///
 /// v0.14.3-lz.14 (fork lz/release-lz14 = lz.13 c58790b11 + lz/kv-dtype-extend edd279eb6 + lz/flint
 /// ff88eb79c) = lz.13 + a cold request joining a batch mid-prefill no longer turns the session's KV
 /// float32 (mlx-lm `BatchKVCache.extend` padded the empty side with a float32 `mx.array([])`; the
@@ -274,7 +312,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.19",
     "rapid-mlx",
 ];
 
@@ -379,11 +417,98 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.13",
         "rapid-mlx",
     ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14-ple.1",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.1",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.2",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.3",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.4",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.5",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.6",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.17",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.18",
+        "rapid-mlx",
+    ],
 ];
 
-/// The MTP head file an MTPLX-style artefact ships next to its trunk shards. Its presence
-/// is the whole MTP auto-detection: the engine's injector probes exactly this name first.
+/// The MTP head file an MTPLX-style artefact ships next to its trunk shards. One of the two ways
+/// a checkpoint carries an MTP head (`MtpHead::Sidecar`); the engine's injector probes exactly this
+/// name first.
 pub const MTP_SIDECAR_FILE: &str = "mtp.safetensors";
+
+/// Model families whose engine injector reads the MTP head straight from the checkpoint's own
+/// shards (`mtp.*` tensors in `model.safetensors.index.json`) when no sidecar is named
+/// (`MtpHead::InShard`). Rapid-MLX v0.14.3-lz.14-ple.1: engine/batched.py falls back to the
+/// checkpoint as the sidecar for `qwen4_exp` only, and qwen4_exp_inject.py `_mtp_weight_files`
+/// lists the shards from the index. Every other family's injector looks for a sidecar FILE
+/// (qwen3_5_inject.py `_find_mtp_weights_file`), so in-shard tensors there are not a head the
+/// engine can serve and must not turn MTP on.
+pub const IN_SHARD_MTP_FAMILIES: [&str; 1] = ["qwen4_exp"];
+
+/// Vision checkpoints whose images the pinned engine reads ON ITS TEXT LANE (fork
+/// v0.14.3-lz.16-ple.2+, lane reason `text_lane_vision`, rapid_mlx/models/qwen4_exp_vision.py):
+/// image requests keep MTP, prompt lookup, the PLE offload, continuous batching and the prefix
+/// cache, so goose does not pin `--text-only` for them. The engine's own rule
+/// (`api/utils.py` `text_lane_vision_supported`) is mirrored in [`text_lane_vision`]: the family,
+/// a `vision_config` without `language_model_only`, and the tower's tensors in the shard index.
+/// Every other vision checkpoint still gets `--text-only` by default: its images would route it
+/// to the engine's serialized single-request MLLM lane.
+pub const TEXT_LANE_VISION_FAMILIES: [&str; 1] = ["qwen4_exp"];
+
+/// The MTP draft depth for Qwen3.8-Flash-Next (`qwen4_exp`). The engine accepts only 1 or 2 for
+/// this family and exits 2 on anything else (cli.py `_resolve_mtp_depth_for_model`); an explicit
+/// 2 also turns on its indexed-QSA split-K verify. Measured 2026-10-26 on workmule (M5 Max 128 GB,
+/// n-gram table on disk, MTP K=2, prompt lookup): code-edit decode 105.9 / 87.0 / 72.2 tok/s at
+/// 8k / 32k / 64k against 38.8 / 35.7 / 31.8 without MTP.
+pub const QWEN4_EXP_MTP_SPECULATIVE_TOKENS: u32 = 2;
 
 /// Draft depth handed to the engine's MTP speculative decoder (`num_speculative_tokens`). It
 /// is the CEILING of the engine's EV auto-K controller, which picks K in 0..=this per round
@@ -421,14 +546,16 @@ pub struct ModelProfile {
     pub frequency_penalty: Option<f64>,
     pub context_limit: Option<u32>,
     /// `"mtp"` demands MTP speculative decoding (skipped with a warning when the directory
-    /// has no `mtp.safetensors`), `"off"` refuses it, `None` = auto (on when the head file
-    /// is there).
+    /// has no MTP head: no `mtp.safetensors` and no in-shard head, see [`MtpHead`]), `"off"`
+    /// refuses it, `None` = auto (on when the model has a head).
     pub speculative: Option<String>,
     /// Directory of an mlx-lm LoRA/DoRA adapter to fuse at load (`--adapter-path`);
     /// `~` expands. Validated at argv build: missing files fail the mount.
     pub adapter_path: Option<String>,
-    /// `Some(false)` lets a vision-bearing checkpoint take the engine's MLLM lane;
-    /// `None`/`Some(true)` pin it to the text lane (`--text-only`). No effect on a
+    /// `Some(true)` pins a vision-bearing checkpoint to the text-only lane (`--text-only`: images
+    /// become a named notice); `Some(false)` never passes it (the engine may then route the
+    /// checkpoint to its MLLM lane). `None` = auto: `--text-only` unless the engine reads this
+    /// checkpoint's images on its text lane ([`TEXT_LANE_VISION_FAMILIES`]). No effect on a
     /// checkpoint whose config.json declares no vision.
     pub text_only: Option<bool>,
     /// Request-side reasoning switch, sent as `chat_template_kwargs.enable_thinking` on every turn
@@ -447,6 +574,20 @@ pub struct ModelProfile {
     /// engine's bf16 cache. Refused at argv build when the model's KV cannot take it
     /// (`kv_cache::check_mode_applies`); the engine refuses architectures it cannot quantize.
     pub kv_cache: Option<KvCacheMode>,
+    /// N-gram / prompt-lookup decoding (`prompt_lookup`): env on the MTP lane, `--suffix-*` flags
+    /// on a pure-attention model without MTP, nothing on a hybrid without MTP. Default = auto.
+    pub prompt_lookup: PromptLookupProfile,
+    /// Keep the checkpoint's n-gram (PLE) table on disk (`--qwen4-ple-offload`,
+    /// `crate::ple_offload`). `None` = auto: on for a `qwen4_exp` checkpoint that would not
+    /// otherwise fit this Mac. Never sent for a checkpoint without the table.
+    pub ple_offload: Option<bool>,
+    /// RoPE scaling past the checkpoint's native positions (`--qwen4-rope-scaling SPEC`, engine
+    /// v0.14.3-lz.16-ple.5+): `"yarn"` (the card's static YaRN, Qwen3.8-Flash-Next factor 4 = ~1M),
+    /// `"yarn:<factor>"`, a JSON object, or `"off"`. `None` = the checkpoint's own config (native
+    /// 262,144 for the open Flash-Next weights). Only `qwen4_exp` reads it; any other family is
+    /// refused at argv build. Pair it with `context_limit` at a MEASURED size (2026-10-29 workmule:
+    /// 400k peaked 96.1 GB, 512k 114.7 GB = at the Metal ceiling).
+    pub rope_scaling: Option<String>,
 }
 
 /// The explicit thinking choices; auto is the ABSENCE of a choice (`Option::None`), never a variant,
@@ -462,6 +603,17 @@ impl ModelProfile {
     fn is_empty(&self) -> bool {
         *self == Self::default()
     }
+}
+
+/// `model_id` in `models_dir`, assessed alone (never a walk of every model): a status poll asks
+/// this for the selected model several times a second.
+fn find_local_model(models_dir: &Path, model_id: &str) -> Result<LocalModel> {
+    hf::local_model(models_dir, model_id)?.with_context(|| {
+        format!(
+            "model '{model_id}' not found in {} (download it first)",
+            models_dir.display()
+        )
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -612,31 +764,170 @@ pub fn served_model_id(settings: &EngineSettings, model_id: &str) -> String {
 /// time — not persisted — so a re-download (an MTP head appearing, a vision-config
 /// checkpoint replacing a text one) changes the argv, and with it `restart_required`,
 /// without anyone editing a setting.
+/// Where a checkpoint keeps the MTP head the engine can serve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MtpHead {
+    /// `<dir>/mtp.safetensors` (MTPLX layout, the Qwen3.8-27B family).
+    Sidecar,
+    /// `mtp.*` tensors inside the checkpoint's own shards, on a family in
+    /// [`IN_SHARD_MTP_FAMILIES`] (Qwen3.8-Flash-Next).
+    InShard,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModelDirFacts {
-    /// `<dir>/mtp.safetensors` is a file.
-    pub has_mtp_sidecar: bool,
+    /// The MTP head the engine can serve from this directory, if any. THE one "has an MTP head"
+    /// fact: the serve argv, the prompt-lookup lane and the desktop's `hasMtpHead` all read it.
+    pub mtp_head: Option<MtpHead>,
+    /// `num_speculative_tokens` for that head (0 without one): [`mtp_depth_for`].
+    pub mtp_depth: u32,
     /// config.json declares `vision_config`, or is a `qwen3_5` `*ForConditionalGeneration`
     /// checkpoint — either way the engine's auto-detection may route it to the serialized
     /// single-request MLLM lane unless `--text-only` pins the text lane.
     pub vision_bearing: bool,
+    /// The pinned engine serves this checkpoint's images on its text lane
+    /// ([`TEXT_LANE_VISION_FAMILIES`]), so auto never passes `--text-only`.
+    pub text_lane_vision: bool,
+    /// config.json declares an audio encoder (`audio_config`, or Qwen-Omni's
+    /// `thinker_config.audio_config`; the engine's `model_hears_audio`): the engine hears audio
+    /// and watches video only on its MLLM lane, so auto never passes `--text-only`.
+    pub hears_audio: bool,
+}
+
+impl ModelDirFacts {
+    pub fn has_mtp_head(&self) -> bool {
+        self.mtp_head.is_some()
+    }
+
+    /// What `text_only: None` resolves to: the text lane, unless the engine reads this
+    /// checkpoint's images there or the checkpoint hears audio (audio and video need the MLLM
+    /// lane, so an omni checkpoint mounts with its media by default).
+    pub fn auto_text_only(&self) -> bool {
+        !self.text_lane_vision && !self.hears_audio
+    }
 }
 
 pub fn inspect_model_dir(dir: &Path) -> ModelDirFacts {
-    let has_mtp_sidecar = dir.join(MTP_SIDECAR_FILE).is_file();
-    let vision_bearing = match std::fs::read(dir.join("config.json")) {
+    let config = match std::fs::read(dir.join("config.json")) {
         Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
-            Ok(config) => config_declares_vision(&config),
+            Ok(config) => Some(config),
             Err(e) => {
                 tracing::warn!(dir = %dir.display(), error = %e, "config.json is not JSON; assuming a text-only checkpoint");
-                false
+                None
             }
         },
-        Err(_) => false,
+        Err(_) => None,
     };
+    let model_type = config
+        .as_ref()
+        .and_then(|c| c.get("model_type"))
+        .and_then(|v| v.as_str());
+    let mtp_head = if dir.join(MTP_SIDECAR_FILE).is_file() {
+        Some(MtpHead::Sidecar)
+    } else if model_type.is_some_and(|t| IN_SHARD_MTP_FAMILIES.contains(&t))
+        && shards_hold_mtp_tensors(dir)
+    {
+        Some(MtpHead::InShard)
+    } else {
+        None
+    };
+    let vision_bearing = config.as_ref().is_some_and(config_declares_vision);
     ModelDirFacts {
-        has_mtp_sidecar,
+        mtp_head,
+        mtp_depth: mtp_head.map_or(0, |_| mtp_depth_for(dir, model_type)),
         vision_bearing,
+        text_lane_vision: vision_bearing
+            && config.as_ref().is_some_and(|c| text_lane_vision(dir, c)),
+        hears_audio: vision_bearing && config.as_ref().is_some_and(config_declares_audio),
+    }
+}
+
+/// The engine's `model_hears_audio` rule (`api/media_parts.py`).
+fn config_declares_audio(config: &serde_json::Value) -> bool {
+    let declared = |c: &serde_json::Value| c.get("audio_config").is_some_and(|v| !v.is_null());
+    declared(config) || config.get("thinker_config").is_some_and(declared)
+}
+
+/// The engine's `text_lane_vision_supported` rule, read from the same files: a
+/// [`TEXT_LANE_VISION_FAMILIES`] model type, a `vision_config` without `language_model_only`, and
+/// `model.visual.*` / `vision_tower.*` keys in the shard index (headers only).
+fn text_lane_vision(dir: &Path, config: &serde_json::Value) -> bool {
+    let family = config
+        .get("model_type")
+        .and_then(|v| v.as_str())
+        .is_some_and(|t| TEXT_LANE_VISION_FAMILIES.contains(&t));
+    let tower_declared = config.get("vision_config").is_some_and(|v| !v.is_null())
+        && !config
+            .get("language_model_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+    if !family || !tower_declared {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(dir.join("model.safetensors.index.json")) else {
+        return false;
+    };
+    serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|index| index.get("weight_map").cloned())
+        .and_then(|m| m.as_object().cloned())
+        .is_some_and(|m| {
+            m.keys()
+                .any(|k| k.starts_with("model.visual.") || k.starts_with("vision_tower."))
+        })
+}
+
+/// Whether the checkpoint's own weights carry `mtp.*` tensors: the shard index's `weight_map`
+/// keys, or a single `model.safetensors` header — the two places the engine's qwen4_exp injector
+/// looks (`_mtp_weight_files`). Headers only; no tensor is read.
+fn shards_hold_mtp_tensors(dir: &Path) -> bool {
+    let is_mtp = |key: &str| key.starts_with("mtp.");
+    if let Ok(bytes) = std::fs::read(dir.join("model.safetensors.index.json")) {
+        return match serde_json::from_slice::<serde_json::Value>(&bytes) {
+            Ok(index) => index
+                .get("weight_map")
+                .and_then(|m| m.as_object())
+                .is_some_and(|m| m.keys().any(|k| is_mtp(k))),
+            Err(e) => {
+                tracing::warn!(dir = %dir.display(), error = %e, "model.safetensors.index.json is not JSON; no in-shard MTP head");
+                false
+            }
+        };
+    }
+    #[cfg(unix)]
+    {
+        let single = dir.join("model.safetensors");
+        if single.is_file() {
+            return match crate::distributed::plan::read_safetensors_header(&single) {
+                Ok(header) => header.keys().any(|k| is_mtp(k)),
+                Err(e) => {
+                    tracing::warn!(dir = %dir.display(), error = %e, "model.safetensors header unreadable; no in-shard MTP head");
+                    false
+                }
+            };
+        }
+    }
+    false
+}
+
+/// The MTP draft depth goose asks the engine for (`num_speculative_tokens`), per checkpoint:
+/// - `qwen4_exp` (Flash-Next): [`QWEN4_EXP_MTP_SPECULATIVE_TOKENS`], the engine's own rule.
+/// - otherwise the checkpoint's `mtplx_runtime.json` `mtp_depth_max` when it is lower than the
+///   measured [`MTP_SPECULATIVE_TOKENS`] (a head trained for fewer steps), else that 3.
+pub fn mtp_depth_for(dir: &Path, model_type: Option<&str>) -> u32 {
+    if model_type == Some("qwen4_exp") {
+        return QWEN4_EXP_MTP_SPECULATIVE_TOKENS;
+    }
+    let declared = std::fs::read(dir.join("mtplx_runtime.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|runtime| runtime.get("mtp_depth_max").and_then(|v| v.as_u64()))
+        .filter(|&depth| depth >= 1);
+    match declared {
+        Some(depth) => u32::try_from(depth)
+            .unwrap_or(u32::MAX)
+            .min(MTP_SPECULATIVE_TOKENS),
+        None => MTP_SPECULATIVE_TOKENS,
     }
 }
 
@@ -658,11 +949,19 @@ fn config_declares_vision(config: &serde_json::Value) -> bool {
     qwen3_5 && conditional_generation
 }
 
-/// The `--speculative-config` value for an MTP head living in `model_dir`. The `model`
-/// field is REQUIRED: the engine resolves the MTP sidecar from it (a directory is probed
-/// for `mtp.safetensors` first); a bare `{"method":"mtp"}` on a local directory reaches
-/// the injector with `sidecar=None` and hard-fails at boot.
-fn mtp_speculative_config(model_dir: &Path) -> String {
+/// The `--speculative-config` value for the MTP head `facts` found in `model_dir`.
+/// - `Sidecar`: the `model` field is REQUIRED: the engine resolves the MTP sidecar from it (a
+///   directory is probed for `mtp.safetensors` first); a bare `{"method":"mtp"}` on a local
+///   directory reaches the injector with `sidecar=None` and hard-fails at boot.
+/// - `InShard`: NO `model` field. The engine hands the qwen4_exp injector the loaded checkpoint
+///   itself as the sidecar (engine/batched.py); naming the directory again would also work
+///   (`_mtp_weight_files` reads the index) but is the "artificial sidecar" the engine avoids, and
+///   the argv measured on 2026-10-26 had none.
+fn mtp_speculative_config(model_dir: &Path, facts: &ModelDirFacts) -> String {
+    let depth = facts.mtp_depth;
+    if facts.mtp_head == Some(MtpHead::InShard) {
+        return format!(r#"{{"method":"mtp","num_speculative_tokens":{depth}}}"#);
+    }
     let dir = if model_dir.is_absolute() {
         model_dir.to_path_buf()
     } else {
@@ -671,9 +970,7 @@ fn mtp_speculative_config(model_dir: &Path) -> String {
             .unwrap_or_else(|_| model_dir.to_path_buf())
     };
     let dir_json = serde_json::to_string(&dir.to_string_lossy()).expect("a string serializes");
-    format!(
-        r#"{{"method":"mtp","model":{dir_json},"num_speculative_tokens":{MTP_SPECULATIVE_TOKENS}}}"#
-    )
+    format!(r#"{{"method":"mtp","model":{dir_json},"num_speculative_tokens":{depth}}}"#)
 }
 
 /// The adapter directory the profile names, expanded and PROVEN to be an mlx-lm adapter
@@ -738,6 +1035,42 @@ fn prefix_cache_flags(engine: &Result<EngineMemoryProfile, String>) -> Vec<Strin
     flags
 }
 
+/// Whether the engine is spawned with the model's MTP head (`--speculative-config`): the profile's
+/// `speculative` override over what the directory holds.
+fn serves_mtp(
+    profile: &ModelProfile,
+    facts: &ModelDirFacts,
+    model_id: &str,
+    model_path: &Path,
+) -> bool {
+    let speculative = profile
+        .speculative
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase());
+    match speculative.as_deref() {
+        Some("off") => false,
+        Some("mtp") => {
+            if !facts.has_mtp_head() {
+                tracing::warn!(
+                    model_id,
+                    dir = %model_path.display(),
+                    "profile asks for MTP but the model has no MTP head ({MTP_SIDECAR_FILE}, or mtp.* tensors in the shards of a {IN_SHARD_MTP_FAMILIES:?} checkpoint); serving without speculative decoding"
+                );
+            }
+            facts.has_mtp_head()
+        }
+        None => facts.has_mtp_head(),
+        Some(other) => {
+            tracing::warn!(
+                model_id,
+                value = other,
+                "unknown profile.speculative value (expected \"mtp\" or \"off\"); treating as auto"
+            );
+            facts.has_mtp_head()
+        }
+    }
+}
+
 /// The engine argv for `model_id` under `settings`, read together with the model
 /// directory (`inspect_model_dir`). Fails only when the profile names an adapter directory
 /// that is not one, when checkpoint parser metadata cannot be read, or when the profile asks for
@@ -792,37 +1125,12 @@ pub fn build_serve_command(
 
     crate::model_parsers::append_checkpoint_parser_flags(&model_path, &mut argv)?;
     let facts = inspect_model_dir(&model_path);
-    let speculative = profile
-        .speculative
-        .as_deref()
-        .map(|s| s.trim().to_ascii_lowercase());
-    let want_mtp = match speculative.as_deref() {
-        Some("off") => false,
-        Some("mtp") => {
-            if !facts.has_mtp_sidecar {
-                tracing::warn!(
-                    model_id,
-                    dir = %model_path.display(),
-                    "profile asks for MTP but {MTP_SIDECAR_FILE} is missing; serving without speculative decoding"
-                );
-            }
-            facts.has_mtp_sidecar
-        }
-        None => facts.has_mtp_sidecar,
-        Some(other) => {
-            tracing::warn!(
-                model_id,
-                value = other,
-                "unknown profile.speculative value (expected \"mtp\" or \"off\"); treating as auto"
-            );
-            facts.has_mtp_sidecar
-        }
-    };
+    let want_mtp = serves_mtp(profile, &facts, model_id, &model_path);
     if want_mtp {
         argv.push("--speculative-config".to_string());
-        argv.push(mtp_speculative_config(&model_path));
+        argv.push(mtp_speculative_config(&model_path, &facts));
     }
-    if facts.vision_bearing && profile.text_only.unwrap_or(true) {
+    if facts.vision_bearing && profile.text_only.unwrap_or(facts.auto_text_only()) {
         argv.push("--text-only".to_string());
     }
     if let Some(raw) = profile.adapter_path.as_deref() {
@@ -836,7 +1144,116 @@ pub fn build_serve_command(
         argv.push("--kv-cache-dtype".to_string());
         argv.push(mode.engine_dtype().to_string());
     }
+    if !profile.prompt_lookup.is_auto() {
+        let lane = prompt_lookup_lane_of(&model_path, want_mtp);
+        argv.extend(prompt_lookup::engine_flags(&profile.prompt_lookup, &lane));
+    }
+    if ple_offload_on(&model_path, profile, ple_offload::Machine::local) {
+        argv.push(ple_offload::ENGINE_FLAG.to_string());
+    }
+    if let Some(spec) = profile.rope_scaling.as_deref() {
+        argv.extend(rope_scaling_flags(&model_path, spec)?);
+    }
     Ok(argv)
+}
+
+/// The one checkpoint family whose engine flag (`--qwen4-rope-scaling`) serves a rope-scaling
+/// override on the single engine. A flag gate, not a split runner: which model_type splits how
+/// lives only in `distributed::config::RUNNERS` (its test refuses a quoted model_type comparison elsewhere).
+const ROPE_SCALING_MODEL_TYPE: &str = "qwen4_exp";
+
+/// The engine flag that serves rope scaling `spec` for the checkpoint at `model_path`
+/// ([`ModelProfile::rope_scaling`]). Validates the spec the way the engine's
+/// `parse_rope_scaling_override` reads it, so a typo fails the mount, not the first long turn.
+pub fn rope_scaling_flags(model_path: &Path, spec: &str) -> Result<Vec<String>> {
+    let spec = spec.trim();
+    let valid = spec == "off"
+        || spec == "yarn"
+        || spec
+            .strip_prefix("yarn:")
+            .and_then(|f| f.parse::<f64>().ok())
+            .is_some_and(|f| f > 1.0)
+        || serde_json::from_str::<serde_json::Value>(spec).is_ok_and(|v| v.is_object());
+    anyhow::ensure!(
+        valid,
+        "rope_scaling {spec:?}: expected \"yarn\", \"yarn:<factor > 1>\", a JSON object or \"off\""
+    );
+    let facts = crate::placement::model::read_model_facts(model_path)?;
+    anyhow::ensure!(
+        facts.model_type == ROPE_SCALING_MODEL_TYPE,
+        "rope_scaling is served for qwen4_exp checkpoints only ({} is {})",
+        model_path.display(),
+        facts.model_type
+    );
+    Ok(vec!["--qwen4-rope-scaling".to_string(), spec.to_string()])
+}
+
+/// Whether the engine leaves `model_path`'s n-gram table on disk under `profile` on `machine`.
+/// Auto charges the model the way the mount gate does (its size on disk plus the smallest useful
+/// context's KV) and reads only static machine facts, so the argv never moves with live memory.
+pub fn ple_offload_on(
+    model_path: &Path,
+    profile: &ModelProfile,
+    machine: impl FnOnce() -> Option<ple_offload::Machine>,
+) -> bool {
+    if !ple_offload::has_table(model_path) {
+        return false;
+    }
+    if let Some(on) = profile.ple_offload {
+        return on;
+    }
+    let facts = match crate::placement::model::read_model_facts(model_path) {
+        Ok(facts) => facts,
+        Err(e) => {
+            tracing::warn!(
+                "n-gram table auto: {} unreadable, the table stays resident: {e:#}",
+                model_path.display()
+            );
+            return false;
+        }
+    };
+    let need = crate::placement::planner::single_engine_need(
+        crate::memory::dir_size_bytes(model_path),
+        Ok(&facts),
+        profile.kv_cache,
+    );
+    ple_offload::resolve(None, true, &facts.model_type, need.total_bytes(), machine())
+}
+
+fn prompt_lookup_lane_of(model_path: &Path, serves_mtp: bool) -> PromptLookupLane {
+    if serves_mtp {
+        return PromptLookupLane::Mtp;
+    }
+    prompt_lookup::lane(false, &prompt_lookup::model_is_hybrid(model_path))
+}
+
+/// The lane `model_id` would take under `settings` — what the desktop shows beside the lever.
+pub fn prompt_lookup_lane(settings: &EngineSettings, model_id: &str) -> PromptLookupLane {
+    let model_path = expand_tilde(&settings.models_dir).join(model_id);
+    let default_profile = ModelProfile::default();
+    let profile = settings
+        .model_profiles
+        .get(model_id)
+        .unwrap_or(&default_profile);
+    let facts = inspect_model_dir(&model_path);
+    prompt_lookup_lane_of(
+        &model_path,
+        serves_mtp(profile, &facts, model_id, &model_path),
+    )
+}
+
+/// Engine process environment the profile adds on top of `sidecar_spawn_env`. The engine reads its
+/// MTP prompt-lookup policy only from the environment, so this is part of the engine's identity
+/// beside the argv: a change to it restarts the engine exactly like an argv change.
+pub fn build_serve_env(settings: &EngineSettings, model_id: &str) -> Vec<(String, String)> {
+    let Some(profile) = settings.model_profiles.get(model_id) else {
+        return Vec::new();
+    };
+    if profile.prompt_lookup.is_auto() {
+        return Vec::new();
+    }
+    let lane = prompt_lookup_lane(settings, model_id);
+    prompt_lookup::engine_env(&profile.prompt_lookup, &lane)
 }
 
 /// The sidecar name the single engine runs under — and so half of the marker its processes carry
@@ -1187,6 +1604,7 @@ enum ManagerState {
         model_id: String,
         sidecar: Box<Sidecar>,
         argv: Vec<String>,
+        env: Vec<(String, String)>,
     },
     Failed {
         model_id: String,
@@ -1259,6 +1677,11 @@ pub struct EngineStatus {
     /// `machine_load_error` says why the lock could not be read.
     pub machine_load: Option<LoadHolder>,
     pub machine_load_error: Option<String>,
+    /// While `state` is "stopped" because something OUTSIDE goose stopped the engine (a SIGTERM
+    /// or SIGINT no goose path sent, see `SidecarExit::stopped_outside_goose`): what ended, in a
+    /// neutral sentence. A stop is not a failure. `None` in every other case.
+    #[serde(default)]
+    pub stopped_outside: Option<String>,
 }
 
 /// A mount in flight, measured — never a guessed percentage.
@@ -1360,23 +1783,44 @@ pub fn local_gpu_ceiling() -> Result<u64> {
     anyhow::bail!("the GPU ceiling is read from Metal, which exists only on macOS")
 }
 
-/// The single engine's need for `model` — the placement planner's own (`single_engine_need`).
+/// The single engine's need for `model` — the placement planner's own (`single_engine_need_placed`)
+/// — and, when the profile leaves the n-gram table on disk on this Mac, the note that says so.
 #[cfg(unix)]
-fn single_engine_need(dir: &Path, weights_bytes: u64, kv_mode: Option<KvCacheMode>) -> Need {
+fn single_engine_need(
+    dir: &Path,
+    weights_bytes: u64,
+    profile: &ModelProfile,
+    machine: ple_offload::Machine,
+) -> (Need, Option<String>) {
     let facts = crate::placement::model::read_model_facts(dir).map_err(|e| format!("{e:#}"));
-    crate::placement::planner::single_engine_need(
+    let on_disk = ple_offload_on(dir, profile, || Some(machine));
+    let need = crate::placement::planner::single_engine_need_placed(
         weights_bytes,
         facts.as_ref().map_err(Clone::clone),
-        kv_mode,
-    )
+        profile.kv_cache,
+        on_disk,
+    );
+    let note = match &facts {
+        Ok(f) if on_disk => Some(ple_offload::fit_note(f.ple_table_bytes, need.total_bytes())),
+        _ => None,
+    };
+    (need, note)
 }
 
 #[cfg(not(unix))]
-fn single_engine_need(_dir: &Path, weights_bytes: u64, _kv_mode: Option<KvCacheMode>) -> Need {
-    Need::single_engine(
-        weights_bytes,
-        Err("model facts are read on macOS only".to_string()),
-        0,
+fn single_engine_need(
+    _dir: &Path,
+    weights_bytes: u64,
+    _profile: &ModelProfile,
+    _machine: ple_offload::Machine,
+) -> (Need, Option<String>) {
+    (
+        Need::single_engine(
+            weights_bytes,
+            Err("model facts are read on macOS only".to_string()),
+            0,
+        ),
+        None,
     )
 }
 
@@ -1476,6 +1920,20 @@ fn engine_exit_message(exit: &crate::SidecarExit) -> String {
         "{account} — not restarted automatically; Mount restarts it (the crash breaker applies). \
          Last log lines:\n{}",
         exit.stderr_tail
+    )
+}
+
+/// A supervised engine something outside goose stopped (`SidecarExit::stopped_outside_goose`), in
+/// one neutral sentence: which model, which process, the OS's own words.
+fn outside_stop_message(model_id: &str, exit: &crate::SidecarExit) -> String {
+    let pid = exit
+        .pid
+        .map(|pid| format!(" (pid {pid})"))
+        .unwrap_or_default();
+    format!(
+        "stopped outside goose: the engine process{pid} serving '{model_id}' ended with {} after \
+         a stop signal no goose path sent (another process or a terminal) — Mount starts it again",
+        exit.status
     )
 }
 
@@ -1665,19 +2123,7 @@ impl MlxEngineManager {
     }
 
     fn local_model(&self, settings: &EngineSettings, model_id: &str) -> Result<LocalModel> {
-        hf::validate_model_id(model_id)?;
-        let models_dir = expand_tilde(&settings.models_dir);
-        let models = hf::list_local_models(&models_dir)?;
-        let model = models
-            .into_iter()
-            .find(|m| m.id == model_id)
-            .with_context(|| {
-                format!(
-                    "model '{model_id}' not found in {} (download it first)",
-                    models_dir.display()
-                )
-            })?;
-        Ok(model)
+        find_local_model(&expand_tilde(&settings.models_dir), model_id)
     }
 
     /// The one fit rule (`crate::fit`) for `model_id` on this Mac right now — the verdict the mount
@@ -1686,7 +2132,15 @@ impl MlxEngineManager {
     /// when it is this model).
     pub async fn mount_fit(&self, model_id: &str) -> Result<FitVerdict> {
         let settings = self.settings();
-        let model = self.local_model(&settings, model_id)?;
+        // Off the async thread: the assessment stats every file of the model, and on a Mac
+        // whose models live on the NFS-linked SSD a busy server makes each stat wait.
+        let model = {
+            let models_dir = expand_tilde(&settings.models_dir);
+            let id = model_id.to_string();
+            tokio::task::spawn_blocking(move || find_local_model(&models_dir, &id))
+                .await
+                .context("model assessment task")??
+        };
         self.judge_model(&settings, &model).await
     }
 
@@ -1709,13 +2163,18 @@ impl MlxEngineManager {
             .gpu_ceiling()
             .context("reading the GPU ceiling the fit rule needs")?;
         let frees = self.start_frees_with(settings).await;
-        let need = single_engine_need(
+        let default_profile = ModelProfile::default();
+        let (need, table_note) = single_engine_need(
             &expand_tilde(&settings.models_dir).join(&model.id),
             model.size_bytes,
             settings
                 .model_profiles
                 .get(&model.id)
-                .and_then(|p| p.kv_cache),
+                .unwrap_or(&default_profile),
+            ple_offload::Machine {
+                total_bytes: reading.total_bytes,
+                ceiling_bytes: ceiling,
+            },
         );
         let others = self.other_engines(settings.port);
         let mut verdict = fit::judge(
@@ -1728,6 +2187,9 @@ impl MlxEngineManager {
                 freed_by_switch_bytes: frees.bytes(),
             },
         );
+        if let Some(note) = table_note {
+            verdict.append(note);
+        }
         if let Some(note) = frees.note() {
             verdict.append(note);
         }
@@ -1955,6 +2417,7 @@ impl MlxEngineManager {
         let weights_bytes = model.size_bytes;
 
         let argv = build_serve_command(&settings, model_id, &self.nodes())?;
+        let serve_env = build_serve_env(&settings, model_id);
         let mut state = self.state.lock().await;
         if self.unmounts_seen() != unmounts {
             return Err(MountStopped {
@@ -1993,8 +2456,10 @@ impl MlxEngineManager {
                 model_id: previous_model,
                 sidecar,
                 argv: previous_argv,
+                env: previous_env,
             } => {
-                if previous_model == model_id && previous_argv == argv {
+                if previous_model == model_id && previous_argv == argv && previous_env == serve_env
+                {
                     Some(sidecar)
                 } else {
                     sidecar.shutdown().await;
@@ -2049,6 +2514,7 @@ impl MlxEngineManager {
                         expected_model_id,
                     );
                     config.env = sidecar_spawn_env();
+                    config.env.extend(serve_env.iter().cloned());
                     config.startup_watch = Some(watch);
                     config.shutdown_line = Some(shutdown_began);
                     config.start_cancel = Some(cancel);
@@ -2086,6 +2552,7 @@ impl MlxEngineManager {
                             model_id,
                             sidecar,
                             argv,
+                            env: serve_env,
                         };
                     } else {
                         drop(state);
@@ -2331,6 +2798,7 @@ impl MlxEngineManager {
             load: None,
             machine_load: None,
             machine_load_error: None,
+            stopped_outside: None,
         };
         match self
             .load_lock_path()
@@ -2370,6 +2838,7 @@ impl MlxEngineManager {
                     model_id,
                     sidecar,
                     argv,
+                    env,
                 } => {
                     status.model_id = Some(model_id.clone());
                     // The state is the PROCESS's, asked of the OS on every poll — never the
@@ -2378,6 +2847,15 @@ impl MlxEngineManager {
                     // supervisor is kept, so a Mount of the same model restarts it through
                     // the crash breaker; nothing restarts on its own.
                     match sidecar.exited().await {
+                        Ok(Some(exit)) if exit.stopped_outside_goose() => {
+                            // A stop from outside goose (`kill -TERM`, Ctrl-C) is a stop: the
+                            // engine reads stopped, never failed. The supervisor is kept, so a
+                            // Mount restarts it as before.
+                            status.state = "stopped".to_string();
+                            status.model_id = None;
+                            status.stopped_outside = Some(outside_stop_message(model_id, &exit));
+                            None
+                        }
                         Ok(Some(exit)) => {
                             status.state = "failed".to_string();
                             status.last_error = Some(engine_exit_message(&exit));
@@ -2388,7 +2866,7 @@ impl MlxEngineManager {
                             status.base_url = Some(sidecar.base_url().to_string());
                             status.pid = sidecar.pid().await;
                             status.last_error = sidecar.shutting_down().await;
-                            Some((model_id.clone(), argv.clone()))
+                            Some((model_id.clone(), argv.clone(), env.clone()))
                         }
                         Err(e) => {
                             status.state = "failed".to_string();
@@ -2439,7 +2917,7 @@ impl MlxEngineManager {
                 }
             }
         }
-        if let Some((running_model, running_argv)) = running {
+        if let Some((running_model, running_argv, running_env)) = running {
             let desired_model = settings.model_id.as_deref().unwrap_or(&running_model);
             // The desired argv is rebuilt from the profile AND the model directory each poll,
             // so an MTP head that arrived, a vision checkpoint swapped in, or an adapter dir
@@ -2451,7 +2929,10 @@ impl MlxEngineManager {
                 desired_model,
                 &self.nodes(),
             ) {
-                Ok(desired) => desired != running_argv,
+                Ok(desired) => {
+                    desired != running_argv
+                        || build_serve_env(&settings, desired_model) != running_env
+                }
                 Err(e) => {
                     tracing::warn!(model = desired_model, error = %format!("{e:#}"), "desired serve argv cannot be built; reporting restart required");
                     true
@@ -2644,6 +3125,183 @@ mod tests {
     }
 
     use super::*;
+
+    fn prompt_lookup_dir(config: serde_json::Value, mtp: bool) -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("org/m");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.json"), config.to_string()).unwrap();
+        if mtp {
+            std::fs::write(dir.join(MTP_SIDECAR_FILE), b"x").unwrap();
+        }
+        root
+    }
+
+    fn prompt_lookup_settings(
+        root: &tempfile::TempDir,
+        lever: crate::prompt_lookup::PromptLookupProfile,
+        speculative: Option<&str>,
+    ) -> EngineSettings {
+        let mut settings = EngineSettings {
+            models_dir: root.path().to_string_lossy().into_owned(),
+            ..EngineSettings::default()
+        };
+        settings.model_profiles.insert(
+            "org/m".into(),
+            ModelProfile {
+                prompt_lookup: lever,
+                speculative: speculative.map(str::to_string),
+                ..ModelProfile::default()
+            },
+        );
+        settings
+    }
+
+    /// A checkpoint whose one shard holds a 4 KiB n-gram table tensor (and the index naming it).
+    fn ngram_table_dir(model_type: &str, with_table: bool) -> tempfile::TempDir {
+        let root = prompt_lookup_dir(
+            serde_json::json!({"model_type": model_type, "num_hidden_layers": 2}),
+            false,
+        );
+        let dir = root.path().join("org/m");
+        let name = if with_table {
+            "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.shard_0.weight"
+        } else {
+            "model.language_model.layers.1.mlp.down_proj.weight"
+        };
+        let header = serde_json::json!({
+            name: {"dtype": "BF16", "shape": [256, 8], "data_offsets": [0, 4096]}
+        })
+        .to_string();
+        let mut shard = (header.len() as u64).to_le_bytes().to_vec();
+        shard.extend(header.as_bytes());
+        shard.extend(std::iter::repeat_n(0u8, 4096));
+        std::fs::write(dir.join("model-00001-of-00001.safetensors"), shard).unwrap();
+        std::fs::write(
+            dir.join("model.safetensors.index.json"),
+            serde_json::json!({"weight_map": {name: "model-00001-of-00001.safetensors"}})
+                .to_string(),
+        )
+        .unwrap();
+        root
+    }
+
+    #[test]
+    fn rope_scaling_reaches_the_engine_for_qwen4_exp_only() {
+        let argv = |root: &tempfile::TempDir, spec: Option<&str>| {
+            let mut s = prompt_lookup_settings(root, Default::default(), None);
+            s.model_profiles.get_mut("org/m").unwrap().rope_scaling = spec.map(str::to_string);
+            build_serve_command(&s, "org/m", &[])
+        };
+        let flash = ngram_table_dir("qwen4_exp", true);
+        let a = argv(&flash, Some("yarn")).unwrap();
+        let i = a
+            .iter()
+            .position(|x| x == "--qwen4-rope-scaling")
+            .expect("flag sent");
+        assert_eq!(a[i + 1], "yarn");
+        assert!(argv(&flash, Some("yarn:2")).is_ok());
+        assert!(argv(&flash, Some(r#"{"rope_type":"yarn","factor":4}"#)).is_ok());
+        assert!(argv(&flash, Some("yarm")).is_err(), "typo fails the mount");
+        assert!(argv(&flash, Some("yarn:0.5")).is_err());
+        let none = argv(&flash, None).unwrap();
+        assert!(
+            !none.iter().any(|x| x == "--qwen4-rope-scaling"),
+            "auto sends nothing"
+        );
+        let other = ngram_table_dir("qwen3_5_moe", false);
+        assert!(
+            argv(&other, Some("yarn")).is_err(),
+            "other families refused"
+        );
+    }
+
+    #[test]
+    fn the_ngram_table_flag_follows_the_profile_and_auto_follows_the_fit() {
+        let flag = |root: &tempfile::TempDir, choice: Option<bool>| {
+            let mut s = prompt_lookup_settings(root, Default::default(), None);
+            s.model_profiles.get_mut("org/m").unwrap().ple_offload = choice;
+            build_serve_command(&s, "org/m", &[])
+                .unwrap()
+                .iter()
+                .any(|a| a == ple_offload::ENGINE_FLAG)
+        };
+        let flash = ngram_table_dir("qwen4_exp", true);
+        assert!(flag(&flash, Some(true)));
+        assert!(!flag(&flash, Some(false)));
+        let no_table = ngram_table_dir("qwen4_exp", false);
+        assert!(!flag(&no_table, Some(true)), "never sent without the table");
+
+        let dir = flash.path().join("org/m");
+        let tiny = ple_offload::Machine {
+            total_bytes: 4096,
+            ceiling_bytes: 4096,
+        };
+        let roomy = ple_offload::Machine {
+            total_bytes: 1 << 40,
+            ceiling_bytes: 1 << 40,
+        };
+        let auto = ModelProfile::default();
+        assert!(ple_offload_on(&dir, &auto, || Some(tiny)));
+        assert!(!ple_offload_on(&dir, &auto, || Some(roomy)));
+        assert!(!ple_offload_on(&dir, &auto, || None));
+        let other = ngram_table_dir("qwen3_5_moe", true);
+        assert!(!ple_offload_on(
+            &other.path().join("org/m"),
+            &auto,
+            || Some(tiny)
+        ));
+        let (need, note) = single_engine_need(&dir, 4096 + 200, &auto, tiny);
+        assert!(need.weights_bytes < 4096, "{need:?}");
+        assert!(note.unwrap().contains("n-gram table on disk"));
+    }
+
+    #[test]
+    fn prompt_lookup_rides_env_on_mtp_flags_on_pure_attention_and_nothing_on_a_hybrid() {
+        use crate::prompt_lookup::{
+            PromptLookupMode, PromptLookupProfile, ENV_ENABLE, ENV_MAX_TOKENS,
+        };
+        let on = PromptLookupProfile {
+            mode: Some(PromptLookupMode::On),
+            max_draft: Some(63),
+            ..Default::default()
+        };
+        let hybrid = serde_json::json!({"model_type": "qwen3_5"});
+        let dense = serde_json::json!({"model_type": "llama"});
+
+        let mtp = prompt_lookup_dir(hybrid.clone(), true);
+        let s = prompt_lookup_settings(&mtp, on.clone(), None);
+        assert_eq!(
+            build_serve_env(&s, "org/m"),
+            vec![
+                (ENV_ENABLE.to_string(), "1".to_string()),
+                (ENV_MAX_TOKENS.to_string(), "63".to_string())
+            ]
+        );
+        let argv = build_serve_command(&s, "org/m", &[]).unwrap();
+        assert!(argv.iter().any(|a| a == "--speculative-config"));
+        assert!(!argv.iter().any(|a| a.starts_with("--suffix")));
+
+        let hybrid_no_mtp = prompt_lookup_settings(&mtp, on.clone(), Some("off"));
+        assert!(build_serve_env(&hybrid_no_mtp, "org/m").is_empty());
+        assert!(matches!(
+            prompt_lookup_lane(&hybrid_no_mtp, "org/m"),
+            PromptLookupLane::Unavailable(_)
+        ));
+        let argv = build_serve_command(&hybrid_no_mtp, "org/m", &[]).unwrap();
+        assert!(!argv.iter().any(|a| a.starts_with("--suffix")));
+
+        let plain = prompt_lookup_dir(dense, false);
+        let s = prompt_lookup_settings(&plain, on, None);
+        assert!(build_serve_env(&s, "org/m").is_empty());
+        let argv = build_serve_command(&s, "org/m", &[]).unwrap();
+        assert!(argv
+            .windows(3)
+            .any(|w| w == ["--suffix-decoding", "--suffix-max-draft", "63"]));
+
+        let auto = prompt_lookup_settings(&mtp, PromptLookupProfile::default(), None);
+        assert!(build_serve_env(&auto, "org/m").is_empty());
+    }
 
     /// An M4 Max 128 GB with 96 GiB available — the Metal ceiling `iogpu` reports there
     /// (115,448,725,504 B, 2026-09-23). Pinned, so a lifecycle test reads the same memory on a
@@ -2901,7 +3559,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.19",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -3131,6 +3789,127 @@ mod tests {
         );
     }
 
+    const QWEN4_EXP_CONFIG: &str = r#"{"model_type":"qwen4_exp","architectures":["Qwen4ExpForCausalLM"],"text_config":{"mtp_num_hidden_layers":1}}"#;
+
+    /// A checkpoint whose shard index lists `keys` (headers only, as the real Flash index does).
+    fn write_index(settings: &EngineSettings, keys: &[&str]) {
+        let map: serde_json::Map<String, serde_json::Value> = keys
+            .iter()
+            .map(|k| {
+                (
+                    (*k).to_string(),
+                    serde_json::json!("model-00001-of-00002.safetensors"),
+                )
+            })
+            .collect();
+        std::fs::write(
+            expand_tilde(&settings.models_dir).join("pub/model/model.safetensors.index.json"),
+            serde_json::json!({ "metadata": {}, "weight_map": map }).to_string(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn an_in_shard_flash_head_serves_mtp_at_depth_2_without_a_model_key() {
+        let (_root, settings) = model_dir_with(QWEN4_EXP_CONFIG, &[]);
+        write_index(
+            &settings,
+            &["model.layers.0.self_attn.q_proj.weight", "mtp.fc.weight"],
+        );
+        let facts = inspect_model_dir(&expand_tilde(&settings.models_dir).join("pub/model"));
+        assert_eq!(facts.mtp_head, Some(MtpHead::InShard));
+        assert_eq!(facts.mtp_depth, QWEN4_EXP_MTP_SPECULATIVE_TOKENS);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert_eq!(
+            flag_value(&argv, "--speculative-config").as_deref(),
+            Some(r#"{"method":"mtp","num_speculative_tokens":2}"#),
+            "{argv:?}"
+        );
+        assert_eq!(
+            prompt_lookup_lane(&settings, "pub/model"),
+            PromptLookupLane::Mtp
+        );
+    }
+
+    #[test]
+    fn in_shard_mtp_tensors_count_only_on_a_family_the_engine_reads_them_for() {
+        // qwen3_5's injector wants a sidecar FILE: in-shard tensors are not a servable head.
+        let (_root, settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[]);
+        write_index(&settings, &["mtp.fc.weight"]);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(
+            !argv.iter().any(|a| a == "--speculative-config"),
+            "{argv:?}"
+        );
+        // A qwen4_exp checkpoint whose shards carry no mtp.* tensors has no head either.
+        let (_root, settings) = model_dir_with(QWEN4_EXP_CONFIG, &[]);
+        write_index(&settings, &["model.layers.0.self_attn.q_proj.weight"]);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(
+            !argv.iter().any(|a| a == "--speculative-config"),
+            "{argv:?}"
+        );
+        assert!(
+            !inspect_model_dir(&expand_tilde(&settings.models_dir).join("pub/model"))
+                .has_mtp_head()
+        );
+    }
+
+    #[test]
+    fn the_sidecar_depth_is_3_unless_the_checkpoint_declares_a_shallower_head() {
+        for (runtime, depth) in [
+            (None, 3),
+            (Some(r#"{"mtp_depth_max": 3}"#), 3),
+            (Some(r#"{"mtp_depth_max": 2}"#), 2),
+            (Some(r#"{"mtp_depth_max": 5}"#), 3),
+            (Some(r#"{"mtp_depth_max": 0}"#), 3),
+        ] {
+            let (_root, settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[MTP_SIDECAR_FILE]);
+            let dir = expand_tilde(&settings.models_dir).join("pub/model");
+            if let Some(runtime) = runtime {
+                std::fs::write(dir.join("mtplx_runtime.json"), runtime).unwrap();
+            }
+            let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+            let json: serde_json::Value =
+                serde_json::from_str(&flag_value(&argv, "--speculative-config").unwrap()).unwrap();
+            assert_eq!(json["num_speculative_tokens"], depth, "{runtime:?}");
+            assert_eq!(json["model"], dir.to_string_lossy().as_ref());
+        }
+    }
+
+    /// The real Qwen3.8-Flash-Next checkpoint on the AI SSD (headers and the index only; no
+    /// weight is loaded). Skipped where the SSD is not mounted.
+    #[test]
+    fn the_real_flash_checkpoint_gets_the_measured_mtp_argv() {
+        let models_dir = "/Volumes/AI-workhorse/models/goose";
+        // The 2026-10-29 build (rapid-mlx/Qwen3.8-Flash-Next-4bit was deleted that day).
+        let model_id = "Jundot/Qwen3.8-Flash-Next-oQ4e-mtp";
+        let dir = Path::new(models_dir).join(model_id);
+        if !dir.join("model.safetensors.index.json").is_file() {
+            eprintln!("skipped: {} is not reachable", dir.display());
+            return;
+        }
+        let facts = inspect_model_dir(&dir);
+        assert_eq!(facts.mtp_head, Some(MtpHead::InShard));
+        assert_eq!(facts.mtp_depth, 2);
+        assert!(facts.vision_bearing && facts.text_lane_vision, "{facts:?}");
+        let settings = EngineSettings {
+            models_dir: models_dir.to_string(),
+            ..Default::default()
+        };
+        let argv = build_serve_command(&settings, model_id, &[]).unwrap();
+        assert_eq!(
+            flag_value(&argv, "--speculative-config").as_deref(),
+            Some(r#"{"method":"mtp","num_speculative_tokens":2}"#),
+            "{argv:?}"
+        );
+        assert!(!argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+        assert_eq!(
+            prompt_lookup_lane(&settings, model_id),
+            PromptLookupLane::Mtp
+        );
+    }
+
     #[test]
     fn speculative_off_suppresses_mtp_even_with_the_head_present() {
         let (_root, mut settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[MTP_SIDECAR_FILE]);
@@ -3174,6 +3953,71 @@ mod tests {
         );
     }
 
+    /// Qwen3.8-Flash-Next-4bit's config.json shape (read 2026-10-29): qwen4_exp, a vision_config,
+    /// language_model_only false; its index carries 501 `model.visual.*` tensors and the MTP head.
+    const FLASH_VISION_CONFIG: &str = r#"{"model_type":"qwen4_exp","architectures":["Qwen4ExpForConditionalGeneration"],"language_model_only":false,"image_token_id":248056,"vision_config":{"depth":27},"text_config":{"mtp_num_hidden_layers":1}}"#;
+
+    #[test]
+    fn flash_with_its_vision_tower_reads_images_on_the_text_lane_with_mtp() {
+        let (_root, settings) = model_dir_with(FLASH_VISION_CONFIG, &[]);
+        write_index(
+            &settings,
+            &[
+                "model.language_model.layers.0.self_attn.q_proj.weight",
+                "model.visual.blocks.0.attn.qkv.weight",
+                "mtp.fc.weight",
+            ],
+        );
+        let facts = inspect_model_dir(&expand_tilde(&settings.models_dir).join("pub/model"));
+        assert!(facts.vision_bearing && facts.text_lane_vision, "{facts:?}");
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(!argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+        assert!(argv.iter().any(|a| a == "--speculative-config"), "{argv:?}");
+    }
+
+    #[test]
+    fn flash_text_only_true_still_pins_the_text_only_lane() {
+        let (_root, mut settings) = model_dir_with(FLASH_VISION_CONFIG, &[]);
+        write_index(&settings, &["model.visual.blocks.0.attn.qkv.weight"]);
+        settings.model_profiles.insert(
+            "pub/model".to_string(),
+            ModelProfile {
+                text_only: Some(true),
+                ..Default::default()
+            },
+        );
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+    }
+
+    #[test]
+    fn text_only_stays_forced_where_images_would_cost_the_fast_lane() {
+        // A Flash quant with no tower tensors (the mlx-community text-only shape), a Flash that
+        // declares language_model_only, and a qwen3_5 vision checkpoint: images would land on
+        // the serialized MLLM lane or on no tower at all, so auto keeps --text-only.
+        let (_root, settings) = model_dir_with(FLASH_VISION_CONFIG, &[]);
+        write_index(
+            &settings,
+            &["model.language_model.layers.0.self_attn.q_proj.weight"],
+        );
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+
+        let lm_only = FLASH_VISION_CONFIG.replace(
+            r#""language_model_only":false"#,
+            r#""language_model_only":true"#,
+        );
+        let (_root, settings) = model_dir_with(&lm_only, &[]);
+        write_index(&settings, &["model.visual.blocks.0.attn.qkv.weight"]);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+
+        let (_root, settings) = model_dir_with(QWEN3_5_VISION_CONFIG, &[]);
+        write_index(&settings, &["model.visual.blocks.0.attn.qkv.weight"]);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+    }
+
     #[test]
     fn text_only_false_lets_a_vision_checkpoint_take_the_mllm_lane() {
         let (_root, mut settings) = model_dir_with(QWEN3_5_VISION_CONFIG, &[]);
@@ -3198,10 +4042,43 @@ mod tests {
         assert_eq!(
             facts,
             ModelDirFacts {
-                has_mtp_sidecar: false,
-                vision_bearing: true
+                mtp_head: None,
+                mtp_depth: 0,
+                vision_bearing: true,
+                text_lane_vision: false,
+                hears_audio: false,
             }
         );
+    }
+
+    const GEMMA4_AUDIO_CONFIG: &str = r#"{"model_type":"gemma4","architectures":["Gemma4ForConditionalGeneration"],"vision_config":{"model_type":"gemma4_vision"},"audio_config":{"model_type":"gemma4_audio"}}"#;
+
+    #[test]
+    fn an_audio_bearing_checkpoint_mounts_on_the_media_lane_by_default() {
+        let (_root, settings) = model_dir_with(GEMMA4_AUDIO_CONFIG, &[]);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(!argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+        let facts = inspect_model_dir(&expand_tilde(&settings.models_dir).join("pub/model"));
+        assert!(facts.hears_audio && !facts.auto_text_only(), "{facts:?}");
+
+        let omni = r#"{"model_type":"qwen3_omni_moe","vision_config":{},"thinker_config":{"audio_config":{"d_model":1280}}}"#;
+        let (_root, settings) = model_dir_with(omni, &[]);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(!argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+    }
+
+    #[test]
+    fn text_only_true_still_pins_an_audio_bearing_checkpoint_to_the_text_lane() {
+        let (_root, mut settings) = model_dir_with(GEMMA4_AUDIO_CONFIG, &[]);
+        settings.model_profiles.insert(
+            "pub/model".to_string(),
+            ModelProfile {
+                text_only: Some(true),
+                ..Default::default()
+            },
+        );
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
     }
 
     #[test]
@@ -3277,7 +4154,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.14",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.19",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
@@ -3964,6 +4841,58 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert_eq!(seen.len(), 2);
         let words = seen[1].outcome.clone().unwrap_err();
         assert!(words.contains("ValueError: no weights"), "{words}");
+    }
+
+    /// 3.0.132: an agent's `kill -TERM` on an idle engine left the sidebar red "Failed … exit
+    /// status: 143 — no goose path stopped it" for hours. A stop signal no goose path sent — the
+    /// signal itself, or the 143 a launcher turns it into — reads STOPPED, with neutral words and
+    /// no error; a SIGKILL stays failed (the test above); a Mount starts it again.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_engine_stopped_from_outside_goose_reads_stopped_not_failed() {
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/small");
+        // The launcher's way (uvx): it turns the SIGTERM into exit code 143.
+        let as_143 = tmp.path().join("exit-143");
+        let manager = test_manager();
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port: free_port(),
+            spawn_command: vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                format!(
+                    "import os, signal, sys\n\
+                     if os.path.exists({flag:?}):\n    signal.signal(signal.SIGTERM, lambda *a: os._exit(143))\n\
+                     {ARGV_FAKE_ENGINE}",
+                    flag = as_143.to_string_lossy()
+                ),
+            ],
+            ..Default::default()
+        });
+        for (how, expect_status) in [("the signal", "signal: 15"), ("exit code 143", "143")] {
+            if how == "exit code 143" {
+                std::fs::write(&as_143, b"").unwrap();
+            }
+            manager.mount("pub/small").await.unwrap();
+            let up = settle(&manager).await;
+            assert_eq!(up.state, "running", "{how}: {:?}", up.last_error);
+            let pid = up.pid.unwrap();
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+            wait_exited(pid).await;
+            let stopped = manager.status().await;
+            assert_eq!(stopped.state, "stopped", "{how}: {:?}", stopped.last_error);
+            assert_eq!(stopped.last_error, None, "{how}");
+            let words = stopped.stopped_outside.unwrap_or_default();
+            assert!(words.starts_with("stopped outside goose"), "{how}: {words}");
+            assert!(words.contains(expect_status), "{how}: {words}");
+            assert!(words.contains("pub/small"), "{how}: {words}");
+        }
+        manager.mount("pub/small").await.unwrap();
+        let again = settle(&manager).await;
+        assert_eq!(again.state, "running", "{:?}", again.last_error);
+        assert_eq!(again.stopped_outside, None);
+        manager.unmount().await.unwrap();
     }
 
     /// Q-256: a Mount that finds its supervised engine dead restarts it through the supervisor —
@@ -5275,6 +6204,7 @@ while True:
             active_bytes_per_token: 0,
             active_params_per_token: 0,
             lookup_bytes: 0,
+            ple_table_bytes: 0,
             excluded_bytes: 0,
             largest_layer_bytes: 0,
             kv: Err("config.json names no attention".into()),
@@ -5301,6 +6231,7 @@ while True:
                 model: &facts,
                 bytes_on_disk,
                 kv_mode: None,
+                ple_offload: None,
                 nodes: &nodes,
                 cluster: None,
                 tensor: None,

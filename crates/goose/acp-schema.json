@@ -7452,7 +7452,14 @@
             "string",
             "null"
           ],
-          "description": "While `state` is \"stopped\": what left it stopped, since this goose started — `owner` (this\nMac's owner unmounted it) · `linkedMac` (a linked Mac unmounted it over LeanZero Link) ·\n`notStarted` (no Unmount since this goose started: nothing has run the engine since its\nlaunch — what an app relaunch leaves). Absent in every other state, and from a goose\nbefore it. A Link peer whose chat route this engine served re-mounts it only on\n`notStarted`."
+          "description": "While `state` is \"stopped\": what left it stopped, since this goose started — `owner` (this\nMac's owner unmounted it) · `linkedMac` (a linked Mac unmounted it over LeanZero Link) ·\n`notStarted` (no Unmount since this goose started: nothing has run the engine since its\nlaunch — what an app relaunch leaves) · `outside` (something outside goose stopped the\nengine: a SIGTERM or SIGINT no goose path sent — a stop, not a failure; `stoppedOutside`\nsays what ended). Absent in every other state, and from a goose before it. A Link peer\nwhose chat route this engine served re-mounts it only on `notStarted`."
+        },
+        "stoppedOutside": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "When `stoppedBy` is `outside`: which engine process ended and how, in one neutral\nsentence. Absent otherwise."
         },
         "servingIntent": {
           "anyOf": [
@@ -9391,7 +9398,7 @@
             "string",
             "null"
           ],
-          "description": "Speculative decoding: `\"mtp\"` (demand the MTP head, skipped with a warning when the\nmodel dir has no `mtp.safetensors`), `\"off\"`, or absent = auto (on when the head exists)."
+          "description": "Speculative decoding: `\"mtp\"` (demand the MTP head, skipped with a warning when the\nmodel has none: no `mtp.safetensors` and no in-shard head), `\"off\"`, or absent = auto\n(on when the head exists)."
         },
         "adapterPath": {
           "type": [
@@ -9406,6 +9413,20 @@
             "null"
           ],
           "description": "`false` lets a vision-bearing checkpoint take the engine's MLLM lane; absent/`true` pins\nthe text lane (`--text-only`). No effect on a checkpoint that declares no vision."
+        },
+        "pleOffload": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Keep the n-gram (PLE) table on disk (`--qwen4-ple-offload`). Absent = auto: on for a\nQwen3.8-Flash-Next checkpoint that would not otherwise fit this Mac. Ignored for a\ncheckpoint without the table (`MlxLocalModelDto::has_ngram_table`)."
+        },
+        "ropeScaling": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "RoPE scaling past the checkpoint's native positions (`--qwen4-rope-scaling`): `\"yarn\"`,\n`\"yarn:<factor>\"`, a JSON object or `\"off\"`. Absent = the checkpoint's own config.\n`qwen4_exp` only; any other family fails the mount."
         },
         "thinking": {
           "anyOf": [
@@ -9435,6 +9456,17 @@
             }
           ],
           "description": "Compressed live KV cache, passed as `--kv-cache-dtype`: `\"int8\"` | `\"int4\"`. Absent = off\n(the engine's bf16 cache, no flag). A change restarts the engine. The mount is refused when\nthe model's KV cannot take it (goose: no attention layers / no quantization group for its\nhead_dim; the engine: a cache layout it cannot quantize — both name the reason)."
+        },
+        "promptLookup": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxPromptLookupDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Prompt-lookup (n-gram copy) drafting. Absent = auto (the engine's family default: on\ninside MTP for Qwen3.5/3.6/3.8, off for the suffix lane). Rides the engine env inside MTP\nand `--suffix-decoding` flags on a pure-attention model served without MTP; a hybrid\nserved without MTP gets nothing. A change restarts the engine."
         }
       },
       "description": "Per-model sampling/context profile. Sampling is per MODEL: the engine spawns each\nmounted model with the flags from ITS profile in `MlxEngineSettingsDto::model_profiles`."
@@ -9451,6 +9483,53 @@
       "enum": [
         "int8",
         "int4"
+      ]
+    },
+    "MlxPromptLookupDto": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxPromptLookupModeDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "minNgram": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "MTP lane only: shortest context n-gram that may trigger a copy (engine floor 2).",
+          "minimum": 0
+        },
+        "maxNgram": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "MTP lane: longest n-gram matched. Suffix lane: `--suffix-max-suffix-len`.",
+          "minimum": 0
+        },
+        "maxDraft": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "MTP lane: copy-draft ceiling. Suffix lane: `--suffix-max-draft`.",
+          "minimum": 0
+        }
+      },
+      "description": "Every field absent = the engine's own default for the lane."
+    },
+    "MlxPromptLookupModeDto": {
+      "type": "string",
+      "enum": [
+        "on",
+        "off"
       ]
     },
     "MlxEngineSettingsUpdateRequest_unstable": {
@@ -9584,6 +9663,39 @@
             "string",
             "null"
           ]
+        },
+        "hasMtpHead": {
+          "type": "boolean",
+          "description": "The model has an MTP head the engine serves (`mtp.safetensors`, or `mtp.*` tensors in the\nshards of a Qwen3.8-Flash-Next checkpoint), so auto/`\"mtp\"` serves it and the\nprompt-lookup lever rides inside it.",
+          "default": false
+        },
+        "hearsAudio": {
+          "type": "boolean",
+          "description": "config.json declares an audio encoder, so auto (`textOnly` unset) mounts the checkpoint on\nthe engine's media lane: it hears audio and watches video, and the text-only lane is off.",
+          "default": false
+        },
+        "hybrid": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "config.json declares recurrent-state layers (GatedDeltaNet, Mamba, ...): without MTP the\nprompt-lookup lever is unavailable. Absent exactly when `hybrid_error` says why."
+        },
+        "hybridError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hasNgramTable": {
+          "type": "boolean",
+          "description": "The checkpoint carries an n-gram (PLE) table the engine can leave on disk: the\n\"Keep n-gram table on disk\" lever is offered only then.",
+          "default": false
+        },
+        "ngramTableAutoOn": {
+          "type": "boolean",
+          "description": "What auto resolves to on this Mac (on = the model would not otherwise fit).",
+          "default": false
         }
       },
       "required": [

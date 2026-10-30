@@ -81,6 +81,8 @@ module.exports = [
         HTMLTextAreaElement: 'readonly',
         HTMLButtonElement: 'readonly',
         HTMLDivElement: 'readonly',
+        HTMLAudioElement: 'readonly',
+        HTMLVideoElement: 'readonly',
         HTMLCanvasElement: 'readonly',
         HTMLIFrameElement: 'readonly',
         MessageEvent: 'readonly',

@@ -176,6 +176,12 @@
   "alertBox.autoCompactAt": {
     "defaultMessage": "Tự động nén tại"
   },
+  "alertBox.autoCompactReserve": {
+    "defaultMessage": "Tự động nén khi gần đầy (không trước {floor}%)"
+  },
+  "alertBox.autoCompactReserveHint": {
+    "defaultMessage": "Chưa đặt tỷ lệ phần trăm nên goose nén khi ngữ cảnh chỉ còn đủ chỗ cho câu trả lời tiếp theo và một kết quả công cụ, và không bao giờ trước {floor}%. Đặt tỷ lệ phần trăm để nén tại một điểm cố định."
+  },
   "alertBox.compactNow": {
     "defaultMessage": "Nén ngay"
   },
@@ -389,6 +395,9 @@
   "benchmarkSection.askAbout": {
     "defaultMessage": "Bắt đầu phiên AI về lượt chạy này"
   },
+  "benchmarkSection.build": {
+    "defaultMessage": "Bản dựng {index}"
+  },
   "benchmarkSection.cannotDeleteNoId": {
     "defaultMessage": "Phiên này chưa có id lượt chạy — nó xuất hiện ngay sau khi khởi chạy"
   },
@@ -430,6 +439,9 @@
   },
   "benchmarkSection.title": {
     "defaultMessage": "Benchmark"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 bản dựng"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "Đã cập nhật tiện ích mở rộng"
@@ -1286,6 +1298,9 @@
   "confirmCloseRun.body": {
     "defaultMessage": "Đóng cửa sổ này sẽ dừng lượt chạy: backend của cửa sổ được giải phóng và động cơ swarm bên dưới nhận tín hiệu thoát."
   },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "Tiếp tục trả lời"
+  },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "Tiếp tục chạy"
   },
@@ -1295,17 +1310,17 @@
   "confirmCloseRun.stopAndClose": {
     "defaultMessage": "Dừng lượt chạy và đóng"
   },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "Dừng câu trả lời và đóng"
+  },
   "confirmCloseRun.stopping": {
     "defaultMessage": "Đang dừng lượt chạy…"
   },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "Đang dừng câu trả lời…"
+  },
   "confirmCloseRun.title": {
     "defaultMessage": "Một lượt chạy swarm đang hoạt động trong cửa sổ này"
-  },
-  "confirmCloseRun.warning": {
-    "defaultMessage": "Cảnh báo"
-  },
-  "confirmCloseRun.turnTitle": {
-    "defaultMessage": "Một cuộc trò chuyện trong cửa sổ này vẫn đang trả lời"
   },
   "confirmCloseRun.turnBody": {
     "defaultMessage": "Đóng cửa sổ này sẽ dừng câu trả lời: cuộc trò chuyện được gửi từ cửa sổ này, và phần trả lời kết thúc tại chỗ nó đang dừng."
@@ -1313,14 +1328,11 @@
   "confirmCloseRun.turnLine": {
     "defaultMessage": "Trò chuyện: {name}"
   },
-  "confirmCloseRun.keepAnswering": {
-    "defaultMessage": "Tiếp tục trả lời"
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "Một cuộc trò chuyện trong cửa sổ này vẫn đang trả lời"
   },
-  "confirmCloseRun.stopAnswerAndClose": {
-    "defaultMessage": "Dừng câu trả lời và đóng"
-  },
-  "confirmCloseRun.stoppingAnswer": {
-    "defaultMessage": "Đang dừng câu trả lời…"
+  "confirmCloseRun.warning": {
+    "defaultMessage": "Cảnh báo"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "Không"
@@ -2120,11 +2132,29 @@
   "engineGlance.chat": {
     "defaultMessage": "Trò chuyện · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "Đóng cửa sổ nổi cho đến khi có việc mới bắt đầu"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "Thu nhỏ thành viên thuốc"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "Bỏ qua lỗi này — chỉ hiện lại nếu động cơ lỗi lần nữa"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "Cửa sổ nổi đã ẩn cho đến khi có việc mới bắt đầu"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "Mở lại trong Cài đặt › Ứng dụng, nơi bạn cũng có thể tắt nó."
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "Mở lại từ biểu tượng goose trên thanh menu hoặc trong Cài đặt › Ứng dụng, nơi bạn cũng có thể tắt nó."
+  },
   "engineGlance.expand": {
     "defaultMessage": "Hiện cả thẻ"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "Hiện viên nổi khi goose được thu nhỏ"
   },
   "engineGlance.forming": {
     "defaultMessage": "Đang viết gì · {count, plural, other {# lệnh gọi công cụ}}"
@@ -2137,6 +2167,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Ẩn thẻ này — đưa lại từ cuối thanh bên hoặc Cài đặt › Ứng dụng"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "Đóng ở đây — nó sẽ trở lại khi có việc mới bắt đầu"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "Đã hiểu"
@@ -2285,23 +2318,32 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "Thẻ trực tiếp của Động cơ, bản nhỏ: đang đọc hay viết gì, nhanh thế nào và phục vụ cuộc trò chuyện nào. Nhấp để mở Động cơ."
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "Nổi trên màn hình"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "Khi goose ở nền"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "Bất cứ khi nào động cơ làm việc"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "Tắt"
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "Tắt cho đến khi bạn đánh dấu. Một viên nhỏ nổi trên các ứng dụng khác, ở góc bạn kéo nó tới. Chỉ nút ⤢ mở goose; kéo chỉ di chuyển nó, và ✕ ẩn nó cho đến khi một công việc, lượt chạy hoặc phân tách mới bắt đầu."
+  },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "Hiện viên hoạt động nổi khi goose được thu nhỏ hoặc chạy nền"
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "Khi nào hiện"
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "Bạn đã đóng nó — ẩn cho đến khi có việc mới bắt đầu."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Trong thanh bên"
   },
   "engineGlanceSettings.inAppDesc": {
     "defaultMessage": "Ở cuối thanh bên, dưới các phiên của bạn. Ẩn ngay trên thẻ; thẻ quay lại từ dòng để lại ở chỗ cũ, hoặc từ đây."
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "Hiện lại"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "Động cơ trong nháy mắt"
@@ -2609,6 +2651,117 @@
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "Kết nối tới một máy chủ goose đang chạy ở nơi khác (cần khởi động lại ứng dụng)"
   },
+  "forgeSeries.between": {
+    "defaultMessage": "Bản dựng 1 đã hoàn tất. Đang chuẩn bị bản dựng 2."
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "Bản dựng {index} trong 2"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "{calls} lần gọi cho mỗi bản dựng"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "Dừng bản dựng đang chạy và ngăn bản dựng tiếp theo bắt đầu. Điểm và bằng chứng đã hoàn tất được giữ lại; việc hủy không công bố gì."
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "Hủy bài đánh giá gồm hai bản dựng này?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "Chuỗi hai bản dựng đã bị hủy"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "Chuỗi hai bản dựng đã bị hủy."
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "Đang kiểm tra hai bản dựng…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "Đã hủy"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "Chưa hoàn tất"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "Hai bản dựng đã hoàn tất."
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "Công bố bản dựng còn lại"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "Chuỗi hai bản dựng chưa hoàn tất"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "Chuỗi hai bản dựng chưa hoàn tất."
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "Cả hai bản dựng đã hoàn tất"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "Ứng dụng đã đóng trước khi hai bản dựng hoàn tất. Bằng chứng đã lưu được giữ lại."
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "Một thao tác Chạy khởi động hai bản dựng độc lập trong ứng dụng này. Bản thứ hai bắt đầu sau khi bản thứ nhất được chấm điểm; mỗi bản giữ bằng chứng riêng."
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "Đã công bố trên leanzero.net"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "Trung vị cục bộ {median} · khoảng {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "Không có phản hồi công bố"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "Chưa có bản dựng nào được chấm điểm."
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "Đang chuẩn bị bản dựng {index} trong 2"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "Một bản dựng được chấm điểm chỉ là kết quả tạm thời. Chưa có trung vị của hai bản dựng."
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "Công bố 2 bản dựng"
+  },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "Xuất bản các bản dựng riêng biệt"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "Tiêu đề công bố"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "Đang công bố bản dựng {index} trong 2…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "Đang chờ bắt đầu"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "Chạy 2 bản dựng"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "Bản dựng {index} trong 2 đang chạy"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "Đã chấm điểm"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "Ứng dụng chạy tuần tự hai bản dựng mới với cùng mô hình, tác vụ và cài đặt. Mỗi bản giữ điểm và bằng chứng riêng."
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "Chưa bắt đầu"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "Hai bản dựng độc lập"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "Không đọc được bằng chứng đã lưu của hai bản dựng. Các bản dựng riêng lẻ vẫn có sẵn."
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "Mở bằng chứng của bản dựng {index}"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "Cần hai bản dựng hoàn tất, có thể so sánh và bằng chứng gốc của chúng để công bố."
+  },
   "formingPanel.callChars": {
     "defaultMessage": "{chars} ký tự"
   },
@@ -2750,6 +2903,9 @@
   "freeMemory.nuclearTotal": {
     "defaultMessage": "Đã đánh dấu: <b>{gb} GB</b>"
   },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "Chỉ trên {mac}"
+  },
   "freeMemory.protectedChip": {
     "defaultMessage": "Được bảo vệ"
   },
@@ -2770,9 +2926,6 @@
   },
   "freeMemory.remoteQuitOff": {
     "defaultMessage": "{mac} không cho phép các Mac khác thoát ứng dụng hoặc gỡ máy chủ mô hình của nó, nên từ đây chỉ có thể giải phóng bộ nhớ của chính goose. Để cho phép, hãy mở goose trên {mac}, vào Cài đặt › Ứng dụng và bật “Cho phép các Mac được liên kết thoát ứng dụng trên Mac này”. Hoặc thoát chúng ngay trên {mac}."
-  },
-  "freeMemory.onlyThere": {
-    "defaultMessage": "Chỉ trên {mac}"
   },
   "freeMemory.title": {
     "defaultMessage": "Giải phóng bộ nhớ trên {mac}"
@@ -4292,14 +4445,14 @@
   "macLoad.policy": {
     "defaultMessage": "Khi có người dùng Mac này"
   },
-  "macLoad.policyHint": {
-    "defaultMessage": "Bận nghĩa là đo được: bộ nhớ trên mức sàn, chỗ trống cho việc nặng, tải mỗi lõi. Người đang dùng bàn phím chỉ dùng để phân xử khi ngang nhau."
-  },
   "macLoad.policy.allow": {
     "defaultMessage": "Nhận tác vụ"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "Từ chối tác vụ"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "Bận nghĩa là đo được: bộ nhớ trên mức sàn, chỗ trống cho việc nặng, tải mỗi lõi. Người đang dùng bàn phím chỉ dùng để phân xử khi ngang nhau."
   },
   "macLoad.queueNoTry": {
     "defaultMessage": "Chưa gửi cho Mac nào: một tác vụ phía trước đang chờ."
@@ -4327,6 +4480,27 @@
   },
   "macLoad.state": {
     "defaultMessage": "Trạng thái"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "Đang hủy…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "Đang chờ, thứ {position} trong hàng"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "Tác vụ của tôi chạy ở đâu"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "Ưu tiên Mac của tôi"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "Ưu tiên Mac khác"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "Chạy trên Mac này nếu còn chỗ, nếu không thì trên Mac khác còn nhiều chỗ nhất, nếu không nữa thì chờ trong hàng."
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "Chạy trên Mac khác còn nhiều chỗ nhất, nếu không thì trên Mac này, nếu không nữa thì chờ trong hàng. Giữ Mac này rảnh."
   },
   "macLoad.title": {
     "defaultMessage": "Tải"
@@ -5708,6 +5882,9 @@
   "mlxEngineView.splitUnreadPending": {
     "defaultMessage": "Đang đọc xem có bản chia nào phục vụ Mac này không…"
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "Đọc lại"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Dừng"
   },
@@ -5788,6 +5965,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "Hạng {rank} của bản chia của {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "Hạng {rank} trong phân chia của một Mac khác · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "Đang phục vụ các lớp {first}–{last} cho {requester} · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "Đang phục vụ các lớp {first}–{last} cho một Mac khác · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Hạng {rank} của bản chia của {requester} · {model}"
@@ -5884,6 +6070,81 @@
   },
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} cần {need} GB trên Mac này và hiện có {free} GB trống cho nó — thiếu {short} GB."
+  },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "Tự động"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "tự động: tắt trên Mac này"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "tự động: bật trên Mac này"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "Giữ bảng n-gram trên ổ đĩa"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Đo trên Qwen3.8-Flash-Next (M5 Max 128 GB): từ 104 GB xuống 72 GB bộ nhớ, tốc độ giải mã chênh vài phần trăm, cùng câu trả lời."
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "Mô hình đọc từ SSD vài hàng trong bảng n-gram 32 GB mà mỗi token cần, thay vì giữ cả bảng trong bộ nhớ. Tự động bật khi mô hình không vừa Mac này nếu không làm vậy. Áp dụng ở lần nạp tiếp theo."
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "Tắt"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "Bật"
+  },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "Tự động"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "Số để trống giữ mặc định của engine. Trong MTP, 31, 63 hoặc 95 lấp đầy trọn các ô xác minh 32 hàng. Áp dụng ở lần nạp tiếp theo."
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "mô hình trộn các lớp linear-attention hoặc SSM với attention và được phục vụ không có đầu MTP. Engine từ chối suffix decoding trên các lớp hồi quy, và prompt lookup chỉ chạy bên trong MTP."
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "trong MTP"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "Bản nháp dài nhất (token)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "N-gram dài nhất"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "N-gram ngắn nhất"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "Đo trên Qwen3.8-27B Q8: sửa mã từ 42,8 lên 134,8 tok/s với 99% bản sao được chấp nhận; tóm tắt và trò chuyện không tăng tốc."
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "Sao chép phần tiếp theo đã có trong prompt thành một bản nháp dài bên trong MTP, được xác minh như mọi bản nháp, nên đầu ra vẫn là của mô hình. Tự động giữ mặc định theo dòng mô hình của engine (bật cho Qwen3.5/3.6/3.8)."
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Prompt lookup cần thư mục của mô hình để chọn làn, và mô hình này không có trong thư mục mô hình."
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "Tắt"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "Bật"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup (n-gram)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "Được phục vụ không có MTP, nên cần gạt điều khiển suffix decoder của engine: chỉ lấy mẫu greedy, mỗi lần một yêu cầu. Tự động để tắt; đo trên Mellum chậm hơn, chỉ bật sau khi so sánh."
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "Không khả dụng cho mô hình này: {reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose không xác định được mô hình này có phải attention thuần hay không ({error})."
   },
   "mlxReplica.cancel": {
     "defaultMessage": "Hủy"
@@ -6016,6 +6277,9 @@
   },
   "mlxSetup.step2": {
     "defaultMessage": "Mô hình"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Đang đọc các máy Mac của bạn…"
   },
   "mlxSetup.step2Done": {
     "defaultMessage": "{count} trên các Mac của bạn"
@@ -6284,6 +6548,9 @@
   "mlxStateTile.state.stopped": {
     "defaultMessage": "Đã dừng"
   },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "Bị dừng bên ngoài goose"
+  },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "Không kết nối được"
   },
@@ -6440,6 +6707,9 @@
   "modelCustomFields.above": {
     "defaultMessage": "Giá trị cao nhất là {max}."
   },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "Trường tùy chỉnh: chọn một ID mô hình để xem các cài đặt mà nó nhận."
+  },
   "modelCustomFields.below": {
     "defaultMessage": "Giá trị thấp nhất là {min}."
   },
@@ -6457,6 +6727,9 @@
   },
   "modelCustomFields.modelDefault": {
     "defaultMessage": "Mặc định của mô hình ({value})"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "Trường tùy chỉnh: {provider} không khai báo trường nào cho “{model}”, nên mô hình chạy theo mặc định của nhà cung cấp."
   },
   "modelCustomFields.notANumber": {
     "defaultMessage": "Nhập một số."
@@ -6995,6 +7268,9 @@
   "myMacs.reconnecting": {
     "defaultMessage": "Đang kết nối lại… (mất liên lạc với goose của Mac này)"
   },
+  "myMacs.runJob": {
+    "defaultMessage": "Chạy tác vụ…"
+  },
   "myMacs.saveFailed": {
     "defaultMessage": "Công tắc chưa được lưu"
   },
@@ -7009,6 +7285,9 @@
   },
   "myMacs.title": {
     "defaultMessage": "Các Mac của tôi"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "cập nhật {seconds} giây trước"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -7046,30 +7325,6 @@
   "needsYouCard.closeNotice": {
     "defaultMessage": "Đóng thông báo này"
   },
-  "needsYouCard.queued": {
-    "defaultMessage": "Đã xếp hàng · trả lời khi lượt này kết thúc"
-  },
-  "needsYouCard.queuedChip": {
-    "defaultMessage": "Đã xếp hàng"
-  },
-  "needsYouCard.sending": {
-    "defaultMessage": "Đang gửi câu trả lời của bạn…"
-  },
-  "needsYouCard.stack": {
-    "defaultMessage": "{count, plural, other {Cần bạn · # câu hỏi}}"
-  },
-  "needsYouCard.stackQueued": {
-    "defaultMessage": "{count} đã xếp hàng"
-  },
-  "needsYouCard.unsentAnswer": {
-    "defaultMessage": "Câu trả lời của bạn: {answer}"
-  },
-  "needsYouCard.unsentClosed": {
-    "defaultMessage": "Chưa gửi — câu hỏi này đã đóng trước khi câu trả lời đang xếp hàng của bạn kịp gửi."
-  },
-  "needsYouCard.unsentFailed": {
-    "defaultMessage": "Chưa gửi — không thể lưu câu trả lời đang xếp hàng của bạn: {error}"
-  },
   "needsYouCard.dismiss": {
     "defaultMessage": "Bỏ qua"
   },
@@ -7088,11 +7343,35 @@
   "needsYouCard.position": {
     "defaultMessage": "{index} / {total}"
   },
+  "needsYouCard.queued": {
+    "defaultMessage": "Đã xếp hàng · trả lời khi lượt này kết thúc"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "Đã xếp hàng"
+  },
   "needsYouCard.recommended": {
     "defaultMessage": "Đề xuất"
   },
+  "needsYouCard.sending": {
+    "defaultMessage": "Đang gửi câu trả lời của bạn…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, other {Cần bạn · # câu hỏi}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} đã xếp hàng"
+  },
   "needsYouCard.title": {
     "defaultMessage": "Cần bạn"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "Câu trả lời của bạn: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "Chưa gửi — câu hỏi này đã đóng trước khi câu trả lời đang xếp hàng của bạn kịp gửi."
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "Chưa gửi — không thể lưu câu trả lời đang xếp hàng của bạn: {error}"
   },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Mô hình đã lưu của công cụ MLX phục vụ {served}; nút này cần {wanted}. Hãy chọn mô hình trong Providers."
@@ -9692,6 +9971,72 @@
   "responseStyle.detailedLabel": {
     "defaultMessage": "Chi tiết"
   },
+  "runJob.best": {
+    "defaultMessage": "Mac tốt nhất"
+  },
+  "runJob.close": {
+    "defaultMessage": "Đóng"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {Lệnh} other {Prompt}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "Tác vụ nặng"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "Một máy Mac chạy số tác vụ nặng (build, render, huấn luyện) tùy theo số khe và bộ nhớ của nó."
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (đang dùng)"
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "công việc đang tắt trên máy Mac này"
+  },
+  "runJob.kind": {
+    "defaultMessage": "Loại"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "Prompt"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "Lệnh shell"
+  },
+  "runJob.mem": {
+    "defaultMessage": "Bộ nhớ cần (GB, tùy chọn)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "Hiện không có máy Mac nào nhận được tác vụ này."
+  },
+  "runJob.none": {
+    "defaultMessage": "Hiện không có máy Mac nào của bạn nhận tác vụ. Hãy bật “Chạy tác vụ do máy Mac khác gửi” trên máy Mac sẽ chạy chúng."
+  },
+  "runJob.ranking": {
+    "defaultMessage": "Tốt nhất lúc này: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "runJob.refused": {
+    "defaultMessage": "Chưa gửi: {reason}"
+  },
+  "runJob.submit": {
+    "defaultMessage": "Chạy tác vụ"
+  },
+  "runJob.target": {
+    "defaultMessage": "Chạy trên"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "Giới hạn thời gian (giây, tùy chọn)"
+  },
+  "runJob.title": {
+    "defaultMessage": "Chạy tác vụ trên…"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "Hiện không Mac nào còn chỗ. Nếu chạy, tác vụ sẽ chờ trong hàng trên Mac này và bắt đầu trên Mac đầu tiên còn chỗ."
+  },
   "scheduleDetailView.actions": {
     "defaultMessage": "Hành động"
   },
@@ -11798,29 +12143,29 @@
   "unansweredPrompt.appClosed": {
     "defaultMessage": "Lượt này kết thúc mà không có trả lời — có thể ứng dụng đã đóng khi goose đang làm việc."
   },
-  "unansweredPrompt.failed": {
-    "defaultMessage": "Lượt này thất bại trước khi có trả lời."
-  },
-  "unansweredPrompt.failedWithReason": {
-    "defaultMessage": "Lượt này thất bại trước khi có trả lời: {reason}"
-  },
-  "unansweredPrompt.resend": {
-    "defaultMessage": "Gửi lại"
-  },
-  "unansweredPrompt.title": {
-    "defaultMessage": "goose đã dừng trước khi trả lời điều này"
-  },
   "unansweredPrompt.continue": {
     "defaultMessage": "Tiếp tục"
   },
   "unansweredPrompt.continueMessage": {
     "defaultMessage": "Hãy tiếp tục từ chỗ đã dừng."
   },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "Lượt này thất bại trước khi có trả lời."
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "Lượt này thất bại trước khi có trả lời: {reason}"
+  },
   "unansweredPrompt.midway": {
     "defaultMessage": "goose đã dừng giữa chừng"
   },
   "unansweredPrompt.midwayAppClosed": {
     "defaultMessage": "goose đã dừng giữa chừng — ứng dụng đã đóng khi goose đang làm việc"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "Gửi lại"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose đã dừng trước khi trả lời điều này"
   },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "Hủy"
@@ -11986,245 +12331,5 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
-  },
-  "engineGlance.close": {
-    "defaultMessage": "Đóng cửa sổ nổi trong phiên này"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "Đóng ở đây cho đến khi bạn mở lại"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "Đã ẩn cửa sổ nổi trong phiên này"
-  },
-  "engineGlance.dismissed.way": {
-    "defaultMessage": "Mở lại trong Cài đặt › Ứng dụng, nơi bạn cũng có thể tắt nó."
-  },
-  "engineGlance.dismissed.wayTray": {
-    "defaultMessage": "Mở lại từ biểu tượng goose trên thanh menu hoặc trong Cài đặt › Ứng dụng, nơi bạn cũng có thể tắt nó."
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "Một cửa sổ nhỏ nằm trên các ứng dụng khác, ở góc bạn kéo nó tới. Nó không bao giờ chiếm tiêu điểm và chỉ đưa goose lên trước khi bạn mở thứ gì đó từ nó. Nút đóng sẽ ẩn nó trong phần còn lại của phiên này."
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "Bạn đã đóng nó — ẩn cho đến khi bạn mở lại."
-  },
-  "engineGlanceSettings.showAgain": {
-    "defaultMessage": "Hiện lại"
-  },
-  "benchmarkSection.build": {
-    "defaultMessage": "Bản dựng {index}"
-  },
-  "benchmarkSection.twoBuilds": {
-    "defaultMessage": "2 bản dựng"
-  },
-  "forgeSeries.between": {
-    "defaultMessage": "Bản dựng 1 đã hoàn tất. Đang chuẩn bị bản dựng 2."
-  },
-  "forgeSeries.build": {
-    "defaultMessage": "Bản dựng {index} trong 2"
-  },
-  "forgeSeries.callBudget": {
-    "defaultMessage": "{calls} lần gọi cho mỗi bản dựng"
-  },
-  "forgeSeries.cancelDetail": {
-    "defaultMessage": "Dừng bản dựng đang chạy và ngăn bản dựng tiếp theo bắt đầu. Điểm và bằng chứng đã hoàn tất được giữ lại; việc hủy không công bố gì."
-  },
-  "forgeSeries.cancelTitle": {
-    "defaultMessage": "Hủy bài đánh giá gồm hai bản dựng này?"
-  },
-  "forgeSeries.cancelled": {
-    "defaultMessage": "Chuỗi hai bản dựng đã bị hủy"
-  },
-  "forgeSeries.cancelledStatus": {
-    "defaultMessage": "Chuỗi hai bản dựng đã bị hủy."
-  },
-  "forgeSeries.checking": {
-    "defaultMessage": "Đang kiểm tra hai bản dựng…"
-  },
-  "forgeSeries.childCancelled": {
-    "defaultMessage": "Đã hủy"
-  },
-  "forgeSeries.childFailed": {
-    "defaultMessage": "Chưa hoàn tất"
-  },
-  "forgeSeries.completeStatus": {
-    "defaultMessage": "Hai bản dựng đã hoàn tất."
-  },
-  "forgeSeries.continuePublish": {
-    "defaultMessage": "Công bố bản dựng còn lại"
-  },
-  "forgeSeries.failed": {
-    "defaultMessage": "Chuỗi hai bản dựng chưa hoàn tất"
-  },
-  "forgeSeries.failedStatus": {
-    "defaultMessage": "Chuỗi hai bản dựng chưa hoàn tất."
-  },
-  "forgeSeries.finished": {
-    "defaultMessage": "Cả hai bản dựng đã hoàn tất"
-  },
-  "forgeSeries.interrupted": {
-    "defaultMessage": "Ứng dụng đã đóng trước khi hai bản dựng hoàn tất. Bằng chứng đã lưu được giữ lại."
-  },
-  "forgeSeries.intro": {
-    "defaultMessage": "Một thao tác Chạy khởi động hai bản dựng độc lập trong ứng dụng này. Bản thứ hai bắt đầu sau khi bản thứ nhất được chấm điểm; mỗi bản giữ bằng chứng riêng."
-  },
-  "forgeSeries.live": {
-    "defaultMessage": "Đã công bố trên leanzero.net"
-  },
-  "forgeSeries.median": {
-    "defaultMessage": "Trung vị cục bộ {median} · khoảng {min}–{max}"
-  },
-  "forgeSeries.noResponse": {
-    "defaultMessage": "Không có phản hồi công bố"
-  },
-  "forgeSeries.noScore": {
-    "defaultMessage": "Chưa có bản dựng nào được chấm điểm."
-  },
-  "forgeSeries.preparing": {
-    "defaultMessage": "Đang chuẩn bị bản dựng {index} trong 2"
-  },
-  "forgeSeries.provisional": {
-    "defaultMessage": "Một bản dựng được chấm điểm chỉ là kết quả tạm thời. Chưa có trung vị của hai bản dựng."
-  },
-  "forgeSeries.publish": {
-    "defaultMessage": "Công bố 2 bản dựng"
-  },
-  "forgeSeries.publishSeparately": {
-    "defaultMessage": "Xuất bản các bản dựng riêng biệt"
-  },
-  "forgeSeries.publishTitle": {
-    "defaultMessage": "Tiêu đề công bố"
-  },
-  "forgeSeries.publishing": {
-    "defaultMessage": "Đang công bố bản dựng {index} trong 2…"
-  },
-  "forgeSeries.queued": {
-    "defaultMessage": "Đang chờ bắt đầu"
-  },
-  "forgeSeries.run": {
-    "defaultMessage": "Chạy 2 bản dựng"
-  },
-  "forgeSeries.running": {
-    "defaultMessage": "Bản dựng {index} trong 2 đang chạy"
-  },
-  "forgeSeries.scored": {
-    "defaultMessage": "Đã chấm điểm"
-  },
-  "forgeSeries.settings": {
-    "defaultMessage": "Ứng dụng chạy tuần tự hai bản dựng mới với cùng mô hình, tác vụ và cài đặt. Mỗi bản giữ điểm và bằng chứng riêng."
-  },
-  "forgeSeries.skipped": {
-    "defaultMessage": "Chưa bắt đầu"
-  },
-  "forgeSeries.title": {
-    "defaultMessage": "Hai bản dựng độc lập"
-  },
-  "forgeSeries.unreadable": {
-    "defaultMessage": "Không đọc được bằng chứng đã lưu của hai bản dựng. Các bản dựng riêng lẻ vẫn có sẵn."
-  },
-  "forgeSeries.view": {
-    "defaultMessage": "Mở bằng chứng của bản dựng {index}"
-  },
-  "forgeSeries.waitingPublish": {
-    "defaultMessage": "Cần hai bản dựng hoàn tất, có thể so sánh và bằng chứng gốc của chúng để công bố."
-  },
-  "modelCustomFields.awaitingModel": {
-    "defaultMessage": "Trường tùy chỉnh: chọn một ID mô hình để xem các cài đặt mà nó nhận."
-  },
-  "modelCustomFields.noFields": {
-    "defaultMessage": "Trường tùy chỉnh: {provider} không khai báo trường nào cho “{model}”, nên mô hình chạy theo mặc định của nhà cung cấp."
-  },
-  "macLoad.stateCancelling": {
-    "defaultMessage": "Đang hủy…"
-  },
-  "macLoad.stateWaiting": {
-    "defaultMessage": "Đang chờ, thứ {position} trong hàng"
-  },
-  "macLoad.strategy": {
-    "defaultMessage": "Tác vụ của tôi chạy ở đâu"
-  },
-  "macLoad.strategy.localFirst": {
-    "defaultMessage": "Ưu tiên Mac của tôi"
-  },
-  "macLoad.strategy.selfish": {
-    "defaultMessage": "Ưu tiên Mac khác"
-  },
-  "macLoad.strategyHint.localFirst": {
-    "defaultMessage": "Chạy trên Mac này nếu còn chỗ, nếu không thì trên Mac khác còn nhiều chỗ nhất, nếu không nữa thì chờ trong hàng."
-  },
-  "macLoad.strategyHint.selfish": {
-    "defaultMessage": "Chạy trên Mac khác còn nhiều chỗ nhất, nếu không thì trên Mac này, nếu không nữa thì chờ trong hàng. Giữ Mac này rảnh."
-  },
-  "myMacs.runJob": {
-    "defaultMessage": "Chạy tác vụ…"
-  },
-  "runJob.title": {
-    "defaultMessage": "Chạy tác vụ trên…"
-  },
-  "runJob.willQueue": {
-    "defaultMessage": "Hiện không Mac nào còn chỗ. Nếu chạy, tác vụ sẽ chờ trong hàng trên Mac này và bắt đầu trên Mac đầu tiên còn chỗ."
-  },
-  "runJob.target": {
-    "defaultMessage": "Chạy trên"
-  },
-  "runJob.best": {
-    "defaultMessage": "Mac tốt nhất"
-  },
-  "runJob.ranking": {
-    "defaultMessage": "Tốt nhất lúc này: {macs}"
-  },
-  "runJob.refusal": {
-    "defaultMessage": "{mac}: {reason}"
-  },
-  "runJob.verdictLine": {
-    "defaultMessage": "{mac}: {verdict}"
-  },
-  "runJob.inUse": {
-    "defaultMessage": "{name} (đang dùng)"
-  },
-  "runJob.noPlace": {
-    "defaultMessage": "Hiện không có máy Mac nào nhận được tác vụ này."
-  },
-  "runJob.none": {
-    "defaultMessage": "Hiện không có máy Mac nào của bạn nhận tác vụ. Hãy bật “Chạy tác vụ do máy Mac khác gửi” trên máy Mac sẽ chạy chúng."
-  },
-  "runJob.jobsOff": {
-    "defaultMessage": "công việc đang tắt trên máy Mac này"
-  },
-  "runJob.kind": {
-    "defaultMessage": "Loại"
-  },
-  "runJob.kindShell": {
-    "defaultMessage": "Lệnh shell"
-  },
-  "runJob.kindPrompt": {
-    "defaultMessage": "Prompt"
-  },
-  "runJob.command": {
-    "defaultMessage": "{kind, select, shell {Lệnh} other {Prompt}}"
-  },
-  "runJob.heavy": {
-    "defaultMessage": "Tác vụ nặng"
-  },
-  "runJob.heavyHint": {
-    "defaultMessage": "Một máy Mac chạy số tác vụ nặng (build, render, huấn luyện) tùy theo số khe và bộ nhớ của nó."
-  },
-  "runJob.mem": {
-    "defaultMessage": "Bộ nhớ cần (GB, tùy chọn)"
-  },
-  "runJob.timeout": {
-    "defaultMessage": "Giới hạn thời gian (giây, tùy chọn)"
-  },
-  "runJob.submit": {
-    "defaultMessage": "Chạy tác vụ"
-  },
-  "runJob.close": {
-    "defaultMessage": "Đóng"
-  },
-  "runJob.refused": {
-    "defaultMessage": "Chưa gửi: {reason}"
-  },
-  "myMacs.updatedAgo": {
-    "defaultMessage": "cập nhật {seconds} giây trước"
   }
 }

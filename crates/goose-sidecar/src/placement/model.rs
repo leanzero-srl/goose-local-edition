@@ -46,6 +46,9 @@ pub struct ModelFacts {
     pub active_params_per_token: u64,
     /// Embedding tables (gathered, not streamed).
     pub lookup_bytes: u64,
+    /// The Qwen3.8-Flash-Next n-gram (PLE) table's bytes, part of `lookup_bytes`: what the engine
+    /// leaves on disk under `--qwen4-ple-offload` (`crate::ple_offload`). 0 for every other model.
+    pub ple_table_bytes: u64,
     /// Vision tower + MTP head bytes in `model*.safetensors` (not held for text).
     pub excluded_bytes: u64,
     /// The heaviest single decoder layer's resident bytes (a pipeline stage holds whole layers).
@@ -162,6 +165,7 @@ pub fn read_model_facts(model_dir: &Path) -> Result<ModelFacts> {
     );
 
     let (mut dense, mut routed, mut lookup, mut excluded) = (0u64, 0u64, 0u64, 0u64);
+    let mut ple_table = 0u64;
     let (mut dense_params, mut routed_params) = (0u64, 0u64);
     let mut per_layer: BTreeMap<u64, u64> = BTreeMap::new();
     let moe_experts = moe.map(|m| m.experts);
@@ -198,7 +202,12 @@ pub fn read_model_facts(model_dir: &Path) -> Result<ModelFacts> {
             let class = classify(&name, shape.first().copied(), moe_experts);
             match class {
                 TensorClass::Excluded => excluded += bytes,
-                TensorClass::Lookup => lookup += bytes,
+                TensorClass::Lookup => {
+                    lookup += bytes;
+                    if crate::ple_offload::is_table_tensor(&name) {
+                        ple_table += bytes;
+                    }
+                }
                 TensorClass::Routed => {
                     routed += bytes;
                     routed_params += params;
@@ -241,6 +250,7 @@ pub fn read_model_facts(model_dir: &Path) -> Result<ModelFacts> {
         active_bytes_per_token: active_bytes,
         active_params_per_token: active_params,
         lookup_bytes: lookup,
+        ple_table_bytes: ple_table,
         excluded_bytes: excluded,
         largest_layer_bytes: per_layer.values().copied().max().unwrap_or(0),
         kv: kv_cache::kv_cache_facts(model_dir).map_err(|e| format!("{e:#}")),
@@ -502,5 +512,12 @@ mod tests {
                 experts_per_token: 10
             })
         );
+        // 128 shards of U32[2500012,20] + BF16 scales/biases [2500012,5]: the bytes
+        // `--qwen4-ple-offload` leaves on disk.
+        assert_eq!(flash.ple_table_bytes, 32_000_153_600);
+        assert!(crate::ple_offload::has_table(
+            &root.join("rapid-mlx/Qwen3.8-Flash-Next-4bit")
+        ));
+        assert_eq!(dense.ple_table_bytes, 0);
     }
 }

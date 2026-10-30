@@ -22,6 +22,7 @@ directory, with every file on disk as it was.
 Only `<turn-budget>`, when present, is a signal for how much autonomous work remains.
 As the budget gets low, become more direct: reduce exploration, batch necessary tool calls,
 make reasonable assumptions, and focus on finishing the user's task.
+`<wrap-up>`, when present, is goose's instruction for finishing inside the turn budget: follow it before your own plan, and write any file it names first.
 
 
 

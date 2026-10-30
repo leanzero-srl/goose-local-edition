@@ -255,6 +255,7 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
     if budgeted:
         prompt_at = cmd.index("-t")
         cmd[prompt_at:prompt_at] = bench_budget.call_budget_args(tier)
+        snapshot = bench_budget.wrap_up_snapshot(snapshot)
     wallet_limit = bench_budget.wallet_limit()
 
     child_env = {**os.environ, **env}
@@ -278,6 +279,8 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
                                 "GOOSE_SWARM_TOP_K", "GOOSE_SWARM_MIN_P", "GOOSE_SWARM_REPEAT_PENALTY"}}
         child_env.update(env)
         child_env.update(isolated_env)
+        if budgeted:
+            child_env.update(bench_budget.wrap_up_env())
         # The sink lives outside the candidate's tree, which the entrant may clean (2026-10-02,
         # openrouter-cloud-73d233da ran `rm -rf` over harness files in its workdir); a lost sink is an
         # incomplete bill. land_telemetry copies it into .swarm/ after the entrant exits.
@@ -386,6 +389,7 @@ def invoke(entrant: str, workdir: Path, port: int, env: Dict[str, str], timeout:
         budget = {"max_calls": tier.call_budget} if budgeted else {}
         entrant_model = cmd[cmd.index("--model") + 1] if "--model" in cmd else None
         budget.update(bench_budget.entrant_calls(tpath, entrant_model))
+        budget.update(bench_budget.wrap_up_record(budgeted))
         budget["stopped_by"] = bench_budget.stopped_by(result, wallet)
         if wallet is not None:
             budget["wallet"] = wallet

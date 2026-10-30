@@ -1,6 +1,6 @@
 import type { ContentBlock, PromptResponse } from '@agentclientprotocol/sdk';
 import type { SteerSessionRequest_unstable, SteerSessionResponse_unstable } from '@aaif/goose-sdk';
-import type { Message } from '../types/message';
+import type { MediaContent, Message } from '../types/message';
 import { getAcpClient } from './acpConnection';
 
 /**
@@ -89,8 +89,30 @@ export function messageToAcpPromptContent(message: Message): ContentBlock[] {
           mimeType: content.mimeType,
         });
         break;
+      case 'media':
+        prompt.push(mediaToAcpContentBlock(content));
+        break;
     }
   }
 
   return prompt;
+}
+
+/**
+ * A named attachment rides an embedded blob resource whose URI carries its file name (goosed turns
+ * `audio/*` and `video/*` blobs into named media parts; ACP has no video block and its audio block
+ * has no name). Unnamed audio goes as an ACP audio block.
+ */
+export function mediaToAcpContentBlock(media: MediaContent): ContentBlock {
+  if (media.kind === 'audio' && !media.name) {
+    return { type: 'audio', data: media.data, mimeType: media.mimeType };
+  }
+  return {
+    type: 'resource',
+    resource: {
+      uri: `attachment:///${encodeURIComponent(media.name || 'video')}`,
+      mimeType: media.mimeType,
+      blob: media.data,
+    },
+  };
 }

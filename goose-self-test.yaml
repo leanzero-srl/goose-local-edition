@@ -20,7 +20,7 @@ parameters:
     input_type: string
     requirement: optional
     default: "all"
-    description: "Which test phases to run: all, basic, extensions, mcp_setup, provider_connections, benchmark_series, openai_compat, delegation, advanced"
+    description: "Which test phases to run: all, basic, extensions, mcp_setup, provider_connections, benchmark_series, openai_compat, delegation, vision, media, advanced"
 
   - key: test_depth
     input_type: string
@@ -362,6 +362,29 @@ prompt: |
      not with a crash or FFI error.
 
   Log results to: {{ workspace_dir }}/phase3b_vision.md
+  {% endif %}
+
+  {% if test_phases == "all" or "media" in test_phases %}
+  ## 🎧 PHASE 3C: Audio and Video Input (LeanZero MLX engine)
+
+  **Prerequisites**: the app's MLX engine serving an audio+vision model (e.g. mlx-community/gemma-4-e4b-it-8bit)
+  on its port (default 8090). Skip this phase if `curl -s http://127.0.0.1:8090/v1/models` fails.
+  The CLI has no attach path for media (the desktop composer's drop/picker is the user surface), so this
+  phase checks the engine contract the desktop relies on.
+
+  1. `curl -s http://127.0.0.1:8090/v1/models` and verify the served model's `capabilities` list contains
+     both "audio" and "video".
+  2. Make a short speech clip: `say -o /tmp/st.aiff "The meeting moved to Thursday" && afconvert -f WAVE -d LEI16 /tmp/st.aiff /tmp/st.wav`.
+  3. POST /v1/chat/completions with a user message whose content is a text part ("Transcribe this audio.")
+     and an `input_audio` part `{"data": <base64 of st.wav>, "format": "wav"}`. Verify the answer contains
+     "Thursday".
+  4. Make a 2-second video (`ffmpeg -f lavfi -i color=c=red:s=160x120:d=2 /tmp/st.mp4`) and POST it as a
+     `video_url` part with a `data:video/mp4;base64,...` URL and the text "What colour is this video?".
+     Verify the answer says red.
+  5. If a text-only model is served instead, verify the desktop would withhold media: `capabilities` lacks
+     "audio"/"video".
+
+  Log results to: {{ workspace_dir }}/phase3c_media.md
   {% endif %}
 
   {% if test_phases == "all" or "advanced" in test_phases %}

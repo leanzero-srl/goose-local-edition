@@ -6,6 +6,14 @@ kv_namespaces = [
   { binding = "LINK_KV", id = "REPLACE_WITH_LINK_KV_NAMESPACE_ID" }
 ]
 
+[[durable_objects.bindings]]
+name = "LINK_DEVICE_REGISTRY"
+class_name = "DeviceRegistryDurableObject"
+
+[[migrations]]
+tag = "controller-registry-v1"
+new_sqlite_classes = ["DeviceRegistryDurableObject"]
+
 [vars]
 TS_NODE_TAG = "tag:leanzero-link"
 ALLOWED_ORIGINS = "*"

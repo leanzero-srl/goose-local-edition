@@ -31,11 +31,7 @@ import { billedCostRowField, type DeclaredPrices } from './benchBilledCost';
 import { benchPublishBilling, droppableAfterRefusal } from './benchPublishBilling';
 import { captureTokenUsage, type CachedCapture, type TokenCapture } from './benchTokenCapture';
 import { tokenUsageLine, type TokenUsage } from './benchTokenUsage';
-import {
-  publishSeriesPair,
-  seriesPublishPlan,
-  type PairCouplingFacts,
-} from './benchSeriesPublish';
+import { publishSeriesPair, seriesPublishPlan, type PairCouplingFacts } from './benchSeriesPublish';
 import {
   catalogDisplayName,
   benchRunRoute,
@@ -297,6 +293,7 @@ import {
   glancePrefsOf,
   isGlancePrefs,
   isGlanceSessions,
+  desktopFloatOn,
   mergeGlanceSessions,
   servingKeptOf,
   servingReportsOf,
@@ -315,6 +312,8 @@ import {
 } from './engineGlanceDesktop';
 import { createGlanceWindowPort } from './engineGlanceWindow';
 import { gooseWindowFacts, trackOutOfSight } from './engineGlanceGooseWindows';
+import { PEER_RANK_SCAN_MS, PeerRankWatch } from './peerRankWatch';
+import { promises as dnsPromises } from 'node:dns';
 import { keepRepainted, repaintWindow } from './windowRepaint';
 import { GlanceCoverage, WINDOW_LIST_JXA } from './engineGlanceCoverage';
 import { TRAY_ACTION_ENGINES, workCutBy } from './utils/mlxInFlight';
@@ -2433,6 +2432,9 @@ const glanceCoverage = new GlanceCoverage({
   onChanged: () => engineGlanceDesktop.refresh(),
   warn: (message) => log.warn(message),
 });
+// goose as the active app, for the floating window's X (engineGlanceDesktop.ts `appActivation`).
+let gooseAppActive = false;
+let gooseAppActiveSince = Number.NEGATIVE_INFINITY;
 const engineGlanceDesktop = new EngineGlanceDesktop({
   port: createGlanceWindowPort({
     url: () => {
@@ -2481,7 +2483,47 @@ const engineGlanceDesktop = new EngineGlanceDesktop({
   },
   // Settings › App offers it back and the tray grows its item: both read the republished glance.
   dismissedChanged: () => renderMlxTray(mlxMonitor.current()),
+  now: () => Date.now(),
+  later: (fn, ms) => {
+    setTimeout(fn, ms);
+  },
+  // goose as the active app (engineGlanceDesktop.ts `close`): a press that activated goose is told
+  // from one that found it active already.
+  appActivation: () => ({ active: gooseAppActive, since: gooseAppActiveSince }),
+  // The X's press activated goose and no goose window was in view: the macOS Hide puts the app the
+  // person was in back in front, exactly as before the click (engineGlanceDesktop.ts).
+  hideApp: () => {
+    log.info('engine glance: closed from its X; goose hidden again, the press had activated it');
+    app.hide();
+  },
 });
+// The ranks of ANOTHER Mac's split running here (peerRankWatch.ts): one the requester launched over
+// ssh is known only from the process list, and it must show on this Mac too (owner, 2026-10-27).
+const execText = (file: string, args: string[]) =>
+  new Promise<string>((resolve, reject) => {
+    execFile(file, args, { timeout: 4000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) =>
+      error ? reject(error) : resolve(stdout)
+    );
+  });
+const peerRankWatch = new PeerRankWatch({
+  listProcesses: () => execText('/bin/ps', ['-axww', '-o', 'pid=,ppid=,command=']),
+  processEnvironment: (pid) =>
+    execText('/bin/ps', ['-E', '-ww', '-o', 'command=', '-p', String(pid)]),
+  reverseLookup: async (address) => (await dnsPromises.reverse(address))[0] ?? null,
+  readFile: (file) => fs.readFile(file, 'utf8'),
+  ownPid: process.pid,
+  onChanged: (ranks) => {
+    log.info(
+      `peer ranks here: ${ranks.map((r) => `rank ${r.rank}/${r.size} ${r.modelId} for ${r.requester ?? 'Link'}${r.layers ? ` layers ${r.layers.first}-${r.layers.last}` : ''}`).join('; ') || 'none'}`
+    );
+    publishEngineGlance(mlxMonitor.current());
+  },
+  warn: (message) => log.warn(message),
+});
+if (process.platform === 'darwin') {
+  void peerRankWatch.scan();
+  setInterval(() => void peerRankWatch.scan(), PEER_RANK_SCAN_MS);
+}
 const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
   const push: GlancePush = {
     engine: buildEngineGlance(snapshot, {
@@ -2493,6 +2535,7 @@ const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
       served: servingReportsOf(glanceSessionsByWindow.values(), closedWindowServing),
       // The swap a window's node loader is making: the way it stopped is never "Failed" (Q-254).
       swap: swapOfReports(glanceSessionsByWindow.values()),
+      peerRanks: peerRankWatch.current(),
     }),
     sessions:
       glanceSessionsByWindow.size > 0
@@ -2514,9 +2557,11 @@ const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
   engineGlanceDesktop.update(push);
 };
 const saveGlancePrefs = (next: GlancePrefs) => {
-  // A floating mode picked in Settings › App is the person asking for the window: a close earlier
-  // this session no longer holds it back (Q-426).
-  const modeChanged = next.desktop !== currentGlancePrefs().desktop;
+  // Ticking the opt-in, or a floating mode picked in Settings › App, is the person asking for the
+  // window: a close earlier this session no longer holds it back (Q-426). Unticked, nothing floats.
+  const before = currentGlancePrefs();
+  const modeChanged =
+    desktopFloatOn(next) && (!desktopFloatOn(before) || next.desktop !== before.desktop);
   glancePrefs = next;
   updateSettings((s) => {
     s.engineGlance = next;
@@ -2538,12 +2583,30 @@ const refreshGlanceSoon = () => setTimeout(() => engineGlanceDesktop.refresh(), 
 app.on('before-quit', () => engineGlanceDesktop.suspendForQuit());
 // The evidence for windowRepaint.ts: a GPU or renderer process that goes away is named in main.log.
 app.on('child-process-gone', (_event, details) => {
-  log.warn(`child process gone: ${details.type} ${details.reason} exit=${details.exitCode}${details.name ? ` (${details.name})` : ''}`);
+  log.warn(
+    `child process gone: ${details.type} ${details.reason} exit=${details.exitCode}${details.name ? ` (${details.name})` : ''}`
+  );
 });
 app.on('render-process-gone', (_event, contents, details) => {
-  log.warn(`renderer gone: ${details.reason} exit=${details.exitCode} url=${contents.getURL().slice(0, 120)}`);
+  log.warn(
+    `renderer gone: ${details.reason} exit=${details.exitCode} url=${contents.getURL().slice(0, 120)}`
+  );
 });
-app.on('browser-window-focus', refreshGlanceSoon);
+app.on('did-become-active', () => {
+  gooseAppActive = true;
+  gooseAppActiveSince = Date.now();
+});
+app.on('did-resign-active', () => {
+  gooseAppActive = false;
+});
+app.on('browser-window-focus', (_event, win) => {
+  // The live click check's evidence: a goose window that came forward right after a press on the
+  // floating window that opened nothing means the focusable-panel fix did not hold on this macOS.
+  if (engineGlanceDesktop.raisedByPress()) {
+    log.warn(`engine glance: goose window ${win.id} came forward right after a press on the glance`);
+  }
+  refreshGlanceSoon();
+});
 app.on('browser-window-blur', refreshGlanceSoon);
 app.on('browser-window-created', (_event, win) => {
   trackOutOfSight(win);
@@ -5699,7 +5762,13 @@ ipcMain.handle('benchmark-retry-scoring', async (_event, runId: string, mode?: '
           if (!hasScoredVerdict(v) || !sameScorer || (!forge && typeof v.evidence_dir !== 'string'))
             throw new Error('Scorer produced no valid result or evidence directory.');
           const evidenceWorkdir = forge ? workdir : path.join(output, 'verdict-evidence');
-          if (!forge && path.resolve(v.evidence_dir) !== path.resolve(evidenceWorkdir))
+          // realpath on both sides: the scorer reports a resolved path, and a profile under a symlinked
+          // directory (/tmp -> /private/tmp on macOS) otherwise refused its own evidence (2026-10-29).
+          const realOrResolved = (p: string) => fs.realpath(p).catch(() => path.resolve(p));
+          if (
+            !forge &&
+            (await realOrResolved(v.evidence_dir)) !== (await realOrResolved(evidenceWorkdir))
+          )
             throw new Error('Scorer evidence directory does not belong to this attempt.');
           const scoredAt = new Date().toISOString();
           // A re-grade keeps the build's own finish (runMeta.finishedAt, the session's endedAt): the
@@ -5882,7 +5951,10 @@ async function benchRunRouteOf(stored: Record<string, unknown>): Promise<BenchRu
 }
 
 /** The engine that RAN a build: stamped on its session row at launch (BenchSessionRow.engineSha256). */
-async function benchEngineShaFor(runKey: string | null, stored: Record<string, unknown>): Promise<string | null> {
+async function benchEngineShaFor(
+  runKey: string | null,
+  stored: Record<string, unknown>
+): Promise<string | null> {
   const rows = await readBenchSessionRows();
   const key =
     runKey ??
@@ -5912,7 +5984,8 @@ async function benchOperatorKey(): Promise<{ key: string | null; problem?: strin
   // A key IS saved but cannot be read (keychain locked, access denied, encryption unavailable): say so on the card
   // rather than publishing as a community entry without a word (final review 2026-10-18).
   try {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('keychain encryption is not available');
+    if (!safeStorage.isEncryptionAvailable())
+      throw new Error('keychain encryption is not available');
     const key = safeStorage.decryptString(sealed).trim();
     return key ? { key } : { key: null, problem: 'the saved operator key is empty' };
   } catch (error) {
@@ -5936,7 +6009,10 @@ ipcMain.handle('benchmark-operator-key-set', async (_event, key: unknown) => {
     return { ok: true, saved: false };
   }
   if (!safeStorage.isEncryptionAvailable())
-    return { ok: false, error: "This Mac's keychain encryption is not available, so the key cannot be stored safely." };
+    return {
+      ok: false,
+      error: "This Mac's keychain encryption is not available, so the key cannot be stored safely.",
+    };
   await fs.mkdir(BENCH_DIR, { recursive: true });
   await fs.writeFile(BENCH_OPERATOR_KEY_FILE(), safeStorage.encryptString(value), { mode: 0o600 });
   return { ok: true, saved: true };
@@ -5947,9 +6023,12 @@ let benchCatalogNames: { at: number; data: Array<{ id?: unknown; name?: unknown 
 async function benchModelDisplayName(model: string, provider: string): Promise<string | null> {
   if (!benchCatalogNames || Date.now() - benchCatalogNames.at > 3600_000) {
     try {
-      const res = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(8000) });
+      const res = await fetch('https://openrouter.ai/api/v1/models', {
+        signal: AbortSignal.timeout(8000),
+      });
       const body = (await res.json()) as { data?: unknown };
-      if (res.ok && Array.isArray(body.data)) benchCatalogNames = { at: Date.now(), data: body.data };
+      if (res.ok && Array.isArray(body.data))
+        benchCatalogNames = { at: Date.now(), data: body.data };
     } catch {
       // offline or refused: the title simply is not prefilled with a display name
     }
@@ -5969,7 +6048,11 @@ ipcMain.handle('benchmark-publish-suggestion', async (_event, key: string) => {
   if (!model) return null;
   const route = await benchRunRouteOf(stored);
   const displayName = await benchModelDisplayName(model, provider ?? '');
-  return { title: suggestedPublishTitle({ model, provider, route, displayName }), local: route === 'local', route };
+  return {
+    title: suggestedPublishTitle({ model, provider, route, displayName }),
+    local: route === 'local',
+    route,
+  };
 });
 
 type BenchPublishArgs = {
@@ -6408,10 +6491,12 @@ async function publishBenchRun(
       openRouterCredentials: benchOpenRouterCredentials,
       cache: benchTokenUsageCache,
     }
-  ).catch((error): TokenCapture => ({
-    usage: null,
-    problem: `token counts could not be recorded: ${error instanceof Error ? error.message : String(error)}`,
-  }));
+  ).catch(
+    (error): TokenCapture => ({
+      usage: null,
+      problem: `token counts could not be recorded: ${error instanceof Error ? error.message : String(error)}`,
+    })
+  );
   if (tokens.usage) payload.tokenUsage = tokens.usage;
   // The run-end bill was incomplete ONLY because records were missing, and the publish-time read found every one of
   // them with the run's own usage agreeing (benchTokenCapture): that read is the complete bill, so price and tokens on
@@ -7051,7 +7136,14 @@ async function scanInstalledApps(): Promise<{ name: string; bundleId: string | n
     new Promise<string | null>((resolve) => {
       execFile(
         '/usr/bin/plutil',
-        ['-extract', 'CFBundleIdentifier', 'raw', '-o', '-', path.join(app, 'Contents', 'Info.plist')],
+        [
+          '-extract',
+          'CFBundleIdentifier',
+          'raw',
+          '-o',
+          '-',
+          path.join(app, 'Contents', 'Info.plist'),
+        ],
         { timeout: 5_000 },
         (err, stdout) => resolve(err ? null : String(stdout).trim() || null)
       );

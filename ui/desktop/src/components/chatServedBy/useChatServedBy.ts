@@ -50,7 +50,7 @@ function mainEngineActivity(): (() => Promise<MlxEngineSnapshot>) | undefined {
 const mainSnapshotPoll = createSharedPoll<MlxEngineSnapshot>(() => {
   const bridge = mainEngineActivity();
   return bridge ? bridge() : Promise.reject(new Error('this build has no engine-activity bridge'));
-});
+}, { what: 'what the engine is doing' });
 
 /**
  * main's latest read of the engine that serves chat (utils/mlxEngineMonitor.ts): what it is doing

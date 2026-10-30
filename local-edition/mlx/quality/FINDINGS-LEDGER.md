@@ -1,6 +1,6 @@
 # Findings ledger — Goose MLX quality loop
 
-Method and statuses: `~/.claude/skills/goose-mlx-quality-loop/SKILL.md`. Ids are assigned by the coordinator;
+Method and statuses: `~/.claude/skills/quality-hunt-loop/SKILL.md` (statuses §4); goose bindings in `~/.claude/skills/goose-mlx-quality-loop/references/tick-and-operating-mode.md`. Ids are assigned by the coordinator;
 rows are never deleted. Severity: dead end > misleads > friction > cosmetic. Verdict: CONFIRMED (seen on
 screen / measured) or PLAUSIBLE (read in code).
 

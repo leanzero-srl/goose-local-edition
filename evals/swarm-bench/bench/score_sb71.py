@@ -68,6 +68,14 @@ WITNESS_UNAVAILABLE = 'witness_unavailable'
 # pointer-events:none, so the element really takes the pointer). A user cannot orbit that view either:
 # charged 0, not refused. Qwen3.8-27B SB7.2 (2026-10-05): div#viz-labels over the canvas.
 CHARGE_COVERED_CANVAS = False
+# SB7.2 (score_sb72.tier_runtime): the LAST ledgerd the gather spawned exited on its own (exit code >= 0; the
+# harness stops services only with SIGKILL, -9) — the candidate stopped serving, so every later phase is
+# unexercised by the candidate, not by the harness: charged 0, and the harness steps that need a serving app
+# (the D1 handshake waits on a page ledgerd serves) are its consequence. Flash-Next SB7.2 (2026-10-29):
+# the SB7 §10 "restart with the same flags" after the B3 SIGKILL died on EADDRINUSE because transport.serve
+# set allow_reuse_address AFTER ThreadingTCPServer() had already bound. SB7.1 keeps refusing.
+CHARGE_LEDGERD_EXIT = False
+LEDGERD_EXIT_MISSING = ('fire_d1_mutation:failed',)
 CANVAS_MISS = 'the point was not delivered to #viz3d after re-centring the canvas twice'
 COAST_ROWS = ('t_coast_identity', 't_coast_reality')
 # row -> (schedule field, sync-1 list requests the vendor must see before the fault fires, label).
@@ -565,9 +573,14 @@ def encode_recorded_media(ctx, root):
     media = observation.get('media')
     if media is None and CHARGE_VIZ_CAP and viz.get('timedOut') is True:
         media = capped_recording_manifest(root)
-        if media is not None:
-            viz.setdefault('sb71', observation)
-            observation['media'] = media
+    elif media is None and ledgerd_self_exit(ctx) is not None:
+        # The viz probe met a page nobody served (the candidate's ledgerd had exited) and ended before
+        # finalizeMedia; its raw recording of that graded session is the run's one graded clip.
+        media = capped_recording_manifest(root, 'Full original graded browser recording (the candidate\'s '
+                                          'ledgerd had exited, so the probe ended early)')
+    if media is not None and 'media' not in observation:
+        viz.setdefault('sb71', observation)
+        observation['media'] = media
     if media is None:
         return
     manifest = Path(root) / media['manifest']
@@ -581,7 +594,7 @@ def encode_recorded_media(ctx, root):
         manifest.write_text(json.dumps({key: value for key, value in media.items() if key != 'manifest'}, indent=2))
 
 
-def capped_recording_manifest(root):
+def capped_recording_manifest(root, selection='Full original graded browser recording (probe stopped at its cap)'):
     """SB7.2 (CHARGE_VIZ_CAP): the probe was killed at its cap before finalizeMedia wrote the manifest, but
     Playwright's raw recording of the graded session is on disk. Write the manifest finalizeMedia would have
     written (no phase clock: the probe died before reporting it) so the run publishes with its one graded clip.
@@ -596,7 +609,7 @@ def capped_recording_manifest(root):
     manifest = {'schemaVersion': 1, 'scorerVersion': 'sb-7.1', 'recording': 'graded-browser',
                 'videos': [{'file': rel, 'caption': 'Original graded browser recording; publication encoding pending',
                             'mimeType': 'video/webm', 'scenario': 'viz', 'sha256': hashlib.sha256(data).hexdigest(),
-                            'bytes': len(data), 'selection': 'Full original graded browser recording (probe stopped at its cap)',
+                            'bytes': len(data), 'selection': selection,
                             'publishable': len(data) <= 4 * 1024 * 1024, 'sourceInterval': None,
                             'recordingClock': None, 'sourceFile': rel}],
                 'errors': []}
@@ -1235,6 +1248,23 @@ def inherited_observation_result(name, original, ctx):
 # caps, a missing fixture pack or vendor surface, the oracle's own coverage, and an unproven B3 hold
 # are the harness's.
 
+def ledgerd_self_exit(ctx):
+    """The candidate's own ledgerd exit that left nothing serving on the graded port: the LAST ledgerd
+    spawned on the boot ledgerd's port exited by itself. (The error journey's ledgerd runs on its own
+    port and db after the graded phases; it is not the service those phases graded.)"""
+    if not CHARGE_LEDGERD_EXIT:
+        return None
+    spawns = [s for s in getattr(ctx, 'ledger_spawns', None) or [] if isinstance(s, dict)]
+    if not spawns:
+        return None
+    graded = [s for s in spawns if s.get('port') == spawns[0].get('port')]
+    return graded[-1] if graded[-1].get('self_exit') is True else None
+
+
+def ledgerd_exit_missing(ctx):
+    return LEDGERD_EXIT_MISSING if ledgerd_self_exit(ctx) is not None else ()
+
+
 def unbound_ledgerd(ctx):
     """gather() stops right after boot when ledgerd never binds its port; every later phase is
     then unreached because the candidate never served, not because the harness failed."""
@@ -1321,6 +1351,14 @@ def candidate_charge(name, original, ctx, outcome):
         return base.g(0.0, 'not exercised: ledgerd never bound its port at boot, so grading stopped before this phase',
                       'the candidate never served; the behaviour this row grades is unproven',
                       parts={'vacuous_root': 'server_runs', 'unexercised': outcome.get('detail')})
+    died = ledgerd_self_exit(ctx)
+    if died is not None:
+        return base.g(0.0, f"not exercised: the candidate's ledgerd (spawn {died['spawn'] + 1} of {died['of']}, "
+                      f"port {died.get('port')}) exited "
+                      f"on its own with code {died['returncode']} and nothing served after it"
+                      + (f": {died['last_line']}" if died.get('last_line') else ''),
+                      'the candidate stopped serving; the behaviour this row grades is unproven',
+                      parts={'ledgerd_self_exit': died, 'unexercised': outcome.get('detail')})
     if name == 'r_b3_sigkill_resync':
         evidence = b3_walk_short(ctx)
         if evidence is None:
@@ -1453,7 +1491,8 @@ def evaluate(ctx):
         # SB7.1: the cap is the harness's own budget; the visual rows would otherwise be zeroed as
         # 'not reached' and hold the run at the visible-surface band. SB7.2 charges it (CHARGE_VIZ_CAP).
         raise UnavailableEvidence(ctx, raw, 'viz probe hit its hard cap before the SB7.1 visual observations')
-    missing = [name for name in raw.get('harness_missing') or [] if name not in viz_cap_missing(viz)]
+    missing = [name for name in raw.get('harness_missing') or []
+               if name not in viz_cap_missing(viz) and name not in ledgerd_exit_missing(ctx)]
     if missing:
         raise UnavailableEvidence(ctx, raw, 'missing benchmark infrastructure: ' + ', '.join(missing))
     if raw.get('probe_unavailable'):

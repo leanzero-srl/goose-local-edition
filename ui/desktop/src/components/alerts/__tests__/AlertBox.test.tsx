@@ -344,4 +344,33 @@ describe('AlertBox', () => {
       expect(screen.queryByText('Compact now', { selector: 'span' })).toBeNull();
     });
   });
+
+  describe('auto-compact point with no percentage set', () => {
+    const meter: Alert = {
+      type: AlertType.Info,
+      message: 'Context window',
+      progress: { current: 100_000, total: 360_000 },
+    };
+
+    it('says 80% is only the floor of the reserve-based point, never "at 80%"', async () => {
+      config.read.mockResolvedValue(null);
+      renderWithIntl(<AlertBox alert={meter} />);
+      const label = await screen.findByTestId('alert-threshold-reserve');
+      expect(label.textContent).toBe('Auto compact near full (not before 80%)');
+      expect(label.getAttribute('title')).toContain('room for the next answer and one tool result');
+      expect(screen.queryByText(/Auto compact at 80%/)).not.toBeInTheDocument();
+    });
+
+    it('a saved percentage replaces the reserve label with the fixed point', async () => {
+      config.read.mockResolvedValue(undefined);
+      config.upsert.mockResolvedValue(undefined);
+      renderWithIntl(<AlertBox alert={meter} />);
+      await screen.findByTestId('alert-threshold-reserve');
+      fireEvent.click(screen.getByRole('button', { name: 'Change when goose compacts' }));
+      fireEvent.mouseDown(screen.getByRole('button', { name: 'Save' }));
+      expect(await screen.findByText(/Auto compact at 80%/)).toBeInTheDocument();
+      expect(screen.queryByTestId('alert-threshold-reserve')).not.toBeInTheDocument();
+      expect(config.upsert).toHaveBeenCalledWith('GOOSE_AUTO_COMPACT_THRESHOLD', 0.8, false);
+    });
+  });
 });

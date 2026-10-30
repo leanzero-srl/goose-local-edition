@@ -58,6 +58,8 @@ import {
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { MlxThinkingFields } from './MlxThinkingFields';
 import { MlxKvCacheFields } from './MlxKvCacheFields';
+import { MlxPromptLookupFields } from './MlxPromptLookupFields';
+import { MlxNgramTableFields } from './MlxNgramTableFields';
 import {
   mlxEngineBrowse,
   mlxEngineBrowseFilters,
@@ -75,6 +77,7 @@ import {
   type MlxEngineStatus,
   type MlxLocalModel,
   type MlxModelProfile,
+  type MlxPromptLookup,
 } from '../../acp/mlx-engine';
 import {
   DownloadProgressRow,
@@ -147,6 +150,7 @@ import { usePlacementPlans } from './usePlacementPlans';
 export { formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
 
 const i18n = defineMessages({
+  statusRetry: { id: 'mlxEngineView.statusRetry', defaultMessage: 'Read again' },
   engineValue: {
     id: 'mlxEngineView.engineValue',
     defaultMessage:
@@ -308,11 +312,27 @@ export type LaneSettingKey = 'speculative' | 'adapterPath' | 'textOnly';
 export type ThinkingSettingKey = 'thinking' | 'reasoningEffort';
 /** `kvCache` is '' (off — the engine's bf16 cache) | 'int8' | 'int4'. */
 export type KvCacheSettingKey = 'kvCache';
+/** `pleOffload` is '' (auto) | 'true' | 'false'. */
+export type NgramTableSettingKey = 'pleOffload';
+/** `ropeScaling` is '' (the checkpoint's own rope) | 'yarn' | 'yarn:<factor>' | a JSON object | 'off'. No form row yet: carried so a save keeps it. */
+export type RopeSettingKey = 'ropeScaling';
+/**
+ * `promptLookupMode` is '' (auto) | 'on' | 'off'; the three numbers are drafted as text and a
+ * blank one leaves the engine's default for the lane.
+ */
+export type PromptLookupSettingKey =
+  | 'promptLookupMode'
+  | 'promptLookupMinNgram'
+  | 'promptLookupMaxNgram'
+  | 'promptLookupMaxDraft';
 export type ProfileDraftKey =
   | NumericSettingKey
   | LaneSettingKey
   | ThinkingSettingKey
-  | KvCacheSettingKey;
+  | KvCacheSettingKey
+  | NgramTableSettingKey
+  | RopeSettingKey
+  | PromptLookupSettingKey;
 
 export type NumericDrafts = Record<ProfileDraftKey, string>;
 
@@ -321,11 +341,23 @@ const NUMERIC_KEYS: NumericSettingKey[] = [...SAMPLING_FIELDS, CONTEXT_LIMIT_FIE
 );
 const LANE_KEYS: LaneSettingKey[] = ['speculative', 'adapterPath', 'textOnly'];
 const THINKING_KEYS: ThinkingSettingKey[] = ['thinking', 'reasoningEffort'];
-const PROFILE_KEYS: ProfileDraftKey[] = [
+const PROFILE_KEYS = [
   ...NUMERIC_KEYS,
   ...LANE_KEYS,
   ...THINKING_KEYS,
   'kvCache',
+  'pleOffload',
+  'ropeScaling',
+] as const;
+const PROMPT_LOOKUP_NUMBERS = [
+  ['promptLookupMinNgram', 'minNgram'],
+  ['promptLookupMaxNgram', 'maxNgram'],
+  ['promptLookupMaxDraft', 'maxDraft'],
+] as const;
+const DRAFT_KEYS: ProfileDraftKey[] = [
+  ...PROFILE_KEYS,
+  'promptLookupMode',
+  ...PROMPT_LOOKUP_NUMBERS.map(([key]) => key),
 ];
 
 export function draftsFromProfile(profile: MlxModelProfile | undefined): NumericDrafts {
@@ -340,6 +372,13 @@ export function draftsFromProfile(profile: MlxModelProfile | undefined): Numeric
   drafts.thinking = profile?.thinking ?? '';
   drafts.reasoningEffort = profile?.reasoningEffort ?? '';
   drafts.kvCache = profile?.kvCache ?? '';
+  drafts.pleOffload = profile?.pleOffload == null ? '' : String(profile.pleOffload);
+  drafts.ropeScaling = profile?.ropeScaling ?? '';
+  drafts.promptLookupMode = profile?.promptLookup?.mode ?? '';
+  for (const [key, field] of PROMPT_LOOKUP_NUMBERS) {
+    const value = profile?.promptLookup?.[field];
+    drafts[key] = value == null ? '' : String(value);
+  }
   return drafts;
 }
 
@@ -363,11 +402,24 @@ export function profileFromDrafts(drafts: NumericDrafts): MlxModelProfile {
   const effort = drafts.reasoningEffort.trim();
   if (effort !== '') profile.reasoningEffort = effort;
   if (drafts.kvCache === 'int8' || drafts.kvCache === 'int4') profile.kvCache = drafts.kvCache;
+  if (drafts.pleOffload === 'true') profile.pleOffload = true;
+  else if (drafts.pleOffload === 'false') profile.pleOffload = false;
+  const ropeScaling = drafts.ropeScaling.trim();
+  if (ropeScaling !== '') profile.ropeScaling = ropeScaling;
+  const promptLookup: MlxPromptLookup = {};
+  const plMode = drafts.promptLookupMode.trim();
+  if (plMode === 'on' || plMode === 'off') promptLookup.mode = plMode;
+  for (const [key, field] of PROMPT_LOOKUP_NUMBERS) {
+    const text = drafts[key].trim();
+    const n = Number(text);
+    if (text !== '' && Number.isInteger(n) && n >= 1) promptLookup[field] = n;
+  }
+  if (Object.keys(promptLookup).length > 0) profile.promptLookup = promptLookup;
   return profile;
 }
 
 export function profileHasValues(profile: MlxModelProfile): boolean {
-  return PROFILE_KEYS.some((key) => profile[key] != null);
+  return PROFILE_KEYS.some((key) => profile[key] != null) || profile.promptLookup != null;
 }
 
 /**
@@ -406,7 +458,7 @@ export function settingsWithProfile(
 }
 
 export function draftsEqual(a: NumericDrafts, b: NumericDrafts): boolean {
-  return PROFILE_KEYS.every((key) => a[key].trim() === b[key].trim());
+  return DRAFT_KEYS.every((key) => a[key].trim() === b[key].trim());
 }
 
 // ---------------------------------------------------------------------------
@@ -423,6 +475,7 @@ export function draftsEqual(a: NumericDrafts, b: NumericDrafts): boolean {
  */
 function StateBadge(props: {
   state: MlxEngineState;
+  stoppedBy: string | null;
   live: MlxLiveRead | null;
   distributed: MlxDistributedStatus | null;
   remote: MlxRemoteSingleStatus | null;
@@ -569,13 +622,13 @@ const STEP_BUTTON = cx(
  * a blank field means the key is omitted and the engine's own default applies (said in quiet
  * text beside the field); a typed 0 is sent as 0 and a Clear action takes it back to blank.
  */
-function NumericField({
+export function NumericField({
   spec,
   text,
   onText,
   engineValue,
 }: {
-  spec: NumericFieldSpec;
+  spec: Omit<NumericFieldSpec, 'key'> & { key: string };
   text: string;
   onText: (v: string) => void;
   /** What the running engine samples with for this field when nothing is sent (Q-170). */
@@ -808,6 +861,8 @@ function gateTone(verdict: string): Tone | undefined {
 interface EngineSectionProps {
   status: MlxEngineStatus | null;
   statusError: string | null;
+  /** Read this Mac's engine status now (the unreachable banner's button; the ticks read too). */
+  onRetryStatus: () => void;
   settings: MlxEngineSettings | null;
   models: MlxLocalModel[];
   mountModelId: string | null;
@@ -870,6 +925,7 @@ function EngineSection(props: EngineSectionProps) {
   const {
     status,
     statusError,
+    onRetryStatus,
     settings,
     models,
     mountModelId,
@@ -1053,7 +1109,19 @@ function EngineSection(props: EngineSectionProps) {
   return (
     <div className="flex flex-col gap-4 pb-8">
       <MlxRestoreBanner refusedModelId={gateRefusalOf(status)?.modelId ?? null} />
-      {statusError && <ToneBanner tone="err" label="Engine unreachable" text={statusError} />}
+      {statusError && (
+        <ToneBanner
+          tone="err"
+          label="Engine unreachable"
+          text={statusError}
+          testId="mlx-status-error"
+          action={
+            <Button size="sm" variant="secondary" icon={<RefreshCw />} onClick={onRetryStatus}>
+              {intl.formatMessage(i18n.statusRetry)}
+            </Button>
+          }
+        />
+      )}
       {status && <MlxMountRefusalBanner status={status} />}
       {banners.gateBlock && (
         <ToneBanner
@@ -1114,6 +1182,7 @@ function EngineSection(props: EngineSectionProps) {
       >
         <MlxStateTile
           state={splitUnread ? null : state}
+          stoppedBy={status?.stoppedBy ?? null}
           unreachable={statusError != null && status == null}
           live={live}
           history={tpsHistory}
@@ -1439,13 +1508,27 @@ function SamplingSection(props: SamplingSectionProps) {
                 text={drafts.contextLimit}
                 onText={(v) => setDraft('contextLimit', v)}
               />
-              <LaneFields drafts={drafts} setDraft={setDraft} />
+              <LaneFields
+                drafts={drafts}
+                setDraft={setDraft}
+                hearsAudio={models.find((m) => m.id === selectedModelId)?.hearsAudio === true}
+              />
               <MlxThinkingFields
                 model={models.find((m) => m.id === selectedModelId)}
                 drafts={drafts}
                 setDraft={setDraft}
               />
               <MlxKvCacheFields
+                model={models.find((m) => m.id === selectedModelId)}
+                drafts={drafts}
+                setDraft={setDraft}
+              />
+              <MlxPromptLookupFields
+                model={models.find((m) => m.id === selectedModelId)}
+                drafts={drafts}
+                setDraft={setDraft}
+              />
+              <MlxNgramTableFields
                 model={models.find((m) => m.id === selectedModelId)}
                 drafts={drafts}
                 setDraft={setDraft}
@@ -1476,7 +1559,7 @@ interface SpeculativeOption extends StudioSelectOption {
 }
 
 const SPECULATIVE_OPTIONS: readonly SpeculativeOption[] = [
-  { value: '', label: 'Auto — MTP when the model folder has mtp.safetensors' },
+  { value: '', label: 'Auto — MTP when the model has an MTP head' },
   { value: 'mtp', label: 'MTP — demand it (skipped with a warning if the head is missing)' },
   { value: 'off', label: 'Off — never speculate' },
 ];
@@ -1506,17 +1589,37 @@ function LaneRow({
   );
 }
 
+/**
+ * Whether the "Text-only lane" switch reads on for a `textOnly` draft. Auto ('') is the text lane,
+ * except for a checkpoint that hears audio: auto mounts that one on the media lane (the sidecar's
+ * `auto_text_only`).
+ */
+export function textLaneOn(textOnlyDraft: string, hearsAudio: boolean): boolean {
+  const draft = textOnlyDraft.trim();
+  if (draft === 'false') return false;
+  if (draft === 'true') return true;
+  return !hearsAudio;
+}
+
+/** The `textOnly` draft the switch writes: auto ('') whenever auto already means that lane. */
+export function textOnlyDraftFor(on: boolean, hearsAudio: boolean): string {
+  if (on) return hearsAudio ? 'true' : '';
+  return hearsAudio ? '' : 'false';
+}
+
 function LaneFields({
   drafts,
   setDraft,
+  hearsAudio,
 }: {
   drafts: NumericDrafts;
   setDraft: (key: ProfileDraftKey, text: string) => void;
+  hearsAudio: boolean;
 }) {
   const speculative =
     SPECULATIVE_OPTIONS.find((o) => o.value === drafts.speculative.trim()) ??
     SPECULATIVE_OPTIONS[0];
-  const textLane = drafts.textOnly.trim() !== 'false';
+  const textLane = textLaneOn(drafts.textOnly, hearsAudio);
   const adapterSet = drafts.adapterPath.trim() !== '';
   return (
     <>
@@ -1565,14 +1668,22 @@ function LaneFields({
       </LaneRow>
       <LaneRow
         label="Text-only lane"
-        note="On: a vision-bearing checkpoint (qwen3_5 with a vision config) is pinned to the text lane, which batches. Off: the engine may route it to its serialized single-request vision lane."
+        note="On: a vision-bearing checkpoint (qwen3_5 with a vision config) is pinned to the text lane, which batches. A Qwen3.8-Flash checkpoint with its vision tower reads images on that same text lane, so it keeps MTP and batching with images. Off: the engine may route a vision checkpoint to its serialized single-request vision lane. A checkpoint with an audio encoder (Gemma 4, Qwen3-Omni) starts off, because audio and video attachments need that lane."
       >
         <StudioSwitch
           checked={textLane}
-          onChange={(v) => setDraft('textOnly', v ? '' : 'false')}
+          onChange={(v) => setDraft('textOnly', textOnlyDraftFor(v, hearsAudio))}
           aria-label="Text-only lane"
         />
-        <span className={TYPE.meta}>{textLane ? 'on' : 'off — vision lane allowed'}</span>
+        <span className={TYPE.meta}>
+          {textLane
+            ? hearsAudio
+              ? 'on — audio and video attachments are withheld'
+              : 'on'
+            : hearsAudio
+              ? 'off — hears audio and watches video'
+              : 'off — vision lane allowed'}
+        </span>
       </LaneRow>
     </>
   );
@@ -2366,7 +2477,7 @@ function ModelsSection({
             label: (
               <>
                 {intl.formatMessage(MODELS_I18N.onYourMacs)}
-                <span className={cx('text-lz-meta', TNUM)}>{rowCount}</span>
+                {rowCount != null && <span className={cx('text-lz-meta', TNUM)}>{rowCount}</span>}
               </>
             ),
           },
@@ -3126,7 +3237,7 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
               label: (
                 <>
                   {intl.formatMessage(VIEW_I18N.tabModels)}
-                  <span className={cx('text-lz-meta', TNUM)}>{modelCount}</span>
+                  {modelCount != null && <span className={cx('text-lz-meta', TNUM)}>{modelCount}</span>}
                 </>
               ),
             },
@@ -3140,6 +3251,7 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
           <span className="pb-2">
             <StateBadge
               state={status.state}
+              stoppedBy={status.stoppedBy ?? null}
               live={live}
               distributed={distributed.status}
               remote={remote}
@@ -3166,6 +3278,7 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
         <EngineSection
           status={status}
           statusError={statusError}
+          onRetryStatus={() => void refreshStatus()}
           settings={settings}
           models={models}
           mountModelId={mountModelId}

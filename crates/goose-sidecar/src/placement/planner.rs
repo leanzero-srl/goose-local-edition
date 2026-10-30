@@ -19,6 +19,7 @@ use crate::distributed::Runner;
 use crate::engine::StartFrees;
 use crate::fit::{self, Need, NodeMemoryFacts, Verdict};
 use crate::kv_cache::KvCacheMode;
+use crate::ple_offload;
 
 /// The serving stack behind each placement kind.
 pub const BACKEND_SINGLE: &str = "rapid-mlx";
@@ -141,6 +142,8 @@ pub struct PlanInput<'a> {
     pub bytes_on_disk: u64,
     /// The single engine's KV cache setting for this model (its profile).
     pub kv_mode: Option<KvCacheMode>,
+    /// The profile's n-gram table choice (`ModelProfile::ple_offload`; `None` = auto).
+    pub ple_offload: Option<bool>,
     pub nodes: &'a [NodeInput],
     pub cluster: Option<&'a ClusterInput>,
     /// The tensor runner's arithmetic (qwen3_5), when the architecture has it.
@@ -473,6 +476,37 @@ pub fn single_engine_need(
     )
 }
 
+/// [`single_engine_need`] with the n-gram table left on disk when `table_on_disk`
+/// (`crate::ple_offload`): its bytes are read from the SSD as needed, never held.
+pub fn single_engine_need_placed(
+    weights_bytes: u64,
+    model: Result<&ModelFacts, String>,
+    kv_mode: Option<KvCacheMode>,
+    table_on_disk: bool,
+) -> Need {
+    let on_disk = match (&model, table_on_disk) {
+        (Ok(m), true) => m.ple_table_bytes,
+        _ => 0,
+    };
+    single_engine_need(weights_bytes.saturating_sub(on_disk), model, kv_mode)
+}
+
+/// Whether this Mac's single engine would leave the n-gram table on disk — the rule
+/// `engine::ple_offload_on` applies to the argv, on the node's own RAM and Metal ceiling.
+fn table_on_disk(input: &PlanInput, facts: &NodeMemoryFacts) -> bool {
+    let full = single_engine_need(input.bytes_on_disk, Ok(input.model), input.kv_mode);
+    ple_offload::resolve(
+        input.ple_offload,
+        input.model.ple_table_bytes > 0,
+        &input.model.model_type,
+        full.total_bytes(),
+        Some(ple_offload::Machine {
+            total_bytes: facts.total_bytes,
+            ceiling_bytes: facts.ceiling_bytes,
+        }),
+    )
+}
+
 fn unknown_fit(reason: String) -> Fit {
     Fit {
         status: FitStatus::Unknown,
@@ -514,11 +548,22 @@ fn single_fit(input: &PlanInput, node: &NodeInput, min_useful: u64) -> Fit {
             .saturating_add(leftover.bytes());
         b.budget = b.facts.budget_bytes();
     }
-    let weights = input.bytes_on_disk;
+    let on_disk = table_on_disk(input, &b.facts);
+    let weights = if on_disk {
+        input
+            .bytes_on_disk
+            .saturating_sub(input.model.ple_table_bytes)
+    } else {
+        input.bytes_on_disk
+    };
     let mut verdict = fit::judge(
-        single_engine_need(weights, Ok(input.model), input.kv_mode),
+        single_engine_need_placed(input.bytes_on_disk, Ok(input.model), input.kv_mode, on_disk),
         b.facts,
     );
+    if on_disk {
+        let held = verdict.need.total_bytes();
+        verdict.append(ple_offload::fit_note(input.model.ple_table_bytes, held));
+    }
     if let Some(note) = leftover.and_then(StartFrees::note) {
         verdict.append(note);
     }
@@ -1769,6 +1814,7 @@ mod tests {
             active_bytes_per_token: 28_420_553_728,
             active_params_per_token: 25_624_600_064,
             lookup_bytes: 2_542_000_000,
+            ple_table_bytes: 0,
             excluded_bytes: 921_000_000,
             largest_layer_bytes: 444_000_000,
             kv: kv(16, 4),
@@ -1811,6 +1857,7 @@ mod tests {
             active_bytes_per_token: 3_787_797_760,
             active_params_per_token: 6_734_332_800,
             lookup_bytes: gib(30.135),
+            ple_table_bytes: gib(29.802),
             excluded_bytes: gib(1.784),
             largest_layer_bytes: gib(31.179),
             kv: kv(12, 2),
@@ -1843,11 +1890,26 @@ mod tests {
         }
 
         fn plan_with_start(&self, goal: Goal, this_mac_start: Option<&StartFrees>) -> Plan {
+            self.plan_full(goal, this_mac_start, None)
+        }
+
+        /// The plan with the profile's n-gram table choice (`None` = auto).
+        fn plan_table(&self, goal: Goal, ple_offload: Option<bool>) -> Plan {
+            self.plan_full(goal, None, ple_offload)
+        }
+
+        fn plan_full(
+            &self,
+            goal: Goal,
+            this_mac_start: Option<&StartFrees>,
+            ple_offload: Option<bool>,
+        ) -> Plan {
             plan(&PlanInput {
                 model_id: "m",
                 model: &self.model,
                 bytes_on_disk: self.bytes_on_disk,
                 kv_mode: None,
+                ple_offload,
                 nodes: &self.nodes,
                 cluster: self.cluster.as_ref(),
                 tensor: self.tensor.as_ref(),
@@ -2144,6 +2206,8 @@ mod tests {
         assert_eq!(plan.best.as_deref(), Some("single:link:worksmacstudio"));
     }
 
+    /// With the n-gram table resident (the profile's Off); auto's table-on-disk single fit is
+    /// `flash_next_fits_the_macbook_with_its_ngram_table_on_disk`.
     #[test]
     fn flash_needs_the_pipeline_on_a_normal_day() {
         let f = Fixture {
@@ -2157,7 +2221,7 @@ mod tests {
             cal: Calibration::fit(&BTreeMap::new()),
             running: None,
         };
-        let plan = f.plan(Goal::Chat);
+        let plan = f.plan_table(Goal::Chat, Some(false));
         assert_eq!(
             plan.best.as_deref(),
             Some("pipeline:jaccl:local+link:worksmacstudio"),
@@ -2198,7 +2262,7 @@ mod tests {
             })),
             ..f
         };
-        let plan = with_fork.plan(Goal::Chat);
+        let plan = with_fork.plan_table(Goal::Chat, Some(false));
         let best = by_id(&plan, plan.best.as_deref().unwrap());
         assert_eq!(best.fit.context, Some(73_216));
         assert!(best.fit.detail.starts_with("the fork's planner"));
@@ -2565,6 +2629,49 @@ mod tests {
     }
 
     /// The owner's 3.0.25 refusal (2026-09-24): Flash-Next-4bit, 97.5 GiB on disk, Mount on the
+    /// The same MacBook (128 GB M4 Max, 93.0 GiB available) with the profile on auto: Flash-Next
+    /// would not otherwise fit, so the n-gram table stays on disk and the single engine fits —
+    /// the mount gate's verdict on the same need, with the note that says why.
+    #[test]
+    fn flash_next_fits_the_macbook_with_its_ngram_table_on_disk() {
+        let f = Fixture {
+            model: flash(),
+            nodes: macs(93.0, 67.0),
+            cluster: None,
+            tensor: None,
+            pipeline: None,
+            records: Vec::new(),
+            bytes_on_disk: gib(97.5),
+            cal: Calibration::fit(&BTreeMap::new()),
+            running: None,
+        };
+        let plan = f.plan_table(Goal::Chat, None);
+        let here = by_id(&plan, "single:local");
+        assert!(here.fit.status.fits(), "{:?}", here.fit);
+        let gate = fit::judge(
+            single_engine_need_placed(gib(97.5), Ok(&flash()), None, true),
+            NodeMemoryFacts {
+                available_bytes: gib(93.0),
+                total_bytes: gib(128.0),
+                ceiling_bytes: M4_CEILING,
+                other_engines_bytes: 0,
+                freed_by_switch_bytes: 0,
+            },
+        );
+        assert_ne!(gate.verdict, Verdict::Block);
+        assert!(
+            here.fit
+                .detail
+                .contains("fits with the n-gram table on disk"),
+            "{}",
+            here.fit.detail
+        );
+        assert_eq!(gate.need.weights_bytes, gib(97.5) - gib(29.802));
+        // The owner's explicit Off keeps the table resident: the recorded refusal.
+        let off = f.plan_table(Goal::Chat, Some(false));
+        assert_eq!(by_id(&off, "single:local").fit.status, FitStatus::Short);
+    }
+
     /// M4 Max with 93.0 GiB available after Make room. The planner's single fit and the mount gate
     /// are ONE verdict (the same `fit::judge` on the same need), and the refusal names the split
     /// that would work.
@@ -2581,7 +2688,7 @@ mod tests {
             cal: Calibration::fit(&BTreeMap::new()),
             running: None,
         };
-        let plan = f.plan(Goal::Chat);
+        let plan = f.plan_table(Goal::Chat, Some(false));
         let here = by_id(&plan, "single:local");
         assert_eq!(here.fit.status, FitStatus::Short);
         let gate = fit::judge(
@@ -2618,6 +2725,7 @@ mod tests {
     /// the MacBook coordinates — and its 3.0.25 app badged Flash "Too big" because the planner
     /// enumerated peers from the saved setup only. With the Link peer measured, the badge is the
     /// MacBook's answer from the other side, and it names the step still missing.
+    /// (n-gram table resident, the profile's Off.)
     #[test]
     fn the_badge_is_the_same_truth_from_either_mac() {
         let macbook_view = Fixture {
@@ -2632,7 +2740,7 @@ mod tests {
             running: None,
         };
         assert_eq!(
-            macbook_view.plan(Goal::Chat).badge,
+            macbook_view.plan_table(Goal::Chat, Some(false)).badge,
             Badge::NeedsBothMacs { needs: None }
         );
 
@@ -2660,7 +2768,7 @@ mod tests {
             cluster: Some(link_peers),
             ..macbook_view
         };
-        let plan = workhorse_view.plan(Goal::Chat);
+        let plan = workhorse_view.plan_table(Goal::Chat, Some(false));
         assert_eq!(by_id(&plan, "single:local").fit.status, FitStatus::Short);
         let Badge::NeedsBothMacs { needs: Some(needs) } = &plan.badge else {
             panic!("{:?}", plan.badge)
@@ -2679,7 +2787,9 @@ mod tests {
             running: None,
         };
         allowed.nodes[1].split_refusal = None;
-        let Badge::NeedsBothMacs { needs: Some(needs) } = allowed.plan(Goal::Chat).badge else {
+        let Badge::NeedsBothMacs { needs: Some(needs) } =
+            allowed.plan_table(Goal::Chat, Some(false)).badge
+        else {
             panic!("the split still needs a setup on this Mac")
         };
         assert!(needs.contains("set up the distributed engine"), "{needs}");
@@ -2688,7 +2798,7 @@ mod tests {
         allowed.nodes.truncate(1);
         allowed.cluster = None;
         assert!(matches!(
-            allowed.plan(Goal::Chat).badge,
+            allowed.plan_table(Goal::Chat, Some(false)).badge,
             Badge::TooBig { .. }
         ));
     }

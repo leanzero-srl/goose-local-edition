@@ -2351,7 +2351,8 @@ pub struct MlxModelProfileDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_limit: Option<u32>,
     /// Speculative decoding: `"mtp"` (demand the MTP head, skipped with a warning when the
-    /// model dir has no `mtp.safetensors`), `"off"`, or absent = auto (on when the head exists).
+    /// model has none: no `mtp.safetensors` and no in-shard head), `"off"`, or absent = auto
+    /// (on when the head exists).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speculative: Option<String>,
     /// Directory of an mlx-lm LoRA/DoRA adapter fused at load (`--adapter-path`); `~` expands.
@@ -2362,6 +2363,16 @@ pub struct MlxModelProfileDto {
     /// the text lane (`--text-only`). No effect on a checkpoint that declares no vision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_only: Option<bool>,
+    /// Keep the n-gram (PLE) table on disk (`--qwen4-ple-offload`). Absent = auto: on for a
+    /// Qwen3.8-Flash-Next checkpoint that would not otherwise fit this Mac. Ignored for a
+    /// checkpoint without the table (`MlxLocalModelDto::has_ngram_table`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ple_offload: Option<bool>,
+    /// RoPE scaling past the checkpoint's native positions (`--qwen4-rope-scaling`): `"yarn"`,
+    /// `"yarn:<factor>"`, a JSON object or `"off"`. Absent = the checkpoint's own config.
+    /// `qwen4_exp` only; any other family fails the mount.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rope_scaling: Option<String>,
     /// Sent as `chat_template_kwargs.enable_thinking` on every turn a session routes to this
     /// model: `"on"` | `"off"`. Absent = auto — nothing is sent and the engine decides (Rapid-MLX
     /// turns thinking off whenever the request carries tools). Captured once per session.
@@ -2378,6 +2389,36 @@ pub struct MlxModelProfileDto {
     /// head_dim; the engine: a cache layout it cannot quantize — both name the reason).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kv_cache: Option<MlxKvCacheModeDto>,
+    /// Prompt-lookup (n-gram copy) drafting. Absent = auto (the engine's family default: on
+    /// inside MTP for Qwen3.5/3.6/3.8, off for the suffix lane). Rides the engine env inside MTP
+    /// and `--suffix-decoding` flags on a pure-attention model served without MTP; a hybrid
+    /// served without MTP gets nothing. A change restarts the engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_lookup: Option<MlxPromptLookupDto>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MlxPromptLookupModeDto {
+    On,
+    Off,
+}
+
+/// Every field absent = the engine's own default for the lane.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxPromptLookupDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<MlxPromptLookupModeDto>,
+    /// MTP lane only: shortest context n-gram that may trigger a copy (engine floor 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_ngram: Option<u32>,
+    /// MTP lane: longest n-gram matched. Suffix lane: `--suffix-max-suffix-len`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_ngram: Option<u32>,
+    /// MTP lane: copy-draft ceiling. Suffix lane: `--suffix-max-draft`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_draft: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2620,11 +2661,16 @@ pub struct MlxEngineStatusDto {
     /// While `state` is "stopped": what left it stopped, since this goose started — `owner` (this
     /// Mac's owner unmounted it) · `linkedMac` (a linked Mac unmounted it over LeanZero Link) ·
     /// `notStarted` (no Unmount since this goose started: nothing has run the engine since its
-    /// launch — what an app relaunch leaves). Absent in every other state, and from a goose
-    /// before it. A Link peer whose chat route this engine served re-mounts it only on
-    /// `notStarted`.
+    /// launch — what an app relaunch leaves) · `outside` (something outside goose stopped the
+    /// engine: a SIGTERM or SIGINT no goose path sent — a stop, not a failure; `stoppedOutside`
+    /// says what ended). Absent in every other state, and from a goose before it. A Link peer
+    /// whose chat route this engine served re-mounts it only on `notStarted`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stopped_by: Option<String>,
+    /// When `stoppedBy` is `outside`: which engine process ended and how, in one neutral
+    /// sentence. Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_outside: Option<String>,
     /// What this Mac's owner last started serving here and did not stop — what this goose's own
     /// launch restores (`mlxEngine/servingIntent`). Absent when nothing is recorded (and from a
     /// goose before it), or exactly when `servingIntentError` says why it could not be read.
@@ -3039,6 +3085,28 @@ pub struct MlxLocalModelDto {
     pub kv_cache_measurement: Option<MlxKvCacheMeasurementDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kv_cache_measurement_error: Option<String>,
+    /// The model has an MTP head the engine serves (`mtp.safetensors`, or `mtp.*` tensors in the
+    /// shards of a Qwen3.8-Flash-Next checkpoint), so auto/`"mtp"` serves it and the
+    /// prompt-lookup lever rides inside it.
+    #[serde(default)]
+    pub has_mtp_head: bool,
+    /// config.json declares an audio encoder, so auto (`textOnly` unset) mounts the checkpoint on
+    /// the engine's media lane: it hears audio and watches video, and the text-only lane is off.
+    #[serde(default)]
+    pub hears_audio: bool,
+    /// config.json declares recurrent-state layers (GatedDeltaNet, Mamba, ...): without MTP the
+    /// prompt-lookup lever is unavailable. Absent exactly when `hybrid_error` says why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hybrid: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hybrid_error: Option<String>,
+    /// The checkpoint carries an n-gram (PLE) table the engine can leave on disk: the
+    /// "Keep n-gram table on disk" lever is offered only then.
+    #[serde(default)]
+    pub has_ngram_table: bool,
+    /// What auto resolves to on this Mac (on = the model would not otherwise fit).
+    #[serde(default)]
+    pub ngram_table_auto_on: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]

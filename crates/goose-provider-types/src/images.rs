@@ -50,6 +50,12 @@ pub struct WithheldImage {
 pub struct ImageReport {
     pub sent: usize,
     pub withheld: Vec<WithheldImage>,
+    /// Attached audio parts sent as `input_audio`.
+    pub audio_sent: usize,
+    /// Attached video parts sent as `video_url`.
+    pub video_sent: usize,
+    /// Attached audio/video parts sent as their named placeholder instead.
+    pub media_withheld: usize,
 }
 
 /// The label of an image a user message names by its path: the file's name.
@@ -650,5 +656,266 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Unsupported image format"));
+    }
+}
+
+/// The OpenAI `input_audio.format` for an audio MIME type: the subtype, with the common aliases
+/// folded (`audio/mpeg` is mp3, `audio/x-wav` is wav).
+pub fn input_audio_format(mime_type: &str) -> String {
+    let subtype = mime_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match subtype.as_str() {
+        "mpeg" | "mp3" => "mp3".to_string(),
+        "x-wav" | "wave" | "vnd.wave" | "wav" => "wav".to_string(),
+        "x-m4a" | "mp4" | "m4a" | "aac" => "m4a".to_string(),
+        other => other.trim_start_matches("x-").to_string(),
+    }
+}
+
+/// An attached audio or video part in the OpenAI chat-completions shape: `input_audio` for sound,
+/// a `video_url` data URL for video (the vLLM / Rapid-MLX extension).
+pub fn convert_media(media: &crate::conversation::message::MediaContent) -> Value {
+    use crate::conversation::message::MediaKind;
+    match media.kind {
+        MediaKind::Audio => json!({
+            "type": "input_audio",
+            "input_audio": {
+                "data": media.data,
+                "format": input_audio_format(&media.mime_type),
+            }
+        }),
+        MediaKind::Video => json!({
+            "type": "video_url",
+            "video_url": {
+                "url": format!("data:{};base64,{}", media.mime_type, media.data)
+            }
+        }),
+    }
+}
+
+/// One piece of a longer PCM WAV clip: where it sits in the clip and its own WAV, base64.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WavPiece {
+    pub start_secs: f64,
+    pub end_secs: f64,
+    pub data: String,
+}
+
+/// A base64 PCM WAV clip longer than `max_secs`, cut into pieces of at most `max_secs` (each a
+/// complete WAV with the clip's own format). `None` = not a PCM WAV this can read, or short
+/// enough to go whole. Gemma 4's audio encoder hears the first 30 s of a clip only (measured
+/// 2026-10-30: a 119 s clip came back as its first 30 s), so a longer one is heard piece by piece.
+pub fn split_pcm_wav(data_b64: &str, max_secs: u32) -> Option<Vec<WavPiece>> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_b64.trim())
+        .ok()?;
+    if bytes.len() < 12 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return None;
+    }
+    let u16_at = |i: usize| -> Option<u16> {
+        Some(u16::from_le_bytes(bytes.get(i..i + 2)?.try_into().ok()?))
+    };
+    let u32_at = |i: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(bytes.get(i..i + 4)?.try_into().ok()?))
+    };
+    let mut fmt: Option<(usize, usize)> = None;
+    let mut data: Option<(usize, usize)> = None;
+    let mut at = 12usize;
+    while at + 8 <= bytes.len() {
+        let id = &bytes[at..at + 4];
+        let size = u32_at(at + 4)? as usize;
+        let body = at + 8;
+        let end = body.saturating_add(size).min(bytes.len());
+        match id {
+            b"fmt " => fmt = Some((body, end)),
+            b"data" => data = Some((body, end)),
+            _ => {}
+        }
+        at = body.saturating_add(size).saturating_add(size & 1);
+    }
+    let (fmt_at, fmt_end) = fmt?;
+    let (data_at, data_end) = data?;
+    if fmt_end - fmt_at < 16 || u16_at(fmt_at)? != 1 {
+        return None;
+    }
+    let block_align = usize::from(u16_at(fmt_at + 12)?);
+    let byte_rate = u32_at(fmt_at + 8)? as usize;
+    if block_align == 0 || byte_rate == 0 {
+        return None;
+    }
+    let total = (data_end - data_at) / block_align * block_align;
+    let per_piece = byte_rate * max_secs as usize / block_align * block_align;
+    if per_piece == 0 || total <= per_piece {
+        return None;
+    }
+    let fmt_chunk = &bytes[fmt_at - 8..fmt_end];
+    let pcm16 = u16_at(fmt_at + 14)? == 16;
+    let data = &bytes[data_at..data_at + total];
+    let mut pieces = Vec::new();
+    let mut offset = 0usize;
+    while offset < total {
+        let len = if total - offset <= per_piece {
+            total - offset
+        } else if pcm16 {
+            quietest_cut(&data[offset..offset + per_piece], byte_rate, block_align)
+        } else {
+            per_piece
+        };
+        let mut wav = Vec::with_capacity(12 + fmt_chunk.len() + 8 + len);
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&((4 + fmt_chunk.len() + 8 + len) as u32).to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(fmt_chunk);
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(len as u32).to_le_bytes());
+        wav.extend_from_slice(&bytes[data_at + offset..data_at + offset + len]);
+        pieces.push(WavPiece {
+            start_secs: offset as f64 / byte_rate as f64,
+            end_secs: (offset + len) as f64 / byte_rate as f64,
+            data: base64::engine::general_purpose::STANDARD.encode(&wav),
+        });
+        offset += len;
+    }
+    Some(pieces)
+}
+
+/// Where to end a piece of 16-bit PCM so a word is not cut in two: the middle of the quietest
+/// 20 ms window in the piece's last 5 seconds (the whole piece when it is shorter than that).
+fn quietest_cut(piece: &[u8], byte_rate: usize, block_align: usize) -> usize {
+    let window = (byte_rate / 50 / block_align).max(1) * block_align;
+    let search = (byte_rate * 5 / block_align) * block_align;
+    if piece.len() < search + window {
+        return piece.len();
+    }
+    let loudness = |w: &[u8]| -> u64 {
+        w.chunks_exact(2)
+            .map(|s| u64::from(i16::from_le_bytes([s[0], s[1]]).unsigned_abs()))
+            .sum()
+    };
+    let mut best = (u64::MAX, piece.len());
+    let mut at = piece.len() - search;
+    while at + window <= piece.len() {
+        let l = loudness(&piece[at..at + window]);
+        if l < best.0 {
+            best = (l, at + window / 2 / block_align * block_align);
+        }
+        at += window;
+    }
+    best.1.max(block_align)
+}
+
+#[cfg(test)]
+mod wav_split_tests {
+    use super::*;
+
+    fn wav(sample_rate: u32, secs: u32) -> String {
+        let data_len = sample_rate * 2 * secs;
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36 + data_len).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&sample_rate.to_le_bytes());
+        b.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"LIST");
+        b.extend_from_slice(&3u32.to_le_bytes());
+        b.extend_from_slice(b"abc\0");
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&data_len.to_le_bytes());
+        b.extend((0..data_len).map(|i| (i % 251) as u8));
+        base64::engine::general_purpose::STANDARD.encode(b)
+    }
+
+    #[test]
+    fn a_long_pcm_wav_is_cut_into_complete_wavs_that_cover_it_in_order() {
+        let pieces = split_pcm_wav(&wav(16_000, 70), 30).unwrap();
+        assert_eq!(pieces.len(), 3);
+        assert_eq!(pieces[0].start_secs, 0.0);
+        assert!((pieces[2].end_secs - 70.0).abs() < 1e-9);
+        for pair in pieces.windows(2) {
+            assert_eq!(pair[0].end_secs, pair[1].start_secs);
+        }
+        for piece in &pieces {
+            assert!(piece.end_secs - piece.start_secs <= 30.0);
+            let wav = base64::engine::general_purpose::STANDARD
+                .decode(&piece.data)
+                .unwrap();
+            assert_eq!(&wav[0..4], b"RIFF");
+            let span = ((piece.end_secs - piece.start_secs) * 32_000.0).round() as usize;
+            assert_eq!(wav.len(), 44 + span);
+        }
+        // Each piece re-splits to nothing: it is short enough to go whole.
+        assert!(split_pcm_wav(&pieces[0].data, 30).is_none());
+    }
+
+    #[test]
+    fn a_piece_ends_in_the_quietest_moment_of_its_last_five_seconds() {
+        // 70 s of loud 16 kHz mono with one silent 0.2 s gap at 27.0-27.2 s.
+        let rate = 16_000usize;
+        let mut samples = vec![12_000i16; rate * 70];
+        for s in &mut samples[rate * 27..rate * 27 + rate / 5] {
+            *s = 0;
+        }
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&((36 + samples.len() * 2) as u32).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&(rate as u32).to_le_bytes());
+        b.extend_from_slice(&((rate * 2) as u32).to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&((samples.len() * 2) as u32).to_le_bytes());
+        for s in &samples {
+            b.extend_from_slice(&s.to_le_bytes());
+        }
+        let pieces =
+            split_pcm_wav(&base64::engine::general_purpose::STANDARD.encode(b), 30).unwrap();
+        let first_end = pieces[0].end_secs;
+        assert!((27.0..27.2).contains(&first_end), "cut at {first_end}");
+        assert_eq!(pieces[1].start_secs, first_end);
+        assert!((pieces.last().unwrap().end_secs - 70.0).abs() < 1e-9);
+        assert!(pieces.iter().all(|p| p.end_secs - p.start_secs <= 30.0));
+    }
+
+    #[test]
+    fn a_short_clip_or_a_non_wav_goes_whole() {
+        assert!(split_pcm_wav(&wav(16_000, 30), 30).is_none());
+        assert!(split_pcm_wav("SUQzBAAAAAAA", 30).is_none());
+        assert!(split_pcm_wav("not base64!", 30).is_none());
+    }
+}
+
+#[cfg(test)]
+mod media_format_tests {
+    use super::input_audio_format;
+
+    #[test]
+    fn input_audio_format_folds_the_common_mime_aliases() {
+        for (mime, want) in [
+            ("audio/wav", "wav"),
+            ("audio/x-wav", "wav"),
+            ("audio/mpeg", "mp3"),
+            ("audio/mp4", "m4a"),
+            ("audio/x-m4a", "m4a"),
+            ("audio/flac", "flac"),
+            ("audio/ogg; codecs=opus", "ogg"),
+        ] {
+            assert_eq!(input_audio_format(mime), want, "{mime}");
+        }
     }
 }

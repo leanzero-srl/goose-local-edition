@@ -867,6 +867,11 @@ mod imp {
                 .model_profiles
                 .get(model_id)
                 .and_then(|p| p.kv_cache),
+            ple_offload: ctx
+                .settings
+                .model_profiles
+                .get(model_id)
+                .and_then(|p| p.ple_offload),
             nodes: &nodes,
             cluster: cluster.as_ref(),
             tensor: tensor.as_ref(),
@@ -982,7 +987,11 @@ mod imp {
     ) -> Result<MlxEnginePlacementPlanResponse, agent_client_protocol::Error> {
         let started = std::time::Instant::now();
         let ctx = context().await?;
-        let local = hf::list_local_models(&ctx.models_dir)
+        // Synchronous walk of every model (NFS-linked on Gabee): on the blocking pool.
+        let models_dir = ctx.models_dir.clone();
+        let local = tokio::task::spawn_blocking(move || hf::list_local_models(&models_dir))
+            .await
+            .map_err(|e| agent_client_protocol::Error::internal_error().data(format!("{e:#}")))?
             .map_err(|e| agent_client_protocol::Error::internal_error().data(format!("{e:#}")))?;
         let chosen: Vec<&hf::LocalModel> = match &req.model_id {
             Some(id) => {

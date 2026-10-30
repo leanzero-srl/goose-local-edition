@@ -1,5 +1,37 @@
 # Distributed engine history (moved here from the mlx-jaccl-cluster skill, 2026-10-03)
 
+## Contents
+- Distributed engine — owner requirements & guardrail design (2026-09-23, not yet built)
+- 2026-09-23 — Flash landed
+- Pipeline split for qwen4_exp (Qwen3.8-Flash-Next) — built 2026-09-23, NOT yet run on two Macs
+- Copying a model to the other Mac over TB5 (goose replica, built 2026-09-23)
+- Flash (qwen4_exp, 95.7 GiB text) on BOTH Macs — measured 2026-09-24
+- goose's DISTRIBUTED engine — BUILT 2026-09-24 (goose main, crates/goose-sidecar/src/distributed/)
+- goose's distributed engine SETS ITSELF UP — 2026-09-24 (night), commits ff38b70f9 d61595bb6 66a28a80f
+- 2026-09-24 — ONE served-id rule for both engines (d8f60daba, ea8ee809f) — supersedes the served-id TRAP above
+- 2026-09-24 — macOS LOCAL NETWORK PRIVACY was why the app's preflight ping failed (90de1b9e2, cd7907158)
+- Full-model reference without 98 GB resident — layer streaming (2026-09-24)
+- Flash OpenAI server — `pipeline_qwen4 serve` (fork 272cb064, 2026-09-24)
+- 2026-09-24 — goose runs the qwen4_exp PIPELINE through the fork's server (goose-sidecar distributed/)
+- Flash from goose's UI + KV slots (2026-09-24)
+- goose's distributed engine over LeanZero Link — BUILT 2026-09-24 (3f0f64f1e..8670bfdb2)
+- Hermetic e2e recipe (proven 2026-09-24, both personal Tailscale identities byte-identical before/after)
+- Traps (each cost time)
+- LIVE test (waits on the owner: app build ≥ 8670bfdb2 on BOTH Macs, Link signed in + Connect on both)
+- LIVE result 2026-09-24 (installed Goose Swarm 3.0.22 on both, Link mesh 100.64.0.2 ↔ 100.64.0.3)
+- IMAGE INPUT on the Flash split (2026-09-24, fork d40e9e363 dabcc67b2 2f7cdf27c a5cb98757; goose pin 8a23b10dd)
+- MEMORY COMPACTION ("Make room") + the GPU-ceiling budget — goose f6fcc664b, fork 2ce699589 (in pin 2f7cdf27c),
+- 2026-09-25 — the split capped EVERY answer at 512 tokens (Q-65) — fixed 39db807f0 (+ 330dc836c)
+- 2026-09-25 — Q-66 idle spin on the TENSOR split + Q-71 window 141,568 (branch q66-doorbell, 158981ad7)
+- 2026-09-25 — Q-75 PIPELINE prefix cache (fork b7bd1afc2, tag lz-pipeline-qwen4.1; goose cc790b8cd, worktree br
+- 2026-09-26 — Q-114 ROOT CAUSE: the tensor split hangs at ~10.5k generated tokens (goose branch q114-gdn-paddin
+- 2026-10-26 MiMo-V2.6-Flash (mimo_v2, 48 layers, 256 experts) across workhorse + workmule
+- 2026-10-26 (evening) MiMo split in goose: three findings on branch mimo-distributed
+- 2026-10-27 MiMo split live through goose (branch mimo-distributed ae9d068c98)
+- 2026-10-27 (session 10) MiMo split: prefill cause, memory model, long context (branch mimo-distributed)
+- 2026-10-28 (session 13) MiMo-V2.6-Flash MOPD omni (EigenLabs 4bit-mtp) live on the split (mimo-distributed 116
+
+
 Verbatim record of goose's DISTRIBUTED engine work, 2026-09-23..26, previously kept in
 `~/.claude/skills/mlx-jaccl-cluster/SKILL.md`. That skill now holds only the raw two-Mac MLX/JACCL layer
 (topology, procedure, measured all_sum, mlx_lm sharding, the Step 1b soak). Read SKILL.md's "The
@@ -406,3 +438,91 @@ default OFF, read per request — flips without a reconnect). The ssh path is un
   `cargo test -p goose-sidecar --features rustls-tls --test distributed_live -- --ignored --nocapture live_q114` with
   GOOSE_DIST_LOCAL_PYTHON / GOOSE_DIST_REMOTE_PYTHON = the managed envs and GOOSE_DIST_REMOTE_MODEL=/Users/workhorse/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx
   (the recorded_config defaults point at the deleted jaccl-smoke venvs).
+
+## 2026-10-26 MiMo-V2.6-Flash (mimo_v2, 48 layers, 256 experts) across workhorse + workmule
+- goose's distributed engine refuses mimo_v2 (config.rs only qwen3_5 tensor / qwen4_exp pipeline); run raw mlx_lm via
+  ~/jaccl-smoke/mimo-serve.sh (mlx_lm PR #1219 branch, pipeline split 19,29, port 8097). TP even split (~84 GB/rank) does not fit the M3U.
+- KV is tiny: 9 full-attn layers x 2560 B/token (4 kv heads, k192/v128, bf16); 39 SWA layers windowed at 128.
+- The JACCL pipeline crash seen on the random tiny model came from an mxfp4 embedding only; real layout passes (mlx-jaccl-cluster changelog).
+
+## 2026-10-26 (evening) MiMo split in goose: three findings on branch mimo-distributed
+- Debug `goose serve` died on the desktop's first providers/config/status request ("tokio-rt-worker has
+  overflowed its stack"). Cause: goose-acp-macros' generated `handle_custom_request` awaited every handler
+  inline, a 1.8 MB debug stack frame on a 2 MiB worker. Each arm is now a boxed future (frame 0.79 MB);
+  test acp_custom_request_stack_test runs on 2 MiB workers. RUST_MIN_STACK is no longer needed.
+  Read frame sizes from a macOS .ips crash report: map each frame to its function start (nm -n) and read
+  the prologue (`sub x9, sp, #N, lsl #12` = probed frame size).
+- Pipeline fork pin: lz-pipeline-qwen4.15 = 07126f05 (vendors mlx-lm's mimo_v2). "Save and provision"
+  builds both Macs' envs in under 10 s when uv's cache is warm.
+- rdmaGid: GID[0] ULA, GID[1] fe80, GID[2] ::ffff:v4 on both TB ends is fine (JACCL all_sum 8.95 GB/s).
+  Only an EMPTY index below the IPv4 GID fails (the 2026-09-24 soak, errno 96). The preflight link
+  repair cannot reorder the table, so the old "must be GID[1]" check refused a working link.
+- Plan with both Macs free: split 17/31 (workhorse L31-47 61.2 GB, workmule L0-30 107.4 GB), context
+  126,208 at the 5% mimo_v2 reserve. Any other model or TTS job on either Mac (30+ GB) and no split fits.
+
+## 2026-10-27 MiMo split live through goose (branch mimo-distributed ae9d068c98)
+- Peer rank program must stay under OpenSSH's 256 KiB exec packet: shipped zlib+base64 (264 KB -> 108 KB on the wire).
+- After a ~100 GB load the workhorse GPU took 6.9-16.4 s to answer; the GPU-stream seed all_sum then died on the mule
+  ("[METAL] GPU Timeout Error"). Fix: timed local GPU warm-up + second CPU barrier (GOOSE_RANK_PIPELINE_WARM).
+- MiMo's tokenizer_config.json names json_tools but its template writes qwen3_coder XML: swap the parser after load.
+- Mule NFS (rclone, soft) fails cold loads ~1/2 at shard 3: warm with an mx.load pass first.
+- Measured: decode ~35 tok/s short, 31 at 16-32k, 27.5 at 64k; prefill ~290 tok/s to 32k, 112 avg at 64k.
+  Context past ~257k is bound by the prefill score workspace (chunk x context x heads x 4 B), not KV.
+
+## 2026-10-27 (session 10) MiMo split: prefill cause, memory model, long context (branch mimo-distributed)
+- PREFILL DROP (64k fell 270 -> 80 tok/s, TTFT 562 s): NOT the full-attention maths alone. Microbench (scratchpad
+  mimo10/sdpa*.py, mini.py = the real vendored mimo_v2 with the first N checkpoint layers through mlx_lm's own
+  BatchKVCache path): unfused SDPA (head_dim 192) costs ~0.83 ms per 1k width per 256-token chunk per full layer on the
+  M3 Ultra (~0.6 on the M5 Max), ~60 s of a 64k prefill. The rest was MEMORY: rank 0's weights not wired and compressed
+  by the kernel under pressure (top CMPRS 47-63 GB of rank 0's 61-64 GB, vm_stat compressor 54 GB, swap +2.5..+6 GB)
+  whenever something else held RAM on the workhorse: the mule's NFS reads through its file cache during the load,
+  content-pipeline TTS jobs (16 GB), a GitHub Actions runner (16 GB RSS, 81 node procs), our own cargo/pnpm build.
+  ROOT: an MLX array is NOT wired until a GPU command buffer uses it (4.8 GB shard: wired 10.2 -> 14.7 GB only after
+  a 1-element GPU sum), and an idle rank's weights are unwired again; under file-cache pressure the kernel compresses
+  them. Three attempts failed (parallel, rank 0 first, wire-touch per shard). WHAT WORKED (12:36 load: pressure never
+  WARN, compressor 0.2 GB, swap flat, 221 s): rank 0 loads LAST and first drops the whole model folder from the file
+  cache (msync MS_INVALIDATE on a read-only mmap, no root: 167 GB asked), and every rank evaluates its weights shard by
+  shard dropping each shard after (73 GB on rank 0). See rank_pipeline_split.py evict_file_cache/shard_groups.
+  Other fixes: ranks load one at a time (`pipeline_load_turn`), a node-dispatch "benchmark"
+  hold on both Macs while the split measures (perl $0="mimo-longctx benchmark hold"; node-probe then says BUSY and
+  queues TTS jobs), wait for CI/TTS/builds to end before a load, and larger prefill chunks at short widths (the plan's
+  step is 2,048, the workspace bounds each step: 32k on 6 layers 16.2 s at 256 vs 11.7 s at 1,024).
+  Result: 64k TTFT 562 -> 218 s (prefill 112 -> 293 tok/s), decode 28.0.
+- MEMORY MODEL (measured, use it before every long run): real peak per rank = weights + full_layers x 2560 B x N +
+  chunk x width x (2 x 64 x 2 + 1) B. The x2 is MLX's SDPA fallback holding scores AND softmax (64k: 9.5-10 GB past
+  resident vs a 5.1 GB one-copy workspace). 128k check: predicted 73.9 / 106.3, measured 72.9 / 105.9 GB.
+  Weights 19/29: rank0 68.28 GB (4 full: 29,35,41,47), rank1 100.31 GB (5 full: 0,5,11,17,23); 18/30: 64.8 / 103.86.
+- PLANNER (layer_split.rs): pair_bytes = 2*heads*act+1; chunk falls 256 -> 16 (MIN_PREFILL_CHUNK) for a requested
+  context; then plans with NO cached prompt context (reason says a follow-up re-reads); config `gpu_headroom_gb: 8.0`
+  (+ `node_gpu_headroom_gb` by node name) caps each budget at ceiling - headroom = the owner's "8 GB under the Metal
+  limit". A derived context (none set) is now smaller (true scores at a 256 chunk).
+- NFS (machine-sync 61f1b54, the NFS agent): the mule mount was `soft`; macOS ignores timeo on soft mounts while
+  reconnecting (0.25 s) -> ETIMEDOUT -> "[load_safetensors] Failed to open". Now hard,intr,deadtimeout=180. Cold
+  loads through goose since: 09:26, 09:55, 10:24, 10:47, 11:21 — 0 "not responding", 0 open failures, no warm-up read.
+- UI (590c272758, 22ff9e614a, 5bd17ea712): hero no longer "Stopped" while the split's status is unread; the split
+  card's context is goose's layer-split plan (no "fits only at"); measured runs key mlxLmPipeline. Verified over CDP.
+- Traps: the card's Stop button can vanish from a stale window -> reload then click (mimo10/stop.sh). /v1/models
+  answers BEFORE the weights load (wait for GOOSE_RANK_PIPELINE_WARM on both). pgrep -f <pattern> matches your own
+  zsh -c wrapper: an until-loop on it never ends.
+- RESULTS 2026-10-27 (19/29 unless noted): 64k 218 s TTFT / 293 prefill / 28.0 decode; 128k 512 / 250 / 22.3, peaks
+  72.9/105.9; 250k 1,594 / 157 / 15.8, 74.3/107.6; 275k (max under 8 GB headroom) 1,826 / 151 / 15.0, 74.9/108.4
+  (mule 7.05 GB under: ~1 GB unmodeled on rank 1). 300k/350k refused (mule short 0.65/1.94 GB). Answers: 2/3 to 128k,
+  degraded past it (garbled self-corrections at 250k).
+
+## 2026-10-28 (session 13) MiMo-V2.6-Flash MOPD omni (EigenLabs 4bit-mtp) live on the split (mimo-distributed 11621e2dd7)
+- THREE fixes before it served (each with a failing-without test): acb9f02730 the layer split's fork env is proven
+  by preflight (a pin bump never rebuilt it before; only qwen4_exp was proven); ff3deeda31 mlx_lm sharded_load
+  looks parameters up as model.* but an mlx-vlm-layout index says language_model.* (checkpoint_weight_map shim);
+  e210b73e2f rank_media's apply_chat_template wrapper must be set with object.__setattr__ on the TokenizerWrapper
+  (its __setattr__ forwards to HF -> infinite recursion) and must honour the callee's tokenize default (True).
+- CONTEXT: with the vision tower on rank 0 the owner's rules (5% reserve, 8 GB under the Metal limit) cap the
+  window at 114,688 (19/29: workhorse short ~3-4 GB at 262k; 18/30: mule over 107.45 GB past ~116k). The text-only
+  build reached 275k only at 19/29 with ~1 GB more available on the workhorse; available swings 76-77.6 GB.
+- VISION WORKS: table cell + max read right; colour A/B ImageNet vs CLIP (GOOSE_MIMO_IMAGE_NORM via the app's env)
+  showed no measurable difference (44 items, logprobs within 0.01) -> ImageNet stays default.
+- CACHE: 100k cold TTFT 360 s, warm 0.52 s, decode ~25 tok/s, swap flat.
+- OPEN BLOCKER: a 2-ROW batch kills the split (jaccl Recv -12 = ENOMEM on ibv_post_recv / rank-1 Metal GPU
+  timeout), reproduced with two concurrent prompts (scratchpad s13/pair.py); text-only run of 10-27 survived 2-row
+  batches at 18/30. Gauntlet not run. Details + candidate fix: HANDOFF.md "Session 13".
+- TRAPS: the dev app has two CDP page targets (main + #/engine-glance), pick by URL; ~/goose-builds tools hardcode
+  9897 and need mainpage.mjs beside them; pgrep|xargs kill in go.sh replaced by a per-pid loop.

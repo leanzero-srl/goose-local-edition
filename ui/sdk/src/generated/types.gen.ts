@@ -2957,11 +2957,17 @@ export type MlxEngineStatusDto = {
      * While `state` is "stopped": what left it stopped, since this goose started — `owner` (this
      * Mac's owner unmounted it) · `linkedMac` (a linked Mac unmounted it over LeanZero Link) ·
      * `notStarted` (no Unmount since this goose started: nothing has run the engine since its
-     * launch — what an app relaunch leaves). Absent in every other state, and from a goose
-     * before it. A Link peer whose chat route this engine served re-mounts it only on
-     * `notStarted`.
+     * launch — what an app relaunch leaves) · `outside` (something outside goose stopped the
+     * engine: a SIGTERM or SIGINT no goose path sent — a stop, not a failure; `stoppedOutside`
+     * says what ended). Absent in every other state, and from a goose before it. A Link peer
+     * whose chat route this engine served re-mounts it only on `notStarted`.
      */
     stoppedBy?: string | null;
+    /**
+     * When `stoppedBy` is `outside`: which engine process ended and how, in one neutral
+     * sentence. Absent otherwise.
+     */
+    stoppedOutside?: string | null;
     /**
      * What this Mac's owner last started serving here and did not stop — what this goose's own
      * launch restores (`mlxEngine/servingIntent`). Absent when nothing is recorded (and from a
@@ -3797,7 +3803,8 @@ export type MlxModelProfileDto = {
     contextLimit?: number | null;
     /**
      * Speculative decoding: `"mtp"` (demand the MTP head, skipped with a warning when the
-     * model dir has no `mtp.safetensors`), `"off"`, or absent = auto (on when the head exists).
+     * model has none: no `mtp.safetensors` and no in-shard head), `"off"`, or absent = auto
+     * (on when the head exists).
      */
     speculative?: string | null;
     /**
@@ -3810,6 +3817,18 @@ export type MlxModelProfileDto = {
      * the text lane (`--text-only`). No effect on a checkpoint that declares no vision.
      */
     textOnly?: boolean | null;
+    /**
+     * Keep the n-gram (PLE) table on disk (`--qwen4-ple-offload`). Absent = auto: on for a
+     * Qwen3.8-Flash-Next checkpoint that would not otherwise fit this Mac. Ignored for a
+     * checkpoint without the table (`MlxLocalModelDto::has_ngram_table`).
+     */
+    pleOffload?: boolean | null;
+    /**
+     * RoPE scaling past the checkpoint's native positions (`--qwen4-rope-scaling`): `"yarn"`,
+     * `"yarn:<factor>"`, a JSON object or `"off"`. Absent = the checkpoint's own config.
+     * `qwen4_exp` only; any other family fails the mount.
+     */
+    ropeScaling?: string | null;
     /**
      * Sent as `chat_template_kwargs.enable_thinking` on every turn a session routes to this
      * model: `"on"` | `"off"`. Absent = auto — nothing is sent and the engine decides (Rapid-MLX
@@ -3829,11 +3848,39 @@ export type MlxModelProfileDto = {
      * head_dim; the engine: a cache layout it cannot quantize — both name the reason).
      */
     kvCache?: MlxKvCacheModeDto | null;
+    /**
+     * Prompt-lookup (n-gram copy) drafting. Absent = auto (the engine's family default: on
+     * inside MTP for Qwen3.5/3.6/3.8, off for the suffix lane). Rides the engine env inside MTP
+     * and `--suffix-decoding` flags on a pure-attention model served without MTP; a hybrid
+     * served without MTP gets nothing. A change restarts the engine.
+     */
+    promptLookup?: MlxPromptLookupDto | null;
 };
 
 export type MlxThinkingModeDto = 'on' | 'off';
 
 export type MlxKvCacheModeDto = 'int8' | 'int4';
+
+/**
+ * Every field absent = the engine's own default for the lane.
+ */
+export type MlxPromptLookupDto = {
+    mode?: MlxPromptLookupModeDto | null;
+    /**
+     * MTP lane only: shortest context n-gram that may trigger a copy (engine floor 2).
+     */
+    minNgram?: number | null;
+    /**
+     * MTP lane: longest n-gram matched. Suffix lane: `--suffix-max-suffix-len`.
+     */
+    maxNgram?: number | null;
+    /**
+     * MTP lane: copy-draft ceiling. Suffix lane: `--suffix-max-draft`.
+     */
+    maxDraft?: number | null;
+};
+
+export type MlxPromptLookupModeDto = 'on' | 'off';
 
 /**
  * Persist MLX engine settings. A running engine keeps its old arguments; status reports
@@ -3893,6 +3940,32 @@ export type MlxLocalModelDto = {
      */
     kvCacheMeasurement?: MlxKvCacheMeasurementDto | null;
     kvCacheMeasurementError?: string | null;
+    /**
+     * The model has an MTP head the engine serves (`mtp.safetensors`, or `mtp.*` tensors in the
+     * shards of a Qwen3.8-Flash-Next checkpoint), so auto/`"mtp"` serves it and the
+     * prompt-lookup lever rides inside it.
+     */
+    hasMtpHead?: boolean;
+    /**
+     * config.json declares an audio encoder, so auto (`textOnly` unset) mounts the checkpoint on
+     * the engine's media lane: it hears audio and watches video, and the text-only lane is off.
+     */
+    hearsAudio?: boolean;
+    /**
+     * config.json declares recurrent-state layers (GatedDeltaNet, Mamba, ...): without MTP the
+     * prompt-lookup lever is unavailable. Absent exactly when `hybrid_error` says why.
+     */
+    hybrid?: boolean | null;
+    hybridError?: string | null;
+    /**
+     * The checkpoint carries an n-gram (PLE) table the engine can leave on disk: the
+     * "Keep n-gram table on disk" lever is offered only then.
+     */
+    hasNgramTable?: boolean;
+    /**
+     * What auto resolves to on this Mac (on = the model would not otherwise fit).
+     */
+    ngramTableAutoOn?: boolean;
 };
 
 /**

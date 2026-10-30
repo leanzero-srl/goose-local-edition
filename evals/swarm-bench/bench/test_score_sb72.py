@@ -874,6 +874,111 @@ class CoveredCanvasTests(unittest.TestCase):
         self.assertIsNone(self.charge(copy.deepcopy(QWEN_COAST)))
 
 
+
+BIND_FAILED = 'OSError: [Errno 48] Address already in use'
+
+
+def spawn(index, port, rc, line=''):
+    return {'spawn': index, 'port': port, 'returncode': rc, 'self_exit': rc is not None and rc >= 0,
+            'spawned_at': 0.0, 'last_line': line}
+
+
+def spawns(*rows):
+    return [{**row, 'of': len(rows)} for row in rows]
+
+
+class LedgerdSelfExitTests(unittest.TestCase):
+    """Flash-Next SB7.2 (2026-10-29): the B3 restart's ledgerd died on EADDRINUSE (its transport set
+    allow_reuse_address after the constructor bound) and the run was REFUSED for fire_d1_mutation:failed.
+    The candidate stopped serving: charged, never refused. The harness's own faults still refuse."""
+
+    def score(self, tier, records, harness_missing=('fire_d1_mutation:failed',)):
+        def stub(name):
+            return lambda c: (base.unavail('idle latency battery never ran') if name == 'b_events_log'
+                              else base.g(1.0, 'synthetic'))
+        checks = [(name, t, stub(name)) for name, t, _fn in base.SB7_CHECKS]
+        with tempfile.TemporaryDirectory() as tmp, patch.object(base, 'SB7_CHECKS', checks), \
+                patch.object(base, '_nominal_console_errors', return_value=0):
+            ctx = SimpleNamespace(probes={'viz': {'timedOut': False}}, root=Path(tmp),
+                                  fixture_seed='c1d09bb52716b03d', port_bound=True,
+                                  harness_missing=list(harness_missing), sched_unreached=[], stream_head=None,
+                                  b3_result=None, ledger_spawns=records)
+            return tier.evaluate(ctx)
+
+    # The receipt's shape: boot ledgerd killed by B3, its restart died on bind, then the error journey's
+    # own ledgerd on another port served and was SIGKILLed by the harness.
+    FLASH = spawns(spawn(0, 57533, -9), spawn(1, 57533, 1, BIND_FAILED), spawn(2, 61001, -9))
+
+    def test_a_graded_ledgerd_that_exited_on_its_own_is_charged_not_refused(self):
+        result = self.score(score, self.FLASH)
+        self.assertEqual(result['harness_missing'], [])
+        self.assertEqual(result['ledgerd_exit']['harness_missing_from_exit'], ['fire_d1_mutation:failed'])
+        row = next(r for r in result['checks'] if r['check'] == 'b_events_log')
+        self.assertEqual(row['score'], 0.0)
+        self.assertNotIn('unavailable', row)
+        self.assertIn('port 57533) exited on its own with code 1', row['detail'])
+        self.assertIn(BIND_FAILED, row['detail'])
+        self.assertIn('LEDGERD EXIT: ', score.format_report(result, 'flash'))
+
+    def test_harness_controls_still_refuse(self):
+        refused = 'missing benchmark infrastructure: fire_d1_mutation:failed'
+        # Every ledgerd was stopped by the harness (SIGKILL, -9): a failed fire is the harness's.
+        with self.assertRaisesRegex(RuntimeError, refused):
+            self.score(score, spawns(spawn(0, 57533, -9), spawn(1, 57533, -9)))
+        with self.assertRaisesRegex(RuntimeError, refused):
+            self.score(score, [])
+        # A restart died but a later restart on the graded port served: the candidate was serving.
+        with self.assertRaisesRegex(RuntimeError, refused):
+            self.score(score, spawns(spawn(0, 57533, -9), spawn(1, 57533, 1, BIND_FAILED), spawn(2, 57533, -9)))
+        # Only the error journey's own ledgerd exited: not the graded service.
+        with self.assertRaisesRegex(RuntimeError, refused):
+            self.score(score, spawns(spawn(0, 57533, -9), spawn(1, 61001, 1)))
+        # A harness step the exit does not explain still refuses.
+        with self.assertRaisesRegex(RuntimeError, r'missing benchmark infrastructure: arm_hold_create:failed$'):
+            self.score(score, self.FLASH, ['fire_d1_mutation:failed', 'arm_hold_create:failed'])
+
+    def test_sb71_keeps_refusing(self):
+        with self.assertRaisesRegex(RuntimeError, 'missing benchmark infrastructure: fire_d1_mutation:failed'):
+            self.score(score_sb71, self.FLASH)
+
+    def test_the_raw_graded_recording_publishes_when_the_graded_ledgerd_exited(self):
+        for records, expect in ((self.FLASH, True), (spawns(spawn(0, 57533, -9), spawn(1, 57533, -9)), False)):
+            with self.subTest(expect=expect), tempfile.TemporaryDirectory() as tmp, score.tier_runtime(), \
+                    patch.object(score_sb71.subprocess, 'run') as run:
+                raw = Path(tmp) / 'bench-media' / 'raw'
+                raw.mkdir(parents=True)
+                (raw / 'page@x.webm').write_bytes(b'webm')
+                ctx = SimpleNamespace(probes={'viz': {'navigationError': 'net::ERR_CONNECTION_REFUSED'}},
+                                      ledger_spawns=records)
+                score_sb71.encode_recorded_media(ctx, tmp)
+                manifest = Path(tmp) / 'bench-media' / 'media-manifest.json'
+                self.assertEqual(manifest.exists(), expect)
+                self.assertEqual(run.called, expect)
+                if expect:
+                    video = json.loads(manifest.read_text())['videos'][0]
+                    self.assertIn("ledgerd had exited", video['selection'])
+                    self.assertEqual(ctx.probes['viz']['sb71']['media']['manifest'], 'bench-media/media-manifest.json')
+
+    def test_gather_records_only_the_candidates_own_exits(self):
+        import signal
+        import subprocess
+        import sys
+        import time
+        own = subprocess.Popen([sys.executable, '-c', 'raise SystemExit(1)'], start_new_session=True)
+        killed = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
+        alive = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
+        try:
+            own.wait(timeout=10)
+            os.killpg(killed.pid, signal.SIGKILL)
+            killed.wait(timeout=10)
+            records = base._ledger_spawn_records([(killed, 1, time.time()), (own, 1, time.time()),
+                                                  (alive, 2, time.time())])
+        finally:
+            os.killpg(alive.pid, signal.SIGKILL)
+            alive.wait(timeout=10)
+        self.assertEqual([(r['spawn'], r['of'], r['port'], r['returncode'], r['self_exit']) for r in records],
+                         [(0, 3, 1, -9, False), (1, 3, 1, 1, True), (2, 3, 2, None, False)])
+
 if __name__ == '__main__':
     unittest.main()
 

@@ -3249,6 +3249,10 @@ export const zMlxEngineStatusDto = z.object({
         z.string(),
         z.null()
     ]).optional(),
+    stoppedOutside: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
     servingIntent: z.union([
         zMlxServingIntentDto,
         z.null()
@@ -3769,6 +3773,30 @@ export const zMlxThinkingModeDto = z.enum(['on', 'off']);
 
 export const zMlxKvCacheModeDto = z.enum(['int8', 'int4']);
 
+export const zMlxPromptLookupModeDto = z.enum(['on', 'off']);
+
+/**
+ * Every field absent = the engine's own default for the lane.
+ */
+export const zMlxPromptLookupDto = z.object({
+    mode: z.union([
+        zMlxPromptLookupModeDto,
+        z.null()
+    ]).optional(),
+    minNgram: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    maxNgram: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    maxDraft: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
 /**
  * Per-model sampling/context profile. Sampling is per MODEL: the engine spawns each
  * mounted model with the flags from ITS profile in `MlxEngineSettingsDto::model_profiles`.
@@ -3818,6 +3846,14 @@ export const zMlxModelProfileDto = z.object({
         z.boolean(),
         z.null()
     ]).optional(),
+    pleOffload: z.union([
+        z.boolean(),
+        z.null()
+    ]).optional(),
+    ropeScaling: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
     thinking: z.union([
         zMlxThinkingModeDto,
         z.null()
@@ -3828,6 +3864,10 @@ export const zMlxModelProfileDto = z.object({
     ]).optional(),
     kvCache: z.union([
         zMlxKvCacheModeDto,
+        z.null()
+    ]).optional(),
+    promptLookup: z.union([
+        zMlxPromptLookupDto,
         z.null()
     ]).optional()
 });
@@ -4013,7 +4053,19 @@ export const zMlxLocalModelDto = z.object({
     kvCacheMeasurementError: z.union([
         z.string(),
         z.null()
-    ]).optional()
+    ]).optional(),
+    hasMtpHead: z.boolean().optional().default(false),
+    hearsAudio: z.boolean().optional().default(false),
+    hybrid: z.union([
+        z.boolean(),
+        z.null()
+    ]).optional(),
+    hybridError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    hasNgramTable: z.boolean().optional().default(false),
+    ngramTableAutoOn: z.boolean().optional().default(false)
 });
 
 export const zMlxEngineModelsListResponse_unstable = z.object({

@@ -47,6 +47,14 @@ CALL_BUDGET = 150
 # test_bench_budget pins it to the source).
 MAX_TURNS_MESSAGE = ("I've reached the maximum number of actions I can do without user input. "
                      "Would you like me to continue?")
+# WRAP-UP NUDGE (owner 2026-10-30: on in benchmarks too): goose's own turn-context line telling the entrant
+# to stop starting features at 80% of the budget, deliver at 90% and only verify in the last calls
+# (crates/goose/src/agents/wrap_up.rs). It counts the same turns --max-turns stops at. Every budgeted run
+# switches it on explicitly, runs it at goose's defaults (the operator's GOOSE_WRAP_UP_* settings are
+# removed from the entrant's config snapshot) and records the version, so the board can label the run.
+WRAP_UP_NUDGE_VERSION = 1  # pinned to wrap_up.rs WRAP_UP_NUDGE_VERSION by test_bench_budget
+WRAP_UP_SWITCH = 'GOOSE_WRAP_UP_NUDGE'
+WRAP_UP_PREFIX = 'GOOSE_WRAP_UP_'
 WALLET_ENV = 'BENCH_MAX_USD'
 # Transport cadence, not a bound on model work: OpenRouter writes a generation record after the
 # stream ends and bench_cost's late-record policy first re-asks after this long, so polling faster
@@ -57,6 +65,24 @@ STATED_BUDGET = re.compile(r'budget of\s+([0-9][0-9,]*)\s+model calls', re.IGNOR
 
 def call_budget_args(tier) -> list[str]:
     return ['--max-turns', str(tier.call_budget)]
+
+
+def wrap_up_env() -> dict[str, str]:
+    return {WRAP_UP_SWITCH: 'true'}
+
+
+def wrap_up_snapshot(snapshot: dict | None) -> dict | None:
+    """The entrant's config snapshot without the operator's wrap-up settings: every budgeted run gets the
+    same nudge, the one WRAP_UP_NUDGE_VERSION names."""
+    if not snapshot or not isinstance(snapshot.get('config'), dict):
+        return snapshot
+    config = {key: value for key, value in snapshot['config'].items() if not str(key).upper().startswith(WRAP_UP_PREFIX)}
+    return {**snapshot, 'config': config}
+
+
+def wrap_up_record(budgeted: bool) -> dict:
+    return ({'wrap_up_nudge': True, 'wrap_up_nudge_version': WRAP_UP_NUDGE_VERSION} if budgeted
+            else {'wrap_up_nudge': False})
 
 
 def stated_budgets(text: str) -> list[int]:

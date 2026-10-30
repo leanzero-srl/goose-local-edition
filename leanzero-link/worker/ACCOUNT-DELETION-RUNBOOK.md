@@ -1,0 +1,46 @@
+# Account deletion incidents
+
+Internal operations reference, 26 October 2026. This procedure does not authorize a production change. The deletion API and client credential handling are in [CONTROLLER-API.md](CONTROLLER-API.md#account-deletion-2026-10-26).
+
+## Customer-visible truth
+
+A confirmed request immediately revokes ordinary Link account access. A `pending` result means cleanup is unfinished; never describe it as deleted. The client keeps its purpose-bound deletion receipt and can retry status after relaunch. The service does not run a background deletion scheduler. Mac files, sessions and model weights are outside this service and are untouched.
+
+An incident does not require the customer to email support to initiate deletion. Collect the request ID through the support path already in use; never ask for the emailed code, deletion token, refresh token, account JWT, node secret or provider API key. The owner must publish the actual retention policy for shared contacts and historical records before claiming App Store readiness. This runbook does not establish a legal retention basis.
+
+## Triage
+
+1. Record the request ID, deployment identity/version, first and latest observation times, `status`, `pending`, `retained` and `completed_at`. Obtain the account from the authenticated case context. Never include credential-bearing request headers or complete registry JSON in an incident ticket.
+2. Read the exact account registry row, using the deployment's real adapter. Node uses `<LINK_KV_DIR>/controller-registry.sqlite`, table `accounts`, with the normalized email's SHA-256 as `account_key`. Cloudflare uses the account's `LINK_DEVICE_REGISTRY` durable object; it is not Workers KV. Check the current account UUID, row revision, deletion request ID/status, cleanup lease, `legacy_operations` and `legacy_mesh_mints.reservations`. Report only those non-secret fields. Do not initialize a replacement registry or copy one deployment's state over another.
+3. Match the pending reason below. A successful status retry is the supported ordinary recovery. It rechecks the deletion receipt and atomically acquires a cleanup lease. Do not edit `status`, invent `completed_at`, delete the registry row, or zero a counter to get a green result.
+
+| Pending reason | Meaning and next action |
+| --- | --- |
+| `in_flight_cleanup` | Another cleanup owns a live 60-second lease. Retry after it finishes; a crashed cleanup can be reclaimed after lease expiry. A provider request has a shorter 30-second transport timeout. |
+| `cleanup_interrupted` | Cleanup lost its lease before completion. Retry status; the stale request cannot finalize a different lease. |
+| `in_flight_requests` | An admitted auth/mint operation has not settled. Unstarted mint reservations and auth operations with no external write are reclaimable after their 60-second lease. A mint marked `external_started` is not reclaimed by a timer; inspect it as an ambiguous operation if its worker disappeared. |
+| `legacy_mesh_outcome_unknown` | A Headscale user or preauth-key CREATE may have committed after its response was lost, malformed or failed at the server. Follow the ambiguous-write procedure below. |
+| `legacy_write_outcome_unknown` | An expired legacy auth operation still records an outstanding Resend contact or Sanity event create. Follow the ambiguous-write procedure below. |
+| `mesh` | Inspect complete Headscale user/key/node responses and the account-isolation policy. Missing configuration, malformed/ambiguous identity, unexpected pagination, provider outage or deletion refusal all keep this pending. Repair the concrete provider problem, then retry status. |
+| `contact` | Inspect Resend contact identity and Link segment membership with the configured account. Repair the actual provider/configuration failure, then retry status. Never delete the global contact to resolve this row. |
+| `activity` | Inspect the configured Sanity sink and exact Link-source account event count. Check credentials and mutation/count responses; a nondecreasing count is a failure. Repair the concrete issue and retry. |
+| `account_records` | Inspect the actual KV adapter and storage health for the account node secret, OTP and email rate keys. Fix storage access; status performs conditional erasure under the cleanup lease. |
+
+## Ambiguous external CREATE: evidence before repair
+
+A timeout, a missing list result, elapsed hours or a worker restart does not prove a remote CREATE was cancelled. The independent regression reproduces a lost Headscale response followed by a later committed user: deletion must remain pending even after a day and a service restart. An empty provider listing alone is not permission to clear the reservation.
+
+1. Preserve the pending barrier. Identify the exact operation/reservation UUID, account UUID, registry revision, timestamps and provider. Determine whether its originating process/request is still live. The registry records an outstanding count, not a provider operation ID; it may be impossible to correlate an ambiguous operation conclusively from existing logs.
+2. Obtain affirmative evidence of the original request's terminal outcome from the provider: the matching committed transaction/resource, a definitive rollback/rejection, or provider-confirmed cancellation. Also prove the originating worker cannot later issue another write. A deployment restart by itself proves neither remote cancellation nor that another worker instance stopped.
+3. If evidence cannot be obtained, leave the request pending and escalate internally to the service owner/provider. A controlled maintenance intervention that quiesces every originating worker and every affected provider writer may be necessary; its availability impact and exact scope need a separate approved plan. This release has no automated remote-operation reconciliation, cancellation endpoint, incident repair CLI or general-purpose force-complete switch.
+4. Once all original writes are definitively settled, inspect a complete account-scoped provider snapshot. Headscale identity is `usernameForEmail(email)` (`acct-` plus the first 16 SHA-256 hex characters); match both its immutable numeric ID and name on every key/node. Resend identity must match email and immutable contact ID; only the configured Link segment belongs to this cleanup. Sanity selection is `_type == "siteEvent" && source == "leanzero-link" && email == $email`. Use a positive control on the same object/query when absence is material. Do not remove another account, newsletter membership or product's events.
+5. Prepare an incident-specific transactional repair for independent review. It must compare the observed account UUID, deletion request ID, registry revision and exact settled operation UUIDs, and refuse any mismatch. It may retire only those proven-settled reservations (including their corresponding `in_flight` count); it must preserve the pending deletion, revocation cutoff and receipt. No repair is included here because the required provider evidence is incident-specific. Apply only within that approved maintenance plan.
+6. Retry the ordinary deletion status route using the client's saved receipt. Its existing cleanup removes keys/nodes/user, Link membership, Link activity and KV records, then alone records `deleted`. Verify the final API result and account-scoped provider state. If cleanup fails or new evidence appears, keep the incident open. Do not substitute a manual database completion flag.
+
+## Retained records and proof limits
+
+`security_revocation_record` retains hashed lookup, old-JWT cutoff and a deletion receipt, preventing old credentials from recreating an account while allowing a fresh account UUID after completion. `shared_contact_record` means only Link's Resend membership was removed: the global contact remains because an independent newsletter can add membership concurrently. `historical_service_records` means this route does not purge application/provider logs, sent-email copies or Sanity transaction history. The source's log-rotation default is 30 days, but deployed schedules/overrides and other providers' actual retention are not verified by this change.
+
+The local suite proves normal deletion, fresh enrollment with old credential rejection, provider cleanup retry, pre-external crash recovery, and a fail-closed lost Headscale CREATE response. It does not prove a deployed account deletion or automatic recovery from unknown provider outcomes. Contact/activity writes also retain their outstanding intent on transport failures, server errors and malformed success responses; a recognized success or definitive client rejection retires it. This preserves the pending barrier but does not automatically reconcile an unknown remote outcome.
+
+Provider references: [Headscale v0.29.3 REST contract](https://github.com/juanfont/headscale/blob/v0.29.3/proto/headscale/v1/headscale.proto), [Headscale user deletion transaction](https://github.com/juanfont/headscale/blob/v0.29.3/hscontrol/db/users.go#L45-L78), [Resend segment removal](https://resend.com/docs/api-reference/contacts/delete-contact-segment), [Sanity mutations](https://www.sanity.io/docs/http-reference/mutation), [Apple account deletion](https://developer.apple.com/help/app-review/guideline-reference/5-1-1-account-deletion).

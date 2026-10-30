@@ -12,6 +12,8 @@ import MlxEngineView, {
   settingsWithProfile,
   formatGb,
   mountFailureBanners,
+  textLaneOn,
+  textOnlyDraftFor,
 } from './MlxEngineView';
 import { mlxDistributedStart } from '../../acp/mlx-distributed';
 import { publishRestoreLine } from './mlxRestore';
@@ -465,6 +467,17 @@ describe('serving-lane profile fields', () => {
     drafts.adapterPath = '   ';
     drafts.textOnly = 'maybe';
     expect(profileHasValues(profileFromDrafts(drafts))).toBe(false);
+  });
+  it('auto is the text lane, except for a checkpoint that hears audio', () => {
+    expect(textLaneOn('', false)).toBe(true);
+    expect(textLaneOn('', true)).toBe(false);
+    expect(textLaneOn('true', true)).toBe(true);
+    expect(textLaneOn('false', false)).toBe(false);
+    // The switch writes auto whenever auto already is that lane, and the explicit value otherwise.
+    expect(textOnlyDraftFor(true, false)).toBe('');
+    expect(textOnlyDraftFor(false, false)).toBe('false');
+    expect(textOnlyDraftFor(true, true)).toBe('true');
+    expect(textOnlyDraftFor(false, true)).toBe('');
   });
 });
 

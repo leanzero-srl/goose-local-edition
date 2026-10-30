@@ -129,6 +129,13 @@ export interface MlxEngineStatus {
   chipError?: string | null;
   lastError?: string;
   /**
+   * While `state` is "stopped": what left it stopped — `owner` · `linkedMac` · `notStarted` ·
+   * `outside` (a SIGTERM/SIGINT no goose path sent: a stop, not a failure). Absent otherwise.
+   */
+  stoppedBy?: string | null;
+  /** When `stoppedBy` is `outside`: which engine process ended and how, in one neutral sentence. */
+  stoppedOutside?: string | null;
+  /**
    * While mounting: the sidecar's measure of the start — `phase` makingRoom | starting | loading |
    * warming, the engine process's resident bytes against the model's bytes on disk.
    */
@@ -159,7 +166,8 @@ export interface MlxModelProfile {
   contextLimit?: number;
   /**
    * Speculative decoding: 'mtp' demands the MTP head (skipped with a warning when the model
-   * dir has no mtp.safetensors), 'off' refuses it; absent = auto (on when the head exists).
+   * has none: no mtp.safetensors and no in-shard head), 'off' refuses it; absent = auto (on when
+   * the head exists).
    */
   speculative?: 'mtp' | 'off';
   /**
@@ -189,9 +197,35 @@ export interface MlxModelProfile {
    * KV cannot take it.
    */
   kvCache?: MlxKvCacheMode;
+  /**
+   * Prompt-lookup (n-gram copy) drafting. Absent = auto: the engine's family default (on inside
+   * MTP for Qwen3.5/3.6/3.8; the suffix lane stays off). A change restarts the engine.
+   */
+  promptLookup?: MlxPromptLookup;
+  /**
+   * Keep the n-gram (PLE) table on disk (`--qwen4-ple-offload`). Absent = auto: on when the
+   * model would not otherwise fit this Mac. Ignored for a model without the table.
+   */
+  pleOffload?: boolean;
+  /**
+   * RoPE scaling past the checkpoint's native positions (`--qwen4-rope-scaling`): 'yarn',
+   * 'yarn:<factor>', a JSON object or 'off'. Absent = the checkpoint's own config. qwen4_exp only.
+   */
+  ropeScaling?: string;
 }
 
 export type MlxKvCacheMode = 'int8' | 'int4';
+
+/** Every field absent = the engine's own default for the lane. */
+export interface MlxPromptLookup {
+  mode?: 'on' | 'off';
+  /** MTP lane only: shortest context n-gram that may trigger a copy (engine floor 2). */
+  minNgram?: number;
+  /** MTP lane: longest n-gram matched. Suffix lane: `--suffix-max-suffix-len`. */
+  maxNgram?: number;
+  /** MTP lane: copy-draft ceiling (31/63/95 fill whole 32-row verify tiles). Suffix: `--suffix-max-draft`. */
+  maxDraft?: number;
+}
 
 /**
  * KV bytes one token of context costs at each cache setting, from the model's config.json and
@@ -291,6 +325,23 @@ export interface MlxLocalModel {
   /** Absent with no error = never measured on this model. */
   kvCacheMeasurement?: MlxKvCacheMeasurement | null;
   kvCacheMeasurementError?: string | null;
+  /**
+   * The model has an MTP head the engine serves (`mtp.safetensors`, or `mtp.*` tensors in the
+   * shards of a Qwen3.8-Flash-Next checkpoint): auto/`mtp` serves it and prompt lookup rides in it.
+   */
+  hasMtpHead?: boolean;
+  /**
+   * config.json declares an audio encoder: auto (`textOnly` unset) mounts it on the media lane,
+   * so it hears audio and watches video with the text-only lane off.
+   */
+  hearsAudio?: boolean;
+  /** config.json declares recurrent-state layers; absent exactly when `hybridError` says why. */
+  hybrid?: boolean | null;
+  hybridError?: string | null;
+  /** The checkpoint carries an n-gram (PLE) table the engine can leave on disk. */
+  hasNgramTable?: boolean;
+  /** What auto resolves to on this Mac. */
+  ngramTableAutoOn?: boolean;
 }
 
 export interface MlxModelsList {

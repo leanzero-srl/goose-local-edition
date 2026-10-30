@@ -285,6 +285,7 @@ pub fn to_bedrock_message_content(content: &MessageContent) -> Result<bedrock::C
         MessageContent::Image(image) => {
             bedrock::ContentBlock::Image(to_bedrock_image(&image.data, &image.mime_type)?)
         }
+        MessageContent::Media(media) => bedrock::ContentBlock::Text(media.placeholder()),
         MessageContent::Thinking(thinking) => {
             let mut builder = bedrock::ReasoningTextBlock::builder().text(&thinking.thinking);
             if !thinking.signature.is_empty() {

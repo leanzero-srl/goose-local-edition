@@ -176,6 +176,12 @@
   "alertBox.autoCompactAt": {
     "defaultMessage": "ऑटो कॉम्पैक्ट पर"
   },
+  "alertBox.autoCompactReserve": {
+    "defaultMessage": "लगभग भरने पर स्वतः संक्षिप्त करें ({floor}% से पहले नहीं)"
+  },
+  "alertBox.autoCompactReserveHint": {
+    "defaultMessage": "कोई प्रतिशत सेट नहीं है, इसलिए goose तब संक्षिप्त करता है जब संदर्भ में केवल अगले उत्तर और एक टूल परिणाम के लिए जगह बचती है, और {floor}% से पहले कभी नहीं। किसी निश्चित बिंदु पर संक्षिप्त करने के लिए प्रतिशत सेट करें।"
+  },
   "alertBox.compactNow": {
     "defaultMessage": "अब संक्षिप्त करें"
   },
@@ -389,6 +395,9 @@
   "benchmarkSection.askAbout": {
     "defaultMessage": "इस रन के बारे में एआई सत्र शुरू करें"
   },
+  "benchmarkSection.build": {
+    "defaultMessage": "बिल्ड {index}"
+  },
   "benchmarkSection.cannotDeleteNoId": {
     "defaultMessage": "इस सत्र की अभी तक कोई रन आईडी नहीं है — यह लॉन्च के कुछ क्षण बाद दिखाई देती है"
   },
@@ -430,6 +439,9 @@
   },
   "benchmarkSection.title": {
     "defaultMessage": "Benchmark"
+  },
+  "benchmarkSection.twoBuilds": {
+    "defaultMessage": "2 बिल्ड"
   },
   "bottomMenuExtensionSelection.extensionUpdated": {
     "defaultMessage": "एक्सटेंशन अपडेट किया गया"
@@ -1286,6 +1298,9 @@
   "confirmCloseRun.body": {
     "defaultMessage": "यह विंडो बंद करने से रन रुक जाता है: विंडो का बैकएंड छोड़ दिया जाता है और उसके नीचे चल रहे swarm इंजन को बाहर निकलने का संकेत दिया जाता है।"
   },
+  "confirmCloseRun.keepAnswering": {
+    "defaultMessage": "जवाब देने दें"
+  },
   "confirmCloseRun.keepRunning": {
     "defaultMessage": "चलने दें"
   },
@@ -1295,17 +1310,17 @@
   "confirmCloseRun.stopAndClose": {
     "defaultMessage": "रन रोकें और बंद करें"
   },
+  "confirmCloseRun.stopAnswerAndClose": {
+    "defaultMessage": "जवाब रोकें और बंद करें"
+  },
   "confirmCloseRun.stopping": {
     "defaultMessage": "रन रोका जा रहा है…"
   },
+  "confirmCloseRun.stoppingAnswer": {
+    "defaultMessage": "जवाब रोका जा रहा है…"
+  },
   "confirmCloseRun.title": {
     "defaultMessage": "इस विंडो में एक swarm रन चल रहा है"
-  },
-  "confirmCloseRun.warning": {
-    "defaultMessage": "चेतावनी"
-  },
-  "confirmCloseRun.turnTitle": {
-    "defaultMessage": "इस विंडो की एक चैट अभी भी जवाब दे रही है"
   },
   "confirmCloseRun.turnBody": {
     "defaultMessage": "यह विंडो बंद करने से जवाब रुक जाता है: चैट इसी विंडो से भेजी गई थी, और उसका जवाब जहाँ है वहीं खत्म हो जाता है।"
@@ -1313,14 +1328,11 @@
   "confirmCloseRun.turnLine": {
     "defaultMessage": "चैट: {name}"
   },
-  "confirmCloseRun.keepAnswering": {
-    "defaultMessage": "जवाब देने दें"
+  "confirmCloseRun.turnTitle": {
+    "defaultMessage": "इस विंडो की एक चैट अभी भी जवाब दे रही है"
   },
-  "confirmCloseRun.stopAnswerAndClose": {
-    "defaultMessage": "जवाब रोकें और बंद करें"
-  },
-  "confirmCloseRun.stoppingAnswer": {
-    "defaultMessage": "जवाब रोका जा रहा है…"
+  "confirmCloseRun.warning": {
+    "defaultMessage": "चेतावनी"
   },
   "confirmationModal.defaultCancel": {
     "defaultMessage": "नहीं"
@@ -2120,11 +2132,29 @@
   "engineGlance.chat": {
     "defaultMessage": "चैट · {name}"
   },
+  "engineGlance.closeUntilNew": {
+    "defaultMessage": "कुछ नया शुरू होने तक फ़्लोटिंग विंडो बंद करें"
+  },
   "engineGlance.collapse": {
     "defaultMessage": "गोली जितना छोटा करें"
   },
+  "engineGlance.dismissFailure": {
+    "defaultMessage": "इस विफलता को हटाएँ — यह तभी लौटेगी जब इंजन फिर से विफल होगा"
+  },
+  "engineGlance.dismissed.untilNew": {
+    "defaultMessage": "कुछ नया शुरू होने तक फ़्लोटिंग विंडो छिपी है"
+  },
+  "engineGlance.dismissed.way": {
+    "defaultMessage": "इसे Settings › ऐप से वापस लाएँ, जहाँ आप इसे बंद भी कर सकते हैं।"
+  },
+  "engineGlance.dismissed.wayTray": {
+    "defaultMessage": "इसे मेनू बार में goose आइकन से या Settings › ऐप से वापस लाएँ, जहाँ आप इसे बंद भी कर सकते हैं।"
+  },
   "engineGlance.expand": {
     "defaultMessage": "पूरा कार्ड दिखाएँ"
+  },
+  "engineGlance.floatTick": {
+    "defaultMessage": "goose मिनिमाइज़ होने पर पिल तैराएँ"
   },
   "engineGlance.forming": {
     "defaultMessage": "यह क्या लिख रहा है · {count, plural, one {# टूल कॉल} other {# टूल कॉल}}"
@@ -2137,6 +2167,9 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "यह कार्ड छिपाएँ — साइडबार के नीचे से या Settings › ऐप से वापस लाएँ"
+  },
+  "engineGlance.hintCloseUntilNew": {
+    "defaultMessage": "यहाँ बंद करें — कुछ नया शुरू होने पर यह लौट आती है"
   },
   "engineGlance.hintDismiss": {
     "defaultMessage": "समझ गया"
@@ -2285,23 +2318,32 @@
   "engineGlanceSettings.description": {
     "defaultMessage": "इंजन का लाइव कार्ड, छोटे रूप में: यह क्या पढ़ या लिख रहा है, कितनी तेज़ी से, और किस चैट को सेवा दे रहा है। इंजन खोलने के लिए क्लिक करें।"
   },
-  "engineGlanceSettings.desktop": {
-    "defaultMessage": "डेस्कटॉप पर तैरता हुआ"
-  },
   "engineGlanceSettings.desktop.away": {
     "defaultMessage": "जब goose पृष्ठभूमि में हो"
   },
   "engineGlanceSettings.desktop.busy": {
     "defaultMessage": "जब भी इंजन काम करे"
   },
-  "engineGlanceSettings.desktop.off": {
-    "defaultMessage": "बंद"
+  "engineGlanceSettings.desktopDescOptIn": {
+    "defaultMessage": "जब तक आप इसे टिक न करें, बंद। आपके दूसरे ऐप्स के ऊपर एक छोटी पिल, उस कोने में जहाँ आप उसे खींचें। केवल उसका ⤢ बटन goose खोलता है; खींचने से वह बस खिसकती है, और उसका ✕ उसे तब तक छिपाता है जब तक कोई नया जॉब, रन या स्प्लिट शुरू न हो।"
+  },
+  "engineGlanceSettings.desktopOptIn": {
+    "defaultMessage": "goose के छोटा (मिनिमाइज़) या बैकग्राउंड में होने पर एक तैरती गतिविधि पिल दिखाएँ"
+  },
+  "engineGlanceSettings.desktopWhen": {
+    "defaultMessage": "यह कब तैरे"
+  },
+  "engineGlanceSettings.dismissedUntilNew": {
+    "defaultMessage": "आपने इसे बंद किया — कुछ नया शुरू होने तक छिपी है।"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "साइडबार में"
   },
   "engineGlanceSettings.inAppDesc": {
     "defaultMessage": "साइडबार के नीचे, आपके सेशनों के नीचे। इसे कार्ड से ही छिपाएँ; यह अपनी जगह छोड़ी गई पंक्ति से, या यहाँ से वापस आता है।"
+  },
+  "engineGlanceSettings.showAgain": {
+    "defaultMessage": "फिर से दिखाएँ"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "इंजन एक नज़र में"
@@ -2609,6 +2651,117 @@
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "कहीं और चल रहे goose सर्वर से कनेक्ट करें (ऐप पुनरारंभ की आवश्यकता है)"
   },
+  "forgeSeries.between": {
+    "defaultMessage": "बिल्ड 1 पूरा हो गया है। बिल्ड 2 तैयार किया जा रहा है।"
+  },
+  "forgeSeries.build": {
+    "defaultMessage": "2 में से बिल्ड {index}"
+  },
+  "forgeSeries.callBudget": {
+    "defaultMessage": "प्रति बिल्ड {calls} कॉल"
+  },
+  "forgeSeries.cancelDetail": {
+    "defaultMessage": "सक्रिय बिल्ड रोकता है और अगला बिल्ड शुरू होने से रोकता है। पूरे हो चुके स्कोर और साक्ष्य सुरक्षित रहते हैं; रद्द करने से कुछ भी प्रकाशित नहीं होता।"
+  },
+  "forgeSeries.cancelTitle": {
+    "defaultMessage": "क्या दो बिल्ड वाला यह बेंचमार्क रद्द करें?"
+  },
+  "forgeSeries.cancelled": {
+    "defaultMessage": "दो बिल्ड का क्रम रद्द किया गया"
+  },
+  "forgeSeries.cancelledStatus": {
+    "defaultMessage": "दो बिल्ड का क्रम रद्द किया गया।"
+  },
+  "forgeSeries.checking": {
+    "defaultMessage": "दोनों बिल्ड की जाँच हो रही है…"
+  },
+  "forgeSeries.childCancelled": {
+    "defaultMessage": "रद्द किया गया"
+  },
+  "forgeSeries.childFailed": {
+    "defaultMessage": "पूरा नहीं हुआ"
+  },
+  "forgeSeries.completeStatus": {
+    "defaultMessage": "दो बिल्ड पूरे हुए।"
+  },
+  "forgeSeries.continuePublish": {
+    "defaultMessage": "शेष बिल्ड प्रकाशित करें"
+  },
+  "forgeSeries.failed": {
+    "defaultMessage": "दो बिल्ड का क्रम पूरा नहीं हुआ"
+  },
+  "forgeSeries.failedStatus": {
+    "defaultMessage": "दो बिल्ड का क्रम पूरा नहीं हुआ।"
+  },
+  "forgeSeries.finished": {
+    "defaultMessage": "दोनों बिल्ड पूरे हो गए हैं"
+  },
+  "forgeSeries.interrupted": {
+    "defaultMessage": "दो बिल्ड का क्रम पूरा होने से पहले ऐप बंद हो गया। सहेजे गए साक्ष्य सुरक्षित हैं।"
+  },
+  "forgeSeries.intro": {
+    "defaultMessage": "इस ऐप में एक बार चलाएँ दबाने से दो स्वतंत्र बिल्ड शुरू होते हैं। पहले का स्कोर मिलने के बाद दूसरा शुरू होता है; दोनों के अपने साक्ष्य सुरक्षित रहते हैं।"
+  },
+  "forgeSeries.live": {
+    "defaultMessage": "leanzero.net पर प्रकाशित"
+  },
+  "forgeSeries.median": {
+    "defaultMessage": "स्थानीय माध्यिका {median} · सीमा {min}–{max}"
+  },
+  "forgeSeries.noResponse": {
+    "defaultMessage": "प्रकाशन का कोई जवाब नहीं"
+  },
+  "forgeSeries.noScore": {
+    "defaultMessage": "अभी कोई स्कोर किया गया बिल्ड उपलब्ध नहीं है।"
+  },
+  "forgeSeries.preparing": {
+    "defaultMessage": "2 में से बिल्ड {index} तैयार किया जा रहा है"
+  },
+  "forgeSeries.provisional": {
+    "defaultMessage": "एक स्कोर किया गया बिल्ड अस्थायी परिणाम है। दो बिल्ड की माध्यिका उपलब्ध नहीं है।"
+  },
+  "forgeSeries.publish": {
+    "defaultMessage": "2 बिल्ड प्रकाशित करें"
+  },
+  "forgeSeries.publishSeparately": {
+    "defaultMessage": "बिल्ड अलग-अलग प्रकाशित करें"
+  },
+  "forgeSeries.publishTitle": {
+    "defaultMessage": "प्रकाशन शीर्षक"
+  },
+  "forgeSeries.publishing": {
+    "defaultMessage": "2 में से बिल्ड {index} प्रकाशित किया जा रहा है…"
+  },
+  "forgeSeries.queued": {
+    "defaultMessage": "शुरू होने की प्रतीक्षा"
+  },
+  "forgeSeries.run": {
+    "defaultMessage": "2 बिल्ड चलाएँ"
+  },
+  "forgeSeries.running": {
+    "defaultMessage": "2 में से बिल्ड {index} चल रहा है"
+  },
+  "forgeSeries.scored": {
+    "defaultMessage": "स्कोर किया गया"
+  },
+  "forgeSeries.settings": {
+    "defaultMessage": "ऐप समान मॉडल, कार्य और सेटिंग के साथ दो नए बिल्ड क्रम से चलाता है। दोनों का अपना स्कोर और साक्ष्य सुरक्षित रहता है।"
+  },
+  "forgeSeries.skipped": {
+    "defaultMessage": "शुरू नहीं हुआ"
+  },
+  "forgeSeries.title": {
+    "defaultMessage": "दो स्वतंत्र बिल्ड"
+  },
+  "forgeSeries.unreadable": {
+    "defaultMessage": "दो बिल्ड के सहेजे गए साक्ष्य पढ़े नहीं जा सके। अलग-अलग बिल्ड अभी भी उपलब्ध हैं।"
+  },
+  "forgeSeries.view": {
+    "defaultMessage": "बिल्ड {index} के साक्ष्य खोलें"
+  },
+  "forgeSeries.waitingPublish": {
+    "defaultMessage": "प्रकाशन के लिए दो पूरे, तुलना योग्य बिल्ड और उनके मूल साक्ष्य आवश्यक हैं।"
+  },
   "formingPanel.callChars": {
     "defaultMessage": "{chars} अक्षर"
   },
@@ -2750,6 +2903,9 @@
   "freeMemory.nuclearTotal": {
     "defaultMessage": "टिक किया: <b>{gb} GB</b>"
   },
+  "freeMemory.onlyThere": {
+    "defaultMessage": "सिर्फ़ {mac} पर"
+  },
   "freeMemory.protectedChip": {
     "defaultMessage": "सुरक्षित"
   },
@@ -2770,9 +2926,6 @@
   },
   "freeMemory.remoteQuitOff": {
     "defaultMessage": "{mac} दूसरे Mac को अपने ऐप्स बंद करने या मॉडल सर्वर अनलोड करने नहीं देता, इसलिए यहाँ से सिर्फ़ goose की अपनी मेमोरी खाली की जा सकती है। इसकी अनुमति देने के लिए {mac} पर goose खोलें, Settings › ऐप में जाएँ और “जुड़े हुए Mac को इस Mac पर ऐप बंद करने दें” चालू करें। या उन्हें {mac} पर ही बंद करें।"
-  },
-  "freeMemory.onlyThere": {
-    "defaultMessage": "सिर्फ़ {mac} पर"
   },
   "freeMemory.title": {
     "defaultMessage": "{mac} पर मेमोरी खाली करें"
@@ -4292,14 +4445,14 @@
   "macLoad.policy": {
     "defaultMessage": "जब कोई इस Mac का उपयोग कर रहा हो"
   },
-  "macLoad.policyHint": {
-    "defaultMessage": "व्यस्त का मतलब मापा गया: सीमा से ऊपर मेमोरी, भारी कामों के खाली स्लॉट, प्रति कोर लोड। कीबोर्ड पर कोई हो तो वह केवल बराबरी तोड़ता है।"
-  },
   "macLoad.policy.allow": {
     "defaultMessage": "जॉब लें"
   },
   "macLoad.policy.refuse": {
     "defaultMessage": "जॉब अस्वीकार करें"
+  },
+  "macLoad.policyHint": {
+    "defaultMessage": "व्यस्त का मतलब मापा गया: सीमा से ऊपर मेमोरी, भारी कामों के खाली स्लॉट, प्रति कोर लोड। कीबोर्ड पर कोई हो तो वह केवल बराबरी तोड़ता है।"
   },
   "macLoad.queueNoTry": {
     "defaultMessage": "अभी किसी Mac को नहीं भेजा गया: आगे वाला काम इंतज़ार में है।"
@@ -4327,6 +4480,27 @@
   },
   "macLoad.state": {
     "defaultMessage": "स्थिति"
+  },
+  "macLoad.stateCancelling": {
+    "defaultMessage": "रद्द किया जा रहा है…"
+  },
+  "macLoad.stateWaiting": {
+    "defaultMessage": "इंतज़ार में, कतार में #{position}"
+  },
+  "macLoad.strategy": {
+    "defaultMessage": "मेरे काम कहाँ चलें"
+  },
+  "macLoad.strategy.localFirst": {
+    "defaultMessage": "पहले मेरा Mac"
+  },
+  "macLoad.strategy.selfish": {
+    "defaultMessage": "पहले दूसरे Mac"
+  },
+  "macLoad.strategyHint.localFirst": {
+    "defaultMessage": "इस Mac में जगह हो तो यहीं, नहीं तो सबसे ज़्यादा जगह वाले दूसरे Mac पर, नहीं तो कतार में इंतज़ार।"
+  },
+  "macLoad.strategyHint.selfish": {
+    "defaultMessage": "सबसे ज़्यादा जगह वाले दूसरे Mac पर, नहीं तो इस Mac पर, नहीं तो कतार में इंतज़ार। यह Mac खाली रहता है।"
   },
   "macLoad.title": {
     "defaultMessage": "लोड"
@@ -5708,6 +5882,9 @@
   "mlxEngineView.splitUnreadPending": {
     "defaultMessage": "पढ़ा जा रहा है कि क्या कोई स्प्लिट इस Mac को सर्व करता है…"
   },
+  "mlxEngineView.statusRetry": {
+    "defaultMessage": "फिर से पढ़ें"
+  },
   "mlxEngineView.stopRemote": {
     "defaultMessage": "रोकें"
   },
@@ -5788,6 +5965,15 @@
   },
   "mlxMode.hosting": {
     "defaultMessage": "{requester} के विभाजन की रैंक {rank} · {model} · {backend}"
+  },
+  "mlxMode.hostingAnother": {
+    "defaultMessage": "दूसरे Mac के स्प्लिट की रैंक {rank} · {model}"
+  },
+  "mlxMode.hostingLayers": {
+    "defaultMessage": "{requester} के लिए लेयर {first}–{last} चला रहा है · {model}"
+  },
+  "mlxMode.hostingLayersAnother": {
+    "defaultMessage": "दूसरे Mac के लिए लेयर {first}–{last} चला रहा है · {model}"
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} के विभाजन की रैंक {rank} · {model}"
@@ -5884,6 +6070,81 @@
   },
   "mlxMountRefusal.short": {
     "defaultMessage": "{model} को इस Mac पर {need} GB चाहिए और अभी इसके लिए {free} GB खाली है — {short} GB कम।"
+  },
+  "mlxNgramTable.auto": {
+    "defaultMessage": "ऑटो"
+  },
+  "mlxNgramTable.autoOff": {
+    "defaultMessage": "ऑटो: इस Mac पर बंद"
+  },
+  "mlxNgramTable.autoOn": {
+    "defaultMessage": "ऑटो: इस Mac पर चालू"
+  },
+  "mlxNgramTable.label": {
+    "defaultMessage": "n-gram तालिका डिस्क पर रखें"
+  },
+  "mlxNgramTable.measured": {
+    "defaultMessage": "Qwen3.8-Flash-Next (M5 Max 128 GB) पर मापा गया: 104 GB से 72 GB मेमोरी, डिकोड गति कुछ प्रतिशत के भीतर, वही उत्तर।"
+  },
+  "mlxNgramTable.note": {
+    "defaultMessage": "मॉडल अपनी 32 GB n-gram तालिका को मेमोरी में रखने के बजाय हर टोकन के लिए ज़रूरी कुछ पंक्तियाँ SSD से पढ़ता है। ऑटो इसे तब चालू करता है जब मॉडल अन्यथा इस Mac में फ़िट नहीं होगा। अगली माउंट पर लागू होता है।"
+  },
+  "mlxNgramTable.off": {
+    "defaultMessage": "बंद"
+  },
+  "mlxNgramTable.on": {
+    "defaultMessage": "चालू"
+  },
+  "mlxPromptLookup.auto": {
+    "defaultMessage": "ऑटो"
+  },
+  "mlxPromptLookup.draftHint": {
+    "defaultMessage": "खाली संख्याएँ इंजन का डिफ़ॉल्ट रखती हैं। MTP के भीतर 31, 63 या 95 पूरी 32-पंक्ति सत्यापन टाइलें भरते हैं। अगले माउंट पर लागू होता है।"
+  },
+  "mlxPromptLookup.hybridReason": {
+    "defaultMessage": "यह linear-attention या SSM परतों को attention के साथ मिलाता है और MTP हेड के बिना चलाया जाता है। इंजन recurrent परतों पर suffix decoding मना करता है, और prompt lookup केवल MTP के भीतर चलता है।"
+  },
+  "mlxPromptLookup.laneMtp": {
+    "defaultMessage": "MTP के भीतर"
+  },
+  "mlxPromptLookup.laneSuffix": {
+    "defaultMessage": "suffix decoding"
+  },
+  "mlxPromptLookup.maxDraft": {
+    "defaultMessage": "सबसे लंबा ड्राफ़्ट (टोकन)"
+  },
+  "mlxPromptLookup.maxNgram": {
+    "defaultMessage": "सबसे लंबा n-gram"
+  },
+  "mlxPromptLookup.minNgram": {
+    "defaultMessage": "सबसे छोटा n-gram"
+  },
+  "mlxPromptLookup.mtpMeasured": {
+    "defaultMessage": "Qwen3.8-27B Q8 पर मापा गया: कोड संपादन 42.8 से 134.8 tok/s, 99% प्रतियाँ स्वीकार; सारांश और चैट में कोई लाभ नहीं।"
+  },
+  "mlxPromptLookup.mtpNote": {
+    "defaultMessage": "प्रॉम्प्ट में पहले से मौजूद निरंतरता को MTP के भीतर लंबे ड्राफ़्ट के रूप में कॉपी करता है, किसी भी ड्राफ़्ट की तरह सत्यापित, इसलिए आउटपुट मॉडल का ही रहता है। ऑटो इंजन का फ़ैमिली डिफ़ॉल्ट रखता है (Qwen3.5/3.6/3.8 के लिए चालू)।"
+  },
+  "mlxPromptLookup.notLocal": {
+    "defaultMessage": "Prompt lookup को अपनी लेन चुनने के लिए मॉडल का फ़ोल्डर चाहिए, और यह मॉडल मॉडल फ़ोल्डर में नहीं है।"
+  },
+  "mlxPromptLookup.off": {
+    "defaultMessage": "बंद"
+  },
+  "mlxPromptLookup.on": {
+    "defaultMessage": "चालू"
+  },
+  "mlxPromptLookup.promptLookup": {
+    "defaultMessage": "Prompt lookup (n-gram)"
+  },
+  "mlxPromptLookup.suffixNote": {
+    "defaultMessage": "MTP के बिना चलाया जाता है, इसलिए यह लीवर इंजन का suffix decoder चलाता है: केवल greedy sampling, एक समय में एक अनुरोध। ऑटो इसे बंद रखता है; Mellum पर धीमा मापा गया, इसलिए तुलना के बाद ही चालू करें।"
+  },
+  "mlxPromptLookup.unavailable": {
+    "defaultMessage": "इस मॉडल के लिए उपलब्ध नहीं: {reason}"
+  },
+  "mlxPromptLookup.unknownReason": {
+    "defaultMessage": "goose यह नहीं बता सकता कि यह मॉडल शुद्ध attention है या नहीं ({error})।"
   },
   "mlxReplica.cancel": {
     "defaultMessage": "रद्द करें"
@@ -6016,6 +6277,9 @@
   },
   "mlxSetup.step2": {
     "defaultMessage": "मॉडल"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "आपके Mac पढ़े जा रहे हैं…"
   },
   "mlxSetup.step2Done": {
     "defaultMessage": "आपके Mac पर {count}"
@@ -6284,6 +6548,9 @@
   "mlxStateTile.state.stopped": {
     "defaultMessage": "रुका हुआ"
   },
+  "mlxStateTile.state.stoppedOutside": {
+    "defaultMessage": "goose के बाहर से रोका गया"
+  },
   "mlxStateTile.state.unreachable": {
     "defaultMessage": "पहुँच से बाहर"
   },
@@ -6440,6 +6707,9 @@
   "modelCustomFields.above": {
     "defaultMessage": "सबसे ऊँचा मान {max} है।"
   },
+  "modelCustomFields.awaitingModel": {
+    "defaultMessage": "कस्टम फ़ील्ड: इसकी सेटिंग देखने के लिए एक मॉडल ID चुनें।"
+  },
   "modelCustomFields.below": {
     "defaultMessage": "सबसे नीचा मान {min} है।"
   },
@@ -6457,6 +6727,9 @@
   },
   "modelCustomFields.modelDefault": {
     "defaultMessage": "मॉडल डिफ़ॉल्ट ({value})"
+  },
+  "modelCustomFields.noFields": {
+    "defaultMessage": "कस्टम फ़ील्ड: {provider} “{model}” के लिए कोई फ़ील्ड घोषित नहीं करता, इसलिए यह प्रदाता के डिफ़ॉल्ट पर चलता है।"
   },
   "modelCustomFields.notANumber": {
     "defaultMessage": "एक संख्या दर्ज करें।"
@@ -6995,6 +7268,9 @@
   "myMacs.reconnecting": {
     "defaultMessage": "दोबारा जुड़ रहा है… (इस Mac के goose से संपर्क टूट गया)"
   },
+  "myMacs.runJob": {
+    "defaultMessage": "जॉब चलाएँ…"
+  },
   "myMacs.saveFailed": {
     "defaultMessage": "स्विच सहेजा नहीं गया"
   },
@@ -7009,6 +7285,9 @@
   },
   "myMacs.title": {
     "defaultMessage": "मेरे Mac"
+  },
+  "myMacs.updatedAgo": {
+    "defaultMessage": "{seconds} सेकंड पहले अपडेट किया गया"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -7046,30 +7325,6 @@
   "needsYouCard.closeNotice": {
     "defaultMessage": "यह सूचना बंद करें"
   },
-  "needsYouCard.queued": {
-    "defaultMessage": "कतार में · यह चरण पूरा होने पर उत्तर जाएगा"
-  },
-  "needsYouCard.queuedChip": {
-    "defaultMessage": "कतार में"
-  },
-  "needsYouCard.sending": {
-    "defaultMessage": "आपका उत्तर भेजा जा रहा है…"
-  },
-  "needsYouCard.stack": {
-    "defaultMessage": "{count, plural, one {आपकी ज़रूरत है · # प्रश्न} other {आपकी ज़रूरत है · # प्रश्न}}"
-  },
-  "needsYouCard.stackQueued": {
-    "defaultMessage": "{count} कतार में"
-  },
-  "needsYouCard.unsentAnswer": {
-    "defaultMessage": "आपका उत्तर: {answer}"
-  },
-  "needsYouCard.unsentClosed": {
-    "defaultMessage": "नहीं भेजा गया — कतार में रखा आपका उत्तर जाने से पहले यह प्रश्न बंद हो गया।"
-  },
-  "needsYouCard.unsentFailed": {
-    "defaultMessage": "नहीं भेजा गया — कतार में रखा आपका उत्तर सहेजा नहीं जा सका: {error}"
-  },
   "needsYouCard.dismiss": {
     "defaultMessage": "ख़ारिज करें"
   },
@@ -7088,11 +7343,35 @@
   "needsYouCard.position": {
     "defaultMessage": "{total} में से {index}"
   },
+  "needsYouCard.queued": {
+    "defaultMessage": "कतार में · यह चरण पूरा होने पर उत्तर जाएगा"
+  },
+  "needsYouCard.queuedChip": {
+    "defaultMessage": "कतार में"
+  },
   "needsYouCard.recommended": {
     "defaultMessage": "अनुशंसित"
   },
+  "needsYouCard.sending": {
+    "defaultMessage": "आपका उत्तर भेजा जा रहा है…"
+  },
+  "needsYouCard.stack": {
+    "defaultMessage": "{count, plural, one {आपकी ज़रूरत है · # प्रश्न} other {आपकी ज़रूरत है · # प्रश्न}}"
+  },
+  "needsYouCard.stackQueued": {
+    "defaultMessage": "{count} कतार में"
+  },
   "needsYouCard.title": {
     "defaultMessage": "आपकी ज़रूरत है"
+  },
+  "needsYouCard.unsentAnswer": {
+    "defaultMessage": "आपका उत्तर: {answer}"
+  },
+  "needsYouCard.unsentClosed": {
+    "defaultMessage": "नहीं भेजा गया — कतार में रखा आपका उत्तर जाने से पहले यह प्रश्न बंद हो गया।"
+  },
+  "needsYouCard.unsentFailed": {
+    "defaultMessage": "नहीं भेजा गया — कतार में रखा आपका उत्तर सहेजा नहीं जा सका: {error}"
   },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX इंजन का सहेजा मॉडल {served} देता है; यह नोड {wanted} चाहता है। Providers में मॉडल चुनें।"
@@ -9692,6 +9971,72 @@
   "responseStyle.detailedLabel": {
     "defaultMessage": "विस्तृत"
   },
+  "runJob.best": {
+    "defaultMessage": "सबसे अच्छा Mac"
+  },
+  "runJob.close": {
+    "defaultMessage": "बंद करें"
+  },
+  "runJob.command": {
+    "defaultMessage": "{kind, select, shell {कमांड} other {प्रॉम्प्ट}}"
+  },
+  "runJob.heavy": {
+    "defaultMessage": "भारी जॉब"
+  },
+  "runJob.heavyHint": {
+    "defaultMessage": "एक Mac उतने भारी जॉब (बिल्ड, रेंडर, ट्रेनिंग) चलाता है जितने उसके स्लॉट और मेमोरी में समाते हैं।"
+  },
+  "runJob.inUse": {
+    "defaultMessage": "{name} (उपयोग में)"
+  },
+  "runJob.jobsOff": {
+    "defaultMessage": "इस Mac पर जॉब बंद हैं"
+  },
+  "runJob.kind": {
+    "defaultMessage": "प्रकार"
+  },
+  "runJob.kindPrompt": {
+    "defaultMessage": "प्रॉम्प्ट"
+  },
+  "runJob.kindShell": {
+    "defaultMessage": "शेल कमांड"
+  },
+  "runJob.mem": {
+    "defaultMessage": "ज़रूरी मेमोरी (GB, वैकल्पिक)"
+  },
+  "runJob.noPlace": {
+    "defaultMessage": "अभी कोई Mac यह जॉब नहीं ले सकता।"
+  },
+  "runJob.none": {
+    "defaultMessage": "अभी आपका कोई Mac जॉब नहीं ले रहा। जिस Mac पर उन्हें चलाना है, उस पर “दूसरे Mac से भेजे गए जॉब चलाएँ” चालू करें।"
+  },
+  "runJob.ranking": {
+    "defaultMessage": "अभी सबसे अच्छे: {macs}"
+  },
+  "runJob.refusal": {
+    "defaultMessage": "{mac}: {reason}"
+  },
+  "runJob.refused": {
+    "defaultMessage": "नहीं भेजा गया: {reason}"
+  },
+  "runJob.submit": {
+    "defaultMessage": "जॉब चलाएँ"
+  },
+  "runJob.target": {
+    "defaultMessage": "कहाँ चलाएँ"
+  },
+  "runJob.timeout": {
+    "defaultMessage": "समय सीमा (सेकंड, वैकल्पिक)"
+  },
+  "runJob.title": {
+    "defaultMessage": "इस पर जॉब चलाएँ…"
+  },
+  "runJob.verdictLine": {
+    "defaultMessage": "{mac}: {verdict}"
+  },
+  "runJob.willQueue": {
+    "defaultMessage": "अभी किसी Mac में जगह नहीं है। चलाने पर यह इस Mac की कतार में रुकेगा और जगह मिलते ही पहले Mac पर शुरू होगा।"
+  },
   "scheduleDetailView.actions": {
     "defaultMessage": "क्रियाएँ"
   },
@@ -11798,29 +12143,29 @@
   "unansweredPrompt.appClosed": {
     "defaultMessage": "यह बारी बिना उत्तर के समाप्त हुई — हो सकता है goose के काम करते समय ऐप बंद हो गया हो।"
   },
-  "unansweredPrompt.failed": {
-    "defaultMessage": "यह बारी उत्तर से पहले विफल हो गई।"
-  },
-  "unansweredPrompt.failedWithReason": {
-    "defaultMessage": "यह बारी उत्तर से पहले विफल हो गई: {reason}"
-  },
-  "unansweredPrompt.resend": {
-    "defaultMessage": "फिर से भेजें"
-  },
-  "unansweredPrompt.title": {
-    "defaultMessage": "goose इसका उत्तर देने से पहले रुक गया"
-  },
   "unansweredPrompt.continue": {
     "defaultMessage": "जारी रखें"
   },
   "unansweredPrompt.continueMessage": {
     "defaultMessage": "जहाँ छोड़ा था वहीं से जारी रखें।"
   },
+  "unansweredPrompt.failed": {
+    "defaultMessage": "यह बारी उत्तर से पहले विफल हो गई।"
+  },
+  "unansweredPrompt.failedWithReason": {
+    "defaultMessage": "यह बारी उत्तर से पहले विफल हो गई: {reason}"
+  },
   "unansweredPrompt.midway": {
     "defaultMessage": "goose बीच में ही रुक गया"
   },
   "unansweredPrompt.midwayAppClosed": {
     "defaultMessage": "goose बीच में ही रुक गया — काम करते समय ऐप बंद हो गया"
+  },
+  "unansweredPrompt.resend": {
+    "defaultMessage": "फिर से भेजें"
+  },
+  "unansweredPrompt.title": {
+    "defaultMessage": "goose इसका उत्तर देने से पहले रुक गया"
   },
   "unreadableConfigBanner.cancel": {
     "defaultMessage": "रद्द करें"
@@ -11986,245 +12331,5 @@
   },
   "windowTitle.withState": {
     "defaultMessage": "{session} — {state}"
-  },
-  "engineGlance.close": {
-    "defaultMessage": "इस सत्र के लिए फ़्लोटिंग विंडो बंद करें"
-  },
-  "engineGlance.hintClose": {
-    "defaultMessage": "इसे यहाँ से बंद करें, जब तक आप इसे वापस न लाएँ"
-  },
-  "engineGlance.dismissed.title": {
-    "defaultMessage": "फ़्लोटिंग विंडो इस सत्र के लिए छिपाई गई"
-  },
-  "engineGlance.dismissed.way": {
-    "defaultMessage": "इसे Settings › ऐप से वापस लाएँ, जहाँ आप इसे बंद भी कर सकते हैं।"
-  },
-  "engineGlance.dismissed.wayTray": {
-    "defaultMessage": "इसे मेनू बार में goose आइकन से या Settings › ऐप से वापस लाएँ, जहाँ आप इसे बंद भी कर सकते हैं।"
-  },
-  "engineGlanceSettings.desktopDescSession": {
-    "defaultMessage": "आपके दूसरे ऐप्स के ऊपर एक छोटी विंडो, उस कोने में जहाँ आप इसे खींचकर रखें। यह कभी फ़ोकस नहीं लेती, और goose को तभी आगे लाती है जब आप इससे कुछ खोलते हैं। इसका बंद करने का बटन इसे इस सत्र के बाकी समय के लिए छिपा देता है।"
-  },
-  "engineGlanceSettings.dismissed": {
-    "defaultMessage": "आपने इसे बंद किया — जब तक आप इसे वापस न लाएँ, छिपी रहेगी।"
-  },
-  "engineGlanceSettings.showAgain": {
-    "defaultMessage": "फिर से दिखाएँ"
-  },
-  "benchmarkSection.build": {
-    "defaultMessage": "बिल्ड {index}"
-  },
-  "benchmarkSection.twoBuilds": {
-    "defaultMessage": "2 बिल्ड"
-  },
-  "forgeSeries.between": {
-    "defaultMessage": "बिल्ड 1 पूरा हो गया है। बिल्ड 2 तैयार किया जा रहा है।"
-  },
-  "forgeSeries.build": {
-    "defaultMessage": "2 में से बिल्ड {index}"
-  },
-  "forgeSeries.callBudget": {
-    "defaultMessage": "प्रति बिल्ड {calls} कॉल"
-  },
-  "forgeSeries.cancelDetail": {
-    "defaultMessage": "सक्रिय बिल्ड रोकता है और अगला बिल्ड शुरू होने से रोकता है। पूरे हो चुके स्कोर और साक्ष्य सुरक्षित रहते हैं; रद्द करने से कुछ भी प्रकाशित नहीं होता।"
-  },
-  "forgeSeries.cancelTitle": {
-    "defaultMessage": "क्या दो बिल्ड वाला यह बेंचमार्क रद्द करें?"
-  },
-  "forgeSeries.cancelled": {
-    "defaultMessage": "दो बिल्ड का क्रम रद्द किया गया"
-  },
-  "forgeSeries.cancelledStatus": {
-    "defaultMessage": "दो बिल्ड का क्रम रद्द किया गया।"
-  },
-  "forgeSeries.checking": {
-    "defaultMessage": "दोनों बिल्ड की जाँच हो रही है…"
-  },
-  "forgeSeries.childCancelled": {
-    "defaultMessage": "रद्द किया गया"
-  },
-  "forgeSeries.childFailed": {
-    "defaultMessage": "पूरा नहीं हुआ"
-  },
-  "forgeSeries.completeStatus": {
-    "defaultMessage": "दो बिल्ड पूरे हुए।"
-  },
-  "forgeSeries.continuePublish": {
-    "defaultMessage": "शेष बिल्ड प्रकाशित करें"
-  },
-  "forgeSeries.failed": {
-    "defaultMessage": "दो बिल्ड का क्रम पूरा नहीं हुआ"
-  },
-  "forgeSeries.failedStatus": {
-    "defaultMessage": "दो बिल्ड का क्रम पूरा नहीं हुआ।"
-  },
-  "forgeSeries.finished": {
-    "defaultMessage": "दोनों बिल्ड पूरे हो गए हैं"
-  },
-  "forgeSeries.interrupted": {
-    "defaultMessage": "दो बिल्ड का क्रम पूरा होने से पहले ऐप बंद हो गया। सहेजे गए साक्ष्य सुरक्षित हैं।"
-  },
-  "forgeSeries.intro": {
-    "defaultMessage": "इस ऐप में एक बार चलाएँ दबाने से दो स्वतंत्र बिल्ड शुरू होते हैं। पहले का स्कोर मिलने के बाद दूसरा शुरू होता है; दोनों के अपने साक्ष्य सुरक्षित रहते हैं।"
-  },
-  "forgeSeries.live": {
-    "defaultMessage": "leanzero.net पर प्रकाशित"
-  },
-  "forgeSeries.median": {
-    "defaultMessage": "स्थानीय माध्यिका {median} · सीमा {min}–{max}"
-  },
-  "forgeSeries.noResponse": {
-    "defaultMessage": "प्रकाशन का कोई जवाब नहीं"
-  },
-  "forgeSeries.noScore": {
-    "defaultMessage": "अभी कोई स्कोर किया गया बिल्ड उपलब्ध नहीं है।"
-  },
-  "forgeSeries.preparing": {
-    "defaultMessage": "2 में से बिल्ड {index} तैयार किया जा रहा है"
-  },
-  "forgeSeries.provisional": {
-    "defaultMessage": "एक स्कोर किया गया बिल्ड अस्थायी परिणाम है। दो बिल्ड की माध्यिका उपलब्ध नहीं है।"
-  },
-  "forgeSeries.publish": {
-    "defaultMessage": "2 बिल्ड प्रकाशित करें"
-  },
-  "forgeSeries.publishSeparately": {
-    "defaultMessage": "बिल्ड अलग-अलग प्रकाशित करें"
-  },
-  "forgeSeries.publishTitle": {
-    "defaultMessage": "प्रकाशन शीर्षक"
-  },
-  "forgeSeries.publishing": {
-    "defaultMessage": "2 में से बिल्ड {index} प्रकाशित किया जा रहा है…"
-  },
-  "forgeSeries.queued": {
-    "defaultMessage": "शुरू होने की प्रतीक्षा"
-  },
-  "forgeSeries.run": {
-    "defaultMessage": "2 बिल्ड चलाएँ"
-  },
-  "forgeSeries.running": {
-    "defaultMessage": "2 में से बिल्ड {index} चल रहा है"
-  },
-  "forgeSeries.scored": {
-    "defaultMessage": "स्कोर किया गया"
-  },
-  "forgeSeries.settings": {
-    "defaultMessage": "ऐप समान मॉडल, कार्य और सेटिंग के साथ दो नए बिल्ड क्रम से चलाता है। दोनों का अपना स्कोर और साक्ष्य सुरक्षित रहता है।"
-  },
-  "forgeSeries.skipped": {
-    "defaultMessage": "शुरू नहीं हुआ"
-  },
-  "forgeSeries.title": {
-    "defaultMessage": "दो स्वतंत्र बिल्ड"
-  },
-  "forgeSeries.unreadable": {
-    "defaultMessage": "दो बिल्ड के सहेजे गए साक्ष्य पढ़े नहीं जा सके। अलग-अलग बिल्ड अभी भी उपलब्ध हैं।"
-  },
-  "forgeSeries.view": {
-    "defaultMessage": "बिल्ड {index} के साक्ष्य खोलें"
-  },
-  "forgeSeries.waitingPublish": {
-    "defaultMessage": "प्रकाशन के लिए दो पूरे, तुलना योग्य बिल्ड और उनके मूल साक्ष्य आवश्यक हैं।"
-  },
-  "modelCustomFields.awaitingModel": {
-    "defaultMessage": "कस्टम फ़ील्ड: इसकी सेटिंग देखने के लिए एक मॉडल ID चुनें।"
-  },
-  "modelCustomFields.noFields": {
-    "defaultMessage": "कस्टम फ़ील्ड: {provider} “{model}” के लिए कोई फ़ील्ड घोषित नहीं करता, इसलिए यह प्रदाता के डिफ़ॉल्ट पर चलता है।"
-  },
-  "macLoad.stateCancelling": {
-    "defaultMessage": "रद्द किया जा रहा है…"
-  },
-  "macLoad.stateWaiting": {
-    "defaultMessage": "इंतज़ार में, कतार में #{position}"
-  },
-  "macLoad.strategy": {
-    "defaultMessage": "मेरे काम कहाँ चलें"
-  },
-  "macLoad.strategy.localFirst": {
-    "defaultMessage": "पहले मेरा Mac"
-  },
-  "macLoad.strategy.selfish": {
-    "defaultMessage": "पहले दूसरे Mac"
-  },
-  "macLoad.strategyHint.localFirst": {
-    "defaultMessage": "इस Mac में जगह हो तो यहीं, नहीं तो सबसे ज़्यादा जगह वाले दूसरे Mac पर, नहीं तो कतार में इंतज़ार।"
-  },
-  "macLoad.strategyHint.selfish": {
-    "defaultMessage": "सबसे ज़्यादा जगह वाले दूसरे Mac पर, नहीं तो इस Mac पर, नहीं तो कतार में इंतज़ार। यह Mac खाली रहता है।"
-  },
-  "myMacs.runJob": {
-    "defaultMessage": "जॉब चलाएँ…"
-  },
-  "runJob.title": {
-    "defaultMessage": "इस पर जॉब चलाएँ…"
-  },
-  "runJob.willQueue": {
-    "defaultMessage": "अभी किसी Mac में जगह नहीं है। चलाने पर यह इस Mac की कतार में रुकेगा और जगह मिलते ही पहले Mac पर शुरू होगा।"
-  },
-  "runJob.target": {
-    "defaultMessage": "कहाँ चलाएँ"
-  },
-  "runJob.best": {
-    "defaultMessage": "सबसे अच्छा Mac"
-  },
-  "runJob.ranking": {
-    "defaultMessage": "अभी सबसे अच्छे: {macs}"
-  },
-  "runJob.refusal": {
-    "defaultMessage": "{mac}: {reason}"
-  },
-  "runJob.verdictLine": {
-    "defaultMessage": "{mac}: {verdict}"
-  },
-  "runJob.inUse": {
-    "defaultMessage": "{name} (उपयोग में)"
-  },
-  "runJob.noPlace": {
-    "defaultMessage": "अभी कोई Mac यह जॉब नहीं ले सकता।"
-  },
-  "runJob.none": {
-    "defaultMessage": "अभी आपका कोई Mac जॉब नहीं ले रहा। जिस Mac पर उन्हें चलाना है, उस पर “दूसरे Mac से भेजे गए जॉब चलाएँ” चालू करें।"
-  },
-  "runJob.jobsOff": {
-    "defaultMessage": "इस Mac पर जॉब बंद हैं"
-  },
-  "runJob.kind": {
-    "defaultMessage": "प्रकार"
-  },
-  "runJob.kindShell": {
-    "defaultMessage": "शेल कमांड"
-  },
-  "runJob.kindPrompt": {
-    "defaultMessage": "प्रॉम्प्ट"
-  },
-  "runJob.command": {
-    "defaultMessage": "{kind, select, shell {कमांड} other {प्रॉम्प्ट}}"
-  },
-  "runJob.heavy": {
-    "defaultMessage": "भारी जॉब"
-  },
-  "runJob.heavyHint": {
-    "defaultMessage": "एक Mac उतने भारी जॉब (बिल्ड, रेंडर, ट्रेनिंग) चलाता है जितने उसके स्लॉट और मेमोरी में समाते हैं।"
-  },
-  "runJob.mem": {
-    "defaultMessage": "ज़रूरी मेमोरी (GB, वैकल्पिक)"
-  },
-  "runJob.timeout": {
-    "defaultMessage": "समय सीमा (सेकंड, वैकल्पिक)"
-  },
-  "runJob.submit": {
-    "defaultMessage": "जॉब चलाएँ"
-  },
-  "runJob.close": {
-    "defaultMessage": "बंद करें"
-  },
-  "runJob.refused": {
-    "defaultMessage": "नहीं भेजा गया: {reason}"
-  },
-  "myMacs.updatedAgo": {
-    "defaultMessage": "{seconds} सेकंड पहले अपडेट किया गया"
   }
 }

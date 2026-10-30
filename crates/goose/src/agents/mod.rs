@@ -28,6 +28,7 @@ pub mod tool_similarity;
 pub mod transient_resend;
 pub mod types;
 pub mod validate_extensions;
+pub mod wrap_up;
 
 pub use agent::{
     harness_nudge, Agent, AgentConfig, AgentEvent, ExtensionLoadResult, GoosePlatform,

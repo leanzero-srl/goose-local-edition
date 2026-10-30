@@ -234,6 +234,47 @@ pub struct ThinkingContent {
     pub signature: String,
 }
 
+/// What an attached media part carries: sound, or moving pictures (with or without sound).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaKind {
+    Audio,
+    Video,
+}
+
+/// An audio or video file the person attached, base64-encoded with its MIME type. Only a model
+/// that declares it hears or watches receives the bytes; every other request carries a named
+/// placeholder instead (see the provider formats).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaContent {
+    pub kind: MediaKind,
+    pub data: String,
+    pub mime_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl MediaContent {
+    /// What a model that cannot take this part reads in its place.
+    pub fn placeholder(&self) -> String {
+        let what = match self.kind {
+            MediaKind::Audio => "audio",
+            MediaKind::Video => "video",
+        };
+        match &self.name {
+            Some(name) => format!(
+                "[Attached {what}: {name} ({}) - this model cannot take {what} input]",
+                self.mime_type
+            ),
+            None => format!(
+                "[Attached {what} ({}) - this model cannot take {what} input]",
+                self.mime_type
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct RedactedThinkingContent {
     pub data: String,
@@ -271,6 +312,7 @@ pub struct SystemNotificationContent {
 pub enum MessageContent {
     Text(TextContent),
     Image(ImageContent),
+    Media(MediaContent),
     ToolRequest(ToolRequest),
     ToolResponse(ToolResponse),
     ToolConfirmationRequest(ToolConfirmationRequest),
@@ -286,6 +328,7 @@ impl fmt::Display for MessageContent {
         match self {
             MessageContent::Text(t) => write!(f, "{}", t.text),
             MessageContent::Image(i) => write!(f, "[Image: {}]", i.mime_type),
+            MessageContent::Media(m) => write!(f, "{}", m.placeholder()),
             MessageContent::ToolRequest(r) => {
                 write!(f, "[ToolRequest: {}]", r.to_readable_string())
             }
@@ -907,6 +950,11 @@ impl Message {
     /// Add image content to the message
     pub fn with_image<S: Into<String>, T: Into<String>>(self, data: S, mime_type: T) -> Self {
         self.with_content(MessageContent::image(data, mime_type))
+    }
+
+    /// Add an attached audio or video file to the message
+    pub fn with_media(self, media: MediaContent) -> Self {
+        self.with_content(MessageContent::Media(media))
     }
 
     /// Add a tool request to the message

@@ -8,6 +8,7 @@ import {
 
 /** A BrowserWindow as Electron 41 behaves on macOS (Q-226 probe): occlusion is 'hide' / 'show'. */
 class FakeWindow extends EventEmitter implements GooseWindowLike {
+  readonly id = 7;
   visible = true;
   minimized = false;
   destroyed = false;
@@ -45,7 +46,7 @@ function tracked() {
 describe('gooseWindowFacts — which goose windows can be seen (Q-226)', () => {
   it('in view: on screen, whether focused or not', () => {
     const win = tracked();
-    expect(gooseWindowFacts([win], null, unread)).toEqual([
+    expect(gooseWindowFacts([win], null, unread)).toMatchObject([
       { onScreen: true, focused: false, bounds: win.bounds, visibleShare: null },
     ]);
     expect(gooseWindowFacts([win], win, unread)[0].focused).toBe(true);
@@ -73,7 +74,7 @@ describe('gooseWindowFacts — which goose windows can be seen (Q-226)', () => {
     hidden.visible = false;
     const gone = tracked();
     gone.destroyed = true;
-    expect(gooseWindowFacts([hidden, gone], null, unread)).toEqual([
+    expect(gooseWindowFacts([hidden, gone], null, unread)).toMatchObject([
       { onScreen: false, focused: false, bounds: hidden.bounds, visibleShare: null },
     ]);
   });

@@ -1,4 +1,4 @@
-import type { GlanceCorner, GlancePush } from './engineGlance';
+import { desktopFloatOn, type GlanceCorner, type GlancePush } from './engineGlance';
 
 /**
  * WHEN and WHERE the engine glance shows — pure, so every rule is tested as data and main and the
@@ -6,14 +6,16 @@ import type { GlanceCorner, GlancePush } from './engineGlance';
  *
  * What the research said about floating status (macOS Picture in Picture, Spotify's miniplayer,
  * Discord/OBS overlays), and what these rules do about it:
- *  - an always-on-top window people did not ask for is the #1 complaint → the desktop window appears
- *    only while something is LIVE, and by default only while no goose window is on screen (the
+ *  - an always-on-top window people did not ask for is the #1 complaint → the desktop window is
+ *    OPT-IN (owner, 2026-10-27: "only if I choose a tick in the main UI", `desktopFloatOn`), and
+ *    even then appears only while something is LIVE, and by default only while no goose window is on screen (the
  *    sidebar card already shows it wherever goose can be seen — Q-226: "not the active app" put it
  *    over goose's own window on a second display);
  *  - it covers what you are working on → it sits in a screen corner, collapses to a pill, and closing
- *    it dismisses it for the rest of this app session (Q-426: a close that came back with the next
- *    busy spell was "obtrusive") — the person brings it back from the menu-bar icon or Settings › App,
- *    and Settings turns it off for good;
+ *    it holds while the work it was closed on goes on (Q-426: a close that came back with the next
+ *    busy spell was "obtrusive"; owner 2026-10-27: it comes back only for a NEW process — a new turn,
+ *    question, split, hosted rank or route, `GlanceDismissal`) — the person brings it back sooner
+ *    from the menu-bar icon or Settings › App, and Settings turns it off for good;
  *  - it flickers between requests → "live" includes a goose session with a turn in flight (the
  *    session-state store's `running`), so the gaps between an agent's model calls, while it runs its
  *    tools, keep it up — a truth the store already has, not a timer;
@@ -23,7 +25,12 @@ import type { GlanceCorner, GlancePush } from './engineGlance';
 /** Something a person would want to glance at: the engine working, a turn in flight, a question. */
 export function glanceLive(push: GlancePush): boolean {
   if (push.sessions.needsYou.length > 0) return true;
-  return push.engine.present && (push.engine.busy || push.sessions.running > 0);
+  if (!push.engine.present) return false;
+  // A rank this Mac serves for another Mac's split is this Mac's part in a process even while the
+  // split sits idle between requests: the peer shows it as long as it holds the rank (owner,
+  // 2026-10-27: "both machines should show the floating window").
+  if (push.engine.engine.mode === 'hosting') return true;
+  return push.engine.busy || push.sessions.running > 0;
 }
 
 /** Anything to show at all — an engine present (idle included), or a question waiting. */
@@ -42,9 +49,8 @@ export interface DesktopFacts {
 }
 
 export function desktopGlanceVisible(push: GlancePush, facts: DesktopFacts): boolean {
-  const mode = push.prefs.desktop;
-  if (mode === 'off' || facts.dismissed || !glanceLive(push)) return false;
-  return mode === 'busy' || !facts.gooseOnScreen;
+  if (!desktopFloatOn(push.prefs) || facts.dismissed || !glanceLive(push)) return false;
+  return push.prefs.desktop === 'busy' || !facts.gooseOnScreen;
 }
 
 /**
@@ -81,6 +87,8 @@ export interface GooseWindowFacts {
    * sliver of the window still shows, so `onScreen` alone kept "seen" a window no one could see.
    */
   visibleShare: number | null;
+  /** The BrowserWindow's id: which window a click on the floating window raised (main). */
+  id?: number;
 }
 
 // ratio: of a goose window's own area left uncovered, below which — goose behind another app — it
@@ -131,7 +139,7 @@ export function coverageWanted(
   windows: readonly GooseWindowFacts[]
 ): boolean {
   if (platform !== 'darwin' || push == null) return false;
-  if (push.prefs.desktop === 'off' || dismissed || !glanceLive(push)) return false;
+  if (!desktopFloatOn(push.prefs) || dismissed || !glanceLive(push)) return false;
   if (windows.some((w) => w.focused)) return false;
   return windows.some((w) => w.onScreen);
 }
@@ -292,4 +300,100 @@ export function placeGlance(input: {
 /** Still clear of every goose window that can be seen — else it must move (or go). */
 export function clearOfGoose(bounds: Rect, windows: readonly GooseWindowFacts[]): boolean {
   return !seenGooseWindows(windows).some((w) => intersects(w.bounds, bounds));
+}
+
+/**
+ * One piece of work the desktop window shows for, as a close remembers it (owner, 2026-10-27: a close
+ * holds "until a new process", and the window must not pop back on the next blur). `graceMs`: how
+ * long the key may be missing from the reads before its work counts as ended — a read that raced a
+ * window reload, or an engine idle between a remote agent's requests, is the same work.
+ */
+export interface GlanceProcess {
+  key: string;
+  graceMs: number;
+}
+
+/** A turn, a question, a split, a hosted rank, a route: present in every read while it lives. */
+export const GLANCE_PROCESS_GRACE_MS = 15_000;
+/**
+ * The single engine busy for clients that are not this app's chats (a Link peer's remote-single
+ * requests, a benchmark): busy only while a request runs, so the gaps between one agent's requests
+ * (its tools run on the other Mac) are the same work for this long.
+ */
+export const GLANCE_ENGINE_WORK_GRACE_MS = 5 * 60_000;
+
+export function glanceProcesses(push: GlancePush): GlanceProcess[] {
+  const out: GlanceProcess[] = [];
+  const add = (key: string, graceMs = GLANCE_PROCESS_GRACE_MS) => out.push({ key, graceMs });
+  for (const n of push.sessions.needsYou) add(`ask:${n.sessionId}:${n.question}`);
+  const turns = push.sessions.runningKeys ?? [];
+  for (const turn of turns) add(`turn:${turn}`);
+  const engine = push.engine;
+  if (!engine.present) return out;
+  const way = engine.engine;
+  switch (way.mode) {
+    case 'hosting':
+      add(`rank:${way.requester}:${way.modelId}:${way.rank}`);
+      break;
+    case 'distributed':
+      add(`split:${engine.modelId ?? ''}:${way.nodeNames.join(',')}`);
+      break;
+    case 'remote':
+      add(`route:${way.peerName}:${engine.modelId ?? ''}`);
+      break;
+    case 'single':
+      if (engine.busy && turns.length === 0 && push.sessions.running === 0) {
+        add(`engine:${engine.modelId ?? ''}`, GLANCE_ENGINE_WORK_GRACE_MS);
+      }
+      break;
+  }
+  return out;
+}
+
+/**
+ * A close of the desktop window, held against the work it was closed on (owner, 2026-10-27): it
+ * holds while that work goes on — through every blur, focus-out and busy spell of it — and ends the
+ * moment a process starts that was not there at the close. Work that ended (missing past its grace)
+ * is forgotten, so the same split started again is a new one.
+ */
+export class GlanceDismissal {
+  private held: Map<string, { lastSeen: number; graceMs: number }> | null = null;
+
+  get active(): boolean {
+    return this.held != null;
+  }
+
+  dismiss(processes: readonly GlanceProcess[], now: number): void {
+    this.held = new Map(processes.map((p) => [p.key, { lastSeen: now, graceMs: p.graceMs }]));
+  }
+
+  clear(): void {
+    this.held = null;
+  }
+
+  /** Reads the work now. true = the close just ended because something new started. */
+  observe(processes: readonly GlanceProcess[], now: number): boolean {
+    const held = this.held;
+    if (!held) return false;
+    const present = new Set(processes.map((p) => p.key));
+    for (const [key, seen] of held) {
+      if (present.has(key)) seen.lastSeen = now;
+      else if (now - seen.lastSeen > seen.graceMs) held.delete(key);
+    }
+    if (processes.some((p) => !held.has(p.key))) {
+      this.held = null;
+      return true;
+    }
+    return false;
+  }
+}
+
+/** A screen point inside a rect (the pointer over the floating window). */
+export function pointIn(point: { x: number; y: number }, rect: Rect): boolean {
+  return (
+    point.x >= rect.x &&
+    point.x < rect.x + rect.width &&
+    point.y >= rect.y &&
+    point.y < rect.y + rect.height
+  );
 }

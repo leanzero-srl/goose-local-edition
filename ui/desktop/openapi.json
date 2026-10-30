@@ -4644,6 +4644,27 @@
           {
             "allOf": [
               {
+                "$ref": "#/components/schemas/MediaContent"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "media"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
                 "$ref": "#/components/schemas/ToolRequest"
               },
               {

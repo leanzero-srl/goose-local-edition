@@ -586,6 +586,13 @@ impl Agent {
         self.swarm_worker.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// The golden swarm compacted at the configured ratio (0.8 by default) and keeps it; a chat's
+    /// point is `context_mgmt::compaction_threshold`'s reserve rule.
+    fn worker_compaction_threshold(&self) -> Option<f64> {
+        self.is_swarm_worker()
+            .then(crate::context_mgmt::configured_or_default_threshold)
+    }
+
     /// SWARM: register the task's single owned file so a pathless `write`/`edit` gets repaired (see the field
     /// doc + `repair_swarm_tool_call`). Pass `None` to disable. Set by the swarm per worker task; opt-in.
     pub fn set_swarm_single_owned_file(&self, path: Option<String>) {
@@ -1054,29 +1061,28 @@ impl Agent {
         let tool_call_cut_off = match Config::global().get_param::<usize>("GOOSE_TOOL_CALL_CUTOFF")
         {
             Ok(v) => v,
-            Err(_) => {
-                let context_limit = match self.provider().await {
-                    Ok(provider) => match crate::session_context::with_session_id(
-                        Some(session.id.clone()),
-                        provider.get_context_limit(&model_config),
-                    )
-                    .await
-                    {
-                        Ok(limit) => Some(limit),
-                        Err(_) => model_config.context_limit,
-                    },
-                    Err(_) => model_config.context_limit,
-                };
-                let compaction_threshold = Config::global()
-                    .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
-                    .unwrap_or(crate::context_mgmt::DEFAULT_COMPACTION_THRESHOLD);
+            Err(_) => match self.provider().await {
                 // An unknown window sizes no cutoff: old tool pairs are summarized against a
                 // window, and without one nothing is (the provider's context-length error still
                 // triggers recovery compaction).
-                context_limit.map_or(usize::MAX, |limit| {
-                    crate::context_mgmt::compute_tool_call_cutoff(limit, compaction_threshold)
-                })
-            }
+                Ok(provider) => {
+                    crate::context_mgmt::tool_call_cutoff(
+                        provider.as_ref(),
+                        &model_config,
+                        &session.id,
+                        self.worker_compaction_threshold(),
+                    )
+                    .await
+                }
+                Err(_) => model_config.context_limit.map_or(usize::MAX, |limit| {
+                    crate::context_mgmt::compute_tool_call_cutoff(
+                        limit,
+                        self.worker_compaction_threshold().unwrap_or_else(|| {
+                            crate::context_mgmt::compaction_threshold(limit, &model_config)
+                        }),
+                    )
+                }),
+            },
         };
 
         Ok(ReplyContext {
@@ -2059,11 +2065,33 @@ impl Agent {
             .ok_or_else(|| anyhow::anyhow!("Session {} has no conversation", session_config.id))?;
         let stored_at_ms = reply_started.elapsed().as_millis() as u64;
 
+        // A chat the guard must count whole (no call reported a prompt yet) is counted with the
+        // system prompt and tools its next request carries.
+        let guard_frame = if !self.is_swarm_worker()
+            && crate::context_mgmt::guard_counts_the_whole_request(
+                &session,
+                conversation.messages(),
+            ) {
+            let (tools, _, system_prompt, _) = self.prepare_tools_and_prompt(&session).await?;
+            Some(self.disclose_tools(&tools, &system_prompt).await)
+        } else {
+            None
+        };
+        let guard_count = if self.is_swarm_worker() {
+            crate::context_mgmt::GuardCount::Worker
+        } else {
+            crate::context_mgmt::GuardCount::Chat(
+                guard_frame
+                    .as_ref()
+                    .map(|(tools, prompt)| (prompt.as_str(), tools.as_slice())),
+            )
+        };
         let needs_auto_compact = check_if_compaction_needed(
             self.provider().await?.as_ref(),
             &conversation,
-            None,
+            self.worker_compaction_threshold(),
             &session,
+            guard_count,
         )
         .await?;
         let clock = ReplyClock {
@@ -2201,6 +2229,8 @@ impl Agent {
                     .get_param::<u32>("GOOSE_MAX_TURNS")
                     .unwrap_or(DEFAULT_MAX_TURNS)
             });
+            // The wrap-up nudge counts the same turns the cap above stops at (resends are not turns).
+            let wrap_up = super::wrap_up::WrapUp::from_config(Config::global(), self.is_swarm_worker());
             let mut compaction_attempts = 0;
             let mut empty_turn_retries = 0u32;
             let mut length_cut_nudges = 0u32;
@@ -2326,6 +2356,7 @@ impl Agent {
                         turns_taken,
                         max_turns,
                         context_report,
+                        wrap_up.as_ref(),
                     ).await
                 } else {
                     if let Some(block) = super::moim::turn_context_message(
@@ -2335,6 +2366,7 @@ impl Agent {
                         turns_taken,
                         max_turns,
                         context_report,
+                        wrap_up.as_ref(),
                     ).await {
                         session_manager.add_message(&session_config.id, &block).await?;
                         conversation.push(block);
@@ -2509,6 +2541,13 @@ impl Agent {
                             if let Some(ref usage) = usage {
                                 self.update_session_metrics(&session_config.id, session_config.schedule_id.clone(), usage, false).await?;
                                 if !self.is_swarm_worker() {
+                                    // The compaction guard's base: what this call carried and the
+                                    // prompt its provider reported for it.
+                                    crate::context_mgmt::note_sent_prompt(
+                                        &session_config.id,
+                                        conversation.messages(),
+                                        usage.usage.input_tokens,
+                                    );
                                     if let Some(read) = crate::context_mgmt::prompt_cache_read(&usage.usage) {
                                         cached_prompt = Some(read);
                                     }
@@ -3538,8 +3577,16 @@ impl Agent {
                         let needs_proactive_compact = check_if_compaction_needed(
                             self.provider().await?.as_ref(),
                             &conversation,
-                            None,
+                            self.worker_compaction_threshold(),
                             &check_session,
+                            if self.is_swarm_worker() {
+                                crate::context_mgmt::GuardCount::Worker
+                            } else {
+                                crate::context_mgmt::GuardCount::Chat(Some((
+                                    system_prompt.as_str(),
+                                    tools.as_slice(),
+                                )))
+                            },
                         )
                         .await
                         .unwrap_or(false);
@@ -4604,6 +4651,103 @@ echo start >> "$PLUGIN_ROOT/hook.log"
             provider.call_count.load(Ordering::SeqCst),
             1,
             "a refused request must not be resent"
+        );
+        Ok(())
+    }
+
+    /// Asks for a tool on every call (so the reply loop runs to its turn cap) and records the text of
+    /// every message each call was sent.
+    struct ToolLoopProvider {
+        seen: std::sync::Mutex<Vec<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::base::Provider for ToolLoopProvider {
+        async fn stream(
+            &self,
+            _model_config: &goose_providers::model::ModelConfig,
+            _system_prompt: &str,
+            messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            let call = {
+                let mut seen = self.seen.lock().unwrap();
+                seen.push(messages.iter().map(Message::as_concat_text).collect());
+                seen.len()
+            };
+            let usage = ProviderUsage::new("mock-model".to_string(), Usage::default());
+            let request = Message::assistant().with_tool_request(
+                format!("t{call}"),
+                Ok(rmcp::model::CallToolRequestParams::new("probe__step")),
+            );
+            Ok(Box::pin(futures::stream::once(async move {
+                Ok((Some(request), Some(usage)))
+            })))
+        }
+
+        fn get_name(&self) -> &str {
+            "tool-loop"
+        }
+    }
+
+    /// The wrap-up nudge reaches the requests at the owner's points of a 30-call budget, each stage
+    /// once, every shown stage still in the last request, and the request's missing file named.
+    #[tokio::test]
+    async fn the_wrap_up_stages_reach_the_requests_at_their_calls() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let provider = Arc::new(ToolLoopProvider {
+            seen: std::sync::Mutex::new(Vec::new()),
+        });
+        let hook_manager = crate::hooks::HookManager::from_plugins_for_test(vec![]);
+        let (agent, session_id) =
+            create_test_agent(temp_dir.path().join("data"), hook_manager, provider.clone()).await?;
+        let session_config = SessionConfig {
+            id: session_id,
+            schedule_id: None,
+            max_turns: Some(30),
+            retry_config: None,
+        };
+        let reply_stream = agent
+            .reply(
+                Message::user().with_text("Build it and write `WRAPUP-PROBE-DECISIONS.md`."),
+                session_config,
+                None,
+            )
+            .await?;
+        tokio::pin!(reply_stream);
+        while let Some(event) = reply_stream.next().await {
+            event?;
+        }
+
+        let seen = provider.seen.lock().unwrap();
+        assert_eq!(seen.len(), 30, "the cap stops at the budget");
+        let first_call_with = |stage: &str| {
+            let opening = format!("<wrap-up stage=\"{stage}\">");
+            seen.iter()
+                .position(|request| request.iter().any(|text| text.contains(&opening)))
+                .map(|at| at + 1)
+        };
+        assert_eq!(first_call_with("finish"), Some(24));
+        assert_eq!(first_call_with("deliver"), Some(27));
+        assert_eq!(first_call_with("final"), Some(28));
+        let last = seen.last().unwrap();
+        for stage in ["finish", "deliver", "final"] {
+            let opening = format!("<wrap-up stage=\"{stage}\">");
+            assert_eq!(
+                last.iter().filter(|text| text.contains(&opening)).count(),
+                1,
+                "{stage} is said once and stays in view"
+            );
+        }
+        let deliver = last
+            .iter()
+            .find(|text| text.contains("<wrap-up stage=\"deliver\">"))
+            .unwrap();
+        assert!(
+            deliver.contains("3 of 30 model calls left after this one")
+                && deliver.contains("Write these now, before anything else")
+                && deliver.contains("do not exist yet: WRAPUP-PROBE-DECISIONS.md"),
+            "{deliver}"
         );
         Ok(())
     }

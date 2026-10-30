@@ -46,7 +46,9 @@ pub mod model_identity;
 mod model_parsers;
 #[cfg(unix)]
 pub mod placement;
+pub mod ple_offload;
 pub mod port_holder;
+pub mod prompt_lookup;
 mod subprocess;
 pub mod thinking;
 
@@ -380,7 +382,35 @@ pub struct SidecarExit {
     /// The exit watch's account, written the moment the process ended (with this Mac's memory
     /// then); `None` when the watch did not see the exit (see `watch_exit`).
     pub exit_report: Option<String>,
+    /// The exit code, when it exited (`ExitStatus::code`); `None` when a signal ended it.
+    pub code: Option<i32>,
+    /// The signal that ended it (Unix); `None` when it exited with a code.
+    pub signal: Option<i32>,
 }
+
+impl SidecarExit {
+    /// Something outside goose STOPPED the engine: no goose path stopped it, and it ended the way
+    /// a polite stop ends a process — SIGTERM or SIGINT, or the 143/130 exit code a launcher
+    /// (uvx) turns those into. A `kill -TERM` from a terminal or another agent is a stop, not a
+    /// crash (the owner's sidebar sat red "Failed … exit status: 143" for hours, 3.0.132).
+    /// SIGKILL (jetsam, the memory killer) and every other code stay a failure.
+    pub fn stopped_outside_goose(&self) -> bool {
+        if self.stopped_by.is_some() {
+            return false;
+        }
+        matches!(self.code, Some(143) | Some(130))
+            || matches!(self.signal, Some(s) if s == SIGTERM_NUMBER || s == SIGINT_NUMBER)
+    }
+}
+
+#[cfg(unix)]
+const SIGTERM_NUMBER: i32 = libc::SIGTERM;
+#[cfg(unix)]
+const SIGINT_NUMBER: i32 = libc::SIGINT;
+#[cfg(not(unix))]
+const SIGTERM_NUMBER: i32 = 15;
+#[cfg(not(unix))]
+const SIGINT_NUMBER: i32 = 2;
 
 /// What [`Sidecar::ensure_running_unless`] did: the engine answered and was kept, or it was
 /// restarted — a load, which the caller measures like a fresh start (Q-256).
@@ -471,12 +501,18 @@ impl Sidecar {
         };
         let stopped_by = handle.stopped_by.lock().unwrap().clone();
         let exit_report = handle.exit_report.lock().unwrap().clone();
+        #[cfg(unix)]
+        let signal = std::os::unix::process::ExitStatusExt::signal(&status);
+        #[cfg(not(unix))]
+        let signal: Option<i32> = None;
         Ok(Some(SidecarExit {
             pid: handle.pid,
             status: status.to_string(),
             stderr_tail: handle.last_words().await,
             stopped_by,
             exit_report,
+            code: status.code(),
+            signal,
         }))
     }
 
@@ -2079,6 +2115,52 @@ mod child_log {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn exit_with(code: Option<i32>, signal: Option<i32>, stopped_by: Option<&str>) -> SidecarExit {
+        SidecarExit {
+            pid: Some(1),
+            status: String::new(),
+            stderr_tail: String::new(),
+            stopped_by: stopped_by.map(str::to_string),
+            exit_report: None,
+            code,
+            signal,
+        }
+    }
+
+    /// One rule decides "stopped outside goose": a polite stop no goose path sent. A SIGKILL
+    /// (jetsam), a crash code, or any stop a goose path made stays what it was.
+    #[test]
+    fn a_stop_signal_from_outside_goose_is_a_stop_everything_else_is_not() {
+        for (code, signal) in [
+            (Some(143), None),
+            (Some(130), None),
+            (None, Some(SIGTERM_NUMBER)),
+            (None, Some(SIGINT_NUMBER)),
+        ] {
+            assert!(
+                exit_with(code, signal, None).stopped_outside_goose(),
+                "{code:?} {signal:?}"
+            );
+            assert!(
+                !exit_with(code, signal, Some("goose unmounted it")).stopped_outside_goose(),
+                "a goose stop is named for what it was: {code:?} {signal:?}"
+            );
+        }
+        for (code, signal) in [
+            (Some(137), None),
+            (None, Some(9)),
+            (Some(1), None),
+            (Some(0), None),
+            (None, Some(11)),
+            (None, None),
+        ] {
+            assert!(
+                !exit_with(code, signal, None).stopped_outside_goose(),
+                "{code:?} {signal:?}"
+            );
+        }
+    }
     use std::path::PathBuf;
 
     /// Q-423's barrier, with the race forced: the engine's ERROR line sits UNREAD in the pipe when

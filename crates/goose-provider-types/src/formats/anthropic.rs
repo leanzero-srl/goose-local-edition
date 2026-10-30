@@ -314,6 +314,12 @@ fn format_messages_with_options(
                 MessageContent::Image(image) => {
                     content.push(convert_image(image, &ImageFormat::Anthropic));
                 }
+                MessageContent::Media(media) => {
+                    content.push(json!({
+                        TYPE_FIELD: TEXT_TYPE,
+                        TEXT_TYPE: media.placeholder()
+                    }));
+                }
                 MessageContent::FrontendToolRequest(tool_request) => {
                     if let Ok(tool_call) = &tool_request.tool_call {
                         content.push(json!({
@@ -2551,6 +2557,35 @@ mod tests {
                 !cached_prefix(&req_a).contains("12:00:00"),
                 "the volatile turn-context timestamp leaked into the cached prefix"
             );
+        }
+
+        /// goose's wrap-up line (agents/wrap_up.rs) rides inside the turn-context block, so a
+        /// request that carries it caches the same prefix as one that does not.
+        #[test]
+        fn a_wrap_up_line_stays_outside_the_cached_prefix() {
+            let plain = turn_context("2026-06-25 12:00:00", "120/150 used");
+            let nudged = plain.replace(
+                "</turn-budget>\n",
+                "</turn-budget>\n<wrap-up stage=\"finish\">30 of 150 model calls left after this \
+                 one. Start no new feature: finish and test the work already in progress.</wrap-up>\n",
+            );
+            assert_ne!(plain, nudged);
+            for (a, b) in [
+                (request(&plain), request(&nudged)),
+                (
+                    request_with(&tool_loop_conversation(&plain)),
+                    request_with(&tool_loop_conversation(&nudged)),
+                ),
+            ] {
+                assert!(
+                    b.to_string().contains("wrap-up stage"),
+                    "the line never reached the body"
+                );
+                assert_eq!(cached_prefix(&a), cached_prefix(&b));
+                assert!(!cached_prefix(&b).contains("wrap-up"));
+                let messages = b["messages"].as_array().unwrap();
+                assert!(find_turn_context(messages).unwrap() > last_breakpoint(messages).unwrap());
+            }
         }
 
         #[test]

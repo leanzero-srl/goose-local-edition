@@ -22,8 +22,8 @@ use crate::config::paths::Paths;
 use crate::config::permission::PermissionManager;
 use crate::config::{Config, GooseMode};
 use crate::conversation::message::{
-    ActionRequiredData, Message, MessageContent, ProviderErrorNotice, SystemNotificationContent,
-    SystemNotificationType, ToolRequest,
+    ActionRequiredData, MediaContent, MediaKind, Message, MessageContent, ProviderErrorNotice,
+    SystemNotificationContent, SystemNotificationType, ToolRequest,
 };
 use crate::execution::manager::{AgentManager, AgentManagerGetResult, RuntimeContext};
 use crate::mcp_utils::ToolResult;
@@ -41,7 +41,7 @@ use crate::session::{
 use crate::source_roots::SourceRoot;
 use crate::utils::sanitize_unicode_tags;
 use agent_client_protocol::schema::v1::{
-    AgentCapabilities, Annotations, AuthMethod, AuthMethodAgent, AuthenticateRequest,
+    AgentCapabilities, Annotations, AudioContent, AuthMethod, AuthMethodAgent, AuthenticateRequest,
     AuthenticateResponse, BlobResourceContents, CancelNotification, CloseSessionRequest,
     CloseSessionResponse, ConfigOptionUpdate, Content, ContentBlock, ContentChunk, Cost,
     CurrentModeUpdate, EmbeddedResource, EmbeddedResourceResource, FileSystemCapabilities,
@@ -811,6 +811,60 @@ fn extract_first_line_number(text: &str) -> Option<usize> {
     None
 }
 
+/// The ACP block an attached media part replays as: the embedded blob resource the desktop sent
+/// it in, named by its URI (ACP has no video block, and its audio block carries no name); an
+/// unnamed audio part (an ACP client's audio block) as an audio block.
+fn media_content_block(media: &MediaContent) -> ContentBlock {
+    match (media.kind, media.name.as_deref()) {
+        (MediaKind::Audio, None) => ContentBlock::Audio(AudioContent::new(
+            media.data.clone(),
+            media.mime_type.clone(),
+        )),
+        (_, name) => ContentBlock::Resource(EmbeddedResource::new(
+            EmbeddedResourceResource::BlobResourceContents(
+                BlobResourceContents::new(
+                    media.data.clone(),
+                    format!(
+                        "attachment:///{}",
+                        urlencoding::encode(name.unwrap_or("video"))
+                    ),
+                )
+                .mime_type(media.mime_type.clone()),
+            ),
+        )),
+    }
+}
+
+/// An embedded blob the desktop attached as audio or video (`audio/*`, `video/*`): the bytes go to
+/// the model as an attached media part, named after the resource's file name. Any other blob is
+/// not a prompt part goose can show a model and is dropped, as before.
+fn attached_media_from_blob(blob: &BlobResourceContents) -> Option<MediaContent> {
+    let mime_type = blob.mime_type.as_deref()?.trim().to_ascii_lowercase();
+    let kind = if mime_type.starts_with("audio/") {
+        MediaKind::Audio
+    } else if mime_type.starts_with("video/") {
+        MediaKind::Video
+    } else {
+        return None;
+    };
+    let name = blob
+        .uri
+        .rsplit('/')
+        .next()
+        .filter(|n| !n.is_empty())
+        .map(|n| {
+            urlencoding::decode(n)
+                .map(|d| d.into_owned())
+                .unwrap_or_else(|_| n.to_string())
+        });
+    Some(MediaContent {
+        kind,
+        data: blob.blob.clone(),
+        mime_type,
+        name,
+    })
+}
+
 fn read_resource_link(link: ResourceLink) -> Option<String> {
     let url = Url::parse(&link.uri).ok()?;
     if url.scheme() == "file" {
@@ -1549,21 +1603,33 @@ impl GooseAcpAgent {
                 ContentBlock::Image(image) => {
                     message = message.with_image(&image.data, &image.mime_type);
                 }
-                ContentBlock::Resource(resource) => {
-                    if let EmbeddedResourceResource::TextResourceContents(text_resource) =
-                        &resource.resource
-                    {
+                ContentBlock::Resource(resource) => match &resource.resource {
+                    EmbeddedResourceResource::TextResourceContents(text_resource) => {
                         let header = format!("--- Resource: {} ---\n", text_resource.uri);
                         let content = format!("{}{}\n---\n", header, text_resource.text);
                         message = message.with_text(&content);
                     }
-                }
+                    EmbeddedResourceResource::BlobResourceContents(blob) => {
+                        if let Some(media) = attached_media_from_blob(blob) {
+                            message = message.with_media(media);
+                        }
+                    }
+                    _ => {}
+                },
                 ContentBlock::ResourceLink(link) => {
                     if let Some(text) = read_resource_link(link.clone()) {
                         message = message.with_text(text);
                     }
                 }
-                ContentBlock::Audio(..) | _ => (),
+                ContentBlock::Audio(audio) => {
+                    message = message.with_media(MediaContent {
+                        kind: MediaKind::Audio,
+                        data: audio.data.clone(),
+                        mime_type: audio.mime_type.clone(),
+                        name: None,
+                    });
+                }
+                _ => (),
             }
         }
         message
@@ -5494,5 +5560,85 @@ print(\"hello, world\")
             manager.is_session_busy("chat").await,
             "a cleared registration leaves the clearing to clear_active_run"
         );
+    }
+}
+
+#[cfg(test)]
+mod attached_media_tests {
+    use super::*;
+
+    #[test]
+    fn an_audio_or_video_blob_becomes_a_named_media_part_and_anything_else_is_dropped() {
+        let blob = |mime: Option<&str>| {
+            let b = BlobResourceContents::new("AAAA", "attachment:///clip.mp4");
+            match mime {
+                Some(m) => b.mime_type(m.to_string()),
+                None => b,
+            }
+        };
+        let video = attached_media_from_blob(&blob(Some("Video/MP4"))).unwrap();
+        assert_eq!(video.kind, MediaKind::Video);
+        assert_eq!(video.mime_type, "video/mp4");
+        assert_eq!(video.name.as_deref(), Some("clip.mp4"));
+        assert_eq!(
+            attached_media_from_blob(&blob(Some("audio/wav")))
+                .unwrap()
+                .kind,
+            MediaKind::Audio
+        );
+        assert!(attached_media_from_blob(&blob(Some("application/pdf"))).is_none());
+        assert!(attached_media_from_blob(&blob(None)).is_none());
+    }
+
+    #[test]
+    fn a_named_audio_blob_keeps_its_file_name_through_intake_and_replay() {
+        let blob = BlobResourceContents::new("UklGRg==", "attachment:///my%20call.wav")
+            .mime_type("audio/wav".to_string());
+        let audio = attached_media_from_blob(&blob).unwrap();
+        assert_eq!(audio.name.as_deref(), Some("my call.wav"));
+        match media_content_block(&audio) {
+            ContentBlock::Resource(r) => match r.resource {
+                EmbeddedResourceResource::BlobResourceContents(b) => {
+                    assert_eq!(b.uri, "attachment:///my%20call.wav");
+                    assert_eq!(attached_media_from_blob(&b).unwrap(), audio);
+                }
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_prompt_with_audio_and_a_video_blob_carries_both_as_media_and_replays_them() {
+        let prompt = vec![
+            ContentBlock::Text(agent_client_protocol::schema::v1::TextContent::new(
+                "listen",
+            )),
+            ContentBlock::Audio(AudioContent::new("UklGRg==", "audio/wav")),
+            ContentBlock::Resource(EmbeddedResource::new(
+                EmbeddedResourceResource::BlobResourceContents(
+                    BlobResourceContents::new("AAAA", "attachment:///clip.mp4")
+                        .mime_type("video/mp4".to_string()),
+                ),
+            )),
+        ];
+        let message = GooseAcpAgent::convert_acp_prompt_to_message(&prompt);
+        let media: Vec<&MediaContent> = message
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                MessageContent::Media(m) => Some(m),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(media.len(), 2);
+        assert!(matches!(
+            media_content_block(media[0]),
+            ContentBlock::Audio(_)
+        ));
+        assert!(matches!(
+            media_content_block(media[1]),
+            ContentBlock::Resource(_)
+        ));
     }
 }

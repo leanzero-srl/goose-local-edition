@@ -742,7 +742,11 @@ impl Agent {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create token counter: {e}"))?;
         let counted = counter.count_chat_tokens(&system_prompt, conversation.messages(), &tools);
-        Ok(i32::try_from(counted)?)
+        let counted = i32::try_from(counted)?;
+        // The guard's base until the next call reports its own prompt: the compacted rows, so it
+        // adds only what is written after them.
+        crate::context_mgmt::note_sent_prompt(session_id, conversation.messages(), Some(counted));
+        Ok(counted)
     }
 
     fn accumulate_cost(
