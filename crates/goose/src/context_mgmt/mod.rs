@@ -6759,6 +6759,9 @@ mod tests {
             .with_writer(move || writer.clone())
             .finish();
         let _guard = tracing::subscriber::set_default(subscriber);
+        // Another test thread may have hit these callsites first, with no subscriber: their
+        // cached "never" interest would hide the events from this one.
+        tracing::callsite::rebuild_interest_cache();
         let bold = "**Thinking:** I should continue.\n\n**Plan:** look at files.\n\n**Step one:** \
                     run ls.\n\n**Step two:** read output.\n\n**Then:** carry on.\n";
         compacted_with(bold, &big_chat()).await;
