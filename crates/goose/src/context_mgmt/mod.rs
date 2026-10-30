@@ -29,6 +29,65 @@ use pillars::{KeptSources, LedgerRead, NoteVerdict, Pillars};
 
 pub const DEFAULT_COMPACTION_THRESHOLD: f64 = 0.8;
 
+// ratio: one tool result plus the summary instruction, as a share of the window — the largest
+// single-call growth of the Flash-Next Gauntlet sb-7.2 run (ple.6, 2026-10-30) was 22,944 prompt
+// tokens on a 360,000 window (6.4%); the instruction and a second ask add ~2k more (8.3% in all).
+const TOOL_RESULT_WINDOW_SHARE: f64 = 1.0 / 12.0;
+
+/// The ratio the person set (`GOOSE_AUTO_COMPACT_THRESHOLD`), when they set one.
+fn configured_compaction_threshold() -> Option<f64> {
+    Config::global()
+        .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
+        .ok()
+}
+
+/// The threshold a caller that does not know the window reports: the person's ratio, else 0.8.
+pub fn configured_or_default_threshold() -> f64 {
+    configured_compaction_threshold().unwrap_or(DEFAULT_COMPACTION_THRESHOLD)
+}
+
+/// The compaction point of a `context_limit`-token window, as a share of it. ONE rule for the
+/// guard, the compaction card, the turn-context countdown and the tool-pair cutoff.
+///
+/// A ratio the person set wins. Otherwise the point is the window minus a reserve — the next
+/// answer at the model's output cap plus one tool result — and never earlier than 0.8. Why
+/// (Flash-Next, Gauntlet sb-7.2, 2026-10-30): the window was the MEASURED 360,000 the engine holds,
+/// 0.8 compacted at 289,943 and left 70k of it unused, while the room the next call can take is
+/// its output (cap 32,768) and one tool result (largest 22,944) with the summary instruction. `GOOSE_COMPACTION_RESERVE_TOKENS`
+/// replaces the derived reserve.
+pub fn compaction_threshold(context_limit: usize, model_config: &ModelConfig) -> f64 {
+    let reserve = Config::global()
+        .get_param::<usize>("GOOSE_COMPACTION_RESERVE_TOKENS")
+        .ok();
+    compaction_threshold_from(
+        configured_compaction_threshold(),
+        reserve,
+        context_limit,
+        model_config.max_output_tokens().max(0) as usize,
+    )
+}
+
+/// [`compaction_threshold`] with its inputs given — the testable form.
+pub fn compaction_threshold_from(
+    configured: Option<f64>,
+    reserve_tokens: Option<usize>,
+    context_limit: usize,
+    max_output_tokens: usize,
+) -> f64 {
+    if let Some(threshold) = configured {
+        return threshold;
+    }
+    if context_limit == 0 {
+        return DEFAULT_COMPACTION_THRESHOLD;
+    }
+    let reserve = reserve_tokens.unwrap_or_else(|| {
+        max_output_tokens + (context_limit as f64 * TOOL_RESULT_WINDOW_SHARE) as usize
+    });
+    // At least one token of reserve: a point at the whole window reads as auto-compaction off.
+    let point = context_limit.saturating_sub(reserve.max(1)) as f64 / context_limit as f64;
+    point.max(DEFAULT_COMPACTION_THRESHOLD)
+}
+
 const TOOLCALL_SUMMARIZATION_BATCH_SIZE: usize = 10;
 
 fn tool_pair_summarization_enabled() -> bool {
@@ -62,23 +121,63 @@ struct SummarizeContext {
 }
 
 /// The sections the model writes (Q-357: P6 and P7 — what code cannot know). The card counts them as
-/// the summary's parts while it streams.
-pub const WRITTEN_PARTS: [(&str, &str); 3] = [
+/// the summary's parts while it streams. "What each file does" and "Still to do" since 2026-10-30:
+/// the kept block names the files only by their line counts, and after the Flash-Next compaction
+/// the model re-grepped its own modules (`grep -n "def \|class "`) to learn what it had built.
+pub const WRITTEN_PARTS: [(&str, &str); 5] = [
     (
         "Where we are",
         "What is done and what is in progress at this moment — the files, commands and results \
          (counts, test outcomes) as they now stand.",
     ),
     (
-        "Next step",
-        "The one next step, as the person's latest request asks for it.",
+        "What each file does",
+        "Each file the work wrote or relies on, one line each: what it does now — its main \
+         functions, routes or exports — and what is still missing in it.",
     ),
     (
         "Decisions and reasons",
         "Each decision this conversation made that the ledger does not already hold — the value \
          chosen (a seed, a threshold, a rule, an exception) and why — one line each.",
     ),
+    (
+        "Still to do",
+        "Each part of the person's request that is not done or not yet verified, one line each, \
+         with the check that will show it done.",
+    ),
+    (
+        "Next step",
+        "The one next step, as the person's latest request asks for it.",
+    ),
 ];
+
+/// What an answer that is not the summary lacks, said to the model that wrote it.
+fn missing_parts_correction(answer: &str) -> String {
+    let written = pillars::written_parts(&pillars::strip_scratch(answer));
+    let missing: Vec<String> = WRITTEN_PARTS
+        .iter()
+        .filter(|(heading, _)| !written.iter().any(|w| w == heading))
+        .map(|(heading, _)| format!("`## {heading}`"))
+        .collect();
+    format!(
+        "Your answer has no {} section{}: it is not the summary. Write the summary now: only the \
+         sections the instruction above lists, in its order, from `## {}` on. Call no tool.",
+        missing.join(", "),
+        if missing.len() == 1 { "" } else { "s" },
+        WRITTEN_PARTS[0].0
+    )
+}
+
+/// Whether a written answer carries every section the summary asks for. An answer without them
+/// is not a summary: the Flash-Next stopped run (2026-10-29) stored "I will now proceed to document
+/// the design decisions and run the final verification sequence." — one line, none of the
+/// sections — as the summary of 241k tokens of work.
+fn has_every_written_part(answer: &str) -> bool {
+    let written = pillars::written_parts(&pillars::strip_scratch(answer));
+    WRITTEN_PARTS
+        .iter()
+        .all(|(heading, _)| written.iter().any(|w| w == heading))
+}
 
 #[derive(Serialize)]
 struct WrittenPart {
@@ -252,16 +351,39 @@ pub async fn compact_messages(
         session_id,
         conversation,
         manual_compact,
-        keep_tail_from_config(),
+        keep_tail_from_config().unwrap_or(0),
         request,
     )
     .await
 }
 
-fn keep_tail_from_config() -> usize {
+fn keep_tail_from_config() -> Option<usize> {
     Config::global()
         .get_param::<usize>("GOOSE_COMPACT_KEEP_TAIL")
-        .unwrap_or(0)
+        .ok()
+}
+
+/// A chat's kept tail: the newest messages that fit `budget_chars` as the summarizing model reads
+/// them, counted back from the end and stopping at the first message that is not an ordinary turn
+/// or goose's own turn-context block (an earlier summary, or a row an earlier compaction hid). Why: before 2026-10-30 a chat kept no
+/// tail (`GOOSE_COMPACT_KEEP_TAIL` 0), so the model woke from a compaction with no exact bytes of
+/// what it had just done — the Flash-Next stopped run spent 13 of its next 17 calls re-reading.
+pub fn tail_that_fits(messages: &[Message], budget_chars: usize) -> usize {
+    let mut used = 0usize;
+    let mut kept = 0usize;
+    for message in messages.iter().rev() {
+        let ordinary = message.is_agent_visible()
+            && (message.is_user_visible() || crate::conversation::is_turn_context_message(message));
+        if !ordinary {
+            break;
+        }
+        used += format_message_for_compacting(message).chars().count();
+        if used > budget_chars {
+            break;
+        }
+        kept += 1;
+    }
+    kept
 }
 
 /// `compact_messages` with the keep-tail injected — the testable form (no env/config read). The
@@ -317,13 +439,17 @@ pub async fn compact_chat(
     request: &SummaryRequest,
     chat: &ChatCompaction,
 ) -> Result<ChatCompacted> {
+    let keep_tail = keep_tail_from_config().unwrap_or_else(|| {
+        chat.kept_budget_chars
+            .map_or(0, |budget| tail_that_fits(conversation.messages(), budget))
+    });
     compact_core(
         provider,
         model_config,
         session_id,
         conversation,
         manual_compact,
-        keep_tail_from_config(),
+        keep_tail,
         request,
         Some(chat),
     )
@@ -433,7 +559,7 @@ async fn compact_core(
         .and_then(extract_text);
 
     let kept = chat.map(|chat| {
-        Pillars::build(
+        let mut kept = Pillars::build(
             messages,
             &KeptSources {
                 note: chat.note.as_deref(),
@@ -443,14 +569,23 @@ async fn compact_core(
             },
             chat.ledger.clone(),
         )
-        .fit(chat.kept_budget_chars)
+        .fit(chat.kept_budget_chars);
+        kept.tail_messages = messages.len() - cut;
+        kept
     });
 
+    // A summary request that extends the chat sends the WHOLE conversation even when a tail is
+    // kept: its prompt is then the prefix the chat's last call cached, while a shorter one cannot be
+    // served from a hybrid model's non-trimmable cache (qwen4_exp: LCP unavailable, full prefill).
+    let summarized = match request {
+        SummaryRequest::ExtendsChat(_) if chat.is_some() => messages,
+        _ => messages_to_compact,
+    };
     let (summary_message, summarization_usage, note) = match do_compact(
         provider,
         model_config,
         session_id,
-        messages_to_compact,
+        summarized,
         request,
         chat.zip(kept.as_ref()),
     )
@@ -516,6 +651,16 @@ async fn compact_core(
 
     let (merged_continuation, _issues) = merge_consecutive_messages(continuation_messages);
     final_messages.extend(merged_continuation);
+
+    // A chat's person's request goes BEFORE its kept tail: the tail is the work that request
+    // asked for, and re-sent after it the request reads as new work. The swarm workers keep the
+    // golden order (tail, then the request).
+    let mut preserved_text = preserved_text;
+    if chat.is_some() && cut < messages.len() {
+        if let Some(text) = preserved_text.take() {
+            final_messages.push(Message::user().with_text(&text));
+        }
+    }
 
     // K4: the kept tail returns VERBATIM after the summary, so the agent reads "summary of the
     // early conversation, then the last turns exactly as they happened" — same shape as the
@@ -774,12 +919,6 @@ pub async fn check_if_compaction_needed(
     }
 
     let messages = conversation.messages();
-    let config = Config::global();
-    let threshold = threshold_override.unwrap_or_else(|| {
-        config
-            .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
-            .unwrap_or(DEFAULT_COMPACTION_THRESHOLD)
-    });
 
     let model_config = session
         .model_config
@@ -790,6 +929,8 @@ pub async fn check_if_compaction_needed(
     else {
         return Ok(false);
     };
+    let threshold =
+        threshold_override.unwrap_or_else(|| compaction_threshold(context_limit, &model_config));
 
     let (current_tokens, _token_source) =
         match guarded_context_tokens(session.usage.total_tokens, compressed_prompt(&session.id)) {
@@ -1110,12 +1251,68 @@ async fn summarize_as_the_chat(
     if let Some(question) = asked {
         return Ok(ChatSummary::Asked(question));
     }
-    if response.content.iter().any(|c| {
-        matches!(
-            c,
-            MessageContent::ToolRequest(_) | MessageContent::FrontendToolRequest(_)
+    let called_a_tool = |response: &Message| {
+        response.content.iter().any(|c| {
+            matches!(
+                c,
+                MessageContent::ToolRequest(_) | MessageContent::FrontendToolRequest(_)
+            )
+        })
+    };
+    if !called_a_tool(&response) && !has_every_written_part(&response.as_concat_text()) {
+        // The model went on with the work instead of summarizing it. Asked once more on the same
+        // cached prefix — its answer and a correction naming the missing sections are all that
+        // is prefilled — before the transcript request, which prefills the whole conversation.
+        let correction = missing_parts_correction(&response.as_concat_text());
+        warn!("compaction: the summary answer was not a summary ({correction}); asking once more");
+        let mut answered = response.clone();
+        strip_reasoning_content(&mut answered);
+        let mut retry = conversation.messages().clone();
+        retry.push(answered);
+        retry.push(Message::user().with_text(&correction));
+        let (retry, _) = fix_conversation(Conversation::new_unvalidated(retry));
+        let retry_sent = crate::agents::reply_parts::messages_for_provider(
+            retry.messages(),
+            model_config.toolshim,
+        );
+        let retry_answer = crate::model_config::stream_as_the_chat(
+            crate::background_work::BackgroundWorkKind::Compaction,
+            provider,
+            model_config,
+            session_id,
+            &frame.system_prompt,
+            retry_sent.messages(),
+            &frame.tools,
+            |_, text| {
+                if let Some(observe) = &chat.progress {
+                    observe(WritingProgress {
+                        written_tokens: None,
+                        parts: pillars::written_parts(text),
+                    });
+                }
+                true
+            },
         )
-    }) {
+        .await;
+        let (second, second_usage) = match retry_answer {
+            Ok((answer, _)) => answer,
+            Err(ProviderError::ContextLengthExceeded(detail)) => {
+                return Ok(ChatSummary::NotWritten(format!(
+                    "was not a summary and the second ask was refused as too long ({detail})"
+                )))
+            }
+            Err(e) => return Err(e.into()),
+        };
+        provider_usage = provider_usage.combine_with(&second_usage);
+        if !called_a_tool(&second) && !has_every_written_part(&second.as_concat_text()) {
+            return Ok(ChatSummary::NotWritten(format!(
+                "was not a summary twice ({})",
+                missing_parts_correction(&second.as_concat_text())
+            )));
+        }
+        response = second;
+    }
+    if called_a_tool(&response) {
         return Ok(ChatSummary::NotWritten(
             "was answered with a tool call instead of the summary".to_string(),
         ));
@@ -2197,11 +2394,37 @@ mod tests {
         .await
         .unwrap();
 
+        // The engine answers every request with "reading project configuration" — no summary
+        // sections — so the chat's summary is asked once more on the same prefix, then as a
+        // transcript.
         let bodies = engine.bodies().await;
-        assert_eq!(bodies.len(), 3, "chat, summary, transcript: {bodies:?}");
-        let (chat, summary, transcript) = (&bodies[0], &bodies[1], &bodies[2]);
+        assert_eq!(
+            bodies.len(),
+            5,
+            "chat, summary, its second ask, the chat's transcript, the worker's transcript: \
+             {bodies:?}"
+        );
+        let (chat, summary, second_ask, transcript) =
+            (&bodies[0], &bodies[1], &bodies[2], &bodies[4]);
         let cached = stable_messages(chat, &block);
         let sent = summary["messages"].as_array().unwrap();
+        let resent = second_ask["messages"].as_array().unwrap();
+        assert_eq!(
+            &resent[..sent.len()],
+            sent.as_slice(),
+            "the second ask extends the summary request"
+        );
+        assert_eq!(
+            resent[sent.len()],
+            serde_json::json!({"role": "assistant", "content": "reading project configuration"})
+        );
+        assert!(resent[sent.len() + 1]["content"]
+            .as_str()
+            .is_some_and(|c| c.contains("it is not the summary")));
+        assert_eq!(second_ask["tools"], chat["tools"]);
+        assert!(bodies[3]
+            .get("tools")
+            .is_none_or(|t| t.as_array().is_some_and(|t| t.is_empty())));
         assert_eq!(
             &sent[..cached.len()],
             cached.as_slice(),
@@ -2447,17 +2670,17 @@ mod tests {
     async fn the_notes_verdict_is_read_and_the_stored_summary_drops_its_scratch() {
         for (answer, expected) in [
             (
-                "NOTE CONCERN: the chat says 24, the note says 12.\n## Where we are\nplanning",
+                "NOTE CONCERN: the chat says 24, the note says 12.\n## Where we are\nplanning\n## What each file does\nnone yet\n## Decisions and reasons\n24 months\n## Still to do\nthe plan\n## Next step\nrun it",
                 NoteOutcome::Read(NoteVerdict::Concern(
                     "the chat says 24, the note says 12.".to_string(),
                 )),
             ),
             (
-                "NOTE OK\n## Where we are\nplanning",
+                "NOTE OK\n## Where we are\nplanning\n## What each file does\nnone yet\n## Decisions and reasons\n24 months\n## Still to do\nthe plan\n## Next step\nrun it",
                 NoteOutcome::Read(NoteVerdict::Ok),
             ),
             (
-                "<analysis>long scratch</analysis>\n## Where we are\nplanning",
+                "<analysis>long scratch</analysis>\n## Where we are\nplanning\n## What each file does\nnone yet\n## Decisions and reasons\n24 months\n## Still to do\nthe plan\n## Next step\nrun it",
                 NoteOutcome::Read(NoteVerdict::Missing),
             ),
         ] {
@@ -2481,7 +2704,8 @@ mod tests {
             assert_eq!(note, expected, "{answer}");
             let stored = conversation.agent_visible_messages()[0].as_concat_text();
             assert!(
-                stored.starts_with("## Where we are\nplanning\n\n<kept-by-goose>"),
+                stored.starts_with("## Where we are\nplanning\n")
+                    && stored.contains("run it\n\n<kept-by-goose>"),
                 "{stored}"
             );
             assert!(
@@ -2496,7 +2720,8 @@ mod tests {
     #[tokio::test]
     async fn the_summary_reports_its_parts_while_it_streams() {
         let provider = ScriptedProvider::new(
-            "## Where we are\nplanning\n## Next step\nrun it\n## Decisions and reasons\n24 months",
+            "## Where we are\nplanning\n## What each file does\nnone yet\n## Decisions and reasons\n\
+             24 months\n## Still to do\nthe plan\n## Next step\nrun it",
         );
         let seen: Arc<std::sync::Mutex<Vec<WritingProgress>>> = Arc::default();
         let mut inputs = chat_inputs(None, false);
@@ -2517,12 +2742,18 @@ mod tests {
         let last = seen.last().unwrap();
         assert_eq!(
             last.parts,
-            ["Where we are", "Next step", "Decisions and reasons"]
+            [
+                "Where we are",
+                "What each file does",
+                "Decisions and reasons",
+                "Still to do",
+                "Next step"
+            ]
         );
         assert!(last.written_tokens.is_some_and(|t| t > 0));
         let counts: Vec<usize> = seen.iter().map(|p| p.parts.len()).collect();
         assert!(
-            counts.windows(2).all(|w| w[0] <= w[1]) && counts[0] < 3,
+            counts.windows(2).all(|w| w[0] <= w[1]) && counts[0] < WRITTEN_PARTS.len(),
             "{counts:?}"
         );
     }
@@ -3478,5 +3709,241 @@ mod tests {
         assert_eq!(cut_transcript_middle("short", 1_000), "short");
         let wide = "é".repeat(5_000);
         assert!(cut_transcript_middle(&wide, 999).len() < 1_200);
+    }
+
+    /// Answers the chat-shaped requests with `answers` in turn (the last one repeats) and a
+    /// transcript request with "<transcript summary>"; records each request.
+    struct SequenceProvider {
+        answers: Vec<String>,
+        calls: std::sync::Mutex<Vec<(Vec<Message>, usize)>>,
+    }
+
+    #[async_trait]
+    impl Provider for SequenceProvider {
+        fn get_name(&self) -> &str {
+            "sequence"
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            messages: &[Message],
+            tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            let mut calls = self.calls.lock().unwrap();
+            let chat_calls = calls.iter().filter(|(_, tools)| *tools > 0).count();
+            calls.push((messages.to_vec(), tools.len()));
+            let usage = ProviderUsage::new(
+                "sequence".to_string(),
+                Usage::new(Some(90), Some(10), Some(100)),
+            );
+            let text = if tools.is_empty() {
+                "<transcript summary>".to_string()
+            } else {
+                self.answers[chat_calls.min(self.answers.len() - 1)].clone()
+            };
+            Ok(stream_from_single_message(
+                Message::assistant().with_text(text),
+                usage,
+            ))
+        }
+    }
+
+    const EVERY_PART: &str = "## Where we are\nsync done, 41 tests pass\n## What each file does\n\
+        app/sync.py — the documented walk\n## Decisions and reasons\nBerlin days\n## Still to do\n\
+        the 3D field\n## Next step\nwrite web/viz.js";
+
+    /// The words the Flash-Next stopped run (2026-10-29) stored as the summary of 241k tokens.
+    const FLASH_NEXT_NON_SUMMARY: &str =
+        "I will now proceed to document the design decisions and run the final verification sequence.";
+
+    #[test]
+    fn an_answer_without_the_sections_is_not_a_summary() {
+        assert!(!has_every_written_part(FLASH_NEXT_NON_SUMMARY));
+        assert!(!has_every_written_part(
+            "## Where we are\nx\n## Next step\ny"
+        ));
+        assert!(has_every_written_part(EVERY_PART));
+        assert!(has_every_written_part(&format!(
+            "<analysis>scratch</analysis>\nNOTE OK\n{EVERY_PART}"
+        )));
+        let correction = missing_parts_correction("## Where we are\nx");
+        let (missing, _) = correction.split_once(':').unwrap();
+        assert!(missing.contains("`## What each file does`"), "{correction}");
+        assert!(!missing.contains("`## Where we are`"), "{correction}");
+    }
+
+    /// The Flash-Next shape: the model answers the summary instruction by going on with the work.
+    /// goose asks once more on the same prefix — the non-answer and a correction naming the
+    /// missing sections — and stores the second answer, never the one-liner.
+    #[tokio::test]
+    async fn a_non_summary_is_asked_once_more_on_the_same_prefix() {
+        let provider = SequenceProvider {
+            answers: vec![FLASH_NEXT_NON_SUMMARY.to_string(), EVERY_PART.to_string()],
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let ChatCompacted::Compacted { conversation, .. } = compact_chat(
+            &provider,
+            &ModelConfig::new("sequence"),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap() else {
+            panic!("compacted");
+        };
+        let calls = provider.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2, "one more ask, no transcript request");
+        let (first, second) = (&calls[0].0, &calls[1].0);
+        assert_eq!(
+            &second[..first.len()],
+            &first[..],
+            "the second ask extends the first request"
+        );
+        assert_eq!(second[first.len()].as_concat_text(), FLASH_NEXT_NON_SUMMARY);
+        assert!(second
+            .last()
+            .unwrap()
+            .as_concat_text()
+            .contains("it is not the summary"));
+        let stored = conversation.agent_visible_messages()[0].as_concat_text();
+        assert!(stored.starts_with("## Where we are\nsync done"), "{stored}");
+        assert!(!stored.contains("I will now proceed"), "{stored}");
+    }
+
+    /// Two non-answers: the chat-shaped request has had its chance; the summary is asked for as a
+    /// transcript.
+    #[tokio::test]
+    async fn two_non_summaries_fall_to_the_transcript_request() {
+        let provider = SequenceProvider {
+            answers: vec![FLASH_NEXT_NON_SUMMARY.to_string()],
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let ChatCompacted::Compacted { conversation, .. } = compact_chat(
+            &provider,
+            &ModelConfig::new("sequence"),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap() else {
+            panic!("compacted");
+        };
+        let calls = provider.calls.lock().unwrap();
+        let tools: Vec<usize> = calls.iter().map(|(_, tools)| *tools).collect();
+        assert_eq!(tools.len(), 3);
+        assert!(tools[0] > 0 && tools[1] > 0 && tools[2] == 0, "{tools:?}");
+        let stored = conversation.agent_visible_messages()[0].as_concat_text();
+        assert!(stored.starts_with("<transcript summary>"), "{stored}");
+    }
+
+    fn tool_loop(turns: usize) -> Conversation {
+        let mut messages = vec![Message::user().with_text("build the console")];
+        for i in 0..turns {
+            messages.push(Message::assistant().with_tool_request(
+                format!("t{i}"),
+                Ok(CallToolRequestParams::new("developer__shell")),
+            ));
+            messages.push(Message::user().with_tool_response(
+                format!("t{i}"),
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    RawContent::text(format!("output {i} {}", "x".repeat(200))).no_annotation(),
+                ])),
+            ));
+        }
+        Conversation::new_unvalidated(messages)
+    }
+
+    /// A chat keeps its newest turns word for word after the summary, sized to its share of the
+    /// window, and the summary request still sends the whole conversation (the cached prefix).
+    #[tokio::test]
+    async fn a_chat_keeps_its_newest_turns_and_the_summary_request_keeps_the_whole_prefix() {
+        let chat = tool_loop(40);
+        let per_message = format_message_for_compacting(&chat.messages()[2])
+            .chars()
+            .count();
+        let mut inputs = chat_inputs(None, false);
+        inputs.kept_budget_chars = Some(per_message * 6 + per_message / 2);
+        let provider = SequenceProvider {
+            answers: vec![EVERY_PART.to_string()],
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let ChatCompacted::Compacted {
+            conversation, kept, ..
+        } = compact_chat(
+            &provider,
+            &ModelConfig::new("sequence"),
+            "s",
+            &chat,
+            false,
+            &frame(),
+            &inputs,
+        )
+        .await
+        .unwrap()
+        else {
+            panic!("compacted");
+        };
+        let sent = &provider.calls.lock().unwrap()[0].0;
+        assert_eq!(
+            sent.len(),
+            chat.messages().len() + 1,
+            "every message, then the ask"
+        );
+        let tail = kept.unwrap().tail_messages;
+        assert!(tail > 0 && tail < chat.messages().len() / 2, "{tail}");
+        let visible = conversation.agent_visible_messages();
+        let last_tool = visible
+            .iter()
+            .rev()
+            .find(|m| {
+                m.content
+                    .iter()
+                    .any(|c| matches!(c, MessageContent::ToolResponse(_)))
+            })
+            .unwrap();
+        assert!(format_message_for_compacting(last_tool).contains("output 39"));
+        assert!(!visible
+            .iter()
+            .any(|m| format_message_for_compacting(m).contains("output 0 ")));
+    }
+
+    #[test]
+    fn a_tail_stops_at_a_row_an_earlier_compaction_hid() {
+        let mut messages = tool_loop(3).messages().clone();
+        messages[2] = messages[2]
+            .clone()
+            .with_metadata(MessageMetadata::user_only());
+        assert_eq!(tail_that_fits(&messages, usize::MAX), 4);
+        assert_eq!(tail_that_fits(&messages, 0), 0);
+    }
+
+    /// The compaction point: the person's ratio wins; otherwise the window minus the output cap
+    /// and one tool result, never earlier than 0.8. The Flash-Next numbers: 360,000 with a 32,768
+    /// cap compacts at 297,232 instead of 288,000.
+    #[test]
+    fn the_compaction_point_reserves_one_answer_and_one_tool_result() {
+        let at = |configured, reserve, limit: usize, output| {
+            (compaction_threshold_from(configured, reserve, limit, output) * limit as f64).round()
+                as usize
+        };
+        assert_eq!(at(None, None, 360_000, 32_768), 297_232);
+        assert_eq!(at(Some(0.8), None, 360_000, 32_768), 288_000);
+        assert_eq!(at(None, Some(20_000), 360_000, 32_768), 340_000);
+        assert_eq!(
+            at(None, None, 128_000, 32_768),
+            102_400,
+            "never earlier than 0.8"
+        );
+        assert_eq!(at(None, None, 1_048_576, 32_768), 928_427);
+        assert!(compaction_threshold_from(None, Some(0), 360_000, 32_768) < 1.0);
+        assert_eq!(compaction_threshold_from(None, None, 0, 4_096), 0.8);
     }
 }

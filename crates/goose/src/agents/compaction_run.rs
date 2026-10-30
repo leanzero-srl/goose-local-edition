@@ -22,12 +22,11 @@ use tracing::{error, warn};
 use super::agent::COMPACTION_THINKING_TEXT;
 use super::{Agent, AgentEvent};
 use crate::agents::platform_extensions::ledger::LedgerFile;
-use crate::config::Config;
 use crate::context_mgmt::pillars::{LedgerRead, NoteVerdict};
 use crate::context_mgmt::state::{CompactionState, LastCompaction};
 use crate::context_mgmt::{
     self, ChatCompacted, ChatCompaction, CompactionTrigger, NoteOutcome, SummaryRequest,
-    WritingProgress, DEFAULT_COMPACTION_THRESHOLD, WRITTEN_PARTS,
+    WritingProgress, WRITTEN_PARTS,
 };
 use crate::conversation::message::{Message, SystemNotificationContent, SystemNotificationType};
 use crate::conversation::Conversation;
@@ -433,9 +432,10 @@ impl Agent {
                 CompactionTrigger::Auto {
                     used: status.tokens_before.map(|t| t as usize),
                     limit,
-                    threshold: Config::global()
-                        .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
-                        .unwrap_or(DEFAULT_COMPACTION_THRESHOLD),
+                    threshold: match limit {
+                        Some(limit) => context_mgmt::compaction_threshold(limit, model_config),
+                        None => context_mgmt::configured_or_default_threshold(),
+                    },
                 }
             }
         };
@@ -507,9 +507,7 @@ impl Agent {
             };
             let before = match &run {
                 CompactionRun::AtReplyStart => {
-                    let threshold = Config::global()
-                        .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
-                        .unwrap_or(DEFAULT_COMPACTION_THRESHOLD);
+                    let threshold = context_mgmt::configured_or_default_threshold();
                     Some(format!(
                         "Exceeded auto-compact threshold of {}%. Performing auto-compaction...",
                         (threshold * 100.0) as u32

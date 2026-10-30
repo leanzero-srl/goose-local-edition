@@ -824,6 +824,35 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
 - Knobs: GOOSE_MIMO_MEDIA=0, GOOSE_MIMO_IMAGE_MAX_PIXELS, GOOSE_MIMO_VIDEO_MAX_TOKENS (16384), GOOSE_MIMO_VISION_BITS (0/8).
 - NOT DONE: live run (Macs busy with voice), audio (plan in HANDOFF Session 12), MTP. HANDOFF.md "Session 12 vision".
 
+## goose's compaction on a local model (2026-10-30, branch compaction-fix)
+
+Owner: "why did goose compact while cloud didn't? ... our compact engine might be fucked." Measured on the Flash-Next
+Gauntlet sb-7.2 (ple.6, 360k, 0.3927 vs cloud 0.6846; engine log runs/2026-10-29-flash-vision/attempt-2/mlx-engine/)
+and the stopped run (stopped-run-1/userdata/benchmark/runs/build/.openai-cloud-39b73921-...-runtime/goose/state/logs/
+llm_request.9.jsonl = the first request after its compaction, summary text inside).
+- WHEN: 0.8 x 360,000 = 288,000; the call that crossed it had 282,806 prompt + 6,700 out. The summary request was
+  agent call 96 of 151 (289,943 prompt, 282,774 cached, same model, thinking medium, 4,316 tokens out, 299 s).
+  Growth before it 1.87k tokens/call (calls 64-106), after it 1.28k: 55 calls more would have needed 360-394k, so the
+  window could NOT have finished the task; compaction was due around call 130 anyway. Cloud 1M -> 800k point, peak
+  322,851, never compacted. 0.8 is not the defect; it only moved the compaction ~20 calls earlier.
+- WHAT WAS LOST (the defect): the model-written part of the stopped run's summary was ONE line, "I will now proceed to
+  document the design decisions and run the final verification sequence." None of the asked sections. goose stored it.
+  The rest was code-built: the task prompt (twice: kept block + preserved request), file names with +/- line counts,
+  8 failed calls. No tail (GOOSE_COMPACT_KEEP_TAIL default 0 for chats), no file contents, no decisions, no TODO.
+- AFTER: stopped run, 13 of the next 17 calls re-read (ls, BROWSER-TESTING, STARTER, SB7-CONTRACT in 3 chunks,
+  VISUAL-CONTRACT, __main__.py, 4 greps of its own modules) - each doc had been read once before. ple.6 run: median
+  output per call 344 tokens after vs 1,144 for the 56 calls before; 3 calls over 2k tokens (writes) vs 22; 35.7k
+  output tokens after vs 175.6k. Its session DB was deleted at cleanup, so its summary text is not recoverable.
+- FIX (compaction-fix): (1) the point is `context_mgmt::compaction_threshold`: limit minus (output cap + 1/16 window),
+  never under 0.8; 360k/32,768 -> 304,732; GOOSE_AUTO_COMPACT_THRESHOLD wins, GOOSE_COMPACTION_RESERVE_TOKENS
+  overrides the reserve; swarm workers keep the configured ratio. (2) an answer missing any of the five sections
+  (Where we are / What each file does / Decisions and reasons / Still to do / Next step) is asked once more on the
+  same cached prefix, then falls to the transcript request. (3) chats keep a verbatim tail sized to the kept share
+  (1/16 window); the summary request still sends the whole conversation (hybrid caches cannot trim). (4) files the
+  person's messages name are kept whole from disk in the kept block, largest dropped first to fit.
+- TRAP: a run's sessions.db lives in the run's hidden .<run>-r0-runtime/goose/data/sessions; keep it before deleting a
+  dev profile, it is the only copy of the summary text.
+
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
   families by REGISTRY id (aws_bedrock, zai, google, custom_deepseek). One allow-list, `LOCAL_EDITION_PROVIDER_IDS` in
