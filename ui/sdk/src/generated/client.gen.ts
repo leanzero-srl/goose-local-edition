@@ -223,6 +223,8 @@ import type {
   MlxEngineMemoryFreeResponse_unstable,
   MlxEngineMemoryHoldersRequest_unstable,
   MlxEngineMemoryHoldersResponse_unstable,
+  MlxEngineMemoryMachineRequest_unstable,
+  MlxEngineMemoryMachineResponse_unstable,
   MlxEngineModelCardRequest_unstable,
   MlxEngineModelCardResponse_unstable,
   MlxEngineModelDeleteRequest_unstable,
@@ -259,6 +261,9 @@ import type {
   MlxEngineStopOtherEngineRequest_unstable,
   MlxEngineStopOtherEngineResponse_unstable,
   MlxEngineUnmountRequest_unstable,
+  MlxEngineWiredLimitApplyRequest_unstable,
+  MlxEngineWiredLimitRemoveDaemonRequest_unstable,
+  MlxEngineWiredLimitResponse_unstable,
   ModelFieldsListRequest_unstable,
   ModelFieldsListResponse_unstable,
   ModelFieldsSaveRequest_unstable,
@@ -473,6 +478,7 @@ import {
   zMlxEngineMeasureSpeedResponse_unstable,
   zMlxEngineMemoryFreeResponse_unstable,
   zMlxEngineMemoryHoldersResponse_unstable,
+  zMlxEngineMemoryMachineResponse_unstable,
   zMlxEngineModelCardResponse_unstable,
   zMlxEngineModelsListResponse_unstable,
   zMlxEngineMountResponse_unstable,
@@ -488,6 +494,7 @@ import {
   zMlxEngineSpeedHistoryResponse_unstable,
   zMlxEngineStatusResponse_unstable,
   zMlxEngineStopOtherEngineResponse_unstable,
+  zMlxEngineWiredLimitResponse_unstable,
   zModelFieldsListResponse_unstable,
   zModelFieldsSaveResponse_unstable,
   zNodesBuildEligibilityResponse_unstable,
@@ -1897,6 +1904,42 @@ export class GooseExtClient {
     return zMlxEngineSettingsResponse_unstable.parse(
       raw,
     ) as MlxEngineSettingsResponse_unstable;
+  }
+
+  async mlxEngineMemoryMachine_unstable(
+    params: MlxEngineMemoryMachineRequest_unstable,
+  ): Promise<MlxEngineMemoryMachineResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/memoryMachine",
+      params,
+    );
+    return zMlxEngineMemoryMachineResponse_unstable.parse(
+      raw,
+    ) as MlxEngineMemoryMachineResponse_unstable;
+  }
+
+  async mlxEngineWiredLimitApply_unstable(
+    params: MlxEngineWiredLimitApplyRequest_unstable,
+  ): Promise<MlxEngineWiredLimitResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/wiredLimitApply",
+      params,
+    );
+    return zMlxEngineWiredLimitResponse_unstable.parse(
+      raw,
+    ) as MlxEngineWiredLimitResponse_unstable;
+  }
+
+  async mlxEngineWiredLimitRemoveDaemon_unstable(
+    params: MlxEngineWiredLimitRemoveDaemonRequest_unstable,
+  ): Promise<MlxEngineWiredLimitResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/wiredLimitRemoveDaemon",
+      params,
+    );
+    return zMlxEngineWiredLimitResponse_unstable.parse(
+      raw,
+    ) as MlxEngineWiredLimitResponse_unstable;
   }
 
   async mlxEngineSettingsUpdate_unstable(

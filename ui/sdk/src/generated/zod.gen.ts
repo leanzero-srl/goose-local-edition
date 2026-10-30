@@ -2953,6 +2953,94 @@ export const zMlxEngineStatusRequest_unstable = z.object({
 });
 
 /**
+ * The running engine's `/v1/status` `memory_budget` (Rapid-MLX lz.20+), bytes unless named.
+ * Every field is absent when the engine did not report it — never a guessed 0.
+ */
+export const zMlxEngineMemoryBudgetDto = z.object({
+    physicalBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    deviceWorkingSetBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    wiredLimitMb: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    mode: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    source: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    resolvedUtilization: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    limitBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    binding: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    weightsBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    planContextTokens: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    kvBytesPerToken: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    planNeedBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    prefixBudgetBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    memoryFloorBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    othersBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    freeBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    effectiveCeilingBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    activeBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    peakBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    maxContextAtCeiling: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    tunables: z.record(z.unknown()).optional().default({})
+});
+
+/**
  * The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −
  * RAM × marginRatio, GPU ceiling)`; the need fits when ≤ budget, and is "warn" when what is left
  * is inside the live-memory drift. Bytes throughout; the desktop draws these, never recomputes.
@@ -3168,6 +3256,14 @@ export const zMlxEngineStatusDto = z.object({
     ]).optional(),
     maxConcurrentRequests: z.union([
         z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    memoryBudget: z.union([
+        zMlxEngineMemoryBudgetDto,
+        z.null()
+    ]).optional(),
+    memoryBudgetError: z.union([
+        z.string(),
         z.null()
     ]).optional(),
     gateMessage: z.union([
@@ -3872,6 +3968,58 @@ export const zMlxModelProfileDto = z.object({
     ]).optional()
 });
 
+/**
+ * The engine memory tunables (goose-sidecar `memory_tunables::MemoryTunables`), each its own
+ * engine flag (fork lz/metal-tunables INTERFACE.md). Absent = the engine's default, except
+ * `memoryFloorGb`, whose absence means goose's per-machine default (round(8% x physical GB)).
+ */
+export const zMlxEngineMemoryTunablesDto = z.object({
+    metalLimitGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    memoryFloorGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    prefixCacheGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    prefillStepSize: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    maxContextTokens: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    guardMarginGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    maxConcurrentRequests: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    autoUtilizationFloor: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    autoUtilizationCeiling: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    autoHeadroomFraction: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    systemReserveFraction: z.union([
+        z.number(),
+        z.null()
+    ]).optional()
+});
+
 export const zMlxEngineSettingsDto = z.object({
     modelId: z.union([
         z.string(),
@@ -3916,12 +4064,77 @@ export const zMlxEngineSettingsDto = z.object({
         z.null()
     ]).optional(),
     spawnCommand: z.array(z.string()),
-    modelProfiles: z.record(zMlxModelProfileDto).optional().default({})
+    modelProfiles: z.record(zMlxModelProfileDto).optional().default({}),
+    memory: zMlxEngineMemoryTunablesDto.optional().default({})
 });
 
 export const zMlxEngineSettingsResponse_unstable = z.object({
     settings: zMlxEngineSettingsDto
 });
+
+/**
+ * This Mac's memory facts for the Memory tab, readable while no engine runs. Local only: the
+ * GPU wired limit can only be changed at the Mac whose password prompt appears.
+ */
+export const zMlxEngineMemoryMachineRequest_unstable = z.record(z.unknown());
+
+export const zMlxEngineMemoryMachineResponse_unstable = z.object({
+    physicalBytes: z.number().int().gte(0),
+    availableBytes: z.number().int().gte(0),
+    workingSetBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    workingSetError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    wiredLimitMb: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    wiredLimitError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    daemonWiredLimitMb: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    daemonError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    defaultFloorGb: z.number(),
+    tunablesSupported: z.boolean(),
+    launcher: z.string()
+});
+
+/**
+ * Set the macOS GPU wired limit through the macOS administrator prompt (the person types their
+ * password). `persist` also installs the boot-time LaunchDaemon. `mb` is 0 or 8192..physical MB.
+ */
+export const zMlxEngineWiredLimitApplyRequest_unstable = z.object({
+    mb: z.number().int().gte(0),
+    persist: z.boolean().optional().default(false)
+});
+
+export const zMlxEngineWiredLimitResponse_unstable = z.object({
+    wiredLimitMb: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    daemonWiredLimitMb: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    command: z.string()
+});
+
+/**
+ * Remove the boot-time LaunchDaemon (the live limit stays until reboot).
+ */
+export const zMlxEngineWiredLimitRemoveDaemonRequest_unstable = z.record(z.unknown());
 
 /**
  * Persist MLX engine settings. A running engine keeps its old arguments; status reports
@@ -8710,6 +8923,9 @@ export const zExtRequest = z.object({
             zMlxEngineMemoryFreeRequest_unstable,
             zMlxEngineUnmountRequest_unstable,
             zMlxEngineSettingsReadRequest_unstable,
+            zMlxEngineMemoryMachineRequest_unstable,
+            zMlxEngineWiredLimitApplyRequest_unstable,
+            zMlxEngineWiredLimitRemoveDaemonRequest_unstable,
             zMlxEngineSettingsUpdateRequest_unstable,
             zMlxEngineModelsListRequest_unstable,
             zMlxEngineModelDeleteRequest_unstable,
@@ -8892,6 +9108,8 @@ export const zExtResponse = z.union([
                 zMlxEngineMemoryHoldersResponse_unstable,
                 zMlxEngineMemoryFreeResponse_unstable,
                 zMlxEngineSettingsResponse_unstable,
+                zMlxEngineMemoryMachineResponse_unstable,
+                zMlxEngineWiredLimitResponse_unstable,
                 zMlxEngineModelsListResponse_unstable,
                 zMlxEngineHfSearchResponse_unstable,
                 zMlxEngineBrowseResponse_unstable,

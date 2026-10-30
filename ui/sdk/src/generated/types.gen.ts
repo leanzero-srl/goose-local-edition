@@ -2867,6 +2867,11 @@ export type MlxEngineStatusDto = {
      * a Link peer routing chat here sizes its node to. Absent from goose builds before it.
      */
     maxConcurrentRequests?: number | null;
+    /**
+     * The engine's own memory plan and use (`/v1/status` `memory_budget`, lz.20+).
+     */
+    memoryBudget?: MlxEngineMemoryBudgetDto | null;
+    memoryBudgetError?: string | null;
     gateMessage?: string | null;
     /**
      * The last memory-gate verdict for `gate_message`: "allow" | "warn" | "block".
@@ -2983,6 +2988,48 @@ export type MlxEngineStatusDto = {
      */
     machineLoad?: MlxMachineLoadDto | null;
     machineLoadError?: string | null;
+};
+
+/**
+ * The running engine's `/v1/status` `memory_budget` (Rapid-MLX lz.20+), bytes unless named.
+ * Every field is absent when the engine did not report it — never a guessed 0.
+ */
+export type MlxEngineMemoryBudgetDto = {
+    physicalBytes?: number | null;
+    deviceWorkingSetBytes?: number | null;
+    wiredLimitMb?: number | null;
+    /**
+     * "auto" | "manual".
+     */
+    mode?: string | null;
+    /**
+     * "auto-context" | "auto-weights" | "manual-utilization" | "manual-gb".
+     */
+    source?: string | null;
+    resolvedUtilization?: number | null;
+    limitBytes?: number | null;
+    /**
+     * "engine" | "macos_working_set" | "memory_floor": which bound holds the cap.
+     */
+    binding?: string | null;
+    weightsBytes?: number | null;
+    planContextTokens?: number | null;
+    kvBytesPerToken?: number | null;
+    planNeedBytes?: number | null;
+    prefixBudgetBytes?: number | null;
+    memoryFloorBytes?: number | null;
+    othersBytes?: number | null;
+    freeBytes?: number | null;
+    effectiveCeilingBytes?: number | null;
+    activeBytes?: number | null;
+    peakBytes?: number | null;
+    maxContextAtCeiling?: number | null;
+    /**
+     * The tunables the engine resolved, by its own names.
+     */
+    tunables?: {
+        [key: string]: unknown;
+    };
 };
 
 /**
@@ -3786,6 +3833,10 @@ export type MlxEngineSettingsDto = {
     modelProfiles?: {
         [key: string]: MlxModelProfileDto;
     };
+    /**
+     * This Mac's engine memory tunables (`mlx_engine.memory`), the same for every model.
+     */
+    memory?: MlxEngineMemoryTunablesDto;
 };
 
 /**
@@ -3881,6 +3932,133 @@ export type MlxPromptLookupDto = {
 };
 
 export type MlxPromptLookupModeDto = 'on' | 'off';
+
+/**
+ * The engine memory tunables (goose-sidecar `memory_tunables::MemoryTunables`), each its own
+ * engine flag (fork lz/metal-tunables INTERFACE.md). Absent = the engine's default, except
+ * `memoryFloorGb`, whose absence means goose's per-machine default (round(8% x physical GB)).
+ */
+export type MlxEngineMemoryTunablesDto = {
+    /**
+     * `--metal-limit-gb`; absent = auto.
+     */
+    metalLimitGb?: number | null;
+    /**
+     * `--memory-floor-gb`.
+     */
+    memoryFloorGb?: number | null;
+    /**
+     * `--cache-memory-mb`, entered in GB.
+     */
+    prefixCacheGb?: number | null;
+    /**
+     * `--prefill-step-size` (tokens).
+     */
+    prefillStepSize?: number | null;
+    /**
+     * `--max-model-len` (tokens); wins over the mounted model's profile `contextLimit`.
+     */
+    maxContextTokens?: number | null;
+    /**
+     * `--memory-guard-margin-gb`.
+     */
+    guardMarginGb?: number | null;
+    /**
+     * `--max-concurrent-requests`.
+     */
+    maxConcurrentRequests?: number | null;
+    /**
+     * `--auto-utilization-floor`.
+     */
+    autoUtilizationFloor?: number | null;
+    /**
+     * `--auto-utilization-ceiling`.
+     */
+    autoUtilizationCeiling?: number | null;
+    /**
+     * `--auto-headroom-fraction`.
+     */
+    autoHeadroomFraction?: number | null;
+    /**
+     * `--system-reserve-fraction`.
+     */
+    systemReserveFraction?: number | null;
+};
+
+/**
+ * This Mac's memory facts for the Memory tab, readable while no engine runs. Local only: the
+ * GPU wired limit can only be changed at the Mac whose password prompt appears.
+ */
+export type MlxEngineMemoryMachineRequest_unstable = {
+    [key: string]: unknown;
+};
+
+export type MlxEngineMemoryMachineResponse_unstable = {
+    /**
+     * `hw.memsize`.
+     */
+    physicalBytes: number;
+    /**
+     * Free pages plus reclaimable file cache right now.
+     */
+    availableBytes: number;
+    /**
+     * Metal's recommended working set as goose read it at its start (Metal fixes it per
+     * process; a new wired limit reaches it at the next engine start).
+     */
+    workingSetBytes?: number | null;
+    workingSetError?: string | null;
+    /**
+     * `sysctl -n iogpu.wired_limit_mb` (0 = macOS default).
+     */
+    wiredLimitMb?: number | null;
+    wiredLimitError?: string | null;
+    /**
+     * The boot-time LaunchDaemon's value; absent when none is installed.
+     */
+    daemonWiredLimitMb?: number | null;
+    daemonError?: string | null;
+    /**
+     * goose's default free-memory floor on this Mac: round(8% x physical GB).
+     */
+    defaultFloorGb: number;
+    /**
+     * Whether the configured engine launcher reads the lz.20 memory flags.
+     */
+    tunablesSupported: boolean;
+    /**
+     * The configured launcher, for the "needs lz.20" line.
+     */
+    launcher: string;
+};
+
+/**
+ * Set the macOS GPU wired limit through the macOS administrator prompt (the person types their
+ * password). `persist` also installs the boot-time LaunchDaemon. `mb` is 0 or 8192..physical MB.
+ */
+export type MlxEngineWiredLimitApplyRequest_unstable = {
+    mb: number;
+    persist?: boolean;
+};
+
+export type MlxEngineWiredLimitResponse_unstable = {
+    /**
+     * The limit read back after the change.
+     */
+    wiredLimitMb?: number | null;
+    daemonWiredLimitMb?: number | null;
+    /**
+     * The root command macOS ran.
+     */
+    command: string;
+};
+
+/**
+ * Remove the boot-time LaunchDaemon (the live limit stays until reboot).
+ */
+export type MlxEngineWiredLimitRemoveDaemonRequest_unstable = {
+    [key: string]: unknown;
+};
 
 /**
  * Persist MLX engine settings. A running engine keeps its old arguments; status reports
@@ -8452,14 +8630,14 @@ export type RecipeParamsAction = 'submit' | 'cancel';
 export type ExtRequest = {
     id: string;
     method: string;
-    params?: AddSessionExtensionRequest_unstable | RemoveSessionExtensionRequest_unstable | GetToolsRequest_unstable | SetToolPermissionsRequest_unstable | GooseToolCallRequest_unstable | ReadResourceRequest_unstable | AppsListRequest_unstable | AppsExportRequest_unstable | AppsImportRequest_unstable | UpdateWorkingDirRequest_unstable | SetSessionSystemPromptRequest_unstable | SteerSessionRequest_unstable | DiagnosticsGetRequest_unstable | ListPromptsRequest_unstable | GetPromptRequest_unstable | SavePromptRequest_unstable | ResetPromptRequest_unstable | DeleteSessionRequest | InspectConfigExtensionRequest_unstable | GetConfigExtensionsRequest_unstable | GetAvailableExtensionsRequest_unstable | AddConfigExtensionRequest_unstable | RemoveConfigExtensionRequest_unstable | SetConfigExtensionEnabledRequest_unstable | GetSessionExtensionsRequest_unstable | ListProvidersRequest_unstable | ProviderSupportedModelsListRequest_unstable | OpenRouterPinReadRequest_unstable | OpenRouterPinSetRequest_unstable | OpenRouterHostsListRequest_unstable | OpenRouterHostProbeRequest_unstable | ProviderCatalogListRequest_unstable | ProviderSetupCatalogListRequest_unstable | ProviderCatalogTemplateRequest_unstable | CustomProviderCreateRequest_unstable | CustomProviderReadRequest_unstable | CustomProviderUpdateRequest_unstable | CustomProviderDeleteRequest_unstable | RefreshProviderInventoryRequest_unstable | ProviderConfigReadRequest_unstable | ProviderConfigStatusRequest_unstable | ProviderConfigSaveRequest_unstable | ProviderConfigDeleteRequest_unstable | ProviderConfigAuthenticateRequest_unstable | ProviderSecretsListRequest_unstable | ProviderSecretDeleteRequest_unstable | ModelFieldsListRequest_unstable | ModelFieldsSaveRequest_unstable | CanonicalModelInfoRequest_unstable | PreferencesReadRequest_unstable | PreferencesSaveRequest_unstable | PreferencesRemoveRequest_unstable | ConfigReadRequest_unstable | ConfigUpsertRequest_unstable | ConfigRemoveRequest_unstable | ConfigReadAllRequest_unstable | ConfigMoveAsideRequest_unstable | DefaultsReadRequest_unstable | DefaultsSaveRequest_unstable | DefaultsClearRequest_unstable | OnboardingImportScanRequest_unstable | OnboardingImportApplyRequest_unstable | ExportSessionRequest_unstable | ImportSessionRequest_unstable | ShareSessionNostrRequest_unstable | EncodeRecipeRequest_unstable | DecodeRecipeRequest_unstable | ScanRecipeRequest_unstable | ListRecipesRequest_unstable | DeleteRecipeRequest_unstable | ScheduleRecipeRequest_unstable | SetRecipeSlashCommandRequest_unstable | SaveRecipeRequest_unstable | CreateRecipeRequest_unstable | ParseRecipeRequest_unstable | RecipeToYamlRequest_unstable | ListSchedulesRequest_unstable | ListScheduleSessionsRequest_unstable | CreateScheduleRequest_unstable | DeleteScheduleRequest_unstable | PauseScheduleRequest_unstable | UnpauseScheduleRequest_unstable | UpdateScheduleRequest_unstable | RunScheduleNowRequest_unstable | KillRunningJobRequest_unstable | InspectRunningJobRequest_unstable | GetSessionInfoRequest_unstable | TruncateSessionConversationRequest_unstable | UpdateSessionProjectRequest_unstable | RenameSessionRequest_unstable | ArchiveSessionRequest_unstable | UnarchiveSessionRequest_unstable | CreateSourceRequest_unstable | ListSourcesRequest_unstable | ListAgentMentionsRequest_unstable | ListSlashCommandsRequest_unstable | UpdateSourceRequest_unstable | DeleteSourceRequest_unstable | ExportSourceRequest_unstable | ImportSourcesRequest_unstable | DictationTranscribeRequest_unstable | DictationConfigRequest_unstable | DictationSecretSaveRequest_unstable | DictationSecretDeleteRequest_unstable | DictationModelsListRequest_unstable | DictationModelDownloadRequest_unstable | DictationModelDownloadProgressRequest_unstable | DictationModelCancelRequest_unstable | DictationModelDeleteRequest_unstable | DictationModelSelectRequest_unstable | LocalInferenceModelsListRequest_unstable | LocalInferenceModelDownloadRequest_unstable | LocalInferenceModelDownloadProgressRequest_unstable | LocalInferenceModelDownloadCancelRequest_unstable | LocalInferenceModelDeleteRequest_unstable | LocalInferenceModelSettingsReadRequest_unstable | LocalInferenceModelSettingsUpdateRequest_unstable | LocalInferenceHuggingFaceSearchRequest_unstable | LocalInferenceHuggingFaceRepoVariantsRequest_unstable | LocalInferenceBuiltinChatTemplatesListRequest_unstable | MlxEngineStatusRequest_unstable | MlxEngineMountRequest_unstable | MlxEngineMountAfterLoadRequest_unstable | MlxEngineStopOtherEngineRequest_unstable | MlxEngineMemoryHoldersRequest_unstable | MlxEngineMemoryFreeRequest_unstable | MlxEngineUnmountRequest_unstable | MlxEngineSettingsReadRequest_unstable | MlxEngineSettingsUpdateRequest_unstable | MlxEngineModelsListRequest_unstable | MlxEngineModelDeleteRequest_unstable | MlxEngineHfSearchRequest_unstable | MlxEngineBrowseRequest_unstable | MlxEngineDownloadRequest_unstable | MlxEngineDownloadProgressRequest_unstable | MlxEngineBrowseFiltersRequest_unstable | MlxEngineModelCardRequest_unstable | MlxEngineDownloadPauseRequest_unstable | MlxEngineDownloadResumeRequest_unstable | MlxEngineDistributedStatusRequest_unstable | MlxEngineDistributedPreflightRequest_unstable | MlxEngineDistributedStartRequest_unstable | MlxEngineDistributedStopRequest_unstable | MlxEngineRemoteSingleStartRequest_unstable | MlxEngineRemoteSingleStopRequest_unstable | MlxEngineRemoteSingleStatusRequest_unstable | MlxEngineServingIntentRequest_unstable | MlxEngineDistributedMakeRoomRequest_unstable | MlxEngineDistributedPeerCandidatesRequest_unstable | MlxEngineDistributedDiscoverRequest_unstable | MlxEngineDistributedProvisionRequest_unstable | MlxEngineDistributedConfigUpdateRequest_unstable | MlxEngineDownloadCancelRequest_unstable | MlxEngineLinkFactsRequest_unstable | MlxEngineReplicaTargetsRequest_unstable | MlxEngineReplicateRequest_unstable | MlxEngineReplicaPullRequest_unstable | MlxEnginePlacementPlanRequest_unstable | MlxEngineMeasureSpeedRequest_unstable | MlxEngineSpeedHistoryRequest_unstable | MlxEngineReplicaProgressRequest_unstable | MlxEngineReplicaCancelRequest_unstable | LeanzeroLinkHealthRequest_unstable | LeanzeroLinkRequestCodeRequest_unstable | LeanzeroLinkVerifyRequest_unstable | LeanzeroLinkConnectRequest_unstable | LeanzeroLinkStatusRequest_unstable | LeanzeroLinkLogoutRequest_unstable | LeanzeroLinkDisconnectRequest_unstable | LeanzeroLinkNodesRequest_unstable | ListMemoryProposalsRequest_unstable | AnswerMemoryProposalRequest_unstable | SessionActivityRequest_unstable | ResolveNeedsYouRequest_unstable | NotesListRequest_unstable | NotesTargetsRequest_unstable | NotesSendRequest_unstable | NotesDraftRequest_unstable | NotesInboxRequest_unstable | NotesShowingRequest_unstable | LeanzeroLinkRemoteExecuteRequest_unstable | LeanzeroLinkJobsSubmitRequest_unstable | LeanzeroLinkJobsListRequest_unstable | LeanzeroLinkJobsGetRequest_unstable | LeanzeroLinkJobsCancelRequest_unstable | LeanzeroLinkJobsLogRequest_unstable | LeanzeroLinkJobsPlaceRequest_unstable | NodesReadRequest_unstable | NodesWriteRequest_unstable | NodesRemoveNodeRequest_unstable | NodesRemoveStrategyRequest_unstable | NodesSetChatNodesRequest_unstable | NodesBuildEligibilityRequest_unstable | NodesResidencyRequest_unstable | NodesLoadHistoryRequest_unstable | NodesServedLastRequest_unstable | NodesEnsureServingRequest_unstable | NodesTakeOverNowRequest_unstable | CompactionPreviewRequest_unstable | CompactionSteerRequest_unstable | LoopsGetRequest_unstable | LoopsStartRequest_unstable | LoopsUpdateRequest_unstable | LoopsControlRequest_unstable | LoopsTickRefusedRequest_unstable | LoopsReadyRequest_unstable | LoopsWakeRequest_unstable | LoopsTemplatesRequest_unstable | LoopsListRequest_unstable | {
+    params?: AddSessionExtensionRequest_unstable | RemoveSessionExtensionRequest_unstable | GetToolsRequest_unstable | SetToolPermissionsRequest_unstable | GooseToolCallRequest_unstable | ReadResourceRequest_unstable | AppsListRequest_unstable | AppsExportRequest_unstable | AppsImportRequest_unstable | UpdateWorkingDirRequest_unstable | SetSessionSystemPromptRequest_unstable | SteerSessionRequest_unstable | DiagnosticsGetRequest_unstable | ListPromptsRequest_unstable | GetPromptRequest_unstable | SavePromptRequest_unstable | ResetPromptRequest_unstable | DeleteSessionRequest | InspectConfigExtensionRequest_unstable | GetConfigExtensionsRequest_unstable | GetAvailableExtensionsRequest_unstable | AddConfigExtensionRequest_unstable | RemoveConfigExtensionRequest_unstable | SetConfigExtensionEnabledRequest_unstable | GetSessionExtensionsRequest_unstable | ListProvidersRequest_unstable | ProviderSupportedModelsListRequest_unstable | OpenRouterPinReadRequest_unstable | OpenRouterPinSetRequest_unstable | OpenRouterHostsListRequest_unstable | OpenRouterHostProbeRequest_unstable | ProviderCatalogListRequest_unstable | ProviderSetupCatalogListRequest_unstable | ProviderCatalogTemplateRequest_unstable | CustomProviderCreateRequest_unstable | CustomProviderReadRequest_unstable | CustomProviderUpdateRequest_unstable | CustomProviderDeleteRequest_unstable | RefreshProviderInventoryRequest_unstable | ProviderConfigReadRequest_unstable | ProviderConfigStatusRequest_unstable | ProviderConfigSaveRequest_unstable | ProviderConfigDeleteRequest_unstable | ProviderConfigAuthenticateRequest_unstable | ProviderSecretsListRequest_unstable | ProviderSecretDeleteRequest_unstable | ModelFieldsListRequest_unstable | ModelFieldsSaveRequest_unstable | CanonicalModelInfoRequest_unstable | PreferencesReadRequest_unstable | PreferencesSaveRequest_unstable | PreferencesRemoveRequest_unstable | ConfigReadRequest_unstable | ConfigUpsertRequest_unstable | ConfigRemoveRequest_unstable | ConfigReadAllRequest_unstable | ConfigMoveAsideRequest_unstable | DefaultsReadRequest_unstable | DefaultsSaveRequest_unstable | DefaultsClearRequest_unstable | OnboardingImportScanRequest_unstable | OnboardingImportApplyRequest_unstable | ExportSessionRequest_unstable | ImportSessionRequest_unstable | ShareSessionNostrRequest_unstable | EncodeRecipeRequest_unstable | DecodeRecipeRequest_unstable | ScanRecipeRequest_unstable | ListRecipesRequest_unstable | DeleteRecipeRequest_unstable | ScheduleRecipeRequest_unstable | SetRecipeSlashCommandRequest_unstable | SaveRecipeRequest_unstable | CreateRecipeRequest_unstable | ParseRecipeRequest_unstable | RecipeToYamlRequest_unstable | ListSchedulesRequest_unstable | ListScheduleSessionsRequest_unstable | CreateScheduleRequest_unstable | DeleteScheduleRequest_unstable | PauseScheduleRequest_unstable | UnpauseScheduleRequest_unstable | UpdateScheduleRequest_unstable | RunScheduleNowRequest_unstable | KillRunningJobRequest_unstable | InspectRunningJobRequest_unstable | GetSessionInfoRequest_unstable | TruncateSessionConversationRequest_unstable | UpdateSessionProjectRequest_unstable | RenameSessionRequest_unstable | ArchiveSessionRequest_unstable | UnarchiveSessionRequest_unstable | CreateSourceRequest_unstable | ListSourcesRequest_unstable | ListAgentMentionsRequest_unstable | ListSlashCommandsRequest_unstable | UpdateSourceRequest_unstable | DeleteSourceRequest_unstable | ExportSourceRequest_unstable | ImportSourcesRequest_unstable | DictationTranscribeRequest_unstable | DictationConfigRequest_unstable | DictationSecretSaveRequest_unstable | DictationSecretDeleteRequest_unstable | DictationModelsListRequest_unstable | DictationModelDownloadRequest_unstable | DictationModelDownloadProgressRequest_unstable | DictationModelCancelRequest_unstable | DictationModelDeleteRequest_unstable | DictationModelSelectRequest_unstable | LocalInferenceModelsListRequest_unstable | LocalInferenceModelDownloadRequest_unstable | LocalInferenceModelDownloadProgressRequest_unstable | LocalInferenceModelDownloadCancelRequest_unstable | LocalInferenceModelDeleteRequest_unstable | LocalInferenceModelSettingsReadRequest_unstable | LocalInferenceModelSettingsUpdateRequest_unstable | LocalInferenceHuggingFaceSearchRequest_unstable | LocalInferenceHuggingFaceRepoVariantsRequest_unstable | LocalInferenceBuiltinChatTemplatesListRequest_unstable | MlxEngineStatusRequest_unstable | MlxEngineMountRequest_unstable | MlxEngineMountAfterLoadRequest_unstable | MlxEngineStopOtherEngineRequest_unstable | MlxEngineMemoryHoldersRequest_unstable | MlxEngineMemoryFreeRequest_unstable | MlxEngineUnmountRequest_unstable | MlxEngineSettingsReadRequest_unstable | MlxEngineMemoryMachineRequest_unstable | MlxEngineWiredLimitApplyRequest_unstable | MlxEngineWiredLimitRemoveDaemonRequest_unstable | MlxEngineSettingsUpdateRequest_unstable | MlxEngineModelsListRequest_unstable | MlxEngineModelDeleteRequest_unstable | MlxEngineHfSearchRequest_unstable | MlxEngineBrowseRequest_unstable | MlxEngineDownloadRequest_unstable | MlxEngineDownloadProgressRequest_unstable | MlxEngineBrowseFiltersRequest_unstable | MlxEngineModelCardRequest_unstable | MlxEngineDownloadPauseRequest_unstable | MlxEngineDownloadResumeRequest_unstable | MlxEngineDistributedStatusRequest_unstable | MlxEngineDistributedPreflightRequest_unstable | MlxEngineDistributedStartRequest_unstable | MlxEngineDistributedStopRequest_unstable | MlxEngineRemoteSingleStartRequest_unstable | MlxEngineRemoteSingleStopRequest_unstable | MlxEngineRemoteSingleStatusRequest_unstable | MlxEngineServingIntentRequest_unstable | MlxEngineDistributedMakeRoomRequest_unstable | MlxEngineDistributedPeerCandidatesRequest_unstable | MlxEngineDistributedDiscoverRequest_unstable | MlxEngineDistributedProvisionRequest_unstable | MlxEngineDistributedConfigUpdateRequest_unstable | MlxEngineDownloadCancelRequest_unstable | MlxEngineLinkFactsRequest_unstable | MlxEngineReplicaTargetsRequest_unstable | MlxEngineReplicateRequest_unstable | MlxEngineReplicaPullRequest_unstable | MlxEnginePlacementPlanRequest_unstable | MlxEngineMeasureSpeedRequest_unstable | MlxEngineSpeedHistoryRequest_unstable | MlxEngineReplicaProgressRequest_unstable | MlxEngineReplicaCancelRequest_unstable | LeanzeroLinkHealthRequest_unstable | LeanzeroLinkRequestCodeRequest_unstable | LeanzeroLinkVerifyRequest_unstable | LeanzeroLinkConnectRequest_unstable | LeanzeroLinkStatusRequest_unstable | LeanzeroLinkLogoutRequest_unstable | LeanzeroLinkDisconnectRequest_unstable | LeanzeroLinkNodesRequest_unstable | ListMemoryProposalsRequest_unstable | AnswerMemoryProposalRequest_unstable | SessionActivityRequest_unstable | ResolveNeedsYouRequest_unstable | NotesListRequest_unstable | NotesTargetsRequest_unstable | NotesSendRequest_unstable | NotesDraftRequest_unstable | NotesInboxRequest_unstable | NotesShowingRequest_unstable | LeanzeroLinkRemoteExecuteRequest_unstable | LeanzeroLinkJobsSubmitRequest_unstable | LeanzeroLinkJobsListRequest_unstable | LeanzeroLinkJobsGetRequest_unstable | LeanzeroLinkJobsCancelRequest_unstable | LeanzeroLinkJobsLogRequest_unstable | LeanzeroLinkJobsPlaceRequest_unstable | NodesReadRequest_unstable | NodesWriteRequest_unstable | NodesRemoveNodeRequest_unstable | NodesRemoveStrategyRequest_unstable | NodesSetChatNodesRequest_unstable | NodesBuildEligibilityRequest_unstable | NodesResidencyRequest_unstable | NodesLoadHistoryRequest_unstable | NodesServedLastRequest_unstable | NodesEnsureServingRequest_unstable | NodesTakeOverNowRequest_unstable | CompactionPreviewRequest_unstable | CompactionSteerRequest_unstable | LoopsGetRequest_unstable | LoopsStartRequest_unstable | LoopsUpdateRequest_unstable | LoopsControlRequest_unstable | LoopsTickRefusedRequest_unstable | LoopsReadyRequest_unstable | LoopsWakeRequest_unstable | LoopsTemplatesRequest_unstable | LoopsListRequest_unstable | {
         [key: string]: unknown;
     } | null;
 };
 
 export type ExtResponse = {
     id: string;
-    result?: EmptyResponse | GetToolsResponse_unstable | SetToolPermissionsResponse_unstable | GooseToolCallResponse_unstable | ReadResourceResponse_unstable | AppsListResponse_unstable | AppsExportResponse_unstable | AppsImportResponse_unstable | SteerSessionResponse_unstable | DiagnosticsGetResponse_unstable | ListPromptsResponse_unstable | GetPromptResponse_unstable | PromptOperationResponse_unstable | InspectConfigExtensionResponse_unstable | GetConfigExtensionsResponse_unstable | GetAvailableExtensionsResponse_unstable | GetSessionExtensionsResponse_unstable | ListProvidersResponse_unstable | ProviderSupportedModelsListResponse_unstable | OpenRouterPinResponse_unstable | OpenRouterHostsListResponse_unstable | OpenRouterHostProbeResponse_unstable | ProviderCatalogListResponse_unstable | ProviderSetupCatalogListResponse_unstable | ProviderCatalogTemplateResponse_unstable | CustomProviderCreateResponse_unstable | CustomProviderReadResponse_unstable | CustomProviderUpdateResponse_unstable | CustomProviderDeleteResponse_unstable | RefreshProviderInventoryResponse_unstable | ProviderConfigReadResponse_unstable | ProviderConfigStatusResponse_unstable | ProviderConfigChangeResponse_unstable | ProviderSecretsListResponse_unstable | ModelFieldsListResponse_unstable | ModelFieldsSaveResponse_unstable | CanonicalModelInfoResponse_unstable | PreferencesReadResponse_unstable | ConfigReadResponse_unstable | ConfigReadAllResponse_unstable | ConfigMoveAsideResponse_unstable | DefaultsReadResponse_unstable | OnboardingImportScanResponse_unstable | OnboardingImportApplyResponse_unstable | ExportSessionResponse_unstable | ImportSessionResponse_unstable | ShareSessionNostrResponse_unstable | EncodeRecipeResponse_unstable | DecodeRecipeResponse_unstable | ScanRecipeResponse_unstable | ListRecipesResponse_unstable | SaveRecipeResponse_unstable | CreateRecipeResponse_unstable | ParseRecipeResponse_unstable | RecipeToYamlResponse_unstable | ListSchedulesResponse_unstable | ListScheduleSessionsResponse_unstable | CreateScheduleResponse_unstable | UpdateScheduleResponse_unstable | RunScheduleNowResponse_unstable | KillRunningJobResponse_unstable | InspectRunningJobResponse_unstable | GetSessionInfoResponse_unstable | CreateSourceResponse_unstable | ListSourcesResponse_unstable | ListAgentMentionsResponse_unstable | ListSlashCommandsResponse_unstable | UpdateSourceResponse_unstable | ExportSourceResponse_unstable | ImportSourcesResponse_unstable | DictationTranscribeResponse_unstable | DictationConfigResponse_unstable | DictationModelsListResponse_unstable | DictationModelDownloadProgressResponse_unstable | LocalInferenceModelsListResponse_unstable | LocalInferenceModelDownloadResponse_unstable | LocalInferenceModelDownloadProgressResponse_unstable | LocalInferenceModelSettingsReadResponse_unstable | LocalInferenceModelSettingsUpdateResponse_unstable | LocalInferenceHuggingFaceSearchResponse_unstable | LocalInferenceHuggingFaceRepoVariantsResponse_unstable | LocalInferenceBuiltinChatTemplatesListResponse_unstable | MlxEngineStatusResponse_unstable | MlxEngineMountResponse_unstable | MlxEngineStopOtherEngineResponse_unstable | MlxEngineMemoryHoldersResponse_unstable | MlxEngineMemoryFreeResponse_unstable | MlxEngineSettingsResponse_unstable | MlxEngineModelsListResponse_unstable | MlxEngineHfSearchResponse_unstable | MlxEngineBrowseResponse_unstable | MlxEngineDownloadProgressResponse_unstable | MlxEngineBrowseFiltersResponse_unstable | MlxEngineModelCardResponse_unstable | MlxEngineDistributedStatusResponse_unstable | MlxEngineDistributedPreflightResponse_unstable | MlxEngineDistributedStartResponse_unstable | MlxEngineDistributedStopResponse_unstable | MlxEngineRemoteSingleStartResponse_unstable | MlxEngineRemoteSingleStopResponse_unstable | MlxEngineRemoteSingleStatusResponse_unstable | MlxEngineServingIntentResponse_unstable | MlxEngineDistributedMakeRoomResponse_unstable | MlxEngineDistributedPeerCandidatesResponse_unstable | MlxEngineDistributedDiscoverResponse_unstable | MlxEngineDistributedProvisionResponse_unstable | MlxEngineDistributedConfigResponse_unstable | MlxEngineLinkFactsResponse_unstable | MlxEngineReplicaTargetsResponse_unstable | MlxEngineReplicateResponse_unstable | MlxEnginePlacementPlanResponse_unstable | MlxEngineMeasureSpeedResponse_unstable | MlxEngineSpeedHistoryResponse_unstable | MlxEngineReplicaProgressResponse_unstable | LeanzeroLinkHealthResponse_unstable | LeanzeroLinkRequestCodeResponse_unstable | LeanzeroLinkVerifyResponse_unstable | LeanzeroLinkStateResponse_unstable | LeanzeroLinkNodesResponse_unstable | ListMemoryProposalsResponse_unstable | AnswerMemoryProposalResponse_unstable | SessionActivityResponse_unstable | ResolveNeedsYouResponse_unstable | NotesListResponse_unstable | NotesTargetsResponse_unstable | NotesSendResponse_unstable | NotesDraftResponse_unstable | NotesInboxResponse_unstable | NotesShowingResponse_unstable | LeanzeroLinkRemoteExecuteResponse_unstable | LeanzeroLinkJobsSubmitResponse_unstable | LeanzeroLinkJobsListResponse_unstable | LeanzeroLinkJobsJobResponse_unstable | LeanzeroLinkJobsLogResponse_unstable | LeanzeroLinkJobsPlaceResponse_unstable | NodesReadResponse_unstable | NodesWriteResponse_unstable | NodesSetChatNodesResponse_unstable | NodesBuildEligibilityResponse_unstable | NodesResidencyResponse_unstable | NodesLoadHistoryResponse_unstable | NodesServedLastResponse_unstable | NodesEnsureServingResponse_unstable | NodesTakeOverNowResponse_unstable | CompactionPreviewResponse_unstable | CompactionSteerResponse_unstable | LoopsGetResponse_unstable | LoopsChangeResponse_unstable | LoopsTickRefusedResponse_unstable | LoopsReadyResponse_unstable | LoopsWakeResponse_unstable | LoopsTemplatesResponse_unstable | LoopsListResponse_unstable | unknown;
+    result?: EmptyResponse | GetToolsResponse_unstable | SetToolPermissionsResponse_unstable | GooseToolCallResponse_unstable | ReadResourceResponse_unstable | AppsListResponse_unstable | AppsExportResponse_unstable | AppsImportResponse_unstable | SteerSessionResponse_unstable | DiagnosticsGetResponse_unstable | ListPromptsResponse_unstable | GetPromptResponse_unstable | PromptOperationResponse_unstable | InspectConfigExtensionResponse_unstable | GetConfigExtensionsResponse_unstable | GetAvailableExtensionsResponse_unstable | GetSessionExtensionsResponse_unstable | ListProvidersResponse_unstable | ProviderSupportedModelsListResponse_unstable | OpenRouterPinResponse_unstable | OpenRouterHostsListResponse_unstable | OpenRouterHostProbeResponse_unstable | ProviderCatalogListResponse_unstable | ProviderSetupCatalogListResponse_unstable | ProviderCatalogTemplateResponse_unstable | CustomProviderCreateResponse_unstable | CustomProviderReadResponse_unstable | CustomProviderUpdateResponse_unstable | CustomProviderDeleteResponse_unstable | RefreshProviderInventoryResponse_unstable | ProviderConfigReadResponse_unstable | ProviderConfigStatusResponse_unstable | ProviderConfigChangeResponse_unstable | ProviderSecretsListResponse_unstable | ModelFieldsListResponse_unstable | ModelFieldsSaveResponse_unstable | CanonicalModelInfoResponse_unstable | PreferencesReadResponse_unstable | ConfigReadResponse_unstable | ConfigReadAllResponse_unstable | ConfigMoveAsideResponse_unstable | DefaultsReadResponse_unstable | OnboardingImportScanResponse_unstable | OnboardingImportApplyResponse_unstable | ExportSessionResponse_unstable | ImportSessionResponse_unstable | ShareSessionNostrResponse_unstable | EncodeRecipeResponse_unstable | DecodeRecipeResponse_unstable | ScanRecipeResponse_unstable | ListRecipesResponse_unstable | SaveRecipeResponse_unstable | CreateRecipeResponse_unstable | ParseRecipeResponse_unstable | RecipeToYamlResponse_unstable | ListSchedulesResponse_unstable | ListScheduleSessionsResponse_unstable | CreateScheduleResponse_unstable | UpdateScheduleResponse_unstable | RunScheduleNowResponse_unstable | KillRunningJobResponse_unstable | InspectRunningJobResponse_unstable | GetSessionInfoResponse_unstable | CreateSourceResponse_unstable | ListSourcesResponse_unstable | ListAgentMentionsResponse_unstable | ListSlashCommandsResponse_unstable | UpdateSourceResponse_unstable | ExportSourceResponse_unstable | ImportSourcesResponse_unstable | DictationTranscribeResponse_unstable | DictationConfigResponse_unstable | DictationModelsListResponse_unstable | DictationModelDownloadProgressResponse_unstable | LocalInferenceModelsListResponse_unstable | LocalInferenceModelDownloadResponse_unstable | LocalInferenceModelDownloadProgressResponse_unstable | LocalInferenceModelSettingsReadResponse_unstable | LocalInferenceModelSettingsUpdateResponse_unstable | LocalInferenceHuggingFaceSearchResponse_unstable | LocalInferenceHuggingFaceRepoVariantsResponse_unstable | LocalInferenceBuiltinChatTemplatesListResponse_unstable | MlxEngineStatusResponse_unstable | MlxEngineMountResponse_unstable | MlxEngineStopOtherEngineResponse_unstable | MlxEngineMemoryHoldersResponse_unstable | MlxEngineMemoryFreeResponse_unstable | MlxEngineSettingsResponse_unstable | MlxEngineMemoryMachineResponse_unstable | MlxEngineWiredLimitResponse_unstable | MlxEngineModelsListResponse_unstable | MlxEngineHfSearchResponse_unstable | MlxEngineBrowseResponse_unstable | MlxEngineDownloadProgressResponse_unstable | MlxEngineBrowseFiltersResponse_unstable | MlxEngineModelCardResponse_unstable | MlxEngineDistributedStatusResponse_unstable | MlxEngineDistributedPreflightResponse_unstable | MlxEngineDistributedStartResponse_unstable | MlxEngineDistributedStopResponse_unstable | MlxEngineRemoteSingleStartResponse_unstable | MlxEngineRemoteSingleStopResponse_unstable | MlxEngineRemoteSingleStatusResponse_unstable | MlxEngineServingIntentResponse_unstable | MlxEngineDistributedMakeRoomResponse_unstable | MlxEngineDistributedPeerCandidatesResponse_unstable | MlxEngineDistributedDiscoverResponse_unstable | MlxEngineDistributedProvisionResponse_unstable | MlxEngineDistributedConfigResponse_unstable | MlxEngineLinkFactsResponse_unstable | MlxEngineReplicaTargetsResponse_unstable | MlxEngineReplicateResponse_unstable | MlxEnginePlacementPlanResponse_unstable | MlxEngineMeasureSpeedResponse_unstable | MlxEngineSpeedHistoryResponse_unstable | MlxEngineReplicaProgressResponse_unstable | LeanzeroLinkHealthResponse_unstable | LeanzeroLinkRequestCodeResponse_unstable | LeanzeroLinkVerifyResponse_unstable | LeanzeroLinkStateResponse_unstable | LeanzeroLinkNodesResponse_unstable | ListMemoryProposalsResponse_unstable | AnswerMemoryProposalResponse_unstable | SessionActivityResponse_unstable | ResolveNeedsYouResponse_unstable | NotesListResponse_unstable | NotesTargetsResponse_unstable | NotesSendResponse_unstable | NotesDraftResponse_unstable | NotesInboxResponse_unstable | NotesShowingResponse_unstable | LeanzeroLinkRemoteExecuteResponse_unstable | LeanzeroLinkJobsSubmitResponse_unstable | LeanzeroLinkJobsListResponse_unstable | LeanzeroLinkJobsJobResponse_unstable | LeanzeroLinkJobsLogResponse_unstable | LeanzeroLinkJobsPlaceResponse_unstable | NodesReadResponse_unstable | NodesWriteResponse_unstable | NodesSetChatNodesResponse_unstable | NodesBuildEligibilityResponse_unstable | NodesResidencyResponse_unstable | NodesLoadHistoryResponse_unstable | NodesServedLastResponse_unstable | NodesEnsureServingResponse_unstable | NodesTakeOverNowResponse_unstable | CompactionPreviewResponse_unstable | CompactionSteerResponse_unstable | LoopsGetResponse_unstable | LoopsChangeResponse_unstable | LoopsTickRefusedResponse_unstable | LoopsReadyResponse_unstable | LoopsWakeResponse_unstable | LoopsTemplatesResponse_unstable | LoopsListResponse_unstable | unknown;
 } | {
     error: {
         code: number;
