@@ -50,7 +50,7 @@ export function arrayBufferToBase64(buffer: ArrayBuffer): string {
   for (let i = 0; i < bytes.length; i += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   }
-  return btoa(binary);
+  return globalThis.btoa(binary);
 }
 
 /**
