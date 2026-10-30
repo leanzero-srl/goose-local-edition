@@ -95,12 +95,17 @@ impl FileNow {
 /// with the `edit` calls after it applied (each replaces its `before` text with its `after`) —
 /// `None` when neither is there.
 pub fn file_now(path: &str, messages: &[Message]) -> Option<FileNow> {
+    file_text_now(path, messages).map(|(text, from_disk)| FileNow::of(&text, from_disk))
+}
+
+/// The text [`file_now`] reads, and whether it came from the disk.
+pub fn file_text_now(path: &str, messages: &[Message]) -> Option<(String, bool)> {
     let on_disk = Path::new(path);
     if !super::pillars::is_secret_like_path(on_disk) {
         if let Ok(meta) = std::fs::metadata(on_disk) {
             if meta.is_file() && meta.len() <= MAX_OUTLINE_BYTES {
                 if let Ok(text) = std::fs::read_to_string(on_disk) {
-                    return Some(FileNow::of(&text, true));
+                    return Some((text, true));
                 }
             }
         }
@@ -136,7 +141,57 @@ pub fn file_now(path: &str, messages: &[Message]) -> Option<FileNow> {
             _ => {}
         }
     }
-    text.map(|text| FileNow::of(&text, false))
+    text.map(|text| (text, false))
+}
+
+/// The `TODO` / `FIXME` markers one file carries, and the lines the "Still to do" list keeps.
+pub const TODO_MARKERS_PER_FILE: usize = 3;
+pub const STILL_TO_DO: usize = 12;
+
+/// The lines of `text` that carry a `TODO` or `FIXME` marker (the code convention, as a whole
+/// word in capitals), as "path line n: the line", at most [`TODO_MARKERS_PER_FILE`].
+pub fn todo_markers(path: &str, text: &str) -> Vec<String> {
+    text.lines()
+        .enumerate()
+        .filter(|(_, line)| {
+            line.split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|word| word == "TODO" || word == "FIXME")
+        })
+        .take(TODO_MARKERS_PER_FILE)
+        .map(|(i, line)| format!("{path} line {}: {}", i + 1, clip(line, 160)))
+        .collect()
+}
+
+/// The items the newest scratchpad (`todo_write`) left unchecked (`- [ ] …`), in its order.
+pub fn scratchpad_open_items(messages: &[Message]) -> Vec<String> {
+    let newest = messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .filter_map(|c| match c {
+            MessageContent::ToolRequest(request) => request.tool_call.as_ref().ok(),
+            _ => None,
+        })
+        .filter(|call| call.name.ends_with("todo_write"))
+        .filter_map(|call| {
+            call.arguments
+                .as_ref()
+                .and_then(|a| a.get("content"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .next_back();
+    newest
+        .iter()
+        .flat_map(|content| content.lines())
+        .filter_map(|line| {
+            let line = line.trim_start();
+            ["- [ ]", "* [ ]", "+ [ ]"]
+                .iter()
+                .find_map(|open| line.strip_prefix(open))
+                .map(|item| format!("scratchpad: {}", clip(item, 200)))
+        })
+        .filter(|item| item.len() > "scratchpad: ".len())
+        .collect()
 }
 
 /// The names a file defines, read line by line without a parser: functions, classes, structs,
@@ -420,7 +475,7 @@ pub fn earlier_summaries(messages: &[Message]) -> Vec<String> {
             // A flagged summary carries the model's answer after goose's flag line.
             let written = match written.strip_prefix(super::pillars::FLAG_LEAD) {
                 Some(flagged) => flagged.split_once("]\n\n").map_or("", |(_, answer)| answer),
-                None => written,
+                None => written.as_str(),
             };
             written.trim().to_string()
         })

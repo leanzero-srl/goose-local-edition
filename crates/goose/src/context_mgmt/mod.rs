@@ -25,6 +25,7 @@ pub mod context_line;
 pub mod facts;
 pub mod pillars;
 pub mod state;
+pub mod summary_check;
 
 use pillars::{KeptSources, LedgerRead, NoteVerdict, Pillars};
 
@@ -940,8 +941,41 @@ async fn compact_core(
     };
     let summary_message = match &kept {
         Some(kept) => {
-            let stored =
-                pillars::stored_summary(&summary_message.as_concat_text(), kept, flag.as_deref());
+            // Round 5: a summary the gate passed is still FLAGGED when it is thin for what it
+            // replaces, mostly under a sentence a section, or mostly what the model will do next;
+            // a flagged one is stored after goose's facts. Numbers the conversation never showed
+            // are marked "(unverified)" (`summary_check`).
+            let written = summary_message.as_concat_text();
+            let flag = flag.or_else(|| {
+                summary_check::thin_summary(
+                    &written,
+                    summary_check::replaced_chars(messages_to_compact),
+                )
+                .map(|why| format!("the model's answer passed the gate, but {why}"))
+            });
+            if let Some(why) = &flag {
+                tracing::warn!(
+                    event = "compaction_summary_flagged",
+                    reason = %why,
+                    "compaction: the summary is stored flagged, after goose's facts"
+                );
+            }
+            let rendered = kept.render();
+            let system = match request {
+                SummaryRequest::ExtendsChat(frame) => frame.system_prompt.as_str(),
+                SummaryRequest::Transcript => "",
+            };
+            let known = summary_check::known_text(messages, &[&rendered, system]);
+            let written = summary_check::mark_unverified_numbers(&written, &known);
+            let unverified = written.matches(summary_check::UNVERIFIED).count();
+            if unverified > 0 {
+                tracing::warn!(
+                    event = "compaction_numbers_unverified",
+                    count = unverified,
+                    "compaction: {unverified} numbers in the summary are not in the conversation"
+                );
+            }
+            let stored = pillars::stored_summary(&written, kept, flag.as_deref());
             let mut message = summary_message;
             message
                 .content
@@ -5335,7 +5369,11 @@ mod tests {
         );
         assert!(calls.len() <= MAX_TRANSCRIPT_CALLS);
         let stored = conversation.agent_visible_messages()[0].as_concat_text();
-        assert!(stored.starts_with("<transcript summary>"), "{stored}");
+        // Round 5: 146 characters for 36,026 of conversation is stored flagged, after the facts.
+        assert!(
+            pillars::model_part(&stored).contains("<transcript summary>"),
+            "{stored}"
+        );
     }
 
     struct RefusingProvider {
@@ -6493,7 +6531,8 @@ mod tests {
             let facts = stored.split_once(pillars::KEPT_OPEN).unwrap().1;
             assert!(
                 facts.contains("## The summaries earlier compactions stored (1")
-                    && facts.contains("12,288 payments loaded")
+                    // Round 5: the fixture's 12,288 is in no row of the conversation.
+                    && facts.contains("12,288 (unverified) payments loaded")
                     && facts.contains("write app/hooks.py"),
                 "{stored}"
             );
@@ -6502,10 +6541,304 @@ mod tests {
             assert_eq!(rows.last().unwrap().as_concat_text(), "now the webhooks");
             assert!(facts.contains("def sync_all"), "{facts}");
             assert_eq!(
-                facts.matches("12,288 payments loaded").count(),
+                facts.matches("12,288 (unverified) payments loaded").count(),
                 1,
                 "carried once, not nested: {facts}"
             );
+        }
+    }
+
+    // ---- Round 5: flag instead of reject, facts first, numbers checked, still to do ----
+
+    /// The FIX4-2 real-model summary (verifier GRADES4, Flash-Next, 2026-10-30), cut to what the
+    /// tests read: its "Where we are" invents "context ~60% of 409,600"; its "Still to do" drops
+    /// the framing check (`fitcheck.py` crashed and never ran clean) and lists the file only for
+    /// cleanup.
+    const FIX4_2_SUMMARY: &str = "## Where we are\nBuilding the Meridian Payments Console in the \
+        workspace. Budget: 150 model calls; roughly 45 used, context ~60% of 409,600. The backend \
+        is functional and smoke-tested against the real vendor on port 8131.\n\
+        ## What each file does\n- `app/store.py` keeps the ledger, the outbox and the drafts.\n\
+        - `web/viz.js` draws the towers with raw WebGL2 and picks on the GPU.\n\
+        ## Decisions and reasons\n- The canvas is 480 px tall so the field spans the frame.\n\
+        ## Still to do\n- Write `DECISIONS.md` with D1, D2 and D3 as implemented.\n\
+        - Kill test processes and remove `tmpdb`, `selfcheck.mjs`, `fitcheck.py` before handoff.\n\
+        ## Next step\nWrite DECISIONS.md, then run the final checks.\n";
+
+    /// Rows from the Flash-Next stopped run (verifier pre.db, rows 0, 12, 205-213): the task with
+    /// the turn context, the contract's framing rule, the framing check that crashed, and the
+    /// inline probe that ran after it ("outside=3").
+    fn d4_chat() -> Conversation {
+        let shell = |id: &str, command: &str| {
+            let mut params = CallToolRequestParams::new("shell");
+            params.arguments = serde_json::json!({ "command": command })
+                .as_object()
+                .cloned();
+            Message::assistant().with_tool_request(id, Ok(params))
+        };
+        let result = |text: &str, exit: i64| {
+            let mut r = if exit == 0 {
+                rmcp::model::CallToolResult::success(vec![RawContent::text(text).no_annotation()])
+            } else {
+                rmcp::model::CallToolResult::error(vec![RawContent::text(text).no_annotation()])
+            };
+            r.structured_content = Some(serde_json::json!({ "exit_code": exit }));
+            r
+        };
+        let mut write = CallToolRequestParams::new("write");
+        write.arguments = serde_json::json!({
+            "path": "fitcheck.py",
+            "content": "import json, math, urllib.request\nd = json.load(urllib.request.urlopen('http://127.0.0.1:8131/api/viz/records'))\n",
+        })
+        .as_object()
+        .cloned();
+        Conversation::new_unvalidated(vec![
+            Message::user().with_text(
+                "Build and finish the Meridian Payments Console in this workspace. \
+                 VISUAL-CONTRACT.md: the overview spans >=60% of the canvas width and height, \
+                 none within 4 CSS px of the canvas edge.\ncontext: 239,105 of 409,600 tokens \
+                 used (58%)",
+            ),
+            Message::assistant().with_tool_request("w1", Ok(write)),
+            Message::user()
+                .with_tool_response("w1", Ok(result("Created fitcheck.py (48 lines)", 0))),
+            shell("s1", "cd . && python3 fitcheck.py"),
+            Message::user().with_tool_response(
+                "s1",
+                Ok(result(
+                    "Traceback (most recent call last):\n  File \"fitcheck.py\", line 12, in \
+                     daynum\nAttributeError: 'datetime.date' object has no attribute 'split'\n\n\
+                     Command exited with code 1",
+                    1,
+                )),
+            ),
+            shell("s2", "cd . && python3 - <<'PY'\nprint('framing')\nPY"),
+            Message::user().with_tool_response(
+                "s2",
+                Ok(result(
+                    "H=480 aspect=1.93 W=926: x 191..784 (64% of W)  y 101..432 (69% of H) \
+                     outside=3",
+                    0,
+                )),
+            ),
+            Message::user().with_text("go on"),
+        ])
+    }
+
+    async fn compacted_with(answer: &str, chat: &Conversation) -> String {
+        let provider = SequenceProvider {
+            answers: vec![answer.to_string()],
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let ChatCompacted::Compacted { conversation, .. } = compact_chat(
+            &provider,
+            &ModelConfig::new("sequence"),
+            "s",
+            chat,
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap() else {
+            panic!("compacted");
+        };
+        conversation.agent_visible_messages()[0].as_concat_text()
+    }
+
+    /// D4 (GRADES4: every real summary dropped it; run 2 said the crashed `fitcheck.py` "proved"
+    /// the framing): the summary below lists `fitcheck.py` only for cleanup. goose's "Still to
+    /// do" carries the check as open work.
+    #[tokio::test]
+    async fn the_still_to_do_list_carries_the_framing_check_the_summary_dropped() {
+        let stored = compacted_with(FIX4_2_SUMMARY, &d4_chat()).await;
+        let facts = stored.split_once(pillars::KEPT_OPEN).unwrap().1;
+        let todo = facts
+            .split_once("## Still to do, by the tool calls")
+            .unwrap_or_else(|| panic!("a Still to do list: {facts}"))
+            .1;
+        let todo = todo.split("\n## ").next().unwrap();
+        assert!(
+            todo.contains("make `shell {\"command\":\"cd . && python3 fitcheck.py\"}` succeed"),
+            "{todo}"
+        );
+        assert!(todo.contains("failed (exit 1)"), "{todo}");
+        assert!(
+            !todo.contains("outside=3"),
+            "a call that worked is not to do: {todo}"
+        );
+    }
+
+    /// GRADES4 run 2: "context ~60% of 409,600". Both numbers are in the conversation, the share
+    /// is not: it is marked. What the conversation said (409,600 alone, 150 is not) is checked
+    /// number by number.
+    #[tokio::test]
+    async fn a_number_the_conversation_never_showed_is_marked_unverified() {
+        let stored = compacted_with(FIX4_2_SUMMARY, &d4_chat()).await;
+        let model = pillars::model_part(&stored);
+        assert!(
+            model.contains("context ~60% of 409,600 (unverified)."),
+            "{model}"
+        );
+        assert!(model.contains("150 (unverified) model calls"), "{model}");
+        assert!(model.contains("roughly 45 (unverified) used"), "{model}");
+        assert!(
+            model.contains("port 8131."),
+            "8131 is in the conversation: {model}"
+        );
+        assert!(
+            model.contains("480 px tall"),
+            "480 is in the conversation: {model}"
+        );
+        assert!(
+            !stored.starts_with(pillars::FLAG_LEAD),
+            "a real summary: {stored}"
+        );
+    }
+
+    /// A conversation big enough that a summary of it says something (the floor is 1% of its
+    /// characters): the GRADES4 junk shapes pass the structural gate and are stored FLAGGED,
+    /// goose's facts first.
+    fn big_chat() -> Conversation {
+        Conversation::new_unvalidated(vec![
+            Message::user().with_text("build the payments console"),
+            Message::assistant().with_text(
+                "The vendor sync stored the payments and the ledger answered. ".repeat(800),
+            ),
+            Message::user().with_text("go on"),
+        ])
+    }
+
+    #[tokio::test]
+    async fn a_gate_passing_non_summary_is_stored_flagged_after_the_facts() {
+        let bold = "**Thinking:** I should continue.\n\n**Plan:** look at files.\n\n**Step one:** \
+                    run ls.\n\n**Step two:** read output.\n\n**Then:** carry on.\n";
+        let notes = "## Where we are\nI will now read the files again.\n## What each file does\n\
+                     Let me list them first.\n## Decisions and reasons\nNext I will decide.\n\
+                     ## Still to do\nI will check the rest.\n## Next step\nNow I start.\n";
+        for answer in [bold, notes] {
+            assert!(
+                summary_shortfall(answer).is_none(),
+                "the gate passes it: {answer}"
+            );
+            let stored = compacted_with(answer, &big_chat()).await;
+            assert!(stored.starts_with(pillars::FLAG_LEAD), "{stored}");
+            assert!(stored.contains("passed the gate, but"), "{stored}");
+            let facts_at = stored.find(pillars::KEPT_OPEN).expect("facts");
+            let answer_at = stored.find(answer.lines().next().unwrap()).expect("answer");
+            assert!(facts_at < answer_at, "facts first: {stored}");
+            assert!(stored.contains(pillars::FLAGGED_ANSWER), "{stored}");
+            // The model's part is still read back as the flag and the answer (earlier summaries).
+            let model = pillars::model_part(&stored);
+            assert!(model.starts_with(pillars::FLAG_LEAD), "{model}");
+            assert!(model.contains(answer.lines().next().unwrap()), "{model}");
+            assert!(!model.contains(pillars::KEPT_OPEN), "{model}");
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct LogBuffer(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuffer {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The benchmark counts flagged summaries from the JSON log: one event per flagged summary,
+    /// and one per summary with unverified numbers.
+    #[tokio::test]
+    async fn a_flagged_summary_logs_an_event_the_benchmark_counts() {
+        let buffer = LogBuffer::default();
+        let writer = buffer.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let bold = "**Thinking:** I should continue.\n\n**Plan:** look at files.\n\n**Step one:** \
+                    run ls.\n\n**Step two:** read output.\n\n**Then:** carry on.\n";
+        compacted_with(bold, &big_chat()).await;
+        compacted_with(FIX4_2_SUMMARY, &d4_chat()).await;
+        let logs = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+        assert_eq!(
+            logs.matches("\"event\":\"compaction_summary_flagged\"")
+                .count(),
+            1,
+            "{logs}"
+        );
+        assert_eq!(
+            logs.matches("\"event\":\"compaction_numbers_unverified\"")
+                .count(),
+            1,
+            "{logs}"
+        );
+    }
+
+    /// The counter-case on the same conversation: a summary that says what was done is stored as
+    /// before — the model's text, then the facts.
+    #[tokio::test]
+    async fn a_real_summary_is_stored_first_and_unflagged() {
+        let mut answer = String::new();
+        for (heading, _) in WRITTEN_PARTS {
+            answer.push_str(&format!(
+                "## {heading}\n{}\n",
+                "The vendor sync stored the payments and the ledger answered. ".repeat(4)
+            ));
+        }
+        let stored = compacted_with(&answer, &big_chat()).await;
+        assert!(stored.starts_with("## Where we are"), "{stored}");
+        assert!(!stored.contains(pillars::FLAGGED_ANSWER), "{stored}");
+    }
+
+    /// The real case, on the real transcript (fixtures outside the repo; workhorse
+    /// ~/scratch/compaction5: flash-next-223.json from verifier pre.db, real-fix4-{1,2,3}.md the
+    /// stored model parts). Run: GOOSE_COMPACTION5_DIR=~/scratch/compaction5 cargo test -p goose
+    /// real_flash_next_summaries -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn real_flash_next_summaries_flags_marks_and_still_to_do() {
+        let dir = std::path::PathBuf::from(
+            std::env::var("GOOSE_COMPACTION5_DIR").expect("GOOSE_COMPACTION5_DIR"),
+        );
+        let fixture: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(dir.join("flash-next-223.json")).unwrap(),
+        )
+        .unwrap();
+        let messages: Vec<Message> = serde_json::from_value(fixture["messages"].clone()).unwrap();
+        let kept = Pillars::build(
+            &messages,
+            &KeptSources::default(),
+            LedgerRead::Entries(vec![]),
+        );
+        let rendered = kept.render();
+        let known = summary_check::known_text(&messages, &[&rendered]);
+        let replaced = summary_check::replaced_chars(&messages);
+        println!(
+            "replaced chars {replaced}, floor {}",
+            summary_check::thin_floor(replaced)
+        );
+        println!("still to do:\n{}", kept.todo.join("\n"));
+        assert!(kept.todo.iter().any(|t| t.contains("python3 fitcheck.py")));
+        for run in ["real-fix4-1", "real-fix4-2", "real-fix4-3"] {
+            let text = std::fs::read_to_string(dir.join(format!("{run}.md"))).unwrap();
+            assert_eq!(summary_check::thin_summary(&text, replaced), None, "{run}");
+            let marked = summary_check::mark_unverified_numbers(&text, &known);
+            let marks: Vec<&str> = marked
+                .match_indices(summary_check::UNVERIFIED)
+                .map(|(at, _)| {
+                    let before = marked.get(..at).unwrap_or_default();
+                    let from = before.char_indices().rev().nth(24).map_or(0, |(i, _)| i);
+                    before.get(from..).unwrap_or_default()
+                })
+                .collect();
+            println!("{run}: {} marks: {marks:#?}", marks.len());
+            if run == "real-fix4-2" {
+                assert!(marked.contains("~60% of 409,600 (unverified)"), "{marked}");
+            }
         }
     }
 }

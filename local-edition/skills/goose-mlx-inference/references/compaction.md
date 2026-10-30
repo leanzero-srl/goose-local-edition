@@ -95,3 +95,31 @@ llm_request.9.jsonl = the first request after its compaction, summary text insid
   (`summarize_a_transcript_as_the_swarm`), golden kept tail; only change kept: tail copies dated now (no request
   carries a date; the store's read-back order now equals the in-memory order).
   (E) LIVE: see the round-4 E2E line in the NOTES of runs/2026-10-30-flash-fixes-verify (Qwen3.5-9B, workhorse :8297).
+- ROUND 5 (2026-10-30, branch compaction-fix-5; the verifier's GRADES4 on 7d16de1ffb, ~/scratch/compverify/evidence4):
+  the structural gate stored two non-summaries UNFLAGGED (5 bold lines of 2-3 words; reasoning-only planning notes),
+  all 3 real Flash-Next summaries dropped D4 (framing via the camera; the crashed `fitcheck.py` never ran clean) and
+  run 2 invented "context ~60% of 409,600". NO WORD LISTS (round 3 broke both ways). FLAG, NEVER REJECT
+  (`context_mgmt/summary_check.rs`, applied in compact_core after the gate, chat path only; swarm untouched):
+  (1) THIN: section bodies < 1% of the replaced chars (format_message_for_compacting, no reasoning), clamped
+  1,000..6,000 chars and <= replaced/10. Measured: real summaries 10,657/11,425/11,912 chars = 3.1-3.5% of 340,773;
+  junk 131-230 chars (0.04-0.07%). 1.5% of tokens (the first idea) sits AT the good ones: rejected.
+  (2) more than half the section bodies under one sentence: 0 or 2 words (CJK: 2 chars a word); ONE word is the
+  empty-list answer ("None.", "Keine.", "无。") and counts as said. (3) more than half the sentences open with
+  "I will" / "Let me" / "Next I" / "Now I" (the only phrase check). Counter-test: "None."/"Keine." sections and
+  short German/Chinese summaries are NOT flagged.
+  FLAGGED LAYOUT: `[goose could not check this summary: <why>. goose's facts come first and are authoritative…]`,
+  then the kept block, then "The model's answer (flagged; goose's facts above win):" + the answer.
+  `pillars::model_part` reads both layouts (earlier_summaries still carries the answer). Telemetry: JSON log
+  events `fields.event = "compaction_summary_flagged"` (warn, with `reason`) and `"compaction_numbers_unverified"`
+  (warn, `count`) — grep the CLI/server log to count them per run.
+  (4) NUMBERS: every number of >= 2 digits standing as its own word in the model text that no row showed (text,
+  tool-call args, tool output; NOT reasoning; plus the kept block and the system prompt) gets " (unverified)";
+  a share "<n>% <one word of <=4 letters> <number>" whose exact phrase (commas/whitespace folded) is in no row gets
+  it after the pair. Real case: FIX4-2 "~60% of 409,600 (unverified)" (409,600 alone is in 25 turn-context rows).
+  Names (pay_00171, R0, v2, 12k, hashes) are not checked.
+  (5) STILL TO DO in the kept block (`## Still to do, by the tool calls (N)`, first in the errors part): each open
+  error as "make `<call>` succeed", then TODO/FIXME markers in written files (3 a file), then the newest
+  `todo_write` scratchpad's unchecked `- [ ]` items; max 12, trimmed after failed calls when the block must fit.
+  D4 test: the stored block lists `python3 fitcheck.py` as open while FIX4-2's own Still-to-do only deletes it.
+  Real-transcript check (ignored): GOOSE_COMPACTION5_DIR=~/scratch/compaction5 cargo test -p goose
+  real_flash_next_summaries -- --ignored --nocapture (flash-next-223.json exported from verifier pre.db).
