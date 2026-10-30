@@ -19,6 +19,34 @@ const ENUM_INIT: isize = -3;
 const ENUM_ITEM: usize = 3;
 const FUNC_END: usize = 12;
 
+// ratio: pixels per image token — Anthropic's published cost of an image is width x height / 750;
+// Qwen-VL's 28x28-pixel merged patches cost width x height / 784, within 5% of it. Before
+// 2026-10-30 an image counted nothing here and ~18 chars ("[image: image/png]") in a compaction's
+// kept tail, while the real image was sent.
+const PIXELS_PER_IMAGE_TOKEN: u64 = 750;
+/// An image the decoder cannot size: the cost of the largest image Anthropic sends unresized
+/// (~1.15 megapixels).
+pub const UNSIZED_IMAGE_TOKENS: usize = 1_600;
+
+/// The tokens an image costs a model: its pixels read from the image's own header (base64 `data`),
+/// one token per [`PIXELS_PER_IMAGE_TOKEN`]; [`UNSIZED_IMAGE_TOKENS`] when it cannot be read.
+pub fn image_tokens(base64_data: &str) -> usize {
+    use base64::Engine;
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(base64_data.trim()) else {
+        return UNSIZED_IMAGE_TOKENS;
+    };
+    let Ok(reader) = image::io::Reader::new(std::io::Cursor::new(bytes)).with_guessed_format()
+    else {
+        return UNSIZED_IMAGE_TOKENS;
+    };
+    match reader.into_dimensions() {
+        Ok((width, height)) => (u64::from(width) * u64::from(height))
+            .div_ceil(PIXELS_PER_IMAGE_TOKEN)
+            .max(1) as usize,
+        Err(_) => UNSIZED_IMAGE_TOKENS,
+    }
+}
+
 pub struct TokenCounter {
     tokenizer: Arc<CoreBPE>,
     token_cache: Mutex<LruCache<TokenCacheKey, usize>>,
@@ -155,8 +183,30 @@ impl TokenCounter {
                         );
                         num_tokens += self.count_tokens(&text);
                     }
-                } else if let Some(tool_response_text) = content.as_tool_response_text() {
-                    num_tokens += self.count_tokens(&tool_response_text);
+                } else if let Some(tool_response) = content.as_tool_response() {
+                    if let Some(tool_response_text) = content.as_tool_response_text() {
+                        num_tokens += self.count_tokens(&tool_response_text);
+                    }
+                    if let Ok(result) = &tool_response.tool_result {
+                        num_tokens += crate::conversation::message::model_visible_content(result)
+                            .filter_map(|item| match &item.raw {
+                                rmcp::model::RawContent::Image(image) => {
+                                    Some(image_tokens(&image.data))
+                                }
+                                _ => None,
+                            })
+                            .sum::<usize>();
+                    }
+                } else if let crate::conversation::message::MessageContent::Image(image) = content {
+                    num_tokens += image_tokens(&image.data);
+                } else if let crate::conversation::message::MessageContent::Thinking(thinking) =
+                    content
+                {
+                    // An OpenAI-compatible request carries an assistant turn's reasoning back as
+                    // `reasoning_content` (Qwen's templates keep it): the Flash-Next stopped run's
+                    // 224 messages were 239,628 prompt tokens at the engine and 112,754 here
+                    // while reasoning counted nothing (692k chars of it).
+                    num_tokens += self.count_tokens(&thinking.thinking);
                 }
             }
         }

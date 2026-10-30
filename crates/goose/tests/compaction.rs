@@ -352,10 +352,13 @@ fn assert_conversation_compacted(conversation: &Conversation) {
             );
             continue;
         }
+        // After the continuation: the preserved request (fully visible) and, for a chat, its kept
+        // tail — the newest turns re-sent word for word as the agent's, their originals already shown
+        // to the person above.
         if idx >= continuation_end {
             assert!(
-                msg.is_agent_visible() && msg.is_user_visible(),
-                "Message after compaction at index {} should be fully visible",
+                msg.is_agent_visible(),
+                "Message after compaction at index {} should be agent visible",
                 idx
             );
         }
@@ -1023,7 +1026,10 @@ async fn test_compact_with_a_note_runs_in_the_reply_stream() -> Result<()> {
     ];
     let session = setup_test_session(&agent, &temp_dir, "compact-note", messages).await?;
     let provider = Arc::new(ScriptedCompactionProvider::new(&[
-        "NOTE OK\n## Where we are\nplanning the users\n## Next step\nrun it\n## Decisions and reasons\n24 months",
+        // All five sections, each with words of its own: since 430d85f003 an answer without them is
+        // not a summary (it is asked again, then falls to the transcript request).
+        "NOTE OK\n## Where we are\nplanning the users\n## What each file does\nno files written yet\n\
+         ## Decisions and reasons\n24 months\n## Still to do\nthe user plan\n## Next step\nrun it",
     ]));
     agent
         .update_provider(
@@ -1048,7 +1054,7 @@ async fn test_compact_with_a_note_runs_in_the_reply_stream() -> Result<()> {
         .filter(|s| s["stage"] == "writing")
         .map(|s| s["parts"].as_array().unwrap().len())
         .collect();
-    assert_eq!(parts_seen.last(), Some(&3), "{parts_seen:?}");
+    assert_eq!(parts_seen.last(), Some(&5), "{parts_seen:?}");
     let done = statuses.last().unwrap();
     assert_eq!(done["trigger"], "manual");
     assert_eq!(done["note"], "keep the 24-month rule");
@@ -1121,7 +1127,9 @@ async fn test_a_question_about_the_note_stops_then_compact_as_written_follows_it
     let session = setup_test_session(&agent, &temp_dir, "compact-question", messages).await?;
     let provider = Arc::new(ScriptedCompactionProvider::new(&[
         "NOTE QUESTION: The chat says 24 months; change it to 12?\n## Where we are\nnever read",
-        "NOTE CONCERN: the chat said 24.\n## Where we are\nplanning with 12 months",
+        "NOTE CONCERN: the chat said 24.\n## Where we are\nplanning with 12 months\n\
+         ## What each file does\nno files written yet\n## Decisions and reasons\n12 months as noted\n\
+         ## Still to do\nthe user plan\n## Next step\nrun it",
     ]));
     agent
         .update_provider(

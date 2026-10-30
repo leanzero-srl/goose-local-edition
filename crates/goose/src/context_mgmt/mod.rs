@@ -34,6 +34,39 @@ pub const DEFAULT_COMPACTION_THRESHOLD: f64 = 0.8;
 // tokens on a 360,000 window (6.4%); the instruction and a second ask add ~2k more (8.3% in all).
 const TOOL_RESULT_WINDOW_SHARE: f64 = 1.0 / 12.0;
 
+/// tokens: the next answer's room when the model config sets no `max_tokens`. goose sends none to a
+/// local engine on purpose (goose-sidecar engine.rs, lz.5), and `ModelConfig::max_output_tokens`
+/// then answers a fictitious 4,096: on Flash-Next's 360,000 window that put the point at 325,904
+/// and left ~9k for a thinking model's summary. 32,768 is the serve default of the engines that cap
+/// such a request (rapid-mlx "Default max tokens: 32768"; Jundot Flash-Next ple.6 scheduled every
+/// unset request at max_tokens=32768) and the largest answer the Flash-Next Gauntlet sb-7.2 run
+/// measured (attempt-2, 154 answers: p50 469, p90 4,316, p99 15,607, max 32,768 — that cap).
+pub const UNSET_OUTPUT_RESERVE_TOKENS: usize = 32_768;
+
+/// A reserve the person set (`GOOSE_COMPACTION_RESERVE_TOKENS`) may move the point below the 0.8
+/// floor of the derived rule — a 32,768 cap on a 128,000 window wants 0.66 — but never below half
+/// the window: a compacted chat must fit well under its point, or every call compacts again.
+const SET_RESERVE_FLOOR: f64 = 0.5;
+
+/// tokens: the room a summary request must leave for its own answer, thinking included. The
+/// Flash-Next summary call (ple.6, 289,943 prompt) answered 4,316 tokens in 299 s; the run's p99
+/// answer was 15,607. A quarter of the window on a small one.
+pub const SUMMARY_ANSWER_TOKENS: usize = 16_384;
+
+/// The room a summary request leaves for its answer on a `window`-token window.
+pub fn summary_answer_room(window: usize) -> usize {
+    SUMMARY_ANSWER_TOKENS.min(window / 4)
+}
+
+/// The output the next call may take: the model config's `max_tokens` when set, else
+/// [`UNSET_OUTPUT_RESERVE_TOKENS`] — never `max_output_tokens()`'s 4,096 stand-in.
+pub fn output_reserve_tokens(model_config: &ModelConfig) -> usize {
+    match model_config.max_tokens {
+        Some(tokens) if tokens > 0 => tokens as usize,
+        _ => UNSET_OUTPUT_RESERVE_TOKENS,
+    }
+}
+
 /// The ratio the person set (`GOOSE_AUTO_COMPACT_THRESHOLD`), when they set one.
 fn configured_compaction_threshold() -> Option<f64> {
     Config::global()
@@ -50,7 +83,8 @@ pub fn configured_or_default_threshold() -> f64 {
 /// guard, the compaction card, the turn-context countdown and the tool-pair cutoff.
 ///
 /// A ratio the person set wins. Otherwise the point is the window minus a reserve — the next
-/// answer at the model's output cap plus one tool result — and never earlier than 0.8. Why
+/// answer at the model's output cap ([`output_reserve_tokens`]) plus one tool result — and never
+/// earlier than 0.8; a reserve the person set is honoured down to half the window. Why
 /// (Flash-Next, Gauntlet sb-7.2, 2026-10-30): the window was the MEASURED 360,000 the engine holds,
 /// 0.8 compacted at 289,943 and left 70k of it unused, while the room the next call can take is
 /// its output (cap 32,768) and one tool result (largest 22,944) with the summary instruction. `GOOSE_COMPACTION_RESERVE_TOKENS`
@@ -63,7 +97,7 @@ pub fn compaction_threshold(context_limit: usize, model_config: &ModelConfig) ->
         configured_compaction_threshold(),
         reserve,
         context_limit,
-        model_config.max_output_tokens().max(0) as usize,
+        output_reserve_tokens(model_config),
     )
 }
 
@@ -85,7 +119,10 @@ pub fn compaction_threshold_from(
     });
     // At least one token of reserve: a point at the whole window reads as auto-compaction off.
     let point = context_limit.saturating_sub(reserve.max(1)) as f64 / context_limit as f64;
-    point.max(DEFAULT_COMPACTION_THRESHOLD)
+    match reserve_tokens {
+        Some(_) => point.max(SET_RESERVE_FLOOR),
+        None => point.max(DEFAULT_COMPACTION_THRESHOLD),
+    }
 }
 
 const TOOLCALL_SUMMARIZATION_BATCH_SIZE: usize = 10;
@@ -151,32 +188,69 @@ pub const WRITTEN_PARTS: [(&str, &str); 5] = [
     ),
 ];
 
+/// The letters and digits a section must hold beyond its heading and the instruction's own ask —
+/// "run it", "none yet", "write web/viz.js" pass; an empty section, "-", "N/A", "TBD", "none" or
+/// the ask parroted back (compaction.md prints each heading followed by its ask) do not.
+const MIN_SECTION_CHARS: usize = 5;
+
+/// `text` as its letters and digits, lowercased: what a section's own words are compared by.
+fn bare_words(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Whether a section of WRITTEN_PARTS[`part`] holds words of its own: at least
+/// [`MIN_SECTION_CHARS`] letters and digits once its heading and its ask are taken out.
+fn section_has_content(part: usize, body: &str) -> bool {
+    let (heading, ask) = WRITTEN_PARTS[part];
+    let mut own = bare_words(body);
+    for template in [bare_words(ask), bare_words(heading)] {
+        own = own.replace(&template, "");
+    }
+    own.chars().count() >= MIN_SECTION_CHARS
+}
+
+/// The sections of WRITTEN_PARTS that `answer` does not carry with words of its own, in order.
+fn parts_without_content(answer: &str) -> Vec<&'static str> {
+    let sections = pillars::written_sections(answer);
+    WRITTEN_PARTS
+        .iter()
+        .enumerate()
+        .filter(|(part, _)| {
+            !sections
+                .iter()
+                .any(|(written, body)| written == part && section_has_content(*part, body))
+        })
+        .map(|(_, (heading, _))| *heading)
+        .collect()
+}
+
 /// What an answer that is not the summary lacks, said to the model that wrote it.
 fn missing_parts_correction(answer: &str) -> String {
-    let written = pillars::written_parts(&pillars::strip_scratch(answer));
-    let missing: Vec<String> = WRITTEN_PARTS
+    let missing: Vec<String> = parts_without_content(answer)
         .iter()
-        .filter(|(heading, _)| !written.iter().any(|w| w == heading))
-        .map(|(heading, _)| format!("`## {heading}`"))
+        .map(|heading| format!("`## {heading}`"))
         .collect();
     format!(
-        "Your answer has no {} section{}: it is not the summary. Write the summary now: only the \
-         sections the instruction above lists, in its order, from `## {}` on. Call no tool.",
+        "Your answer has no {} section{} written in your own words: it is not the summary. Write \
+         the summary now: only the sections the instruction above lists, in its order, from `## {}` \
+         on, each with what this conversation did. Call no tool.",
         missing.join(", "),
         if missing.len() == 1 { "" } else { "s" },
         WRITTEN_PARTS[0].0
     )
 }
 
-/// Whether a written answer carries every section the summary asks for. An answer without them
+/// Whether a written answer carries every section the summary asks for, each with words of its
+/// own (outside code fences; its heading in any reasonable markdown form). An answer without them
 /// is not a summary: the Flash-Next stopped run (2026-10-29) stored "I will now proceed to document
 /// the design decisions and run the final verification sequence." — one line, none of the
-/// sections — as the summary of 241k tokens of work.
+/// sections — as the summary of 241k tokens of work. Before 2026-10-30 a heading alone passed, so
+/// the instruction's own template echoed back, or headings inside a code fence, passed too.
 fn has_every_written_part(answer: &str) -> bool {
-    let written = pillars::written_parts(&pillars::strip_scratch(answer));
-    WRITTEN_PARTS
-        .iter()
-        .all(|(heading, _)| written.iter().any(|w| w == heading))
+    parts_without_content(answer).is_empty()
 }
 
 #[derive(Serialize)]
@@ -240,8 +314,10 @@ pub struct ChatCompaction {
     pub pins: Vec<String>,
     pub goal: Option<String>,
     pub ledger: LedgerRead,
-    /// The kept block's share of the window, in chars; `None` when the window is unknown.
-    pub kept_budget_chars: Option<usize>,
+    /// The chat's window in tokens (`effective_context_limit`, the guard's own); `None` when it is
+    /// unknown. It sizes the kept block ([`kept_budget_chars`]), the kept tail
+    /// ([`tail_budget_tokens`]) and the room the summary request leaves for its answer.
+    pub context_limit: Option<usize>,
     /// The session's folder, which the kept block resolves relative paths against (Q-394).
     pub working_dir: std::path::PathBuf,
     pub progress: Option<CompactionObserver>,
@@ -259,6 +335,31 @@ pub fn kept_budget_chars(context_limit: Option<usize>) -> Option<usize> {
             * crate::agents::platform_extensions::recall::CHARS_PER_TOKEN
             * KEPT_WINDOW_SHARE) as usize
     })
+}
+
+/// The kept block fitted to its sixteenth of a `context_limit`-token window as goose's tokenizer
+/// counts it. `Pillars::fit` cuts by chars at `CHARS_PER_TOKEN`; the person's words in CJK, or
+/// JSON and hex in a failed call's output, run 2-4x more tokens than that, so a block that fits
+/// its chars is fitted again to the chars its own tokens allow.
+fn fit_kept_to_tokens(
+    built: Pillars,
+    context_limit: usize,
+    counter: &crate::token_counter::TokenCounter,
+) -> Pillars {
+    let budget_tokens = tail_budget_tokens(context_limit);
+    let mut budget_chars = kept_budget_chars(Some(context_limit)).unwrap_or(usize::MAX);
+    let mut kept = built.clone().fit(Some(budget_chars));
+    for _ in 0..3 {
+        let rendered = kept.render();
+        let tokens = counter.count_tokens(&rendered);
+        if tokens <= budget_tokens {
+            break;
+        }
+        let chars = rendered.chars().count();
+        budget_chars = (chars as f64 * budget_tokens as f64 / tokens as f64 * 0.95) as usize;
+        kept = built.clone().fit(Some(budget_chars));
+    }
+    kept
 }
 
 /// How the person's note fared.
@@ -363,27 +464,67 @@ fn keep_tail_from_config() -> Option<usize> {
         .ok()
 }
 
-/// A chat's kept tail: the newest messages that fit `budget_chars` as the summarizing model reads
-/// them, counted back from the end and stopping at the first message that is not an ordinary turn
-/// or goose's own turn-context block (an earlier summary, or a row an earlier compaction hid). Why: before 2026-10-30 a chat kept no
+/// The kept tail's budget in tokens for a window of `context_limit` tokens: the same sixteenth as
+/// the kept block.
+pub fn tail_budget_tokens(context_limit: usize) -> usize {
+    (context_limit as f64 * KEPT_WINDOW_SHARE) as usize
+}
+
+fn opens_on_a_tool_result(message: &Message) -> bool {
+    message
+        .content
+        .iter()
+        .any(|c| matches!(c, MessageContent::ToolResponse(_)))
+}
+
+/// A chat's kept tail: the newest messages that fit `budget_tokens` as goose's tokenizer counts
+/// them (images at their real cost: `token_counter::image_tokens`), counted back from the end and
+/// stopping at the first message that is not an ordinary turn or goose's own turn-context block
+/// or harness nudge (an earlier summary, or a row an earlier compaction hid). Why: before 2026-10-30 a chat kept no
 /// tail (`GOOSE_COMPACT_KEEP_TAIL` 0), so the model woke from a compaction with no exact bytes of
 /// what it had just done — the Flash-Next stopped run spent 13 of its next 17 calls re-reading.
-pub fn tail_that_fits(messages: &[Message], budget_chars: usize) -> usize {
+/// Counted in tokens since 2026-10-30: in chars an image was ~18 ("[image: image/png]") while the
+/// image itself was sent, and CJK, JSON and hex run 2-4x more tokens than chars/4.
+///
+/// A tail never opens on a tool result whose request it leaves out (an orphan `role:tool` message
+/// that OpenAI-compatible servers refuse): the request is kept with it when both fit the budget,
+/// else the result is left out with its request.
+pub fn tail_that_fits(
+    messages: &[Message],
+    budget_tokens: usize,
+    counter: &crate::token_counter::TokenCounter,
+) -> usize {
+    // goose's own rows the model reads go into the tail too: its turn-context blocks and its
+    // harness nudges (a length-cut continuation is the newest row of a long tool loop, and a tail
+    // that stopped at it kept nothing).
+    let ordinary = |message: &Message| {
+        message.is_agent_visible()
+            && (message.is_user_visible()
+                || crate::conversation::is_turn_context_message(message)
+                || is_harness_nudge(message))
+    };
+    let cost =
+        |message: &Message| counter.count_chat_tokens("", std::slice::from_ref(message), &[]);
     let mut used = 0usize;
-    let mut kept = 0usize;
-    for message in messages.iter().rev() {
-        let ordinary = message.is_agent_visible()
-            && (message.is_user_visible() || crate::conversation::is_turn_context_message(message));
-        if !ordinary {
+    let mut start = messages.len();
+    while start > 0 {
+        let message = &messages[start - 1];
+        if !ordinary(message) {
             break;
         }
-        used += format_message_for_compacting(message).chars().count();
-        if used > budget_chars {
+        let tokens = cost(message);
+        if used + tokens > budget_tokens {
             break;
         }
-        kept += 1;
+        used += tokens;
+        start -= 1;
     }
-    kept
+    // The walk stopped at a message that did not fit (or was not an ordinary turn): when the tail
+    // opens on a tool result, that message is its request, so the result goes with it.
+    while start < messages.len() && opens_on_a_tool_result(&messages[start]) {
+        start += 1;
+    }
+    messages.len() - start
 }
 
 /// `compact_messages` with the keep-tail injected — the testable form (no env/config read). The
@@ -439,10 +580,19 @@ pub async fn compact_chat(
     request: &SummaryRequest,
     chat: &ChatCompaction,
 ) -> Result<ChatCompacted> {
-    let keep_tail = keep_tail_from_config().unwrap_or_else(|| {
-        chat.kept_budget_chars
-            .map_or(0, |budget| tail_that_fits(conversation.messages(), budget))
-    });
+    // A recovery compaction keeps no tail: the provider just refused a request goose had sized to
+    // this window, so the window is not to be trusted with one.
+    let keep_tail = match (keep_tail_from_config(), chat.context_limit) {
+        (Some(keep_tail), _) => keep_tail,
+        (None, _) if chat.trigger == CompactionTrigger::Recovery => 0,
+        (None, Some(limit)) => {
+            let counter = create_token_counter()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to create token counter: {e}"))?;
+            tail_that_fits(conversation.messages(), tail_budget_tokens(limit), &counter)
+        }
+        (None, None) => 0,
+    };
     compact_core(
         provider,
         model_config,
@@ -533,33 +683,46 @@ async fn compact_core(
     let keep_tail = keep_tail.min(messages.len().saturating_sub(2));
     let mut cut = messages.len() - keep_tail;
     // A kept tail may not OPEN on a tool response whose request was summarized away — that is an
-    // orphan `role:tool` message and OpenAI-compatible servers reject the request outright. Extend
-    // the tail backward until its first message carries no ToolResponse (the paired request then
-    // rides along); `cut == 0` degrades to keeping everything except the summary, which is safe.
-    while cut > 0
-        && cut < messages.len()
-        && messages[cut]
-            .content
-            .iter()
-            .any(|c| matches!(c, MessageContent::ToolResponse(_)))
-    {
-        cut -= 1;
+    // orphan `role:tool` message and OpenAI-compatible servers reject the request outright. A
+    // chat's tail (`tail_that_fits`) already keeps the pair within its budget or leaves both out;
+    // here a chat drops the response with its request rather than drag a request of any size in
+    // (a small result whose request was a big write pulled the whole write past the budget). The
+    // swarm workers keep the golden rule: extend the tail backward until its first message carries
+    // no ToolResponse; `cut == 0` degrades to keeping everything except the summary.
+    if chat.is_some() {
+        while cut < messages.len() && opens_on_a_tool_result(&messages[cut]) {
+            cut += 1;
+        }
+    } else {
+        while cut > 0 && cut < messages.len() && opens_on_a_tool_result(&messages[cut]) {
+            cut -= 1;
+        }
     }
     let messages_to_compact = &messages[..cut];
 
     // With a kept tail, the most recent user text is usually INSIDE it already — appending the
     // preserved copy too would duplicate the instruction the model most attends to.
+    // A harness nudge in the tail is goose's, not the person's request: counted as it, the
+    // person's real request was never re-sent before the tail.
     let preserved_in_tail = keep_tail > 0
-        && messages[cut..]
-            .iter()
-            .any(|m| matches!(m.role, rmcp::model::Role::User) && has_text_only(m));
+        && messages[cut..].iter().any(|m| {
+            matches!(m.role, rmcp::model::Role::User) && has_text_only(m) && !is_harness_nudge(m)
+        });
     let preserved_text = preserved_user_message
         .as_ref()
         .filter(|_| !preserved_in_tail)
         .and_then(extract_text);
 
+    let counter = match chat.and_then(|chat| chat.context_limit) {
+        Some(_) => Some(
+            create_token_counter()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to create token counter: {e}"))?,
+        ),
+        None => None,
+    };
     let kept = chat.map(|chat| {
-        let mut kept = Pillars::build(
+        let built = Pillars::build(
             messages,
             &KeptSources {
                 note: chat.note.as_deref(),
@@ -568,8 +731,11 @@ async fn compact_core(
                 working_dir: Some(&chat.working_dir),
             },
             chat.ledger.clone(),
-        )
-        .fit(chat.kept_budget_chars);
+        );
+        let mut kept = match (chat.context_limit, &counter) {
+            (Some(limit), Some(counter)) => fit_kept_to_tokens(built, limit, counter),
+            _ => built.fit(None),
+        };
         kept.tail_messages = messages.len() - cut;
         kept
     });
@@ -1065,8 +1231,11 @@ async fn do_compact(
             );
         }
     }
-    let (message, usage) =
-        summarize_a_transcript(provider, model_config, session_id, messages).await?;
+    let (message, usage) = summarize_a_transcript(provider, model_config, session_id, messages, {
+        chat.and_then(|(chat, _)| chat.context_limit)
+            .or_else(|| refused_window(session_id, &model_config.model_name))
+    })
+    .await?;
     let note = match chat {
         Some((chat, _)) if chat.note.is_some() => NoteOutcome::NotSent,
         _ => NoteOutcome::NoNote,
@@ -1207,6 +1376,20 @@ async fn summarize_as_the_chat(
             None
         }
     };
+    // The summary's answer needs room of its own, thinking included. A request that would leave it
+    // less is not sent: the answer would be cut at `length` and fail the gate after a full prefill.
+    // The transcript request, without the tools and the kept tail, is measured to fit instead.
+    if let (Some(window), Some(counter)) = (chat.context_limit, &counter) {
+        let prompt = counter.count_chat_tokens(&frame.system_prompt, sent.messages(), &frame.tools);
+        let room = summary_answer_room(window);
+        if prompt + room > window {
+            return Ok(ChatSummary::NotWritten(format!(
+                "would leave its answer {} of the {room} tokens it needs ({prompt} prompt tokens \
+                 on a {window}-token window)",
+                window.saturating_sub(prompt)
+            )));
+        }
+    }
     let watch_note = kept.note.is_some() && chat.may_ask;
     let mut written_tokens = 0u64;
     let mut asked: Option<String> = None;
@@ -1275,6 +1458,19 @@ async fn summarize_as_the_chat(
             retry.messages(),
             model_config.toolshim,
         );
+        if let (Some(window), Some(counter)) = (chat.context_limit, &counter) {
+            let prompt = counter.count_chat_tokens(
+                &frame.system_prompt,
+                retry_sent.messages(),
+                &frame.tools,
+            );
+            if prompt + summary_answer_room(window) > window {
+                return Ok(ChatSummary::NotWritten(format!(
+                    "was not a summary, and a second ask would leave its answer {} tokens",
+                    window.saturating_sub(prompt)
+                )));
+            }
+        }
         let retry_answer = crate::model_config::stream_as_the_chat(
             crate::background_work::BackgroundWorkKind::Compaction,
             provider,
@@ -1350,20 +1546,46 @@ async fn summarize_as_the_chat(
 /// [`SummaryRequest::Transcript`], trying progressively more of the tool responses removed from
 /// the middle while the provider refuses the request as too long, and then (I-9) the middle of the
 /// transcript itself cut to a share of the window the refusal names.
+///
+/// `window` is a window goose has MEASURED (the chat's effective limit, or one a refusal named) —
+/// never a model config's declared one, which can be wrong either way. With it, each request is
+/// measured by goose's tokenizer before it is sent, and one that would leave its answer less than
+/// [`summary_answer_room`] is not sent: a refusal (or an answer cut at `length`) is certain, and
+/// each costs a full prefill. A refusal naming a smaller window narrows it for the steps after.
+/// Without one, the removal ladder is three steps (0, 50, 100%) instead of five. At most
+/// [`MAX_TRANSCRIPT_CALLS`] requests are sent: before 2026-10-30 up to eight were, each
+/// prefilling the whole transcript.
 async fn summarize_a_transcript(
     provider: &dyn Provider,
     model_config: &ModelConfig,
     session_id: &str,
     messages: &[Message],
+    window: Option<usize>,
 ) -> Result<(Message, ProviderUsage), anyhow::Error> {
     let agent_visible_messages: Vec<Message> = messages
         .iter()
         .filter(|msg| msg.is_agent_visible())
         .map(|msg| msg.agent_visible_content())
         .collect();
+    let counter = create_token_counter().await.ok();
+    let mut window = window;
+    let fits = |transcript: &str, window: Option<usize>| match (window, &counter) {
+        (Some(window), Some(counter)) => {
+            counter.count_tokens(transcript)
+                + TRANSCRIPT_PROMPT_TOKENS
+                + summary_answer_room(window)
+                <= window
+        }
+        _ => true,
+    };
+    let mut calls = 0usize;
 
     // Try progressively removing more tool response messages from the middle to reduce context length
-    let removal_percentages = [0, 10, 20, 50, 100];
+    let removal_percentages: &[u32] = if window.is_some() && counter.is_some() {
+        &[0, 10, 20, 50, 100]
+    } else {
+        &[0, 50, 100]
+    };
     let mut refusal = String::new();
     let mut transcript = String::new();
 
@@ -1374,11 +1596,20 @@ async fn summarize_a_transcript(
             .map(|&msg| format_message_for_compacting(msg))
             .collect::<Vec<_>>()
             .join("\n");
+        if !fits(&transcript, window) || calls == MAX_TRANSCRIPT_CALLS {
+            continue;
+        }
+        calls += 1;
         match summarize_transcript_text(provider, model_config, session_id, transcript.clone())
             .await?
         {
             Ok(summary) => return Ok(summary),
-            Err(ProviderError::ContextLengthExceeded(why)) => refusal = why,
+            Err(ProviderError::ContextLengthExceeded(why)) => {
+                if let Some(named) = goose_providers::errors::refused_context_window(&why) {
+                    window = Some(window.map_or(named, |window| window.min(named)));
+                }
+                refusal = why;
+            }
             Err(e) => return Err(e.into()),
         }
     }
@@ -1387,20 +1618,32 @@ async fn summarize_a_transcript(
     // window. Before I-9 the session ended here ("Unable to continue").
     let named = goose_providers::errors::refused_context_window(&refusal)
         .or_else(|| refused_window(session_id, &model_config.model_name));
-    let Some(mut window) = named.or(model_config.context_limit) else {
+    let Some(mut window) = named
+        .into_iter()
+        .chain(window)
+        .min()
+        .or(model_config.context_limit)
+    else {
         return Err(anyhow::anyhow!(
             "Failed to compact: context limit exceeded even after removing all tool responses"
         ));
     };
     for share in TRANSCRIPT_WINDOW_SHARES {
+        if calls == MAX_TRANSCRIPT_CALLS {
+            break;
+        }
         let budget = (window as f64 * share * TRANSCRIPT_CHARS_PER_TOKEN) as usize;
         let cut = cut_transcript_middle(&transcript, budget);
+        if !fits(&cut, Some(window)) {
+            continue;
+        }
         warn!(
             "compaction: the transcript is over the {window}-token window even without tool \
              responses; summarizing it with its middle cut to {} of {} characters",
             cut.len(),
             transcript.len()
         );
+        calls += 1;
         match summarize_transcript_text(provider, model_config, session_id, cut).await? {
             Ok(summary) => return Ok(summary),
             Err(ProviderError::ContextLengthExceeded(why)) => {
@@ -1413,9 +1656,18 @@ async fn summarize_a_transcript(
     }
     Err(anyhow::anyhow!(
         "Failed to compact: context limit exceeded even after removing all tool responses and \
-         cutting the transcript to fit a {window}-token window"
+         cutting the transcript to fit a {window}-token window ({calls} summary requests sent)"
     ))
 }
+
+/// The most transcript summary requests one compaction sends: three removal steps and two cuts
+/// when goose has no measured window; with one, the steps that cannot fit are never sent and a
+/// cut transcript usually goes second.
+const MAX_TRANSCRIPT_CALLS: usize = 5;
+
+/// tokens: the transcript instruction around the transcript (compaction.md's transcript branch,
+/// ~2.4k chars) and its one user line, rounded up.
+const TRANSCRIPT_PROMPT_TOKENS: usize = 1_024;
 
 /// Shares of the window a cut transcript may fill, tried in order: the rest is the summary
 /// prompt and the summary itself.
@@ -1586,6 +1838,27 @@ pub fn compute_tool_call_cutoff(context_limit: usize, compaction_threshold: f64)
     };
     let effective_limit = (context_limit as f64 * threshold) as usize;
     (3 * effective_limit / 20_000).clamp(10, 500)
+}
+
+/// The tool-pair cutoff of a chat: [`compute_tool_call_cutoff`] on the window the compaction guard
+/// reads ([`effective_context_limit`]: a refused or compressed window and GOOSE_LOCAL_CONTEXT_CAP
+/// included) and its compaction point; `worker_threshold` is a swarm worker's own ratio. An
+/// unknown window sizes no cutoff (`usize::MAX`). Before 2026-10-30 the cutoff read the provider's
+/// raw limit while the guard read the effective one, so the two sized to different windows.
+pub async fn tool_call_cutoff(
+    provider: &dyn Provider,
+    model_config: &ModelConfig,
+    session_id: &str,
+    worker_threshold: Option<f64>,
+) -> usize {
+    effective_context_limit(provider, model_config, Some(session_id))
+        .await
+        .map_or(usize::MAX, |limit| {
+            compute_tool_call_cutoff(
+                limit,
+                worker_threshold.unwrap_or_else(|| compaction_threshold(limit, model_config)),
+            )
+        })
 }
 
 pub fn tool_ids_to_summarize(
@@ -2554,7 +2827,7 @@ mod tests {
             pins: Vec::new(),
             goal: None,
             ledger: LedgerRead::Entries(Vec::new()),
-            kept_budget_chars: None,
+            context_limit: None,
             working_dir: std::path::PathBuf::from("/Users/someone"),
             progress: None,
         }
@@ -3768,7 +4041,7 @@ mod tests {
         assert!(has_every_written_part(&format!(
             "<analysis>scratch</analysis>\nNOTE OK\n{EVERY_PART}"
         )));
-        let correction = missing_parts_correction("## Where we are\nx");
+        let correction = missing_parts_correction("## Where we are\nsync done, 41 tests pass");
         let (missing, _) = correction.split_once(':').unwrap();
         assert!(missing.contains("`## What each file does`"), "{correction}");
         assert!(!missing.contains("`## Where we are`"), "{correction}");
@@ -3865,12 +4138,12 @@ mod tests {
     /// window, and the summary request still sends the whole conversation (the cached prefix).
     #[tokio::test]
     async fn a_chat_keeps_its_newest_turns_and_the_summary_request_keeps_the_whole_prefix() {
-        let chat = tool_loop(40);
-        let per_message = format_message_for_compacting(&chat.messages()[2])
-            .chars()
-            .count();
+        let chat = tool_loop(12);
+        let counter = create_token_counter().await.unwrap();
+        let per_message_tokens =
+            counter.count_chat_tokens("", std::slice::from_ref(&chat.messages()[2]), &[]);
         let mut inputs = chat_inputs(None, false);
-        inputs.kept_budget_chars = Some(per_message * 6 + per_message / 2);
+        inputs.context_limit = Some((per_message_tokens * 6 + per_message_tokens / 2) * 16);
         let provider = SequenceProvider {
             answers: vec![EVERY_PART.to_string()],
             calls: std::sync::Mutex::new(Vec::new()),
@@ -3909,20 +4182,21 @@ mod tests {
                     .any(|c| matches!(c, MessageContent::ToolResponse(_)))
             })
             .unwrap();
-        assert!(format_message_for_compacting(last_tool).contains("output 39"));
+        assert!(format_message_for_compacting(last_tool).contains("output 11"));
         assert!(!visible
             .iter()
             .any(|m| format_message_for_compacting(m).contains("output 0 ")));
     }
 
-    #[test]
-    fn a_tail_stops_at_a_row_an_earlier_compaction_hid() {
+    #[tokio::test]
+    async fn a_tail_stops_at_a_row_an_earlier_compaction_hid() {
         let mut messages = tool_loop(3).messages().clone();
         messages[2] = messages[2]
             .clone()
             .with_metadata(MessageMetadata::user_only());
-        assert_eq!(tail_that_fits(&messages, usize::MAX), 4);
-        assert_eq!(tail_that_fits(&messages, 0), 0);
+        let counter = create_token_counter().await.unwrap();
+        assert_eq!(tail_that_fits(&messages, usize::MAX, &counter), 4);
+        assert_eq!(tail_that_fits(&messages, 0, &counter), 0);
     }
 
     /// The compaction point: the person's ratio wins; otherwise the window minus the output cap
@@ -3945,5 +4219,600 @@ mod tests {
         assert_eq!(at(None, None, 1_048_576, 32_768), 928_427);
         assert!(compaction_threshold_from(None, Some(0), 360_000, 32_768) < 1.0);
         assert_eq!(compaction_threshold_from(None, None, 0, 4_096), 0.8);
+    }
+
+    // ---- review 2026-10-30 (compaction-fix-2): each test below fails on 430d85f003 ----
+
+    /// Defect 1: goose sends a local engine no `max_tokens`, and the point read
+    /// `max_output_tokens()`'s 4,096 stand-in: 325,904 on Flash-Next's 360,000 instead of 297,232,
+    /// leaving ~9k for a thinking model's summary.
+    #[test]
+    fn an_unset_output_cap_reserves_the_engines_default_not_4096() {
+        let flash = ModelConfig::new("flash-next");
+        assert_eq!(flash.max_tokens, None);
+        assert_eq!(
+            flash.max_output_tokens(),
+            4_096,
+            "the stand-in this must not read"
+        );
+        let point = (compaction_threshold(360_000, &flash) * 360_000.0).round() as usize;
+        assert_eq!(point, 297_232);
+        // At the point: one tool result (the run's largest, 22,944) and the summary's answer room
+        // (16,384, ~3.8x the measured 4,316) still fit.
+        assert!(360_000 - point >= 22_944 + summary_answer_room(360_000));
+        let capped = ModelConfig::new("flash-next").with_max_tokens(Some(8_192));
+        assert_eq!(output_reserve_tokens(&capped), 8_192);
+    }
+
+    /// Plausible item: the 0.8 floor applies to the DERIVED rule only; a reserve the person set
+    /// moves the point below it (a 32,768 cap plus a tool result on a 128,000 window), down to
+    /// half the window.
+    #[test]
+    fn a_reserve_the_person_set_moves_the_point_below_the_default_floor() {
+        let at = |reserve: Option<usize>, limit: usize| {
+            (compaction_threshold_from(None, reserve, limit, 32_768) * limit as f64).round()
+                as usize
+        };
+        assert_eq!(at(Some(43_434), 128_000), 84_566);
+        assert_eq!(
+            at(Some(100_000), 128_000),
+            64_000,
+            "never below half the window"
+        );
+        assert_eq!(
+            at(None, 128_000),
+            102_400,
+            "the derived rule keeps its 0.8 floor"
+        );
+    }
+
+    /// The guard compacts at the reserve's point, not at the floor: on Flash-Next's 360,000 with no
+    /// output cap, 295,000 used is under the point (297,232) and 298,000 is over it. Catches a
+    /// guard that ignores the reserve (0.8 would compact at 288,000) and the 4,096 stand-in (it
+    /// would not compact until 325,904).
+    #[tokio::test]
+    async fn the_guard_compacts_at_the_reserve_point() {
+        let provider = MockProvider::new(Message::assistant().with_text("x"), 360_000);
+        let conversation = Conversation::new_unvalidated(vec![Message::user().with_text("go")]);
+        let mut session = crate::session::Session {
+            id: "reserve-guard-session".to_string(),
+            model_config: Some(ModelConfig::new("flash-next")),
+            ..Default::default()
+        };
+        for (used, compacts) in [(287_000, false), (295_000, false), (298_000, true)] {
+            session.usage = Usage::new(Some(used - 1_000), Some(1_000), Some(used));
+            let needed = check_if_compaction_needed(&provider, &conversation, None, &session)
+                .await
+                .unwrap();
+            assert_eq!(needed, compacts, "{used} used of 360,000");
+        }
+    }
+
+    fn sections(parts: [&str; 5]) -> String {
+        WRITTEN_PARTS
+            .iter()
+            .zip(parts)
+            .map(|((heading, _), body)| format!("## {heading}\n{body}\n"))
+            .collect()
+    }
+
+    const BODIES: [&str; 5] = [
+        "sync done, 41 tests pass",
+        "app/sync.py — the documented walk",
+        "Berlin days, not UTC",
+        "the 3D field and its test",
+        "write web/viz.js",
+    ];
+
+    /// Defect 2: a heading alone passed the gate. Empty sections, headings inside a code fence, and
+    /// the instruction's own template echoed back (compaction.md prints each heading, then its
+    /// ask) are not a summary.
+    #[test]
+    fn a_section_needs_words_of_its_own_outside_a_code_fence() {
+        assert!(has_every_written_part(&sections(BODIES)));
+        let empty = sections(["", "", "", "", ""]);
+        assert!(!has_every_written_part(&empty), "{empty}");
+        let parroted: String = WRITTEN_PARTS
+            .iter()
+            .map(|(heading, ask)| format!("## {heading}\n{ask}\n"))
+            .collect();
+        assert!(!has_every_written_part(&parroted), "{parroted}");
+        let fenced = format!(
+            "Here is the format:\n```markdown\n{}```\n",
+            sections(BODIES)
+        );
+        assert!(!has_every_written_part(&fenced), "{fenced}");
+        let placeholder = sections(["N/A", BODIES[1], BODIES[2], "TBD", BODIES[4]]);
+        assert!(!has_every_written_part(&placeholder));
+        let correction = missing_parts_correction(&placeholder);
+        let (missing, _) = correction.split_once(':').unwrap();
+        assert!(
+            missing.contains("`## Where we are`") && missing.contains("`## Still to do`"),
+            "{correction}"
+        );
+        assert!(!missing.contains("`## Next step`"), "{correction}");
+        // A section may hold a code block of its own.
+        let with_code = sections([
+            "the build:\n```\ncargo test -p goose\n```",
+            BODIES[1],
+            BODIES[2],
+            BODIES[3],
+            BODIES[4],
+        ]);
+        assert!(has_every_written_part(&with_code), "{with_code}");
+    }
+
+    /// Defect 3: real summaries head their sections in other markdown forms; each is the section.
+    #[test]
+    fn a_section_heading_is_read_in_its_usual_markdown_forms() {
+        let forms: [fn(&str, &str) -> String; 6] = [
+            |h, b| format!("## {h}:\n{b}\n"),
+            |h, b| format!("### {h}\n{b}\n"),
+            |h, b| format!("**{h}**\n{b}\n"),
+            |h, b| format!("**{h}:** {b}\n"),
+            |h, b| format!("{}:\n{b}\n", h.to_uppercase()),
+            |h, b| format!("## 1. {h}\n{b}\n"),
+        ];
+        for (i, form) in forms.iter().enumerate() {
+            let answer: String = WRITTEN_PARTS
+                .iter()
+                .zip(BODIES)
+                .map(|((heading, _), body)| form(heading, body))
+                .collect();
+            assert!(has_every_written_part(&answer), "form {i}:\n{answer}");
+            assert_eq!(
+                pillars::written_parts(&answer),
+                WRITTEN_PARTS.iter().map(|(h, _)| *h).collect::<Vec<_>>(),
+                "form {i}"
+            );
+        }
+        // A sentence that opens with a heading's words is not the heading.
+        assert!(pillars::written_parts("Where we are now is unclear\n## Next steps\n").is_empty());
+    }
+
+    /// Hex: ~2-3 chars per token, so a write of it is far more tokens than its chars / 4.
+    fn hex_text(chars: usize) -> String {
+        let mut text: String = (0u64..chars as u64 / 16 + 1)
+            .map(|i| format!("{:016x}", i.wrapping_mul(0x9e37_79b9_7f4a_7c15)))
+            .collect();
+        text.truncate(chars);
+        text
+    }
+
+    fn write_then_ok(content: &str) -> [Message; 2] {
+        let mut params = CallToolRequestParams::new("developer__write");
+        params.arguments = serde_json::json!({"path": "/w/data.hex", "content": content})
+            .as_object()
+            .cloned();
+        [
+            Message::assistant().with_tool_request("w1", Ok(params)),
+            Message::user().with_tool_response(
+                "w1",
+                Ok(rmcp::model::CallToolResult::success(vec![
+                    RawContent::text("Created /w/data.hex").no_annotation(),
+                ])),
+            ),
+        ]
+    }
+
+    /// Defect 4: a small tool result whose request is a big write dragged the whole write into the
+    /// kept tail past its budget. The pair is kept within the budget or left out together.
+    #[tokio::test]
+    async fn a_tool_result_whose_request_is_over_the_budget_leaves_the_tail_with_it() {
+        let big = hex_text(40_000);
+        let mut messages = vec![Message::user().with_text("store the dump")];
+        messages.extend(write_then_ok(&big));
+        let chat = Conversation::new_unvalidated(messages);
+        let mut inputs = chat_inputs(None, false);
+        inputs.context_limit = Some(64_000);
+        let counter = create_token_counter().await.unwrap();
+        let budget = tail_budget_tokens(64_000);
+        assert!(counter.count_chat_tokens("", &chat.messages()[1..2], &[]) > budget);
+        assert_eq!(tail_that_fits(chat.messages(), budget, &counter), 0);
+        let provider = SequenceProvider {
+            answers: vec![sections(BODIES)],
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let ChatCompacted::Compacted {
+            conversation, kept, ..
+        } = compact_chat(
+            &provider,
+            &ModelConfig::new("sequence"),
+            "s",
+            &chat,
+            false,
+            &frame(),
+            &inputs,
+        )
+        .await
+        .unwrap()
+        else {
+            panic!("compacted");
+        };
+        assert_eq!(kept.unwrap().tail_messages, 0);
+        let after = conversation.agent_visible_messages();
+        let tokens = counter.count_chat_tokens("", &after, &[]);
+        assert!(
+            !after
+                .iter()
+                .any(|m| m.as_concat_text().contains(big.get(..64).unwrap())
+                    || format_message_for_compacting(m).contains(big.get(..64).unwrap())),
+            "the write stays out of the compacted chat"
+        );
+        assert!(tokens < 64_000 / 4, "{tokens}");
+        // Room for both: the pair is kept whole, never the result alone.
+        let small = write_then_ok("hello");
+        let kept_pair = tail_that_fits(&small, budget, &counter);
+        assert_eq!(kept_pair, 2);
+    }
+
+    fn png(width: u32, height: u32) -> String {
+        use base64::Engine;
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageRgb8(image::RgbImage::new(width, height))
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageOutputFormat::Png,
+            )
+            .unwrap();
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    /// Defect 5: the tail was counted in chars — an image as ~18 while the real image is sent,
+    /// CJK at 2-4x the tokens of chars / 4. It is counted by goose's tokenizer, images at their
+    /// pixel cost.
+    #[tokio::test]
+    async fn the_tail_counts_tokens_and_images_at_their_real_cost() {
+        assert_eq!(crate::token_counter::image_tokens(&png(1024, 1024)), 1_399);
+        assert_eq!(
+            crate::token_counter::image_tokens("not an image"),
+            crate::token_counter::UNSIZED_IMAGE_TOKENS
+        );
+        let counter = create_token_counter().await.unwrap();
+        let screenshot = Message::user()
+            .with_text("see the screen")
+            .with_image(png(1024, 1024), "image/png");
+        assert!(counter.count_chat_tokens("", std::slice::from_ref(&screenshot), &[]) > 1_399);
+        let window = 16_384;
+        let budget = tail_budget_tokens(window);
+        let messages = vec![
+            Message::user().with_text("build it"),
+            Message::assistant().with_text("ok"),
+            screenshot,
+        ];
+        assert_eq!(
+            tail_that_fits(&messages, budget, &counter),
+            0,
+            "the image is over 1,024"
+        );
+        let cjk = "数据同步完成测试通过".repeat(120);
+        let messages = vec![
+            Message::user().with_text("build it"),
+            Message::assistant().with_text(&cjk),
+            Message::user().with_text(&cjk),
+        ];
+        let kept = tail_that_fits(&messages, budget, &counter);
+        let kept_tokens = counter.count_chat_tokens("", &messages[messages.len() - kept..], &[]);
+        assert!(kept_tokens <= budget, "{kept_tokens} > {budget}");
+        assert!(
+            format_message_for_compacting(&messages[2]).chars().count() < budget * 4,
+            "in chars it fit"
+        );
+    }
+
+    /// Defect 5, the loop: on a 16k or 32k window a compaction's own part — summary, kept block,
+    /// kept tail — is well under the point, so the next guard check does not compact again. The
+    /// chat is CJK and hex tool output with screenshots, the shapes chars / 4 under-counted.
+    #[tokio::test]
+    async fn a_small_window_is_left_well_under_its_point_after_a_compaction() {
+        let counter = create_token_counter().await.unwrap();
+        for window in [16_384usize, 32_768] {
+            let mut messages = vec![Message::user().with_text("同步所有用户并画出图表")];
+            for i in 0..30 {
+                let mut params = CallToolRequestParams::new("developer__shell");
+                params.arguments = serde_json::json!({"command": format!("run {i}")})
+                    .as_object()
+                    .cloned();
+                messages.push(Message::assistant().with_tool_request(format!("c{i}"), Ok(params)));
+                let mut result = rmcp::model::CallToolResult::success(vec![RawContent::text(
+                    format!("{} {}", "数据同步完成".repeat(40), hex_text(400)),
+                )
+                .no_annotation()]);
+                if i % 5 == 0 {
+                    result
+                        .content
+                        .push(RawContent::image(png(800, 600), "image/png").no_annotation());
+                }
+                messages.push(Message::user().with_tool_response(format!("c{i}"), Ok(result)));
+            }
+            let chat = Conversation::new_unvalidated(messages);
+            let mut inputs = chat_inputs(None, false);
+            inputs.context_limit = Some(window);
+            let provider = SequenceProvider {
+                answers: vec![sections(BODIES)],
+                calls: std::sync::Mutex::new(Vec::new()),
+            };
+            let ChatCompacted::Compacted { conversation, .. } = compact_chat(
+                &provider,
+                &ModelConfig::new("sequence"),
+                "s",
+                &chat,
+                false,
+                &SummaryRequest::Transcript,
+                &inputs,
+            )
+            .await
+            .unwrap() else {
+                panic!("compacted");
+            };
+            let after = counter.count_chat_tokens("", &conversation.agent_visible_messages(), &[]);
+            let point = (0.8 * window as f64) as usize;
+            // The summary here is short; a real one gets the answer room at most. A quarter of
+            // the point is left for the system prompt and tools.
+            let own = after + summary_answer_room(window);
+            assert!(
+                own < point * 3 / 4,
+                "{window}: {after} tokens kept + {} answer room vs point {point}",
+                summary_answer_room(window)
+            );
+        }
+    }
+
+    /// Defect 6 and the request-before-tail order: a harness nudge in the kept tail is not the
+    /// person's request; the request is re-sent BEFORE the tail (the tail is the work it asked for).
+    #[tokio::test]
+    async fn the_persons_request_goes_before_the_tail_even_with_a_nudge_in_it() {
+        for with_nudge in [false, true] {
+            let mut messages = tool_loop(12).messages().clone();
+            if with_nudge {
+                messages.push(crate::agents::harness_nudge(
+                    crate::agents::LENGTH_CUT_CONTINUATION,
+                ));
+            }
+            let chat = Conversation::new_unvalidated(messages);
+            let counter = create_token_counter().await.unwrap();
+            let per = counter.count_chat_tokens("", std::slice::from_ref(&chat.messages()[2]), &[]);
+            let mut inputs = chat_inputs(None, false);
+            inputs.context_limit = Some((per * 6 + per / 2) * 16);
+            let provider = SequenceProvider {
+                answers: vec![sections(BODIES)],
+                calls: std::sync::Mutex::new(Vec::new()),
+            };
+            let ChatCompacted::Compacted {
+                conversation, kept, ..
+            } = compact_chat(
+                &provider,
+                &ModelConfig::new("sequence"),
+                "s",
+                &chat,
+                false,
+                &frame(),
+                &inputs,
+            )
+            .await
+            .unwrap()
+            else {
+                panic!("compacted");
+            };
+            let tail = kept.unwrap().tail_messages;
+            assert!(tail > 0, "nudge {with_nudge}");
+            let visible = conversation.agent_visible_messages();
+            let request = visible
+                .iter()
+                .position(|m| m.as_concat_text() == "build the console")
+                .unwrap_or_else(|| panic!("nudge {with_nudge}: the request is re-sent"));
+            let first_tail = visible.len() - tail;
+            assert!(
+                request < first_tail,
+                "nudge {with_nudge}: request at {request}, tail from {first_tail}"
+            );
+        }
+    }
+
+    /// Defect 8: the tool-pair cutoff reads the guard's window — a refused window narrows both.
+    #[tokio::test]
+    async fn the_tool_pair_cutoff_reads_the_guards_window() {
+        let provider = MockProvider::new(Message::assistant().with_text("x"), 1_000_000);
+        let model_config = provider.config.clone();
+        let session = "cutoff-window-session";
+        let wide = tool_call_cutoff(&provider, &model_config, session, Some(0.8)).await;
+        assert_eq!(wide, compute_tool_call_cutoff(1_000_000, 0.8));
+        remember_window(session, &model_config.model_name, 100_000);
+        let narrowed = tool_call_cutoff(&provider, &model_config, session, Some(0.8)).await;
+        assert_eq!(narrowed, compute_tool_call_cutoff(100_000, 0.8));
+        assert!(narrowed < wide);
+    }
+
+    /// Plausible item: a summary request that would leave its answer no room is not sent; the
+    /// transcript request goes instead, and the transcript fallback sends at most
+    /// MAX_TRANSCRIPT_CALLS requests (it sent up to eight).
+    #[tokio::test]
+    async fn a_summary_request_without_room_for_its_answer_is_not_sent() {
+        let provider = SequenceProvider {
+            answers: vec![sections(BODIES)],
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let chat = Conversation::new_unvalidated(vec![
+            Message::user().with_text(hex_text(36_000)),
+            Message::assistant().with_text("noted"),
+            Message::user().with_text("go on"),
+        ]);
+        let mut inputs = chat_inputs(None, false);
+        inputs.context_limit = Some(16_384);
+        let ChatCompacted::Compacted { conversation, .. } = compact_chat(
+            &provider,
+            &ModelConfig::new("sequence"),
+            "s",
+            &chat,
+            false,
+            &frame(),
+            &inputs,
+        )
+        .await
+        .unwrap() else {
+            panic!("compacted");
+        };
+        let calls = provider.calls.lock().unwrap();
+        assert!(
+            calls.iter().all(|(_, tools)| *tools == 0),
+            "no chat-shaped request was sent: {:?}",
+            calls.iter().map(|(_, t)| *t).collect::<Vec<_>>()
+        );
+        assert!(calls.len() <= MAX_TRANSCRIPT_CALLS);
+        let stored = conversation.agent_visible_messages()[0].as_concat_text();
+        assert!(stored.starts_with("<transcript summary>"), "{stored}");
+    }
+
+    struct RefusingProvider {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for RefusingProvider {
+        fn get_name(&self) -> &str {
+            "refusing"
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(ProviderError::ContextLengthExceeded("too long".to_string()))
+        }
+    }
+
+    /// Plausible item: a provider that keeps refusing got up to eight full-prefill transcript
+    /// requests (five removal steps, three cuts); at most MAX_TRANSCRIPT_CALLS are sent.
+    #[tokio::test]
+    async fn the_refused_transcript_ladder_is_bounded() {
+        let provider = RefusingProvider {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let model_config = ModelConfig::new("refusing").with_context_limit(Some(262_144));
+        let result = compact_messages(
+            &provider,
+            &model_config,
+            "refusing-session",
+            &tool_loop(10),
+            false,
+            &SummaryRequest::Transcript,
+        )
+        .await;
+        assert!(result.is_err());
+        let calls = provider.calls.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            (3..=5).contains(&calls),
+            "every refusal was read and the ladder stopped at its bound: {calls}"
+        );
+    }
+
+    /// E2E (2026-10-30, compaction-fix-2): a real long transcript compacted by a real local model
+    /// through the chat-shaped request. Env: E2E_SESSION_JSON (an array of goose Messages),
+    /// E2E_WINDOW, E2E_PROMPT_TOKENS (the conversation is cut from its end to this many tokens),
+    /// GOOSE_MODEL = GOOSE_FAST_MODEL, OPENAI_HOST, OPENAI_API_KEY. Prints what the gate read.
+    #[tokio::test]
+    #[ignore = "needs a local engine and a session export"]
+    async fn e2e_a_real_model_writes_a_summary_the_gate_reads() {
+        let var = |name: &str| std::env::var(name).unwrap();
+        let mut messages: Vec<Message> =
+            serde_json::from_str(&std::fs::read_to_string(var("E2E_SESSION_JSON")).unwrap())
+                .unwrap();
+        let window: usize = var("E2E_WINDOW").parse().unwrap();
+        let prompt_tokens: usize = var("E2E_PROMPT_TOKENS").parse().unwrap();
+        let counter = create_token_counter().await.unwrap();
+        while counter.count_chat_tokens("", &messages, &[]) > prompt_tokens {
+            messages.pop();
+        }
+        let provider = crate::providers::create("openai", Vec::new())
+            .await
+            .unwrap();
+        let model_config = ModelConfig::new(var("GOOSE_MODEL")).with_context_limit(Some(window));
+        let point = compaction_threshold(window, &model_config);
+        let written = Arc::new(std::sync::Mutex::new(None));
+        let mut inputs = chat_inputs(None, false);
+        inputs.context_limit = Some(window);
+        inputs.trigger = CompactionTrigger::Auto {
+            used: Some(prompt_tokens),
+            limit: Some(window),
+            threshold: point,
+        };
+        let seen = written.clone();
+        inputs.progress = Some(Arc::new(move |progress: WritingProgress| {
+            *seen.lock().unwrap() = Some(progress);
+        }));
+        let started = std::time::Instant::now();
+        let compacted = compact_chat(
+            provider.as_ref(),
+            &model_config,
+            "e2e-compaction",
+            &Conversation::new_unvalidated(messages.clone()),
+            false,
+            &frame(),
+            &inputs,
+        )
+        .await
+        .unwrap();
+        let ChatCompacted::Compacted {
+            conversation,
+            usage,
+            kept,
+            ..
+        } = compacted
+        else {
+            panic!("asked");
+        };
+        let stored = conversation.agent_visible_messages()[0].as_concat_text();
+        let model_text = pillars::model_part(&stored).to_string();
+        let sections = pillars::written_sections(&model_text);
+        println!(
+            "E2E messages={} counted_prompt={} window={window} point={:.4} ({}) elapsed={:.0}s",
+            messages.len(),
+            counter.count_chat_tokens("", &messages, &[]),
+            point,
+            (point * window as f64) as usize,
+            started.elapsed().as_secs_f64()
+        );
+        println!(
+            "E2E usage input={:?} output={:?} streamed_tokens={:?} tail={} gate={} missing={:?}",
+            usage.usage.input_tokens,
+            usage.usage.output_tokens,
+            written
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|p| p.written_tokens),
+            kept.map_or(0, |k| k.tail_messages),
+            has_every_written_part(&model_text),
+            parts_without_content(&model_text)
+        );
+        for (part, body) in &sections {
+            println!(
+                "E2E section {} = {} chars",
+                WRITTEN_PARTS[*part].0,
+                body.len()
+            );
+        }
+        println!(
+            "E2E model text ({} chars):\n{model_text}\nE2E END",
+            model_text.len()
+        );
+        let junk = [
+            FLASH_NEXT_NON_SUMMARY.to_string(),
+            WRITTEN_PARTS
+                .iter()
+                .map(|(heading, ask)| format!("## {heading}\n{ask}\n"))
+                .collect(),
+            format!("```\n{model_text}\n```"),
+            model_text
+                .split_once("## What each file does")
+                .map_or(String::new(), |(first, _)| first.to_string()),
+        ];
+        for (i, junk) in junk.iter().enumerate() {
+            println!("E2E junk {i} gate={}", has_every_written_part(junk));
+        }
     }
 }

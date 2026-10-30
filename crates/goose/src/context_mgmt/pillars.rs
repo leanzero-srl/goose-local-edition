@@ -204,7 +204,7 @@ impl Pillars {
     fn load_documents(&mut self, budget: usize) {
         for i in 0..self.documents.len() {
             let room = budget.saturating_sub(self.render().chars().count());
-            if self.documents[i].chars > room {
+            if self.documents[i].chars > room.min(MAX_NAMED_DOCUMENT_BYTES) {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&self.documents[i].path) else {
@@ -484,10 +484,108 @@ fn document_line(document: &Document) -> String {
     }
 }
 
-/// The files under the chat's folder that the person's messages name — by a path relative to it
-/// or an absolute one inside it — in the order first named, with their size on disk; `fit` reads
-/// the ones that fit. A hidden component (`.env`, `.git/…`) or a path outside the folder is never
-/// read: the block is sent to the provider.
+/// bytes: the largest named file whose text the kept block carries; a bigger one is named by its
+/// path and size only. A task's documents run to a few thousand words (the Flash-Next run's
+/// `SB7-CONTRACT.md`, `BROWSER-TESTING.md`); a file past 64 KiB is data, not a brief.
+pub const MAX_NAMED_DOCUMENT_BYTES: usize = 64 * 1024;
+
+/// Name parts that mark a file as holding secrets: such a file is never read into the block,
+/// which is sent to the provider. Matched against the file's and its folders' names split at
+/// `.`, `_` and `-`, ignoring case: `prod.env`, `secrets.yaml`, `key.pem`, `terraform.tfstate`,
+/// `id_rsa`, `aws-credentials.json`.
+const SECRET_NAME_PARTS: [&str; 34] = [
+    "env",
+    "envrc",
+    "secret",
+    "secrets",
+    "credential",
+    "credentials",
+    "creds",
+    "password",
+    "passwords",
+    "passwd",
+    "token",
+    "tokens",
+    "apikey",
+    "apikeys",
+    "private",
+    "pem",
+    "key",
+    "keys",
+    "p12",
+    "pfx",
+    "jks",
+    "keystore",
+    "tfstate",
+    "tfvars",
+    "kdbx",
+    "gpg",
+    "pgp",
+    "asc",
+    "ovpn",
+    "htpasswd",
+    "netrc",
+    "kubeconfig",
+    "rsa",
+    "ed25519",
+];
+
+/// Whether a path under the chat's folder names a secret-holding file (see [`SECRET_NAME_PARTS`]).
+fn is_secret_like(inside: &Path) -> bool {
+    inside.components().any(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .to_lowercase()
+            .split(['.', '_', '-'])
+            .any(|part| SECRET_NAME_PARTS.contains(&part))
+    })
+}
+
+/// Words that, shortly before a file name in the same sentence, make it a file the person does
+/// NOT want used ("don't read prod.env", "ignore legacy.md", "without the old SPEC.md").
+const NEGATIONS: [&str; 12] = [
+    "not",
+    "no",
+    "never",
+    "nor",
+    "ignore",
+    "skip",
+    "without",
+    "except",
+    "avoid",
+    "exclude",
+    "excluding",
+    "dont",
+];
+
+/// Whether the words before a file name (`before`, nearest last) negate it: a negation among the
+/// four nearest, in the same sentence.
+fn negated(before: &[&str]) -> bool {
+    for word in before.iter().rev().take(4) {
+        if word.ends_with(['.', '!', '?', ';']) {
+            return false;
+        }
+        let bare: String = word
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect();
+        if NEGATIONS.contains(&bare.as_str())
+            || (bare.ends_with("nt") && word.contains(['\'', '’']))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// The files under the chat's folder that the person's messages name as task inputs — by a path
+/// relative to it or an absolute one inside it — in the order first named, with their size on
+/// disk; `fit` reads the ones that fit, up to [`MAX_NAMED_DOCUMENT_BYTES`] each. The block is sent
+/// to the provider, so a file is never read when it is hidden (`.env`, `.git/…`), outside the
+/// folder, secret-like by name ([`is_secret_like`]: `prod.env`, `key.pem`, `terraform.tfstate`),
+/// or named in a negation ("don't touch secrets.yaml").
 fn named_documents(
     asked: &[Asked],
     preserved: Option<&str>,
@@ -498,44 +596,45 @@ fn named_documents(
     };
     let mut seen = std::collections::HashSet::new();
     let mut documents = Vec::new();
-    let words = asked
-        .iter()
-        .map(|a| a.text.as_str())
-        .chain(preserved)
-        .flat_map(str::split_whitespace);
-    for word in words {
-        let word = word
-            .trim_matches(|c: char| {
-                matches!(
-                    c,
-                    '`' | '"' | '\'' | '(' | ')' | '[' | ']' | ',' | ';' | ':' | '<' | '>'
-                )
-            })
-            .trim_end_matches('.');
-        if !word.contains('.') || word.contains("://") || word.starts_with('-') {
-            continue;
+    for text in asked.iter().map(|a| a.text.as_str()).chain(preserved) {
+        let words: Vec<&str> = text.split_whitespace().collect();
+        for (at, word) in words.iter().enumerate() {
+            let word = word
+                .trim_matches(|c: char| {
+                    matches!(
+                        c,
+                        '`' | '"' | '\'' | '(' | ')' | '[' | ']' | ',' | ';' | ':' | '<' | '>'
+                    )
+                })
+                .trim_end_matches('.');
+            if !word.contains('.') || word.contains("://") || word.starts_with('-') {
+                continue;
+            }
+            if negated(&words[..at]) {
+                continue;
+            }
+            let Ok(path) = folder.join(word).canonicalize() else {
+                continue;
+            };
+            let Ok(inside) = path.strip_prefix(&folder) else {
+                continue;
+            };
+            let hidden = inside
+                .components()
+                .any(|c| c.as_os_str().to_string_lossy().starts_with('.'));
+            let Ok(meta) = path.metadata() else {
+                continue;
+            };
+            if hidden || is_secret_like(inside) || !meta.is_file() || !seen.insert(path.clone()) {
+                continue;
+            }
+            documents.push(Document {
+                path: path.display().to_string(),
+                text: String::new(),
+                chars: meta.len() as usize,
+                left_out: true,
+            });
         }
-        let Ok(path) = folder.join(word).canonicalize() else {
-            continue;
-        };
-        let Ok(inside) = path.strip_prefix(&folder) else {
-            continue;
-        };
-        let hidden = inside
-            .components()
-            .any(|c| c.as_os_str().to_string_lossy().starts_with('.'));
-        let Ok(meta) = path.metadata() else {
-            continue;
-        };
-        if hidden || !meta.is_file() || !seen.insert(path.clone()) {
-            continue;
-        }
-        documents.push(Document {
-            path: path.display().to_string(),
-            text: String::new(),
-            chars: meta.len() as usize,
-            left_out: true,
-        });
     }
     documents
 }
@@ -971,14 +1070,110 @@ pub fn streaming_note_verdict(so_far: &str) -> Option<NoteVerdict> {
     Some(note_line(line).unwrap_or(NoteVerdict::Missing))
 }
 
-/// The section headings the model has written so far (`## …` lines), in order.
+/// The summary sections ([`super::WRITTEN_PARTS`]) the model has written so far, in order, by
+/// their canonical headings.
 pub fn written_parts(so_far: &str) -> Vec<String> {
-    so_far
-        .lines()
-        .filter_map(|line| line.trim_start().strip_prefix("## "))
-        .map(|heading| heading.trim().to_string())
-        .filter(|heading| !heading.is_empty())
+    written_sections(so_far)
+        .into_iter()
+        .map(|(part, _)| super::WRITTEN_PARTS[part].0.to_string())
         .collect()
+}
+
+/// Which summary section a line heads, and the words after the heading on the same line. Read
+/// leniently (2026-10-30: real summaries head their sections `## Where we are:`, `### Where we
+/// are`, `**Where we are**`, `**Where we are:** sync done`, `1. Where we are:`): a markdown heading
+/// of any level whose title is the section's, with a closing colon or emphasis; a line in emphasis
+/// that opens with the title; a plain line that opens with the title and a colon. Case is ignored.
+fn part_heading(line: &str) -> Option<(usize, &str)> {
+    let line = line.trim();
+    let hashes = line.chars().take_while(|c| *c == '#').count();
+    let rest = line.get(hashes..).unwrap_or_default().trim_start();
+    let rest = match rest.split_once(['.', ')']) {
+        Some((number, after))
+            if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            after.trim_start()
+        }
+        _ => rest,
+    };
+    let marks = rest.chars().take_while(|c| matches!(c, '*' | '_')).count();
+    let rest = rest.get(marks..).unwrap_or_default();
+    WRITTEN_PARTS_TITLES
+        .iter()
+        .enumerate()
+        .find_map(|(part, title)| {
+            let head = rest.get(..title.len())?;
+            if !head.eq_ignore_ascii_case(title) {
+                return None;
+            }
+            let after = rest.get(title.len()..).unwrap_or_default();
+            let closing = after
+                .chars()
+                .take_while(|c| matches!(c, '*' | '_' | ':') || c.is_whitespace())
+                .map(char::len_utf8)
+                .sum::<usize>();
+            let (closed, inline) = after.split_at(closing);
+            let colon = closed.contains(':');
+            let emphasis = marks > 0 && closed.trim_start().starts_with(['*', '_']);
+            let accepted = if hashes > 0 {
+                inline.is_empty()
+            } else {
+                emphasis || colon
+            };
+            // `Where we are now …` is a sentence, not the heading: the title ends at a separator.
+            let separated = !closed.is_empty() || inline.is_empty();
+            (accepted && separated).then_some((part, inline.trim()))
+        })
+}
+
+const WRITTEN_PARTS_TITLES: [&str; super::WRITTEN_PARTS.len()] = {
+    let mut titles = [""; super::WRITTEN_PARTS.len()];
+    let mut i = 0;
+    while i < titles.len() {
+        titles[i] = super::WRITTEN_PARTS[i].0;
+        i += 1;
+    }
+    titles
+};
+
+/// The summary sections in `text` (its scratch stripped), in order: each section's index in
+/// [`super::WRITTEN_PARTS`] and the words written under it up to the next heading. A heading inside
+/// a code fence is the fence's text, not a section; any other markdown heading ends a section.
+pub fn written_sections(text: &str) -> Vec<(usize, String)> {
+    let text = strip_scratch(text);
+    let mut sections: Vec<(usize, String)> = Vec::new();
+    let mut open = false;
+    let mut fence: Option<&str> = None;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if let Some(marker) = fence {
+            if trimmed.starts_with(marker) {
+                fence = None;
+            } else if let (true, Some((_, body))) = (open, sections.last_mut()) {
+                body.push('\n');
+                body.push_str(line);
+            }
+            continue;
+        }
+        if let Some(marker) = ["```", "~~~"].into_iter().find(|m| trimmed.starts_with(m)) {
+            fence = Some(marker);
+            continue;
+        }
+        if let Some((part, inline)) = part_heading(trimmed) {
+            sections.push((part, inline.to_string()));
+            open = true;
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            open = false;
+            continue;
+        }
+        if let (true, Some((_, body))) = (open, sections.last_mut()) {
+            body.push('\n');
+            body.push_str(line);
+        }
+    }
+    sections
 }
 
 /// The stored summary: the model's text, its scratch gone, then the kept block.
@@ -1534,5 +1729,52 @@ mod tests {
         let tight = build(Some(kept.render().chars().count() - 5));
         assert!(tight.documents[0].left_out && !tight.render().contains("sync 12,288"));
         assert!(build(None).documents[0].left_out);
+    }
+
+    /// Defect 7 (review 2026-10-30): only dot-paths were skipped, so a named `prod.env`,
+    /// `secrets.yaml`, `key.pem` or `terraform.tfstate` was read into the block sent to the
+    /// provider. Secret-like names, files named in a negation, and files over the size cap are
+    /// never read.
+    #[test]
+    fn a_secret_like_or_negated_file_is_never_read() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "prod.env",
+            "secrets.yaml",
+            "key.pem",
+            "terraform.tfstate",
+            "id_rsa.txt",
+            "aws-credentials.json",
+            "legacy.md",
+        ] {
+            std::fs::write(dir.path().join(name), format!("LEAKED {name}")).unwrap();
+        }
+        std::fs::write(dir.path().join("notes.md"), "# Notes\nthe brief").unwrap();
+        std::fs::write(
+            dir.path().join("big.md"),
+            "y".repeat(MAX_NAMED_DOCUMENT_BYTES + 1),
+        )
+        .unwrap();
+        let asked = Message::user().with_text(
+            "use prod.env, secrets.yaml, key.pem, terraform.tfstate, id_rsa.txt, \
+             aws-credentials.json, notes.md and big.md. Don't read legacy.md",
+        );
+        let kept = Pillars::build(
+            std::slice::from_ref(&asked),
+            &KeptSources {
+                working_dir: Some(dir.path()),
+                ..Default::default()
+            },
+            LedgerRead::Entries(Vec::new()),
+        )
+        .fit(Some(1_000_000));
+        let named: Vec<&str> = kept.documents.iter().map(|d| file_name(&d.path)).collect();
+        assert_eq!(named, ["notes.md", "big.md"]);
+        let rendered = kept.render();
+        assert!(!rendered.contains("LEAKED"), "{rendered}");
+        assert!(rendered.contains("# Notes\nthe brief"));
+        assert!(kept.documents[1].left_out, "over the size cap");
+        assert!(!negated(&["please", "read"]) && negated(&["don't", "touch"]));
+        assert!(!negated(&["never.", "Then", "read"]), "a sentence ends");
     }
 }

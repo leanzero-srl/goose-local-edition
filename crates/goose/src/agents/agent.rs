@@ -1061,31 +1061,28 @@ impl Agent {
         let tool_call_cut_off = match Config::global().get_param::<usize>("GOOSE_TOOL_CALL_CUTOFF")
         {
             Ok(v) => v,
-            Err(_) => {
-                let context_limit = match self.provider().await {
-                    Ok(provider) => match crate::session_context::with_session_id(
-                        Some(session.id.clone()),
-                        provider.get_context_limit(&model_config),
-                    )
-                    .await
-                    {
-                        Ok(limit) => Some(limit),
-                        Err(_) => model_config.context_limit,
-                    },
-                    Err(_) => model_config.context_limit,
-                };
+            Err(_) => match self.provider().await {
                 // An unknown window sizes no cutoff: old tool pairs are summarized against a
                 // window, and without one nothing is (the provider's context-length error still
                 // triggers recovery compaction).
-                context_limit.map_or(usize::MAX, |limit| {
+                Ok(provider) => {
+                    crate::context_mgmt::tool_call_cutoff(
+                        provider.as_ref(),
+                        &model_config,
+                        &session.id,
+                        self.worker_compaction_threshold(),
+                    )
+                    .await
+                }
+                Err(_) => model_config.context_limit.map_or(usize::MAX, |limit| {
                     crate::context_mgmt::compute_tool_call_cutoff(
                         limit,
                         self.worker_compaction_threshold().unwrap_or_else(|| {
                             crate::context_mgmt::compaction_threshold(limit, &model_config)
                         }),
                     )
-                })
-            }
+                }),
+            },
         };
 
         Ok(ReplyContext {
