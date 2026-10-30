@@ -3090,6 +3090,10 @@ pub struct MlxLocalModelDto {
     /// prompt-lookup lever rides inside it.
     #[serde(default)]
     pub has_mtp_head: bool,
+    /// config.json declares an audio encoder, so auto (`textOnly` unset) mounts the checkpoint on
+    /// the engine's media lane: it hears audio and watches video, and the text-only lane is off.
+    #[serde(default)]
+    pub hears_audio: bool,
     /// config.json declares recurrent-state layers (GatedDeltaNet, Mamba, ...): without MTP the
     /// prompt-lookup lever is unavailable. Absent exactly when `hybrid_error` says why.
     #[serde(default, skip_serializing_if = "Option::is_none")]

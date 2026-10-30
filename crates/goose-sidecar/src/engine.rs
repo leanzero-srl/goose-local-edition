@@ -788,11 +788,22 @@ pub struct ModelDirFacts {
     /// The pinned engine serves this checkpoint's images on its text lane
     /// ([`TEXT_LANE_VISION_FAMILIES`]), so auto never passes `--text-only`.
     pub text_lane_vision: bool,
+    /// config.json declares an audio encoder (`audio_config`, or Qwen-Omni's
+    /// `thinker_config.audio_config`; the engine's `model_hears_audio`): the engine hears audio
+    /// and watches video only on its MLLM lane, so auto never passes `--text-only`.
+    pub hears_audio: bool,
 }
 
 impl ModelDirFacts {
     pub fn has_mtp_head(&self) -> bool {
         self.mtp_head.is_some()
+    }
+
+    /// What `text_only: None` resolves to: the text lane, unless the engine reads this
+    /// checkpoint's images there or the checkpoint hears audio (audio and video need the MLLM
+    /// lane, so an omni checkpoint mounts with its media by default).
+    pub fn auto_text_only(&self) -> bool {
+        !self.text_lane_vision && !self.hears_audio
     }
 }
 
@@ -827,7 +838,14 @@ pub fn inspect_model_dir(dir: &Path) -> ModelDirFacts {
         vision_bearing,
         text_lane_vision: vision_bearing
             && config.as_ref().is_some_and(|c| text_lane_vision(dir, c)),
+        hears_audio: vision_bearing && config.as_ref().is_some_and(config_declares_audio),
     }
+}
+
+/// The engine's `model_hears_audio` rule (`api/media_parts.py`).
+fn config_declares_audio(config: &serde_json::Value) -> bool {
+    let declared = |c: &serde_json::Value| c.get("audio_config").is_some_and(|v| !v.is_null());
+    declared(config) || config.get("thinker_config").is_some_and(declared)
 }
 
 /// The engine's `text_lane_vision_supported` rule, read from the same files: a
@@ -1112,7 +1130,7 @@ pub fn build_serve_command(
         argv.push("--speculative-config".to_string());
         argv.push(mtp_speculative_config(&model_path, &facts));
     }
-    if facts.vision_bearing && profile.text_only.unwrap_or(!facts.text_lane_vision) {
+    if facts.vision_bearing && profile.text_only.unwrap_or(facts.auto_text_only()) {
         argv.push("--text-only".to_string());
     }
     if let Some(raw) = profile.adapter_path.as_deref() {
@@ -4023,8 +4041,39 @@ mod tests {
                 mtp_depth: 0,
                 vision_bearing: true,
                 text_lane_vision: false,
+                hears_audio: false,
             }
         );
+    }
+
+    const GEMMA4_AUDIO_CONFIG: &str = r#"{"model_type":"gemma4","architectures":["Gemma4ForConditionalGeneration"],"vision_config":{"model_type":"gemma4_vision"},"audio_config":{"model_type":"gemma4_audio"}}"#;
+
+    #[test]
+    fn an_audio_bearing_checkpoint_mounts_on_the_media_lane_by_default() {
+        let (_root, settings) = model_dir_with(GEMMA4_AUDIO_CONFIG, &[]);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(!argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+        let facts = inspect_model_dir(&expand_tilde(&settings.models_dir).join("pub/model"));
+        assert!(facts.hears_audio && !facts.auto_text_only(), "{facts:?}");
+
+        let omni = r#"{"model_type":"qwen3_omni_moe","vision_config":{},"thinker_config":{"audio_config":{"d_model":1280}}}"#;
+        let (_root, settings) = model_dir_with(omni, &[]);
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(!argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+    }
+
+    #[test]
+    fn text_only_true_still_pins_an_audio_bearing_checkpoint_to_the_text_lane() {
+        let (_root, mut settings) = model_dir_with(GEMMA4_AUDIO_CONFIG, &[]);
+        settings.model_profiles.insert(
+            "pub/model".to_string(),
+            ModelProfile {
+                text_only: Some(true),
+                ..Default::default()
+            },
+        );
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
     }
 
     #[test]

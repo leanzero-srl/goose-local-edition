@@ -995,7 +995,9 @@ fn models_list_blocking() -> Result<MlxEngineModelsListResponse, agent_client_pr
                     Ok(hybrid) => (Some(hybrid), None),
                     Err(e) => (None, Some(format!("{e:#}"))),
                 };
-                let has_mtp_head = inspect_model_dir(&dir).has_mtp_head();
+                let facts = inspect_model_dir(&dir);
+                let has_mtp_head = facts.has_mtp_head();
+                let hears_audio = facts.hears_audio;
                 let has_ngram_table = ple_offload::has_table(&dir);
                 let ngram_table_auto_on = has_ngram_table
                     && ple_offload_on(&dir, &ModelProfile::default(), ple_offload::Machine::local);
@@ -1011,6 +1013,7 @@ fn models_list_blocking() -> Result<MlxEngineModelsListResponse, agent_client_pr
                     kv_cache_measurement,
                     kv_cache_measurement_error,
                     has_mtp_head,
+                    hears_audio,
                     hybrid,
                     hybrid_error,
                     has_ngram_table,

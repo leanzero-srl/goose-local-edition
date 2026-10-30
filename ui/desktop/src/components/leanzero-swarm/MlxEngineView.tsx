@@ -1476,7 +1476,11 @@ function SamplingSection(props: SamplingSectionProps) {
                 text={drafts.contextLimit}
                 onText={(v) => setDraft('contextLimit', v)}
               />
-              <LaneFields drafts={drafts} setDraft={setDraft} />
+              <LaneFields
+                drafts={drafts}
+                setDraft={setDraft}
+                hearsAudio={models.find((m) => m.id === selectedModelId)?.hearsAudio === true}
+              />
               <MlxThinkingFields
                 model={models.find((m) => m.id === selectedModelId)}
                 drafts={drafts}
@@ -1553,17 +1557,37 @@ function LaneRow({
   );
 }
 
+/**
+ * Whether the "Text-only lane" switch reads on for a `textOnly` draft. Auto ('') is the text lane,
+ * except for a checkpoint that hears audio: auto mounts that one on the media lane (the sidecar's
+ * `auto_text_only`).
+ */
+export function textLaneOn(textOnlyDraft: string, hearsAudio: boolean): boolean {
+  const draft = textOnlyDraft.trim();
+  if (draft === 'false') return false;
+  if (draft === 'true') return true;
+  return !hearsAudio;
+}
+
+/** The `textOnly` draft the switch writes: auto ('') whenever auto already means that lane. */
+export function textOnlyDraftFor(on: boolean, hearsAudio: boolean): string {
+  if (on) return hearsAudio ? 'true' : '';
+  return hearsAudio ? '' : 'false';
+}
+
 function LaneFields({
   drafts,
   setDraft,
+  hearsAudio,
 }: {
   drafts: NumericDrafts;
   setDraft: (key: ProfileDraftKey, text: string) => void;
+  hearsAudio: boolean;
 }) {
   const speculative =
     SPECULATIVE_OPTIONS.find((o) => o.value === drafts.speculative.trim()) ??
     SPECULATIVE_OPTIONS[0];
-  const textLane = drafts.textOnly.trim() !== 'false';
+  const textLane = textLaneOn(drafts.textOnly, hearsAudio);
   const adapterSet = drafts.adapterPath.trim() !== '';
   return (
     <>
@@ -1612,14 +1636,22 @@ function LaneFields({
       </LaneRow>
       <LaneRow
         label="Text-only lane"
-        note="On: a vision-bearing checkpoint (qwen3_5 with a vision config) is pinned to the text lane, which batches. A Qwen3.8-Flash checkpoint with its vision tower reads images on that same text lane, so it keeps MTP and batching with images. Off: the engine may route a vision checkpoint to its serialized single-request vision lane."
+        note="On: a vision-bearing checkpoint (qwen3_5 with a vision config) is pinned to the text lane, which batches. A Qwen3.8-Flash checkpoint with its vision tower reads images on that same text lane, so it keeps MTP and batching with images. Off: the engine may route a vision checkpoint to its serialized single-request vision lane. A checkpoint with an audio encoder (Gemma 4, Qwen3-Omni) starts off, because audio and video attachments need that lane."
       >
         <StudioSwitch
           checked={textLane}
-          onChange={(v) => setDraft('textOnly', v ? '' : 'false')}
+          onChange={(v) => setDraft('textOnly', textOnlyDraftFor(v, hearsAudio))}
           aria-label="Text-only lane"
         />
-        <span className={TYPE.meta}>{textLane ? 'on' : 'off — vision lane allowed'}</span>
+        <span className={TYPE.meta}>
+          {textLane
+            ? hearsAudio
+              ? 'on — audio and video attachments are withheld'
+              : 'on'
+            : hearsAudio
+              ? 'off — hears audio and watches video'
+              : 'off — vision lane allowed'}
+        </span>
       </LaneRow>
     </>
   );

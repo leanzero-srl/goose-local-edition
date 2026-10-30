@@ -2,7 +2,7 @@ use super::api_client::ApiClient;
 use super::base::{ConfigKey, ModelInfo, Provider, ProviderMetadata};
 use super::retry::ProviderRetry;
 use crate::api_client::{AuthMethod, TlsConfig};
-use crate::conversation::message::{Message, MessageContent};
+use crate::conversation::message::{MediaContent, MediaKind, Message, MessageContent};
 use crate::conversation::token_usage::ProviderUsage;
 use crate::declarative::{DeclarativeProviderConfig, KeyResolver};
 use crate::errors::ProviderError;
@@ -15,7 +15,9 @@ use crate::formats::openai_responses::{
     create_responses_request, get_responses_usage, responses_api_to_message, ResponsesApiResponse,
 };
 use crate::http_status::sanitize_url;
-use crate::images::{announced, withheld_images_notice, ImageFormat, ImageInput};
+use crate::images::{
+    announced, convert_image, convert_media, withheld_images_notice, ImageFormat, ImageInput,
+};
 use crate::openai_compatible::{
     handle_response_openai_compat, handle_status, stream_responses_compat,
 };
@@ -25,7 +27,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::StatusCode;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::base::{MessageStream, ProviderDescriptor};
 use crate::model::ModelConfig;
@@ -648,6 +650,157 @@ impl OpenAiProvider {
         }
     }
 
+    /// The media pre-pass (3.0.135). Rapid-MLX's MLLM lane caps a request that carries media at
+    /// 8,192 prompt tokens (`mllm_batch_generator._prefill_cap_violation`), and a goose chat turn
+    /// (system prompt + tools) is ~21k on its own, so every attached clip in the agent turn is
+    /// refused 400. Raising the cap is not safe: a ~22k-token video prefill passed 33 GB (one
+    /// forward, Gemma's bidirectional image attention). So each attached audio/video clip (and,
+    /// on an engine that hears audio - the MLLM lane - each attached image) is sent to the same
+    /// engine alone in a short side request, and the agent turn carries the returned transcript or
+    /// description as a labelled text part. Text-only requests on that lane are chunked and exempt
+    /// from the cap. `None` = nothing to do (no media, not a goose MLX engine, or the engine
+    /// withholds every attached kind, which keeps the named placeholders).
+    async fn media_prepass(
+        &self,
+        model_config: &ModelConfig,
+        messages: &[Message],
+    ) -> Option<Vec<Message>> {
+        let carries = |m: &Message| {
+            m.role == rmcp::model::Role::User
+                && m.content
+                    .iter()
+                    .any(|c| matches!(c, MessageContent::Media(_) | MessageContent::Image(_)))
+        };
+        if !messages.iter().any(carries) || !self.asks_engine_for_image_input() {
+            return None;
+        }
+        let model_name = model_config.model_name.as_str();
+        let models_path =
+            Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
+        let json = self.fetch_models_json(&models_path).await.ok()?;
+        let caps = prepass_kinds(&json, model_name);
+        if !caps.audio && !caps.video {
+            return None;
+        }
+        let mut changed = false;
+        let mut out = Vec::with_capacity(messages.len());
+        for message in messages {
+            if !carries(message) {
+                out.push(message.clone());
+                continue;
+            }
+            let ask = message.as_concat_text();
+            let mut rewritten = message.clone();
+            rewritten.content.clear();
+            let mut image_no = 0usize;
+            for content in &message.content {
+                let attachment = match content {
+                    MessageContent::Media(media)
+                        if match media.kind {
+                            MediaKind::Audio => caps.audio,
+                            MediaKind::Video => caps.video,
+                        } =>
+                    {
+                        Some(Attachment::Media(media))
+                    }
+                    MessageContent::Image(image) if caps.images => {
+                        image_no += 1;
+                        Some(Attachment::Image(image, image_no))
+                    }
+                    _ => None,
+                };
+                match attachment {
+                    Some(attachment) => {
+                        changed = true;
+                        let text = self.attachment_text(model_name, &ask, &attachment).await;
+                        rewritten.content.push(MessageContent::text(text));
+                    }
+                    None => rewritten.content.push(content.clone()),
+                }
+            }
+            out.push(rewritten);
+        }
+        changed.then_some(out)
+    }
+
+    /// The labelled text the agent turn carries for one attachment: the engine's transcript or
+    /// description from a side request (cached by content), or the reason it could not be made.
+    async fn attachment_text(
+        &self,
+        model_name: &str,
+        ask: &str,
+        attachment: &Attachment<'_>,
+    ) -> String {
+        let key = format!(
+            "{}|{}|{}",
+            self.api_client.host(),
+            model_name,
+            attachment.digest()
+        );
+        let cached = MEDIA_PREPASS_CACHE
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&key).cloned());
+        if let Some(text) = cached {
+            tracing::info!(model = %model_name, kind = attachment.kind(), "media_prepass: cached");
+            return attachment.label(model_name, Ok(&text));
+        }
+        let started = std::time::Instant::now();
+        let payload = prepass_payload(model_name, ask, attachment);
+        match self.prepass_request(&payload).await {
+            Ok((text, prompt_tokens)) => {
+                tracing::info!(
+                    host = %sanitize_url(self.api_client.host()),
+                    model = %model_name,
+                    kind = attachment.kind(),
+                    prompt_tokens = ?prompt_tokens,
+                    chars = text.len(),
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "media_prepass: the attachment went to the engine alone; the agent turn \
+                     carries its text"
+                );
+                if let Ok(mut cache) = MEDIA_PREPASS_CACHE.lock() {
+                    if cache.len() >= MEDIA_PREPASS_CACHE_ENTRIES {
+                        cache.clear();
+                    }
+                    cache.insert(key, text.clone());
+                }
+                attachment.label(model_name, Ok(&text))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    host = %sanitize_url(self.api_client.host()),
+                    model = %model_name,
+                    kind = attachment.kind(),
+                    error = %e,
+                    "media_prepass_failed: the agent turn names the attachment and the reason"
+                );
+                attachment.label(model_name, Err(&e.to_string()))
+            }
+        }
+    }
+
+    async fn prepass_request(
+        &self,
+        payload: &serde_json::Value,
+    ) -> Result<(String, Option<u64>), ProviderError> {
+        let response = self.post_chat(payload).await?;
+        let json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| ProviderError::RequestFailed(format!("Failed to parse JSON: {e}")))?;
+        let text = json["choices"][0]["message"]["content"]
+            .as_str()
+            .map(str::trim)
+            .unwrap_or_default();
+        if text.is_empty() {
+            return Err(ProviderError::RequestFailed(
+                "the engine returned no text for the attachment".to_string(),
+            ));
+        }
+        Ok((text.to_string(), json["usage"]["prompt_tokens"].as_u64()))
+    }
+
     /// Whether this provider asks the endpoint's `/v1/models` if it reads images before sending
     /// one: the `omlx` lane, and the built-in `openai` provider pointed at a loopback host, which is
     /// how a benchmark's "Single model" entrant reaches the app's MLX engine (provider openai, host
@@ -958,6 +1111,158 @@ fn refuses_non_text_content(error: &ProviderError) -> bool {
         || text.contains("only text content")
         || (text.contains("image")
             && (text.contains("not supported") || text.contains("does not support")))
+}
+
+/// Rapid-MLX's MLLM lane refusing a request whose media prefill exceeds its per-batch cap
+/// (`mllm_batch_generator._prefill_cap_violation`, HTTP 400 "... exceeds the per-batch cap ...").
+/// An image left in the history (a tool's screenshot) is what still trips it after the pre-pass;
+/// the turn is sent again with every image as its named placeholder.
+fn refuses_media_prefill(error: &ProviderError) -> bool {
+    error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("exceeds the per-batch cap")
+}
+
+const MEDIA_PREPASS_CACHE_ENTRIES: usize = 64;
+/// The side request's answer budget: a 2-minute transcript or a detailed description fits.
+const MEDIA_PREPASS_MAX_TOKENS: u64 = 1024;
+const MEDIA_PREPASS_SYSTEM: &str =
+    "You turn one attached file into plain text for another assistant; answer with that text only.";
+
+/// Transcripts and descriptions already made in this process, by host, model and content digest,
+/// so a clip in the history is not sent to the engine again on every turn.
+static MEDIA_PREPASS_CACHE: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Which attached parts the pre-pass sends alone, from the served entry's `/v1/models`
+/// capabilities: audio and video when declared, images when the engine hears audio (audio is
+/// declared only on the MLLM lane, where the media cap applies to images too).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct PrepassKinds {
+    audio: bool,
+    video: bool,
+    images: bool,
+}
+
+fn prepass_kinds(json: &serde_json::Value, model_name: &str) -> PrepassKinds {
+    let Some(caps) = served_entry(json, model_name)
+        .and_then(|e| e.get("capabilities"))
+        .and_then(|v| v.as_array())
+    else {
+        return PrepassKinds::default();
+    };
+    let has = |tag: &str| caps.iter().any(|c| c.as_str() == Some(tag));
+    PrepassKinds {
+        audio: has("audio"),
+        video: has("video"),
+        images: has("audio") && has("vision"),
+    }
+}
+
+enum Attachment<'a> {
+    Media(&'a MediaContent),
+    Image(&'a rmcp::model::ImageContent, usize),
+}
+
+impl Attachment<'_> {
+    fn kind(&self) -> &'static str {
+        match self {
+            Attachment::Media(m) => match m.kind {
+                MediaKind::Audio => "audio",
+                MediaKind::Video => "video",
+            },
+            Attachment::Image(..) => "image",
+        }
+    }
+
+    fn digest(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let (mime, data) = match self {
+            Attachment::Media(m) => (m.mime_type.as_str(), m.data.as_str()),
+            Attachment::Image(i, _) => (i.mime_type.as_str(), i.data.as_str()),
+        };
+        let digest = Sha256::digest(data.as_bytes());
+        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        format!("{}|{mime}|{hex}", self.kind())
+    }
+
+    fn part(&self) -> serde_json::Value {
+        match self {
+            Attachment::Media(m) => convert_media(m),
+            Attachment::Image(i, _) => convert_image(i, &ImageFormat::OpenAi),
+        }
+    }
+
+    fn instruction(&self) -> &'static str {
+        match self {
+            Attachment::Media(m) if m.kind == MediaKind::Audio => {
+                "Transcribe this audio word for word, in its language. Then, on a last line \
+                 starting with \"Sounds:\", name any non-speech sounds (or \"none\")."
+            }
+            Attachment::Media(_) => {
+                "Describe this video in detail, in time order: what is shown, what moves or \
+                 changes, and any text that appears on screen. If someone speaks, say so."
+            }
+            Attachment::Image(..) => {
+                "Describe this image in detail: what it shows, its layout, and every piece of \
+                 text in it, verbatim."
+            }
+        }
+    }
+
+    fn name(&self) -> String {
+        match self {
+            Attachment::Media(m) => match &m.name {
+                Some(name) => format!("{name} ({})", m.mime_type),
+                None => format!("({})", m.mime_type),
+            },
+            Attachment::Image(i, n) => format!("#{n} ({})", i.mime_type),
+        }
+    }
+
+    /// The text part the agent turn carries, labelled as derived from the attachment.
+    fn label(&self, model_name: &str, text: Result<&str, &str>) -> String {
+        let model = model_name.rsplit('/').next().unwrap_or(model_name);
+        let kind = self.kind();
+        let made = match self {
+            Attachment::Media(m) if m.kind == MediaKind::Audio => "transcript",
+            _ => "description",
+        };
+        match text {
+            Ok(text) => format!(
+                "[Attached {kind} {} - {made} made from the attachment by {model}, not the \
+                 file itself:]\n{text}\n[End of the {made} of the attached {kind}]",
+                self.name()
+            ),
+            Err(reason) => format!(
+                "[Attached {kind} {} - {model} could not turn it into text: {reason}]",
+                self.name()
+            ),
+        }
+    }
+}
+
+/// The side request for one attachment: a one-line system instruction, the person's own words
+/// for context (bounded), the attachment, no tools, no history.
+fn prepass_payload(model_name: &str, ask: &str, attachment: &Attachment<'_>) -> serde_json::Value {
+    let ask: String = ask.trim().chars().take(600).collect();
+    let mut text = attachment.instruction().to_string();
+    if !ask.is_empty() {
+        text.push_str(&format!(
+            " The person attached it with this message (for context only, do not answer it): \"{ask}\""
+        ));
+    }
+    serde_json::json!({
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": MEDIA_PREPASS_SYSTEM},
+            {"role": "user", "content": [{"type": "text", "text": text}, attachment.part()]},
+        ],
+        "max_tokens": MEDIA_PREPASS_MAX_TOKENS,
+        "stream": false,
+        "chat_template_kwargs": {"enable_thinking": false},
+    })
 }
 
 /// Whether a chat-completions body carries an image part anywhere in its messages.
@@ -1326,6 +1631,8 @@ impl Provider for OpenAiProvider {
                 text_only_engine: false,
                 ..Default::default()
             };
+            let prepared = self.media_prepass(model_config, messages).await;
+            let messages: &[Message] = prepared.as_deref().unwrap_or(messages);
             let (payload, mut images_notice) = self
                 .chat_request(model_config, system, messages, tools, format_options)
                 .await?;
@@ -1348,7 +1655,10 @@ impl Provider for OpenAiProvider {
                 // text-only server) is sent the same turn once more with every image as its named
                 // placeholder, so the agent reads that the image was not sent and carries on
                 // instead of the session ending on the refusal (2026-10-27, MiMo Gauntlet).
-                Err(e) if refuses_non_text_content(&e) && payload_carries_images(&payload) => {
+                Err(e)
+                    if (refuses_non_text_content(&e) || refuses_media_prefill(&e))
+                        && payload_carries_images(&payload) =>
+                {
                     let _ = log.error(&e);
                     tracing::warn!(
                         host = %sanitize_url(self.api_client.host()),
@@ -1557,7 +1867,7 @@ mod tests {
     use crate::api_client::AuthMethod;
     use serde_json::json;
 
-    fn make_provider(name: &str) -> OpenAiProvider {
+    pub(super) fn make_provider(name: &str) -> OpenAiProvider {
         OpenAiProvider {
             api_client: ApiClient::new_with_tls(
                 "http://localhost".to_string(),
@@ -2888,8 +3198,204 @@ mod tests {
 
 #[cfg(test)]
 mod media_input_tests {
-    use super::withheld_media;
+    use super::*;
+    use crate::conversation::message::{MediaContent, MediaKind};
     use serde_json::json;
+
+    fn clip(kind: MediaKind, data: &str, name: &str) -> MediaContent {
+        MediaContent {
+            kind,
+            data: data.to_string(),
+            mime_type: match kind {
+                MediaKind::Audio => "audio/wav".to_string(),
+                MediaKind::Video => "video/mp4".to_string(),
+            },
+            name: Some(name.to_string()),
+        }
+    }
+
+    /// Every POST body goose sent, for each conversation streamed through an `omlx` provider at
+    /// a mock engine whose `/v1/models` lists `caps`. A side request (the pre-pass) is answered
+    /// `side_status` with "HEARD <n>" as its text; every other request is answered "ok".
+    async fn prepass_bodies(
+        caps: serde_json::Value,
+        conversations: &[Vec<Message>],
+        side_status: u16,
+    ) -> Vec<serde_json::Value> {
+        use futures::StreamExt;
+        use wiremock::matchers::{body_string_contains, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                json!({"object": "list", "data": [{"id": "served", "capabilities": caps}]}),
+            ))
+            .mount(&server)
+            .await;
+        let side = if side_status == 200 {
+            ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"index": 0, "message": {"role": "assistant",
+                             "content": "  HEARD Thursday at 4 pm  "}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 812, "completion_tokens": 9, "total_tokens": 821},
+            }))
+        } else {
+            ResponseTemplate::new(side_status)
+                .set_body_json(json!({"error": "audio decode failed"}))
+        };
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(body_string_contains(MEDIA_PREPASS_SYSTEM))
+            .respond_with(side)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+                             "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            })))
+            .mount(&server)
+            .await;
+
+        let mut provider = super::tests::make_provider("omlx");
+        provider.api_client =
+            ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        provider.supports_streaming = false;
+        for messages in conversations {
+            let stream = provider
+                .stream(&ModelConfig::new("served"), "system", messages, &[])
+                .await
+                .unwrap();
+            let _: Vec<_> = stream.collect().await;
+        }
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
+            .collect()
+    }
+
+    fn is_side(body: &serde_json::Value) -> bool {
+        body["messages"][0]["content"] == MEDIA_PREPASS_SYSTEM
+    }
+
+    const OMNI_CAPS: &[&str] = &["text", "vision", "video", "audio", "tools"];
+
+    #[tokio::test]
+    async fn each_attached_clip_goes_to_the_engine_alone_and_the_agent_turn_carries_its_text() {
+        let turn = vec![Message::user()
+            .with_text("what day is the meeting?")
+            .with_media(clip(MediaKind::Audio, "UklGRprepass1", "call.wav"))
+            .with_media(clip(MediaKind::Video, "AAAAprepass1", "clip.mp4"))];
+        let mut second = turn.clone();
+        second.push(Message::assistant().with_text("Thursday."));
+        second.push(Message::user().with_text("and the time?"));
+        let bodies = prepass_bodies(json!(OMNI_CAPS), &[turn, second], 200).await;
+
+        let side: Vec<_> = bodies.iter().filter(|b| is_side(b)).collect();
+        // One side request per clip; the second turn re-reads them from the cache.
+        assert_eq!(side.len(), 2, "{bodies:#?}");
+        assert_eq!(bodies.len(), 4);
+        let audio_side = side
+            .iter()
+            .find(|b| b["messages"][1]["content"][1]["type"] == "input_audio")
+            .expect("an audio side request");
+        assert!(audio_side.get("tools").is_none());
+        assert_eq!(audio_side["messages"].as_array().unwrap().len(), 2);
+        assert_eq!(audio_side["max_tokens"], MEDIA_PREPASS_MAX_TOKENS);
+        let ask = audio_side["messages"][1]["content"][0]["text"]
+            .as_str()
+            .unwrap();
+        assert!(ask.starts_with("Transcribe") && ask.contains("what day is the meeting?"));
+        assert!(side
+            .iter()
+            .any(|b| b["messages"][1]["content"][1]["type"] == "video_url"));
+
+        for main in bodies.iter().filter(|b| !is_side(b)) {
+            let wire = serde_json::to_string(main).unwrap();
+            assert!(
+                !wire.contains("input_audio") && !wire.contains("video_url"),
+                "{wire}"
+            );
+            assert!(wire.contains("[Attached audio call.wav (audio/wav) - transcript made from the attachment by served"));
+            assert!(wire.contains("[Attached video clip.mp4 (video/mp4) - description made from the attachment by served"));
+            assert!(wire.contains("HEARD Thursday at 4 pm"));
+            assert!(wire.contains("what day is the meeting?"));
+        }
+    }
+
+    #[tokio::test]
+    async fn media_the_engine_does_not_declare_keeps_its_named_placeholder_and_no_side_request() {
+        let turn = vec![Message::user().with_text("listen").with_media(clip(
+            MediaKind::Audio,
+            "UklGRprepass2",
+            "call.wav",
+        ))];
+        let bodies = prepass_bodies(json!(["text", "tools"]), &[turn], 200).await;
+        assert_eq!(bodies.len(), 1);
+        assert!(!is_side(&bodies[0]));
+        let wire = serde_json::to_string(&bodies[0]).unwrap();
+        assert!(
+            wire.contains("this model cannot take audio input"),
+            "{wire}"
+        );
+        assert!(!wire.contains("UklGRprepass2"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_side_request_names_the_clip_and_the_reason_and_the_turn_still_goes() {
+        let turn = vec![Message::user().with_text("listen").with_media(clip(
+            MediaKind::Audio,
+            "UklGRprepass3",
+            "broken.wav",
+        ))];
+        let bodies = prepass_bodies(json!(OMNI_CAPS), &[turn], 400).await;
+        assert_eq!(bodies.len(), 2, "{bodies:#?}");
+        let main = bodies.iter().find(|b| !is_side(b)).unwrap();
+        let wire = serde_json::to_string(main).unwrap();
+        assert!(!wire.contains("UklGRprepass3"), "{wire}");
+        assert!(wire.contains(
+            "[Attached audio broken.wav (audio/wav) - served could not turn it into text:"
+        ));
+        assert!(wire.contains("audio decode failed"));
+    }
+
+    #[tokio::test]
+    async fn an_image_is_described_first_only_on_an_engine_that_hears_audio() {
+        let png = "iVBORw0KGgoprepass4";
+        let turn = vec![Message::user()
+            .with_text("what is this?")
+            .with_image(png, "image/png")];
+        let bodies = prepass_bodies(json!(OMNI_CAPS), std::slice::from_ref(&turn), 200).await;
+        assert_eq!(bodies.iter().filter(|b| is_side(b)).count(), 1);
+        let main = serde_json::to_string(bodies.iter().find(|b| !is_side(b)).unwrap()).unwrap();
+        assert!(!main.contains(png) && main.contains("[Attached image #1 (image/png)"));
+
+        // A vision engine without audio (the text lane, or a VLM) still gets the image itself.
+        let bodies = prepass_bodies(json!(["text", "vision", "tools"]), &[turn], 200).await;
+        assert_eq!(bodies.len(), 1);
+        assert!(serde_json::to_string(&bodies[0]).unwrap().contains(png));
+    }
+
+    #[test]
+    fn the_mllm_lane_media_cap_refusal_is_recognised() {
+        let e = ProviderError::RequestFailed(
+            "Request failed with status: 400 Bad Request. Vision-request prompt tokens (21193) \
+             exceeds the per-batch cap (8192 ...)"
+                .to_string(),
+        );
+        assert!(refuses_media_prefill(&e));
+        assert!(!refuses_media_prefill(&ProviderError::RequestFailed(
+            "boom".into()
+        )));
+    }
 
     #[test]
     fn media_is_withheld_only_when_the_engine_lists_capabilities_without_it() {

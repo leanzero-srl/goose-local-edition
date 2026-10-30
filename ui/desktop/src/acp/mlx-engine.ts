@@ -330,6 +330,11 @@ export interface MlxLocalModel {
    * shards of a Qwen3.8-Flash-Next checkpoint): auto/`mtp` serves it and prompt lookup rides in it.
    */
   hasMtpHead?: boolean;
+  /**
+   * config.json declares an audio encoder: auto (`textOnly` unset) mounts it on the media lane,
+   * so it hears audio and watches video with the text-only lane off.
+   */
+  hearsAudio?: boolean;
   /** config.json declares recurrent-state layers; absent exactly when `hybridError` says why. */
   hybrid?: boolean | null;
   hybridError?: string | null;
