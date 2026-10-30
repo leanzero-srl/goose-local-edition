@@ -167,9 +167,49 @@ impl TokenCounter {
             num_tokens += self.count_tokens(system_prompt) + tokens_per_message;
         }
 
+        // The reasoning of the newest assistant tool-call row while only its tool results follow:
+        // the agent stores one answer with N tool calls as N rows, each carrying the answer's
+        // reasoning, and the request formatter sends it once (`merge_split_tool_call_messages`).
+        // Counted per row, the stopped Flash-Next run's 223 rows were 278,867 tokens here and
+        // 239,237 at the engine (its own template and tokenizer): 16 rows repeated 177,693 chars
+        // of reasoning.
+        let mut split_reasoning: Option<String> = None;
         for message in messages {
             if !message.metadata.agent_visible {
                 continue;
+            }
+            let reasoning: String = message
+                .content
+                .iter()
+                .filter_map(|c| match c {
+                    crate::conversation::message::MessageContent::Thinking(t) => {
+                        Some(t.thinking.as_str())
+                    }
+                    _ => None,
+                })
+                .collect();
+            let calls_a_tool = message
+                .content
+                .iter()
+                .any(|c| c.as_tool_request().is_some());
+            let says_something = message
+                .content
+                .iter()
+                .any(|c| c.as_text().is_some_and(|t| !t.trim().is_empty()));
+            let only_tool_results = !message.content.is_empty()
+                && message
+                    .content
+                    .iter()
+                    .all(|c| c.as_tool_response().is_some());
+            let repeats_reasoning = message.role == rmcp::model::Role::Assistant
+                && calls_a_tool
+                && !says_something
+                && !reasoning.trim().is_empty()
+                && split_reasoning.as_deref() == Some(reasoning.as_str());
+            if message.role == rmcp::model::Role::Assistant && calls_a_tool {
+                split_reasoning = (!reasoning.trim().is_empty()).then_some(reasoning);
+            } else if !only_tool_results {
+                split_reasoning = None;
             }
             num_tokens += tokens_per_message;
             for content in &message.content {
@@ -206,7 +246,9 @@ impl TokenCounter {
                     // `reasoning_content` (Qwen's templates keep it): the Flash-Next stopped run's
                     // 224 messages were 239,628 prompt tokens at the engine and 112,754 here
                     // while reasoning counted nothing (692k chars of it).
-                    num_tokens += self.count_tokens(&thinking.thinking);
+                    if !repeats_reasoning {
+                        num_tokens += self.count_tokens(&thinking.thinking);
+                    }
                 }
             }
         }
@@ -287,6 +329,84 @@ pub async fn create_token_counter() -> Result<TokenCounter, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One answer with three parallel tool calls, as the agent stores it: three assistant rows,
+    /// each carrying the answer's reasoning, each followed by its result. Sizes as the stopped
+    /// Flash-Next run's (2026-10-29): reasoning in the tens of kilobytes, results ~1.5k chars.
+    fn split_turns(turns: usize, repeat_reasoning: bool) -> Vec<Message> {
+        use rmcp::model::{AnnotateAble, CallToolRequestParams, CallToolResult, RawContent};
+        let mut messages = vec![Message::user().with_text("build the console")];
+        for turn in 0..turns {
+            let reasoning: String = (0..400)
+                .map(|i| format!("Turn {turn} step {i}: check app/store.py against the contract. "))
+                .collect();
+            for call in 0..3 {
+                let id = format!("t{turn}c{call}");
+                let mut params = CallToolRequestParams::new("developer__shell");
+                params.arguments =
+                    serde_json::json!({"command": format!("sed -n {call},40p app/store.py")})
+                        .as_object()
+                        .cloned();
+                let mut row = Message::assistant();
+                if call == 0 || repeat_reasoning {
+                    row = row.with_thinking(reasoning.clone(), "");
+                }
+                messages.push(row.with_tool_request(id.clone(), Ok(params)));
+                messages.push(Message::user().with_tool_response(
+                    id,
+                    Ok(CallToolResult::success(vec![RawContent::text(
+                        format!("{call}: def now_iso(): return datetime.now(UTC)\n").repeat(30),
+                    )
+                    .no_annotation()])),
+                ));
+            }
+        }
+        messages
+    }
+
+    /// The reasoning an answer's split rows repeat is sent once (the request formatter merges the
+    /// rows back), so it is counted once. Measured 2026-10-30: the stopped Flash-Next run's 223
+    /// rows counted 278,867 here and rendered 239,237 with the engine's own template and tokenizer.
+    #[tokio::test]
+    async fn reasoning_repeated_on_split_tool_call_rows_is_counted_once() {
+        let counter = create_token_counter().await.unwrap();
+        let split = split_turns(6, true);
+        let once = split_turns(6, false);
+        assert_eq!(
+            counter.count_chat_tokens("", &split, &[]),
+            counter.count_chat_tokens("", &once, &[])
+        );
+        // The formatter sends it once per answer: what the count now follows.
+        let sent = goose_providers::formats::openai::format_messages(
+            &split,
+            &goose_providers::images::ImageFormat::OpenAi,
+        );
+        let reasoned = sent
+            .iter()
+            .filter(|m| m.get("reasoning_content").is_some())
+            .count();
+        assert_eq!(reasoned, 6, "one reasoning per answer on the wire");
+        // An answer with words of its own is a new turn: the same reasoning is counted again.
+        let mut sequential = once.clone();
+        let reasoning = "the same short plan for both turns, repeated".repeat(20);
+        sequential.push(
+            Message::assistant()
+                .with_thinking(reasoning.clone(), "")
+                .with_text("done"),
+        );
+        let before = counter.count_chat_tokens("", &sequential, &[]);
+        sequential.push(Message::user().with_text("again"));
+        sequential.push(
+            Message::assistant()
+                .with_thinking(reasoning.clone(), "")
+                .with_text("done"),
+        );
+        let after = counter.count_chat_tokens("", &sequential, &[]);
+        assert!(
+            after - before > counter.count_tokens(&reasoning),
+            "{before} -> {after}"
+        );
+    }
 
     #[tokio::test]
     async fn test_token_caching() {

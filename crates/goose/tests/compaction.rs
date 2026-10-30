@@ -62,7 +62,10 @@ impl MockCompactionProvider {
                     let mut tokens = 100;
                     for content in &msg.content {
                         if let MessageContent::Text(text) = content {
-                            if text.text.contains("long_tool_call") {
+                            // The summary names the long call; it is not the call.
+                            if text.text.contains("long_tool_call")
+                                && !text.text.contains("mock summary")
+                            {
                                 tokens += 15000;
                             }
                         }
@@ -144,7 +147,34 @@ impl Provider for MockCompactionProvider {
 
         // Generate response
         let message = if is_compaction {
-            Message::assistant().with_text("<mock summary of conversation>")
+            // A summary the gate reads as one: its five sections, "Where we are" naming what the
+            // conversation named.
+            let mut said: Vec<String> = messages
+                .iter()
+                .map(goose::context_mgmt::format_message_for_compacting)
+                .collect();
+            // A transcript request carries the conversation in its system prompt.
+            if let Some((_, history)) = system_prompt.split_once("**Conversation History:**") {
+                said.push(history.to_string());
+            }
+            // Only the names (paths, numbers) the conversation used: a short summary, as a model's is.
+            let said = said.join("\n");
+            let names: Vec<&str> = said
+                .split_whitespace()
+                .filter(|t| {
+                    t.len() <= 40
+                        && t.contains(|c: char| c.is_ascii_digit() || matches!(c, '/' | '.' | '_'))
+                })
+                .take(20)
+                .collect();
+            Message::assistant().with_text(format!(
+                "<mock summary of conversation>\n## Where we are\nthe work so far {}\n\
+                 ## What each file does\n\
+                 no files written in this mock\n## Decisions and reasons\nNothing.\n\
+                 ## Still to do\nnothing, the mock task is complete\n## Next step\n\
+                 answer the next request",
+                names.join(" ")
+            ))
         } else {
             let response_text = if messages.iter().any(|msg| {
                 msg.content.iter().any(|c| {
@@ -1028,8 +1058,9 @@ async fn test_compact_with_a_note_runs_in_the_reply_stream() -> Result<()> {
     let provider = Arc::new(ScriptedCompactionProvider::new(&[
         // All five sections, each with words of its own: since 430d85f003 an answer without them is
         // not a summary (it is asked again, then falls to the transcript request).
-        "NOTE OK\n## Where we are\nplanning the users\n## What each file does\nno files written yet\n\
-         ## Decisions and reasons\n24 months\n## Still to do\nthe user plan\n## Next step\nrun it",
+        "NOTE OK\n## Where we are\nplanning the users: no login in 24 months\n## What each file does\n\
+         no files written yet\n## Decisions and reasons\n24 months\n## Still to do\nthe user plan\n\
+         ## Next step\nrun the user plan",
     ]));
     agent
         .update_provider(
@@ -1085,7 +1116,7 @@ async fn test_compact_with_a_note_runs_in_the_reply_stream() -> Result<()> {
         .unwrap();
     let summary = goose::context_mgmt::latest_summary(stored.messages()).expect("a summary");
     assert!(
-        summary.starts_with("## Where we are\nplanning the users"),
+        summary.starts_with("## Where we are\nplanning the users: no login in 24 months"),
         "{summary}"
     );
     assert!(summary.contains("[1] inactive means no login in 24 months"));
@@ -1127,9 +1158,9 @@ async fn test_a_question_about_the_note_stops_then_compact_as_written_follows_it
     let session = setup_test_session(&agent, &temp_dir, "compact-question", messages).await?;
     let provider = Arc::new(ScriptedCompactionProvider::new(&[
         "NOTE QUESTION: The chat says 24 months; change it to 12?\n## Where we are\nnever read",
-        "NOTE CONCERN: the chat said 24.\n## Where we are\nplanning with 12 months\n\
-         ## What each file does\nno files written yet\n## Decisions and reasons\n12 months as noted\n\
-         ## Still to do\nthe user plan\n## Next step\nrun it",
+        "NOTE CONCERN: the chat said 24.\n## Where we are\nplanning with 12 months, the chat said 24\n\
+         ## What each file does\nno files written yet\n## Decisions and reasons\n12 months as the note asks\n\
+         ## Still to do\nthe user plan\n## Next step\nrun the user plan",
     ]));
     agent
         .update_provider(
@@ -1183,5 +1214,68 @@ async fn test_a_question_about_the_note_stops_then_compact_as_written_follows_it
     let state = compaction_state(&agent, &session.id).await?;
     assert_eq!(state.note, None);
     assert!(!state.follow_as_written);
+    Ok(())
+}
+
+/// A manual `/compact` keeps the verbatim tail an automatic compaction keeps (before 2026-10-30 it
+/// kept none: the command row, stored for the person alone, stopped the tail's walk), and the
+/// command itself never becomes part of what the agent reads.
+#[tokio::test]
+async fn test_manual_compact_keeps_the_verbatim_tail() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let agent = Agent::new();
+    let messages = vec![
+        Message::user().with_text("read SPEC.md"),
+        Message::assistant().with_text("SPEC.md asks for app/sync.py"),
+        Message::user().with_text("write app/sync.py with the 24-month rule"),
+        Message::assistant().with_text("app/sync.py written, 41 tests pass"),
+    ];
+    let session = setup_test_session(&agent, &temp_dir, "compact-tail", messages).await?;
+    let provider = Arc::new(ScriptedCompactionProvider::new(&[
+        "## Where we are\napp/sync.py written, 41 tests pass\n## What each file does\n\
+         app/sync.py holds the 24-month rule\n## Decisions and reasons\nNothing.\n\
+         ## Still to do\nnothing, the task is complete\n## Next step\nreport the 41 passing tests",
+    ]));
+    agent
+        .update_provider(
+            provider.clone(),
+            ModelConfig::new("mock-model"),
+            &session.id,
+        )
+        .await?;
+
+    run_reply(&agent, &session.id, "/compact").await?;
+    assert_eq!(provider.compactions.load(Ordering::SeqCst), 1);
+    let stored = agent
+        .config
+        .session_manager
+        .get_session(&session.id, true)
+        .await?
+        .conversation
+        .unwrap();
+    let visible: Vec<String> = stored
+        .messages()
+        .iter()
+        .filter(|m| m.is_agent_visible())
+        .map(|m| m.as_concat_text())
+        .collect();
+    let summary_at = visible
+        .iter()
+        .position(|t| t.starts_with("## Where we are"))
+        .expect("the summary");
+    assert!(
+        visible[summary_at + 1..]
+            .iter()
+            .any(|t| t == "app/sync.py written, 41 tests pass"),
+        "the newest turn is kept word for word after the summary: {visible:?}"
+    );
+    assert!(
+        visible.iter().all(|t| !t.contains("/compact")),
+        "the command is the person's, never the agent's: {visible:?}"
+    );
+    assert!(stored
+        .messages()
+        .iter()
+        .any(|m| m.as_concat_text() == "/compact" && m.is_user_visible()));
     Ok(())
 }
