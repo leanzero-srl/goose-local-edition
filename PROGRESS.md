@@ -46,3 +46,13 @@
   (model-agnostic; native video paths are broken on both mlx-vlm versions); audio goes as input_audio.
 - 15:35 workmule cargo: llama-cpp-sys-2's httplib fails against Homebrew OpenSSL 4 (only openssl@4 installed).
   Installed keg-only openssl@3 on workmule, build with OPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3.
+- 15:50 ENGINE (fork lz/omni-media 73cb25592): input_audio -> temp file + {"type":"audio"} marker ->
+  mlx_vlm.prepare_inputs(audio=); video_url -> label + sampled frame image_url parts before the template;
+  /v1/models tags "video" (vision models) + "audio" (audio encoder in config); audio requests skip the
+  image-keyed caches + text-only prefill. tests/test_media_parts.py 9 pass; 1,311 related fork tests pass.
+  Qwen3-Omni still needs the mlx-vlm pin question settled (0.7.1 vision broken on it, see 15:35).
+- 15:50 GOOSE (1b53648067): Media content end to end in Rust (formats, ACP intake + replay, provider asks
+  /v1/models for audio/video) and desktop (types, prompt.ts, adapter, useFileDrop/picker, MediaAttachment card,
+  UserMessage). Compile: workmule went BUSY (another session's gverify engine hold since 15:30, 5 GB headroom),
+  so cargo check runs on the laptop (job workhorse-20261030-155003-af47, own target ~/wt/goose-omni/target).
+  BLOCKED for GPU probes until workmule frees (or the workhorse after ~23:00).
