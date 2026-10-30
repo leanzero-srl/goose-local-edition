@@ -756,10 +756,18 @@ pub fn split_pcm_wav(data_b64: &str, max_secs: u32) -> Option<Vec<WavPiece>> {
         return None;
     }
     let fmt_chunk = &bytes[fmt_at - 8..fmt_end];
+    let pcm16 = u16_at(fmt_at + 14)? == 16;
+    let data = &bytes[data_at..data_at + total];
     let mut pieces = Vec::new();
     let mut offset = 0usize;
     while offset < total {
-        let len = per_piece.min(total - offset);
+        let len = if total - offset <= per_piece {
+            total - offset
+        } else if pcm16 {
+            quietest_cut(&data[offset..offset + per_piece], byte_rate, block_align)
+        } else {
+            per_piece
+        };
         let mut wav = Vec::with_capacity(12 + fmt_chunk.len() + 8 + len);
         wav.extend_from_slice(b"RIFF");
         wav.extend_from_slice(&((4 + fmt_chunk.len() + 8 + len) as u32).to_le_bytes());
@@ -776,6 +784,31 @@ pub fn split_pcm_wav(data_b64: &str, max_secs: u32) -> Option<Vec<WavPiece>> {
         offset += len;
     }
     Some(pieces)
+}
+
+/// Where to end a piece of 16-bit PCM so a word is not cut in two: the middle of the quietest
+/// 20 ms window in the piece's last 5 seconds (the whole piece when it is shorter than that).
+fn quietest_cut(piece: &[u8], byte_rate: usize, block_align: usize) -> usize {
+    let window = (byte_rate / 50 / block_align).max(1) * block_align;
+    let search = (byte_rate * 5 / block_align) * block_align;
+    if piece.len() < search + window {
+        return piece.len();
+    }
+    let loudness = |w: &[u8]| -> u64 {
+        w.chunks_exact(2)
+            .map(|s| u64::from(i16::from_le_bytes([s[0], s[1]]).unsigned_abs()))
+            .sum()
+    };
+    let mut best = (u64::MAX, piece.len());
+    let mut at = piece.len() - search;
+    while at + window <= piece.len() {
+        let l = loudness(&piece[at..at + window]);
+        if l < best.0 {
+            best = (l, at + window / 2 / block_align * block_align);
+        }
+        at += window;
+    }
+    best.1.max(block_align)
 }
 
 #[cfg(test)]
@@ -807,15 +840,56 @@ mod wav_split_tests {
     #[test]
     fn a_long_pcm_wav_is_cut_into_complete_wavs_that_cover_it_in_order() {
         let pieces = split_pcm_wav(&wav(16_000, 70), 30).unwrap();
-        let spans: Vec<_> = pieces.iter().map(|p| (p.start_secs, p.end_secs)).collect();
-        assert_eq!(spans, vec![(0.0, 30.0), (30.0, 60.0), (60.0, 70.0)]);
-        let first = base64::engine::general_purpose::STANDARD
-            .decode(&pieces[0].data)
-            .unwrap();
-        assert_eq!(&first[0..4], b"RIFF");
-        assert_eq!(first.len(), 44 + 16_000 * 2 * 30);
+        assert_eq!(pieces.len(), 3);
+        assert_eq!(pieces[0].start_secs, 0.0);
+        assert!((pieces[2].end_secs - 70.0).abs() < 1e-9);
+        for pair in pieces.windows(2) {
+            assert_eq!(pair[0].end_secs, pair[1].start_secs);
+        }
+        for piece in &pieces {
+            assert!(piece.end_secs - piece.start_secs <= 30.0);
+            let wav = base64::engine::general_purpose::STANDARD
+                .decode(&piece.data)
+                .unwrap();
+            assert_eq!(&wav[0..4], b"RIFF");
+            let span = ((piece.end_secs - piece.start_secs) * 32_000.0).round() as usize;
+            assert_eq!(wav.len(), 44 + span);
+        }
         // Each piece re-splits to nothing: it is short enough to go whole.
         assert!(split_pcm_wav(&pieces[0].data, 30).is_none());
+    }
+
+    #[test]
+    fn a_piece_ends_in_the_quietest_moment_of_its_last_five_seconds() {
+        // 70 s of loud 16 kHz mono with one silent 0.2 s gap at 27.0-27.2 s.
+        let rate = 16_000usize;
+        let mut samples = vec![12_000i16; rate * 70];
+        for s in &mut samples[rate * 27..rate * 27 + rate / 5] {
+            *s = 0;
+        }
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&((36 + samples.len() * 2) as u32).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&(rate as u32).to_le_bytes());
+        b.extend_from_slice(&((rate * 2) as u32).to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&((samples.len() * 2) as u32).to_le_bytes());
+        for s in &samples {
+            b.extend_from_slice(&s.to_le_bytes());
+        }
+        let pieces =
+            split_pcm_wav(&base64::engine::general_purpose::STANDARD.encode(b), 30).unwrap();
+        let first_end = pieces[0].end_secs;
+        assert!((27.0..27.2).contains(&first_end), "cut at {first_end}");
+        assert_eq!(pieces[1].start_secs, first_end);
+        assert!((pieces.last().unwrap().end_secs - 70.0).abs() < 1e-9);
+        assert!(pieces.iter().all(|p| p.end_secs - p.start_secs <= 30.0));
     }
 
     #[test]

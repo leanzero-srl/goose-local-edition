@@ -690,7 +690,6 @@ impl OpenAiProvider {
                 out.push(message.clone());
                 continue;
             }
-            let ask = message.as_concat_text();
             let mut rewritten = message.clone();
             rewritten.content.clear();
             let mut image_no = 0usize;
@@ -713,7 +712,7 @@ impl OpenAiProvider {
                 match attachment {
                     Some(attachment) => {
                         changed = true;
-                        let text = self.attachment_text(model_name, &ask, &attachment).await;
+                        let text = self.attachment_text(model_name, &attachment).await;
                         rewritten.content.push(MessageContent::text(text));
                     }
                     None => rewritten.content.push(content.clone()),
@@ -726,12 +725,7 @@ impl OpenAiProvider {
 
     /// The labelled text the agent turn carries for one attachment: the engine's transcript or
     /// description from a side request (cached by content), or the reason it could not be made.
-    async fn attachment_text(
-        &self,
-        model_name: &str,
-        ask: &str,
-        attachment: &Attachment<'_>,
-    ) -> String {
+    async fn attachment_text(&self, model_name: &str, attachment: &Attachment<'_>) -> String {
         let key = format!(
             "{}|{}|{}",
             self.api_client.host(),
@@ -753,7 +747,7 @@ impl OpenAiProvider {
         let mut failures = 0usize;
         let mut prompt_tokens = 0u64;
         for (span, part) in &pieces {
-            let payload = prepass_payload(model_name, ask, attachment.instruction(), part.clone());
+            let payload = prepass_payload(model_name, attachment.instruction(), part.clone());
             let text = match self.prepass_request(&payload).await {
                 Ok((text, tokens)) => {
                     prompt_tokens += tokens.unwrap_or(0);
@@ -1257,8 +1251,9 @@ impl Attachment<'_> {
     fn instruction(&self) -> &'static str {
         match self {
             Attachment::Media(m) if m.kind == MediaKind::Audio => {
-                "Transcribe the speech in this audio word for word, in its language. If there \
-                 is no speech, describe the sound in one line."
+                "Transcribe the speech in this audio word for word, in its language. Do not \
+                 answer, summarise or reorder anything. If there is no speech, describe the sound \
+                 in one line."
             }
             Attachment::Media(_) => {
                 "Describe this video in detail, in time order: what is shown, what moves or \
@@ -1303,26 +1298,23 @@ impl Attachment<'_> {
     }
 }
 
-/// The side request for one attachment: a one-line system instruction, the person's own words
-/// for context (bounded), the attachment, no tools, no history.
+/// The side request for one attachment: a one-line system instruction, the instruction for its
+/// kind, the attachment; no tools, no history.
+///
+/// The person's own words are NOT sent: with the question beside a 30 s audio piece, Gemma 4 E4B
+/// answered the question instead of transcribing (3.0.135 on Gabee: the last piece of a 2-minute
+/// clip came back "The Vienna train leaves on Friday at 10 to fix the kitchen sink", merging two
+/// sentences into the question's shape, and the chat answer gave the train a wrong time).
 fn prepass_payload(
     model_name: &str,
-    ask: &str,
     instruction: &str,
     part: serde_json::Value,
 ) -> serde_json::Value {
-    let ask: String = ask.trim().chars().take(600).collect();
-    let mut text = instruction.to_string();
-    if !ask.is_empty() {
-        text.push_str(&format!(
-            " The person attached it with this message (for context only, do not answer it): \"{ask}\""
-        ));
-    }
     serde_json::json!({
         "model": model_name,
         "messages": [
             {"role": "system", "content": MEDIA_PREPASS_SYSTEM},
-            {"role": "user", "content": [{"type": "text", "text": text}, part]},
+            {"role": "user", "content": [{"type": "text", "text": instruction}, part]},
         ],
         "max_tokens": MEDIA_PREPASS_MAX_TOKENS,
         // Greedy: at the engine's default temperature Gemma 4 E4B answered a 60 s video once
@@ -3383,7 +3375,11 @@ mod media_input_tests {
         let ask = audio_side["messages"][1]["content"][0]["text"]
             .as_str()
             .unwrap();
-        assert!(ask.starts_with("Transcribe") && ask.contains("what day is the meeting?"));
+        assert!(ask.starts_with("Transcribe"));
+        assert!(
+            !ask.contains("what day is the meeting?"),
+            "the side request never carries the question"
+        );
         assert!(side
             .iter()
             .any(|b| b["messages"][1]["content"][1]["type"] == "video_url"));
@@ -3483,12 +3479,16 @@ mod media_input_tests {
             .with_media(clip(MediaKind::Audio, &pcm_wav_b64(8_000, 70), "long.wav"))];
         let bodies = prepass_bodies(json!(OMNI_CAPS), &[turn], 200).await;
         let side: Vec<_> = bodies.iter().filter(|b| is_side(b)).collect();
-        assert_eq!(side.len(), 3, "one side request per 30 s piece");
+        assert_eq!(
+            side.len(),
+            3,
+            "one side request per piece of at most 30 s (even loudness: cut 25 s in)"
+        );
         let main = serde_json::to_string(bodies.iter().find(|b| !is_side(b)).unwrap()).unwrap();
         for span in [
-            "[0:00 - 0:30] HEARD",
-            "[0:30 - 1:00] HEARD",
-            "[1:00 - 1:10] HEARD",
+            "[0:00 - 0:25] HEARD",
+            "[0:25 - 0:50] HEARD",
+            "[0:50 - 1:10] HEARD",
         ] {
             assert!(main.contains(span), "{span} in {main}");
         }
