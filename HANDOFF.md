@@ -715,3 +715,21 @@ only; scoring = <run dir>/graded-sb7-db appears. Call budget = 150 turns (bench_
 END STATE: dev app quit by pid, installed Goose Swarm on 9897, goose-single-guard OK on both Macs, no ranks,
 no holds/markers, /tmp/goose-pipe-trace flags removed. ngram-go NOT touched.
 OPEN: why ranks' samples diverged on image requests (FIX 2 masks it); E gate (optimistic paint, stream latency).
+
+## Session 15 (2026-10-30 22:00 EET ->): main merged; re-Gauntlet sb-7.2 with compaction r4-6 + wrap-up nudge
+COMMITS: 2e1304d70a merge main ed0d7d1303 (3.0.136) into mimo-distributed (conflicts: openai.rs = main's, the
+branch's fix is main's b173e17213 byte for byte; i18n + MlxEngineView keep both sides; main's HANDOFF.md kept as
+HANDOFF-floating-window.md; engine.rs ROPE_SCALING_MODEL_TYPE so distributed::config's "no quoted model_type
+outside RUNNERS" test passes). 8b6d5e4d4f sb7.2 + forge2 manifests refrozen for the nudge's harness bytes (main
+ships 1c71262a7d without a refreeze -> `pnpm run package` refuses "Packaged benchmark differs ... bench_budget.py").
+TRAP (workhorse): Homebrew `openssl` is now 4.x; llama-cpp-sys-2 0.1.146's vendored httplib fails (const
+X509_NAME). Fix = <scratchpad>/s15/env.sh (OPENSSL_ROOT_DIR/INCLUDE_DIR/DIR + CXXFLAGS/CFLAGS -I openssl@3), AND
+delete the stale cmake cache target/debug/build/llama-cpp-sys-2-<hash>/out/build (it caches /opt/homebrew/include).
+FLAKY: goose-sidecar tests/port_holders.rs (process/port timing) fails ~1 in 3 under load; identical on main.
+NUDGE IN THE BENCH: run_build.py (1c71262a7d) switches the nudge ON for every budgeted entrant and strips the
+operator's GOOSE_WRAP_UP_* from the snapshot: running WITHOUT it needs the three harness files reverted + refreeze.
+Audio on the split: /v1/models declares text,vision,video,tools (no audio) -> openai.rs withheld_media() sends
+attached audio as its named placeholder (loud to the model, not an engine error); images stay in the agent turn
+(media pre-pass sends images only when the engine declares audio), so rank 0's vision path is unchanged.
+Readiness notes: /Volumes/AI-workhorse/runs/2026-10-30-mimo-split-regauntlet/NOTES.md. Rig: <scratchpad>/s15
+(gate.sh, build.sh, replay.py growing-session replay from the 10-28 run's real session, probe.sh, wait_free.sh).
