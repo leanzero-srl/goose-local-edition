@@ -179,6 +179,9 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.17 (fork lz/release-lz17 5ab6da823) = ple.6 as ONE line again: the plain lz.N line (lz.16 stream
+/// whitespace fix) and the qwen4 PLE line (offload, vision, YaRN, reclaim) are the same commit history; the only
+/// change past ple.6 is the merged PLE offload perf doc (no code).
 /// v0.14.3-lz.16-ple.6 (fork lz/qwen4-cache-reclaim) = ple.5 + the memory guard calibrates in a goose session and
 /// reclaims before it refuses: prefix-hit steps enter the peak fit (copy measured), a flat full-chunk group votes
 /// a = 0, a turn that fits alone but not beside its own hit's copy is re-prefilled cold instead of refused (the
@@ -304,7 +307,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.6",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.17",
     "rapid-mlx",
 ];
 
@@ -449,6 +452,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.5",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.6",
         "rapid-mlx",
     ],
 ];
@@ -3510,7 +3519,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.6",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.17",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -4074,7 +4083,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.16-ple.6",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.17",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
