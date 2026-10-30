@@ -1,4 +1,4 @@
-use crate::conversation::message::{Message, MessageContent, ProviderMetadata};
+use crate::conversation::message::{MediaKind, Message, MessageContent, ProviderMetadata};
 use crate::conversation::token_usage::{ProviderUsage, Usage};
 use crate::errors::ProviderError;
 pub use crate::formats::unparsed_tool_call::UnparsedToolCalls;
@@ -6,6 +6,7 @@ use crate::formats::unparsed_tool_call::{
     settle_reply, settle_text, RefusedToolCall, UnparsedCallHold,
 };
 use crate::images::{
+    convert_media,
     attached_image_label, convert_image, detect_image_path, load_image_file, path_image_label,
     tool_image_label, withheld_image_placeholder, ImageFormat, ImageReport, WithheldImage,
 };
@@ -247,6 +248,10 @@ pub struct OpenAiFormatOptions {
     /// placeholder instead ([`withheld_image_placeholder`]), and the request reports it, so a past
     /// image in history can never make the engine refuse a later turn.
     pub text_only_engine: bool,
+    /// The engine does not hear audio: an attached audio part goes as its named placeholder.
+    pub withhold_audio: bool,
+    /// The engine does not watch video: an attached video part goes as its named placeholder.
+    pub withhold_video: bool,
 }
 
 fn merge_reasoning_text(prefix: &str, suffix: &str) -> String {
@@ -679,6 +684,25 @@ pub fn format_messages_reporting_images(
                             "type": "text",
                             "text": "[Image content removed - not supported in assistant messages]"
                         }));
+                    }
+                }
+                MessageContent::Media(media) => {
+                    let withheld = message.role != Role::User
+                        || options.text_only_engine
+                        || match media.kind {
+                            MediaKind::Audio => options.withhold_audio,
+                            MediaKind::Video => options.withhold_video,
+                        };
+                    if withheld {
+                        images.media_withheld += 1;
+                        content_array.push(json!({"type": "text", "text": media.placeholder()}));
+                    } else {
+                        match media.kind {
+                            MediaKind::Audio => images.audio_sent += 1,
+                            MediaKind::Video => images.video_sent += 1,
+                        }
+                        has_non_text_content = true;
+                        content_array.push(convert_media(media));
                     }
                 }
                 MessageContent::FrontendToolRequest(request) => match &request.tool_call {

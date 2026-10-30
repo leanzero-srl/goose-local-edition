@@ -22,8 +22,8 @@ use crate::config::paths::Paths;
 use crate::config::permission::PermissionManager;
 use crate::config::{Config, GooseMode};
 use crate::conversation::message::{
-    ActionRequiredData, Message, MessageContent, ProviderErrorNotice, SystemNotificationContent,
-    SystemNotificationType, ToolRequest,
+    ActionRequiredData, MediaContent, MediaKind, Message, MessageContent, ProviderErrorNotice,
+    SystemNotificationContent, SystemNotificationType, ToolRequest,
 };
 use crate::execution::manager::{AgentManager, AgentManagerGetResult, RuntimeContext};
 use crate::mcp_utils::ToolResult;
@@ -811,6 +811,32 @@ fn extract_first_line_number(text: &str) -> Option<usize> {
     None
 }
 
+/// An embedded blob the desktop attached as audio or video (`audio/*`, `video/*`): the bytes go to
+/// the model as an attached media part, named after the resource's file name. Any other blob is
+/// not a prompt part goose can show a model and is dropped, as before.
+fn attached_media_from_blob(blob: &BlobResourceContents) -> Option<MediaContent> {
+    let mime_type = blob.mime_type.as_deref()?.trim().to_ascii_lowercase();
+    let kind = if mime_type.starts_with("audio/") {
+        MediaKind::Audio
+    } else if mime_type.starts_with("video/") {
+        MediaKind::Video
+    } else {
+        return None;
+    };
+    let name = blob
+        .uri
+        .rsplit('/')
+        .next()
+        .filter(|n| !n.is_empty())
+        .map(|n| n.to_string());
+    Some(MediaContent {
+        kind,
+        data: blob.blob.clone(),
+        mime_type,
+        name,
+    })
+}
+
 fn read_resource_link(link: ResourceLink) -> Option<String> {
     let url = Url::parse(&link.uri).ok()?;
     if url.scheme() == "file" {
@@ -1549,21 +1575,33 @@ impl GooseAcpAgent {
                 ContentBlock::Image(image) => {
                     message = message.with_image(&image.data, &image.mime_type);
                 }
-                ContentBlock::Resource(resource) => {
-                    if let EmbeddedResourceResource::TextResourceContents(text_resource) =
-                        &resource.resource
-                    {
+                ContentBlock::Resource(resource) => match &resource.resource {
+                    EmbeddedResourceResource::TextResourceContents(text_resource) => {
                         let header = format!("--- Resource: {} ---\n", text_resource.uri);
                         let content = format!("{}{}\n---\n", header, text_resource.text);
                         message = message.with_text(&content);
                     }
-                }
+                    EmbeddedResourceResource::BlobResourceContents(blob) => {
+                        if let Some(media) = attached_media_from_blob(blob) {
+                            message = message.with_media(media);
+                        }
+                    }
+                    _ => {}
+                },
                 ContentBlock::ResourceLink(link) => {
                     if let Some(text) = read_resource_link(link.clone()) {
                         message = message.with_text(text);
                     }
                 }
-                ContentBlock::Audio(..) | _ => (),
+                ContentBlock::Audio(audio) => {
+                    message = message.with_media(MediaContent {
+                        kind: MediaKind::Audio,
+                        data: audio.data.clone(),
+                        mime_type: audio.mime_type.clone(),
+                        name: None,
+                    });
+                }
+                _ => (),
             }
         }
         message

@@ -50,6 +50,12 @@ pub struct WithheldImage {
 pub struct ImageReport {
     pub sent: usize,
     pub withheld: Vec<WithheldImage>,
+    /// Attached audio parts sent as `input_audio`.
+    pub audio_sent: usize,
+    /// Attached video parts sent as `video_url`.
+    pub video_sent: usize,
+    /// Attached audio/video parts sent as their named placeholder instead.
+    pub media_withheld: usize,
 }
 
 /// The label of an image a user message names by its path: the file's name.
@@ -650,5 +656,46 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Unsupported image format"));
+    }
+}
+
+/// The OpenAI `input_audio.format` for an audio MIME type: the subtype, with the common aliases
+/// folded (`audio/mpeg` is mp3, `audio/x-wav` is wav).
+pub fn input_audio_format(mime_type: &str) -> String {
+    let subtype = mime_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match subtype.as_str() {
+        "mpeg" | "mp3" => "mp3".to_string(),
+        "x-wav" | "wave" | "vnd.wave" | "wav" => "wav".to_string(),
+        "x-m4a" | "mp4" | "m4a" | "aac" => "m4a".to_string(),
+        other => other.trim_start_matches("x-").to_string(),
+    }
+}
+
+/// An attached audio or video part in the OpenAI chat-completions shape: `input_audio` for sound,
+/// a `video_url` data URL for video (the vLLM / Rapid-MLX extension).
+pub fn convert_media(media: &crate::conversation::message::MediaContent) -> Value {
+    use crate::conversation::message::MediaKind;
+    match media.kind {
+        MediaKind::Audio => json!({
+            "type": "input_audio",
+            "input_audio": {
+                "data": media.data,
+                "format": input_audio_format(&media.mime_type),
+            }
+        }),
+        MediaKind::Video => json!({
+            "type": "video_url",
+            "video_url": {
+                "url": format!("data:{};base64,{}", media.mime_type, media.data)
+            }
+        }),
     }
 }
