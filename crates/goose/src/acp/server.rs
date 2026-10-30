@@ -811,19 +811,23 @@ fn extract_first_line_number(text: &str) -> Option<usize> {
     None
 }
 
-/// The ACP block an attached media part replays as: audio as an audio block, video as the embedded
-/// blob resource the desktop sent it in (ACP has no video block).
+/// The ACP block an attached media part replays as: the embedded blob resource the desktop sent
+/// it in, named by its URI (ACP has no video block, and its audio block carries no name); an
+/// unnamed audio part (an ACP client's audio block) as an audio block.
 fn media_content_block(media: &MediaContent) -> ContentBlock {
-    match media.kind {
-        MediaKind::Audio => ContentBlock::Audio(AudioContent::new(
+    match (media.kind, media.name.as_deref()) {
+        (MediaKind::Audio, None) => ContentBlock::Audio(AudioContent::new(
             media.data.clone(),
             media.mime_type.clone(),
         )),
-        MediaKind::Video => ContentBlock::Resource(EmbeddedResource::new(
+        (_, name) => ContentBlock::Resource(EmbeddedResource::new(
             EmbeddedResourceResource::BlobResourceContents(
                 BlobResourceContents::new(
                     media.data.clone(),
-                    format!("attachment:///{}", media.name.as_deref().unwrap_or("video")),
+                    format!(
+                        "attachment:///{}",
+                        urlencoding::encode(name.unwrap_or("video"))
+                    ),
                 )
                 .mime_type(media.mime_type.clone()),
             ),
@@ -848,7 +852,11 @@ fn attached_media_from_blob(blob: &BlobResourceContents) -> Option<MediaContent>
         .rsplit('/')
         .next()
         .filter(|n| !n.is_empty())
-        .map(|n| n.to_string());
+        .map(|n| {
+            urlencoding::decode(n)
+                .map(|d| d.into_owned())
+                .unwrap_or_else(|_| n.to_string())
+        });
     Some(MediaContent {
         kind,
         data: blob.blob.clone(),
@@ -5580,6 +5588,24 @@ mod attached_media_tests {
         );
         assert!(attached_media_from_blob(&blob(Some("application/pdf"))).is_none());
         assert!(attached_media_from_blob(&blob(None)).is_none());
+    }
+
+    #[test]
+    fn a_named_audio_blob_keeps_its_file_name_through_intake_and_replay() {
+        let blob = BlobResourceContents::new("UklGRg==", "attachment:///my%20call.wav")
+            .mime_type("audio/wav".to_string());
+        let audio = attached_media_from_blob(&blob).unwrap();
+        assert_eq!(audio.name.as_deref(), Some("my call.wav"));
+        match media_content_block(&audio) {
+            ContentBlock::Resource(r) => match r.resource {
+                EmbeddedResourceResource::BlobResourceContents(b) => {
+                    assert_eq!(b.uri, "attachment:///my%20call.wav");
+                    assert_eq!(attached_media_from_blob(&b).unwrap(), audio);
+                }
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

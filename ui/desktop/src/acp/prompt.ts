@@ -99,11 +99,12 @@ export function messageToAcpPromptContent(message: Message): ContentBlock[] {
 }
 
 /**
- * Audio goes as an ACP audio block; video has no ACP block of its own, so it rides an embedded blob
- * resource with its MIME type (goosed turns `audio/*` and `video/*` blobs into media parts).
+ * A named attachment rides an embedded blob resource whose URI carries its file name (goosed turns
+ * `audio/*` and `video/*` blobs into named media parts; ACP has no video block and its audio block
+ * has no name). Unnamed audio goes as an ACP audio block.
  */
 export function mediaToAcpContentBlock(media: MediaContent): ContentBlock {
-  if (media.kind === 'audio') {
+  if (media.kind === 'audio' && !media.name) {
     return { type: 'audio', data: media.data, mimeType: media.mimeType };
   }
   return {
