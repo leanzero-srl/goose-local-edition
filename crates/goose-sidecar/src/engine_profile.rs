@@ -27,7 +27,6 @@ pub const GUARD_FLOOR_CHUNK_TOKENS: u64 = 256; // measured: rapid_mlx/scheduler.
 // of Metal's recommended working set, clamped to [0.90, 0.97]. `/v1/status`
 // `memory_guard.ceiling_bytes` replaces it once the engine runs.
 pub const ENGINE_CAP_HEADROOM_SHARE: f64 = 0.08; // ratio: memory_budget.py _AUTO_HEADROOM_FRACTION, of the weights
-const ENGINE_CAP_HEADROOM_MIN_BYTES: u64 = 512 * 1024 * 1024; // ratio: memory_budget.py _AUTO_HEADROOM_MIN_BYTES
 pub const ENGINE_CAP_MIN_SHARE: f64 = 0.90; // ratio: memory_budget.py AUTO_UTILIZATION_FLOOR, of the working set
 pub const ENGINE_CAP_MAX_SHARE: f64 = 0.97; // ratio: memory_budget.py AUTO_UTILIZATION_CEILING, of the working set
 
@@ -49,14 +48,6 @@ impl EngineMemoryProfile {
                 prefill_chunk_tokens,
             } => prefill_chunk_tokens,
             EngineMemoryProfile::Guarded { floor_chunk_tokens } => floor_chunk_tokens,
-        }
-    }
-
-    /// The ceiling a step is planned under on a Mac whose Metal working set is `ceiling_bytes`.
-    pub fn ceiling_bytes(self, weights_bytes: u64, ceiling_bytes: u64) -> u64 {
-        match self {
-            EngineMemoryProfile::Unguarded { .. } => ceiling_bytes,
-            EngineMemoryProfile::Guarded { .. } => engine_metal_cap(weights_bytes, ceiling_bytes),
         }
     }
 }
@@ -246,17 +237,6 @@ pub fn pinned_profile() -> Result<EngineMemoryProfile, String> {
     profile_of_launcher(&launcher)
 }
 
-/// The ceiling the guarded engine plans under on a Mac whose Metal working set is
-/// `ceiling_bytes`, with `weights_bytes` loaded (Gabee's 64 GB M3 Max and the 27B: 0.90 × 55.66 GB
-/// = 50.10 GB).
-pub fn engine_metal_cap(weights_bytes: u64, ceiling_bytes: u64) -> u64 {
-    let headroom = ((weights_bytes as f64 * ENGINE_CAP_HEADROOM_SHARE) as u64)
-        .max(ENGINE_CAP_HEADROOM_MIN_BYTES);
-    let share = ((weights_bytes + headroom) as f64 / ceiling_bytes.max(1) as f64)
-        .clamp(ENGINE_CAP_MIN_SHARE, ENGINE_CAP_MAX_SHARE);
-    (ceiling_bytes as f64 * share) as u64
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,32 +348,5 @@ mod tests {
         let unknown = profile_of_launcher(&launcher("v9.9.9-lz.99")).unwrap_err();
         assert!(unknown.contains("v9.9.9-lz.99"), "{unknown}");
         assert!(profile_of_launcher(&["python3".into(), "serve.py".into()]).is_err());
-    }
-
-    /// The four ratios are copies of the engine's (memory_budget.py at lz.10 and lz/memory-guard);
-    /// once the engine runs, `/v1/status` `memory_guard.ceiling_bytes` is read instead. This pins the
-    /// copy: a weights share inside [0.90, 0.97] follows the weights, outside it clamps.
-    #[test]
-    fn the_engine_cap_follows_its_auto_rule() {
-        let ceiling = 55_662_788_608;
-        assert_eq!(
-            engine_metal_cap(31_885_090_345, ceiling),
-            (ceiling as f64 * 0.90) as u64
-        );
-        let big = 49_000_000_000u64;
-        let expected = (big as f64 * 1.08) / ceiling as f64;
-        assert_eq!(
-            engine_metal_cap(big, ceiling),
-            (ceiling as f64 * expected) as u64
-        );
-        assert_eq!(
-            engine_metal_cap(54_000_000_000, ceiling),
-            (ceiling as f64 * 0.97) as u64
-        );
-        assert_eq!(
-            engine_metal_cap(1, 1_000_000_000),
-            900_000_000,
-            "512 MiB floor then clamp"
-        );
     }
 }

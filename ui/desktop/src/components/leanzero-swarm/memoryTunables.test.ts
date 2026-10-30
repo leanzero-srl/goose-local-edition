@@ -57,6 +57,21 @@ describe('memory tunable drafts', () => {
     );
   });
 
+  it('checks the cap against the default floor goose sends when the floor is blank', () => {
+    const p = parseMemoryDrafts(drafts({ metalLimitGb: '133' }), {
+      physicalBytes: MAC_128,
+      kvBytesPerToken: null,
+    });
+    expect(p.problems).toContainEqual(
+      expect.objectContaining({ kind: 'capPlusFloor', capGb: 133, floorGb: 7 })
+    );
+    const ok = parseMemoryDrafts(drafts({ metalLimitGb: '130' }), {
+      physicalBytes: MAC_128,
+      kvBytesPerToken: null,
+    });
+    expect(ok.problems.filter((x) => x.kind === 'capPlusFloor')).toEqual([]);
+  });
+
   it('refuses an auto floor above the ceiling, against the engine default for the unset side', () => {
     const p = parseMemoryDrafts(drafts({ autoUtilizationFloor: '0.98' }), {
       physicalBytes: MAC_128,

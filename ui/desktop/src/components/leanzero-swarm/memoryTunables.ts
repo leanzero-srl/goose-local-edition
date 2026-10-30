@@ -233,7 +233,8 @@ export function parseMemoryDrafts(
   }
   const cap = memory.metalLimitGb;
   if (cap != null && physicalGb != null) {
-    const floor = memory.memoryFloorGb ?? 0;
+    // A blank floor is not 0: goose sends its default (5% of RAM), so check that one.
+    const floor = memory.memoryFloorGb ?? defaultFloorGb(physicalGb * GB);
     if (cap + floor > physicalGb) {
       problems.push({ kind: 'capPlusFloor', capGb: cap, floorGb: floor, physicalGb });
     }

@@ -2236,10 +2236,16 @@ impl MlxEngineManager {
             },
         );
         let others = self.other_engines(settings.port);
+        let (available_bytes, ceiling) = memory_tunables_fit_facts(
+            &settings.memory,
+            reading.available_bytes,
+            reading.total_bytes,
+            ceiling,
+        );
         let mut verdict = fit::judge(
             need,
             NodeMemoryFacts {
-                available_bytes: reading.available_bytes,
+                available_bytes,
                 total_bytes: reading.total_bytes,
                 ceiling_bytes: ceiling,
                 other_engines_bytes: machine::other_engines_bytes(&others),
@@ -3140,8 +3146,61 @@ pub fn global_manager() -> &'static MlxEngineManager {
     MANAGER.get_or_init(MlxEngineManager::new)
 }
 
+/// The mount gate's facts under the Memory tab's tunables: the engine can use no more than its
+/// Metal cap (`metal_limit_gb`), and a free-memory floor larger than the gate's own RAM margin
+/// (`fit::AVAILABLE_MARGIN_RATIO`) leaves the engine that much less of the available memory. With
+/// the defaults (auto cap, floor 5% < 9.3%) the facts are unchanged. Review 2026-10-30: the gate
+/// read neither, so a cap below the weights passed it and failed only at the engine's preflight.
+fn memory_tunables_fit_facts(
+    memory: &crate::memory_tunables::MemoryTunables,
+    available_bytes: u64,
+    total_bytes: u64,
+    ceiling_bytes: u64,
+) -> (u64, u64) {
+    let ceiling = match memory.metal_limit_gb {
+        Some(gb) if gb > 0.0 => ceiling_bytes.min((gb * 1e9) as u64),
+        _ => ceiling_bytes,
+    };
+    let margin = (total_bytes as f64 * fit::AVAILABLE_MARGIN_RATIO) as u64;
+    let floor = memory
+        .effective_floor_gb(Some(total_bytes))
+        .map(|gb| (gb * 1e9) as u64)
+        .unwrap_or(0);
+    let available = available_bytes.saturating_sub(floor.saturating_sub(margin));
+    (available, ceiling)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_mount_gate_reads_the_cap_and_a_floor_above_its_margin() {
+        use crate::memory_tunables::MemoryTunables;
+        let total = 137_438_953_472u64; // 128 GiB
+        let gb = 1_000_000_000u64;
+        // defaults: unchanged (auto cap; floor 7 GB < the gate's 9.3% = 12.8 GB margin)
+        let d = memory_tunables_fit_facts(&MemoryTunables::default(), 100 * gb, total, 115 * gb);
+        assert_eq!(d, (100 * gb, 115 * gb));
+        // a 60 GB cap bounds the GPU side
+        let cap = MemoryTunables {
+            metal_limit_gb: Some(60.0),
+            ..Default::default()
+        };
+        assert_eq!(
+            memory_tunables_fit_facts(&cap, 100 * gb, total, 115 * gb).1,
+            60 * gb
+        );
+        // a 20 GB floor takes what it exceeds the margin by off the available side
+        let floor = MemoryTunables {
+            memory_floor_gb: Some(20.0),
+            ..Default::default()
+        };
+        let margin = (total as f64 * fit::AVAILABLE_MARGIN_RATIO) as u64;
+        assert_eq!(
+            memory_tunables_fit_facts(&floor, 100 * gb, total, 115 * gb).0,
+            100 * gb - (20 * gb - margin)
+        );
+    }
+
     /// Q-423: the sanitized words are completed with the exception the engine logged, the named
     /// absence of one, or why it cannot be read — never left as the bare "Internal error".
     #[test]

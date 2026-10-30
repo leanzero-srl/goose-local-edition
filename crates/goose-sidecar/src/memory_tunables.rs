@@ -288,7 +288,8 @@ impl MemoryTunables {
             }
         }
         if let (Some(cap), Some(p)) = (self.metal_limit_gb, physical_gb) {
-            let floor = self.memory_floor_gb.unwrap_or(0.0);
+            // A blank floor is not 0: goose sends the per-machine default, so check that one.
+            let floor = self.effective_floor_gb(physical_bytes).unwrap_or(0.0);
             if cap > 0.0 && cap <= p && cap + floor > p {
                 problems.push(format!(
                     "metal_limit_gb {} GB + memory_floor_gb {} GB is more than this Mac's {} GB of RAM",
@@ -593,6 +594,19 @@ mod tests {
     #[test]
     fn impossible_combinations_are_refused_by_name() {
         let physical = Some(128 * GIB);
+        // A blank floor is the default floor goose sends (7 GB on 128 GiB), not 0: a 133 GB cap
+        // fits 137.4 GB of RAM alone but not with the floor the engine will be given.
+        let blank_floor = MemoryTunables {
+            metal_limit_gb: Some(133.0),
+            ..Default::default()
+        };
+        let e = blank_floor.validate(physical, None).unwrap_err();
+        assert!(e.contains("memory_floor_gb 7 GB"), "{e}");
+        let fits = MemoryTunables {
+            metal_limit_gb: Some(130.0),
+            ..Default::default()
+        };
+        assert!(fits.validate(physical, None).is_ok());
         let cap_floor = MemoryTunables {
             metal_limit_gb: Some(130.0),
             memory_floor_gb: Some(11.0),
