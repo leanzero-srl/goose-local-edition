@@ -194,6 +194,11 @@ pub fn max_concurrent_requests(settings: &EngineSettings) -> u32 {
         .unwrap_or(MAX_CONCURRENT_REQUESTS)
 }
 
+/// v0.14.3-lz.20 (fork lz/metal-tunables d7b59cace) = lz.19 + memory tunables: every memory number the engine plans
+/// under is a flag goose sends from Settings > Memory (`memory_tunables.rs`), the auto Metal cap follows the
+/// context it must hold (Flash-Next 360k on the mule: 103.9 -> 112.0 GB, admits 391,978 vs 294,144), the
+/// free-memory floor counts wired + anonymous - purgeable + compressor (never the file cache), and /v1/status
+/// carries `memory_budget`.
 /// v0.14.3-lz.19 (fork lz/omni-media 813e97e0b) = lz.18 + audio and video input on the MLLM lane (fork
 /// api/media_parts.py: `input_audio` parts become files for mlx_vlm.prepare_inputs(audio=), `video_url` parts become
 /// sampled JPEG frames, /v1/models tags `audio` / `video`; measured on gemma-4-e4b-it-8bit).
@@ -327,7 +332,7 @@ pub fn max_concurrent_requests(settings: &EngineSettings) -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.19",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.20",
     "rapid-mlx",
 ];
 
@@ -490,6 +495,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.18",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.19",
         "rapid-mlx",
     ],
 ];
@@ -3706,7 +3717,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.19",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.20",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -4511,7 +4522,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.19",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.20",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
