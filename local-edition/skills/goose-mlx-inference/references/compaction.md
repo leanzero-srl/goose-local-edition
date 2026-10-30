@@ -2,6 +2,13 @@
 
 Moved verbatim from SKILL.md on 2026-10-30 (skills audit). Read by section; the CORE card in SKILL.md wins on conflict.
 
+## Contents
+- The defect (Flash Gauntlet 0.3927): WHEN / WHAT WAS LOST / AFTER
+- Round 1 FIX (compaction-fix): reserve point, summary gate, verbatim tail, named files; TRAP: where a run's sessions.db lives
+- REVIEW FIXES (round 2, compaction-fix-2); TRAP: TokenCounter ignored reasoning; E2E on Qwen3.5-9B; MUTATION PROOF
+- ROUND 4 (compaction-fix-4): provider-anchored decision, fact sheet beside every summary, structural gate, summary from reasoning
+- ROUND 5 (compaction-fix-5): flagging (size floor, thin sections, future intent), fact sheet first when flagged, "(unverified)" numbers, still-to-do from tool calls
+
 ## goose's compaction on a local model (2026-10-30, branch compaction-fix)
 
 Owner: "why did goose compact while cloud didn't? ... our compact engine might be fucked." Measured on the Flash-Next
