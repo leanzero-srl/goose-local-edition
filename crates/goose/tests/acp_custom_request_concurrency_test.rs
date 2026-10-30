@@ -14,6 +14,8 @@ use common_tests::fixtures::server::AcpServerConnection;
 use common_tests::fixtures::{run_test, send_custom, Connection, TestConnectionConfig};
 use goose_test_support::EnforceSessionId;
 use serial_test::serial;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -104,12 +106,39 @@ fn a_blocked_models_list_does_not_hold_other_requests() {
         .await;
         let waited = started.elapsed();
 
-        // Release the FIFO whatever happened, so a failure cannot hang the suite.
+        // Release the FIFO whatever happened, so a failure cannot hang the suite. The models list
+        // reads the index more than once (MTP head, n-gram table, PLE offload facts) and a FIFO
+        // answers only one open: the blocked reader already resolved the path, so the FIFO moves
+        // aside and a plain file with the same content takes its name before the one write.
         let writer = fifo.clone();
-        tokio::task::spawn_blocking(move || std::fs::write(writer, "{\"weight_map\":{}}"))
-            .await
-            .unwrap()
-            .unwrap();
+        tokio::task::spawn_blocking(move || {
+            let index = "{\"weight_map\":{}}";
+            let aside = writer.with_extension("fifo");
+            std::fs::rename(&writer, &aside)?;
+            std::fs::write(&writer, index)?;
+            // A loaded machine may reach the path only after the swap: then nobody holds the
+            // FIFO and a blocking open for write would hang the suite, so open it non-blocking.
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(libc::O_NONBLOCK)
+                    .open(&aside)
+                {
+                    Ok(mut fifo) => return fifo.write_all(index.as_bytes()),
+                    Err(e)
+                        if e.raw_os_error() == Some(libc::ENXIO) && Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(20))
+                    }
+                    Err(e) if e.raw_os_error() == Some(libc::ENXIO) => return Ok(()),
+                    Err(e) => return Err(e),
+                }
+            }
+        })
+        .await
+        .unwrap()
+        .unwrap();
         let listed = tokio::time::timeout(Duration::from_secs(10), blocked)
             .await
             .expect("models list answers once the FIFO is written")
