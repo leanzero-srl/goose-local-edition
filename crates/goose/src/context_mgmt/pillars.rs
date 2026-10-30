@@ -130,6 +130,12 @@ pub struct Pillars {
     pub failed: Vec<Failed>,
     pub failed_left_out: usize,
     pub failed_settled: usize,
+    /// What is still to do by the tool calls themselves (round 5): each error still open, the
+    /// `TODO`/`FIXME` markers the written files carry, and the items the newest scratchpad left
+    /// unchecked. Why: three real Flash-Next summaries (2026-10-30) dropped an open item the
+    /// transcript showed (the framing check `fitcheck.py` crashed and never ran clean; run 2 said
+    /// it "proved" the framing); the errors were listed, but nowhere as work still to do.
+    pub todo: Vec<String>,
     /// The shell commands that ran, exited 0 and did more than look, newest last.
     pub worked: Vec<String>,
     /// The newest tool calls with their outcome, oldest first.
@@ -183,12 +189,21 @@ impl Pillars {
             .filter(|(id, _)| !settled.contains(id))
             .map(|(_, failed)| failed)
             .collect();
+        let texts: Vec<Option<(String, bool)>> = files
+            .iter()
+            .map(|file| super::facts::file_text_now(&file.path, messages))
+            .collect();
+        let todo = still_to_do(&failed, &files, &texts, messages);
         Self {
             resent_after,
-            files_now: files
+            files_now: texts
                 .iter()
-                .map(|file| super::facts::file_now(&file.path, messages))
+                .map(|text| {
+                    text.as_ref()
+                        .map(|(text, from_disk)| super::facts::FileNow::of(text, *from_disk))
+                })
                 .collect(),
+            todo,
             failed_settled: failed_settled - failed.len(),
             worked: super::facts::worked_commands(messages),
             calls: super::facts::last_calls(messages),
@@ -231,6 +246,10 @@ impl Pillars {
             if !self.failed.is_empty() {
                 self.failed.remove(0);
                 self.failed_left_out += 1;
+                continue;
+            }
+            if self.todo.len() > FIT_FLOOR_LINES {
+                self.todo.pop();
                 continue;
             }
             if let LedgerRead::Entries(entries) = &mut self.ledger {
@@ -455,11 +474,22 @@ impl Pillars {
             }
             Pillar::Failed
                 if !self.failed.is_empty()
+                    || !self.todo.is_empty()
                     || self.failed_left_out > 0
                     || self.failed_settled > 0
                     || !self.worked.is_empty()
                     || !self.calls.is_empty() =>
             {
+                if !self.todo.is_empty() {
+                    out.push_str(&format!(
+                        "\n## Still to do, by the tool calls ({}): goose's list; it holds even where \
+                         a summary says otherwise\n",
+                        self.todo.len()
+                    ));
+                    for item in &self.todo {
+                        out.push_str(&format!("- {item}\n"));
+                    }
+                }
                 if !self.failed.is_empty() || self.failed_left_out > 0 || self.failed_settled > 0 {
                     out.push_str(&format!(
                         "\n## Errors still open ({})\n",
@@ -1092,6 +1122,34 @@ fn work_folders(
     folders
 }
 
+/// The "Still to do" list ([`Pillars::todo`]): open errors first (each a call to make succeed),
+/// then the written files' markers, then the scratchpad's unchecked items; at most
+/// [`super::facts::STILL_TO_DO`].
+fn still_to_do(
+    failed: &[Failed],
+    files: &[WrittenFile],
+    texts: &[Option<(String, bool)>],
+    messages: &[Message],
+) -> Vec<String> {
+    let errors = failed.iter().map(|failed| {
+        format!(
+            "make `{}` succeed: it {} and no later run of it succeeded",
+            super::facts::clip(&failed.call, 200),
+            failed.outcome
+        )
+    });
+    let markers = files
+        .iter()
+        .zip(texts)
+        .filter_map(|(file, text)| text.as_ref().map(|(text, _)| (file, text)))
+        .flat_map(|(file, text)| super::facts::todo_markers(&file.path, text));
+    errors
+        .chain(markers)
+        .chain(super::facts::scratchpad_open_items(messages))
+        .take(super::facts::STILL_TO_DO)
+        .collect()
+}
+
 fn failed_line(failed: &Failed) -> String {
     if failed.output.is_empty() {
         format!("{} {}.", failed.call, failed.outcome)
@@ -1426,30 +1484,53 @@ pub fn written_sections(text: &str) -> Vec<(usize, String)> {
     sections
 }
 
-/// The stored summary: the model's text, its scratch gone, then the kept block.
+/// The stored summary: the model's text, its scratch gone, then the kept block. A FLAGGED summary
+/// (round 5) is stored the other way round — goose's flag line, the kept block, then the model's
+/// answer — so what the model reads first after the compaction is what goose knows, not what a
+/// summary that failed a check says.
 pub fn stored_summary(model_text: &str, kept: &Pillars, flag: Option<&str>) -> String {
     let written = strip_scratch(model_text);
-    let written = match flag {
-        Some(why) => format!(
-            "{FLAG_LEAD}: {why}. What follows is the model's answer as written; the facts in the \
-             kept block below are goose's own — trust them over it, and read a file again before \
-             relying on what it holds.]\n\n{written}"
-        ),
-        None => written,
-    };
     let written = written.trim();
-    if written.is_empty() {
-        kept.render()
-    } else {
-        format!("{written}\n\n{}", kept.render())
+    match flag {
+        Some(why) => {
+            let lead = format!(
+                "{FLAG_LEAD}: {why}. goose's facts come first and are authoritative; the model's \
+                 answer follows them as written — trust the facts over it, and read a file again \
+                 before relying on what it holds.]"
+            );
+            if written.is_empty() {
+                format!("{lead}\n\n{}", kept.render())
+            } else {
+                format!("{lead}\n\n{}\n\n{FLAGGED_ANSWER}\n{written}", kept.render())
+            }
+        }
+        None if written.is_empty() => kept.render(),
+        None => format!("{written}\n\n{}", kept.render()),
     }
 }
 
-/// The model-written part of a stored summary (what goose wrote before its kept block).
-pub fn model_part(stored: &str) -> &str {
-    match stored.split_once(KEPT_OPEN) {
-        Some((written, _)) => written.trim_end(),
-        None => stored,
+/// What heads the model's answer after the kept block in a flagged summary.
+pub const FLAGGED_ANSWER: &str = "The model's answer (flagged; goose's facts above win):";
+
+/// The model-written part of a stored summary: what goose wrote before its kept block, or, in a
+/// flagged one, goose's flag line and the model's answer after the block.
+pub fn model_part(stored: &str) -> String {
+    let Some((before, rest)) = stored.split_once(KEPT_OPEN) else {
+        return stored.to_string();
+    };
+    let before = before.trim_end();
+    if !before.starts_with(FLAG_LEAD) {
+        return before.to_string();
+    }
+    let after = rest
+        .split_once(KEPT_CLOSE)
+        .map_or("", |(_, after)| after)
+        .trim();
+    let after = after.strip_prefix(FLAGGED_ANSWER).unwrap_or(after).trim();
+    if after.is_empty() {
+        before.to_string()
+    } else {
+        format!("{before}\n\n{after}")
     }
 }
 
