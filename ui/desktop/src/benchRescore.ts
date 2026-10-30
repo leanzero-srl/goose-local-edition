@@ -133,7 +133,8 @@ export interface StoredRunMeta {
 export function publishRunMeta(stored: {
   runMeta?: unknown;
   runId?: unknown;
-}): (StoredRunMeta & { buildId?: string }) | null {
+  budget?: unknown;
+}): (StoredRunMeta & { buildId?: string; wrapUpNudge?: number }) | null {
   const meta = stored.runMeta as StoredRunMeta | undefined;
   if (!meta || typeof meta !== 'object') return null;
   return {
@@ -143,7 +144,17 @@ export function publishRunMeta(stored: {
     repairRounds: meta.repairRounds,
     ...(typeof stored.runId === 'string' && stored.runId ? { buildId: stored.runId } : {}),
     ...(typeof meta.rescoredAt === 'string' ? { rescoredAt: meta.rescoredAt } : {}),
+    ...wrapUpNudgeField(stored.budget),
   };
+}
+
+/** The wrap-up nudge version a budgeted run ran with (bench_budget.py wrap_up_record), for the board's label. */
+function wrapUpNudgeField(budget: unknown): { wrapUpNudge?: number } {
+  if (!budget || typeof budget !== 'object') return {};
+  const { wrap_up_nudge: on, wrap_up_nudge_version: version } = budget as Record<string, unknown>;
+  return on === true && Number.isSafeInteger(version) && (version as number) >= 1
+    ? { wrapUpNudge: version as number }
+    : {};
 }
 
 /**

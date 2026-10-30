@@ -195,6 +195,24 @@ describe('publish runMeta — the same build, recognised on republish (both fami
     );
     expect(publishRunMeta({ runId: 'cloud-x' })).toBeNull();
   });
+
+  it("labels a run that ran with goose's wrap-up nudge, from its budget record", () => {
+    const budget = { max_calls: 150, wrap_up_nudge: true, wrap_up_nudge_version: 1 };
+    expect(publishRunMeta({ runId: null, runMeta: meta, budget })).toEqual({
+      ...meta,
+      wrapUpNudge: 1,
+    });
+    expect(
+      publishRunMeta({
+        runId: null,
+        runMeta: meta,
+        budget: { max_calls: 150, wrap_up_nudge: false },
+      })
+    ).toEqual(meta);
+    expect(publishRunMeta({ runId: null, runMeta: meta, budget: { max_calls: 150 } })).toEqual(
+      meta
+    );
+  });
 });
 
 describe('a posted run is publishable again only once re-scored after the post', () => {
