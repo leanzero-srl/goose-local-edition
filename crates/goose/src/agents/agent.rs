@@ -4745,6 +4745,7 @@ echo start >> "$PLUGIN_ROOT/hook.log"
             .unwrap();
         assert!(
             deliver.contains("3 of 30 model calls left after this one")
+                && deliver.contains("Write these now, before anything else")
                 && deliver.contains("do not exist yet: WRAPUP-PROBE-DECISIONS.md"),
             "{deliver}"
         );

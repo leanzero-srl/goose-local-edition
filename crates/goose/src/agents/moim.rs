@@ -28,6 +28,13 @@ As the budget gets low, become more direct: reduce exploration, batch necessary 
 make reasonable assumptions, and focus on finishing the user's task.
 "#;
 
+/// Said only while the wrap-up nudge is armed for chats: the block above tells the model the turn
+/// context is not the person's request, and a 9B model then ignored all three `<wrap-up>` lines
+/// (probe 2026-10-30, Qwen3.5-9B, budget 30: DECISIONS.md named at calls 24/27/28, never written).
+const WRAP_UP_SYSTEM_PROMPT_LINE: &str = "`<wrap-up>`, when present, is goose's instruction for \
+finishing inside the turn budget: follow it before your own plan, and write any file it names first.
+";
+
 /// Which context line the turn-context block carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContextReport {
@@ -53,7 +60,13 @@ pub fn system_prompt_block() -> Option<String> {
     if SKIP.with(|f| f.get()) {
         None
     } else {
-        Some(SYSTEM_PROMPT_BLOCK_TEMPLATE.replace("{turn_context_tag}", TURN_CONTEXT_TAG))
+        let block = SYSTEM_PROMPT_BLOCK_TEMPLATE.replace("{turn_context_tag}", TURN_CONTEXT_TAG);
+        let armed = WrapUp::from_config(crate::config::Config::global(), false).is_some();
+        Some(if armed {
+            block + WRAP_UP_SYSTEM_PROMPT_LINE
+        } else {
+            block
+        })
     }
 }
 
@@ -622,6 +635,10 @@ mod chat_context_tests {
     fn the_system_prompt_separates_context_usage_from_the_turn_budget() {
         let block = system_prompt_block().unwrap();
         assert!(!block.contains("compaction status"), "{block}");
+        assert!(
+            block.contains("`<wrap-up>`, when present, is goose's instruction"),
+            "the nudge is on by default, so the system prompt says to follow it: {block}"
+        );
         assert!(
             block.contains("Context usage is not a budget for the work."),
             "{block}"

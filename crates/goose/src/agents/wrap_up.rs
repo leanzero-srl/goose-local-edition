@@ -221,10 +221,13 @@ impl WrapUp {
         let outputs = if missing.is_empty() {
             String::new()
         } else {
-            format!(
-                " Files the request names that do not exist yet: {}.",
-                missing.join(", ")
-            )
+            let lead = match stage {
+                Stage::Finish => "Not written yet, and the request names them",
+                Stage::Deliver | Stage::Final => {
+                    "Write these now, before anything else: the request names them and they do not exist yet"
+                }
+            };
+            format!(" {lead}: {}.", missing.join(", "))
         };
         let text = template
             .replace("{left}", &max_turns.saturating_sub(turns_taken).to_string())
@@ -415,7 +418,8 @@ mod tests {
             line,
             "<wrap-up stage=\"deliver\">15 of 150 model calls left after this one. Make sure what \
              you built runs, write the outputs the request requires, and leave the workspace in a \
-             finished state. Files the request names that do not exist yet: DECISIONS.md.</wrap-up>"
+             finished state. Write these now, before anything else: the request names them and they do \
+             not exist yet: DECISIONS.md.</wrap-up>"
         );
         let last = wrap.line(Stage::Final, 150, 150, &[]);
         assert!(last.contains("this one and 0 more"), "{last}");
