@@ -58,6 +58,7 @@ sec1 = { version = "0.7", default-features = false, features = ["der", "pkcs8", 
 include_dir = { workspace = true }
 
 [dev-dependencies]
+base64 = { workspace = true }
 test-case = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "test-util"] }

@@ -1,6 +1,7 @@
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { compressImageDataUrl, errorMessage } from '../utils/conversionUtils';
 import { mediaKindOf } from '../types/message';
+import { arrayBufferToBase64, speechWavDataUrl } from '../utils/speechWav';
 
 /** Largest audio/video file attached inline (it travels base64 in the prompt). */
 export const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
@@ -18,6 +19,26 @@ export function readMediaFile(
   }
   const reader = new FileReader();
   readers?.add(reader);
+  if (entry.mediaKind === 'audio') {
+    // Audio goes as 16 kHz mono PCM WAV (utils/speechWav.ts); the file itself when undecodable.
+    reader.onload = (event) => {
+      readers?.delete(reader);
+      const bytes = event.target?.result as ArrayBuffer;
+      void speechWavDataUrl(bytes).then((wav) =>
+        update(entry.id, {
+          dataUrl: wav ?? `data:${file.type || 'audio/wav'};base64,${arrayBufferToBase64(bytes)}`,
+          isLoading: false,
+        })
+      );
+    };
+    reader.onerror = () => {
+      update(entry.id, { isLoading: false, error: 'Failed to read file' });
+      readers?.delete(reader);
+    };
+    reader.onabort = () => readers?.delete(reader);
+    reader.readAsArrayBuffer(file);
+    return;
+  }
   reader.onload = (event) => {
     update(entry.id, { dataUrl: event.target?.result as string, isLoading: false });
     readers?.delete(reader);

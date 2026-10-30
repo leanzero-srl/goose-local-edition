@@ -16,7 +16,8 @@ use crate::formats::openai_responses::{
 };
 use crate::http_status::sanitize_url;
 use crate::images::{
-    announced, convert_image, convert_media, withheld_images_notice, ImageFormat, ImageInput,
+    announced, convert_image, convert_media, split_pcm_wav, withheld_images_notice, ImageFormat,
+    ImageInput,
 };
 use crate::openai_compatible::{
     handle_response_openai_compat, handle_status, stream_responses_compat,
@@ -746,38 +747,59 @@ impl OpenAiProvider {
             return attachment.label(model_name, Ok(&text));
         }
         let started = std::time::Instant::now();
-        let payload = prepass_payload(model_name, ask, attachment);
-        match self.prepass_request(&payload).await {
-            Ok((text, prompt_tokens)) => {
-                tracing::info!(
-                    host = %sanitize_url(self.api_client.host()),
-                    model = %model_name,
-                    kind = attachment.kind(),
-                    prompt_tokens = ?prompt_tokens,
-                    chars = text.len(),
-                    elapsed_ms = started.elapsed().as_millis() as u64,
-                    "media_prepass: the attachment went to the engine alone; the agent turn \
-                     carries its text"
-                );
-                if let Ok(mut cache) = MEDIA_PREPASS_CACHE.lock() {
-                    if cache.len() >= MEDIA_PREPASS_CACHE_ENTRIES {
-                        cache.clear();
-                    }
-                    cache.insert(key, text.clone());
+        let pieces = attachment.pieces();
+        let whole = pieces.len() == 1;
+        let mut texts = Vec::with_capacity(pieces.len());
+        let mut failures = 0usize;
+        let mut prompt_tokens = 0u64;
+        for (span, part) in &pieces {
+            let payload = prepass_payload(model_name, ask, attachment.instruction(), part.clone());
+            let text = match self.prepass_request(&payload).await {
+                Ok((text, tokens)) => {
+                    prompt_tokens += tokens.unwrap_or(0);
+                    text
                 }
-                attachment.label(model_name, Ok(&text))
-            }
-            Err(e) => {
-                tracing::warn!(
-                    host = %sanitize_url(self.api_client.host()),
-                    model = %model_name,
-                    kind = attachment.kind(),
-                    error = %e,
-                    "media_prepass_failed: the agent turn names the attachment and the reason"
-                );
-                attachment.label(model_name, Err(&e.to_string()))
+                Err(e) => {
+                    failures += 1;
+                    tracing::warn!(
+                        host = %sanitize_url(self.api_client.host()),
+                        model = %model_name,
+                        kind = attachment.kind(),
+                        error = %e,
+                        "media_prepass_failed: the agent turn names the attachment and the reason"
+                    );
+                    if whole {
+                        return attachment.label(model_name, Err(&e.to_string()));
+                    }
+                    format!("(this part could not be turned into text: {e})")
+                }
+            };
+            texts.push(match span {
+                Some((from, to)) => format!("[{} - {}] {text}", clock(*from), clock(*to)),
+                None => text,
+            });
+        }
+        let text = texts.join("\n");
+        tracing::info!(
+            host = %sanitize_url(self.api_client.host()),
+            model = %model_name,
+            kind = attachment.kind(),
+            pieces = pieces.len(),
+            failures,
+            prompt_tokens,
+            chars = text.len(),
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "media_prepass: the attachment went to the engine alone; the agent turn carries its text"
+        );
+        if failures == 0 {
+            if let Ok(mut cache) = MEDIA_PREPASS_CACHE.lock() {
+                if cache.len() >= MEDIA_PREPASS_CACHE_ENTRIES {
+                    cache.clear();
+                }
+                cache.insert(key, text.clone());
             }
         }
+        attachment.label(model_name, Ok(&text))
     }
 
     async fn prepass_request(
@@ -1132,6 +1154,14 @@ fn refuses_media_prefill(error: &ProviderError) -> bool {
 }
 
 const MEDIA_PREPASS_CACHE_ENTRIES: usize = 64;
+/// The longest audio piece one side request carries (Gemma 4 hears the first 30 s of a clip).
+const MEDIA_PREPASS_AUDIO_PIECE_SECS: u32 = 30;
+
+/// `m:ss` for a span label.
+fn clock(secs: f64) -> String {
+    let whole = secs.round() as u64;
+    format!("{}:{:02}", whole / 60, whole % 60)
+}
 /// The side request's answer budget: a 2-minute transcript or a detailed description fits.
 const MEDIA_PREPASS_MAX_TOKENS: u64 = 1024;
 const MEDIA_PREPASS_SYSTEM: &str =
@@ -1201,15 +1231,38 @@ impl Attachment<'_> {
         }
     }
 
+    /// The parts the side requests carry, each with its span in the clip: a PCM WAV longer than
+    /// [`MEDIA_PREPASS_AUDIO_PIECE_SECS`] goes piece by piece, everything else whole.
+    fn pieces(&self) -> Vec<(Option<(f64, f64)>, serde_json::Value)> {
+        if let Attachment::Media(m) = self {
+            if m.kind == MediaKind::Audio {
+                if let Some(pieces) = split_pcm_wav(&m.data, MEDIA_PREPASS_AUDIO_PIECE_SECS) {
+                    return pieces
+                        .into_iter()
+                        .map(|p| {
+                            let part = convert_media(&MediaContent {
+                                data: p.data,
+                                mime_type: "audio/wav".to_string(),
+                                ..m.clone()
+                            });
+                            (Some((p.start_secs, p.end_secs)), part)
+                        })
+                        .collect();
+                }
+            }
+        }
+        vec![(None, self.part())]
+    }
+
     fn instruction(&self) -> &'static str {
         match self {
             Attachment::Media(m) if m.kind == MediaKind::Audio => {
-                "Transcribe this audio word for word, in its language. Then, on a last line \
-                 starting with \"Sounds:\", name any non-speech sounds (or \"none\")."
+                "Transcribe the speech in this audio word for word, in its language. If there \
+                 is no speech, describe the sound in one line."
             }
             Attachment::Media(_) => {
                 "Describe this video in detail, in time order: what is shown, what moves or \
-                 changes, and any text that appears on screen. If someone speaks, say so."
+                 changes, and any text that appears on screen."
             }
             Attachment::Image(..) => {
                 "Describe this image in detail: what it shows, its layout, and every piece of \
@@ -1252,9 +1305,14 @@ impl Attachment<'_> {
 
 /// The side request for one attachment: a one-line system instruction, the person's own words
 /// for context (bounded), the attachment, no tools, no history.
-fn prepass_payload(model_name: &str, ask: &str, attachment: &Attachment<'_>) -> serde_json::Value {
+fn prepass_payload(
+    model_name: &str,
+    ask: &str,
+    instruction: &str,
+    part: serde_json::Value,
+) -> serde_json::Value {
     let ask: String = ask.trim().chars().take(600).collect();
-    let mut text = attachment.instruction().to_string();
+    let mut text = instruction.to_string();
     if !ask.is_empty() {
         text.push_str(&format!(
             " The person attached it with this message (for context only, do not answer it): \"{ask}\""
@@ -1264,7 +1322,7 @@ fn prepass_payload(model_name: &str, ask: &str, attachment: &Attachment<'_>) -> 
         "model": model_name,
         "messages": [
             {"role": "system", "content": MEDIA_PREPASS_SYSTEM},
-            {"role": "user", "content": [{"type": "text", "text": text}, attachment.part()]},
+            {"role": "user", "content": [{"type": "text", "text": text}, part]},
         ],
         "max_tokens": MEDIA_PREPASS_MAX_TOKENS,
         "stream": false,
@@ -3389,6 +3447,49 @@ mod media_input_tests {
         let bodies = prepass_bodies(json!(["text", "vision", "tools"]), &[turn], 200).await;
         assert_eq!(bodies.len(), 1);
         assert!(serde_json::to_string(&bodies[0]).unwrap().contains(png));
+    }
+
+    fn pcm_wav_b64(sample_rate: u32, secs: u32) -> String {
+        use base64::Engine as _;
+        let data_len = sample_rate * 2 * secs;
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36 + data_len).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        for v in [16u32] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        for v in [1u16, 1u16] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        b.extend_from_slice(&sample_rate.to_le_bytes());
+        b.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+        for v in [2u16, 16u16] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&data_len.to_le_bytes());
+        b.extend(std::iter::repeat_n(7u8, data_len as usize));
+        base64::engine::general_purpose::STANDARD.encode(b)
+    }
+
+    #[tokio::test]
+    async fn a_long_wav_is_heard_in_30_second_pieces_and_the_transcript_names_each_span() {
+        let turn = vec![Message::user()
+            .with_text("summarise the call")
+            .with_media(clip(MediaKind::Audio, &pcm_wav_b64(8_000, 70), "long.wav"))];
+        let bodies = prepass_bodies(json!(OMNI_CAPS), &[turn], 200).await;
+        let side: Vec<_> = bodies.iter().filter(|b| is_side(b)).collect();
+        assert_eq!(side.len(), 3, "one side request per 30 s piece");
+        let main = serde_json::to_string(bodies.iter().find(|b| !is_side(b)).unwrap()).unwrap();
+        for span in [
+            "[0:00 - 0:30] HEARD",
+            "[0:30 - 1:00] HEARD",
+            "[1:00 - 1:10] HEARD",
+        ] {
+            assert!(main.contains(span), "{span} in {main}");
+        }
+        assert!(!main.contains("input_audio"));
     }
 
     #[test]
