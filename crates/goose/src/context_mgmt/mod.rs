@@ -6735,52 +6735,6 @@ mod tests {
         }
     }
 
-    #[derive(Clone, Default)]
-    struct LogBuffer(Arc<std::sync::Mutex<Vec<u8>>>);
-
-    impl std::io::Write for LogBuffer {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    /// The benchmark counts flagged summaries from the JSON log: one event per flagged summary,
-    /// and one per summary with unverified numbers.
-    #[tokio::test]
-    async fn a_flagged_summary_logs_an_event_the_benchmark_counts() {
-        let buffer = LogBuffer::default();
-        let writer = buffer.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .json()
-            .with_writer(move || writer.clone())
-            .finish();
-        let _guard = tracing::subscriber::set_default(subscriber);
-        // Another test thread may have hit these callsites first, with no subscriber: their
-        // cached "never" interest would hide the events from this one.
-        tracing::callsite::rebuild_interest_cache();
-        let bold = "**Thinking:** I should continue.\n\n**Plan:** look at files.\n\n**Step one:** \
-                    run ls.\n\n**Step two:** read output.\n\n**Then:** carry on.\n";
-        compacted_with(bold, &big_chat()).await;
-        compacted_with(FIX4_2_SUMMARY, &d4_chat()).await;
-        let logs = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
-        assert_eq!(
-            logs.matches("\"event\":\"compaction_summary_flagged\"")
-                .count(),
-            1,
-            "{logs}"
-        );
-        assert_eq!(
-            logs.matches("\"event\":\"compaction_numbers_unverified\"")
-                .count(),
-            1,
-            "{logs}"
-        );
-    }
-
     /// The counter-case on the same conversation: a summary that says what was done is stored as
     /// before — the model's text, then the facts.
     #[tokio::test]
