@@ -3540,7 +3540,7 @@ mod media_input_tests {
         let mut provider = super::tests::make_provider("omlx");
         provider.api_client =
             ApiClient::new_with_tls(env("OMNI_LIVE_URL"), AuthMethod::NoAuth, None).unwrap();
-        let model = ModelConfig::new(&env("OMNI_LIVE_MODEL"));
+        let model = ModelConfig::new(env("OMNI_LIVE_MODEL"));
         let mut out = std::fs::File::create(env("OMNI_LIVE_OUT")).unwrap();
         for line in std::fs::read_to_string(env("OMNI_LIVE_CLIPS"))
             .unwrap()
