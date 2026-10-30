@@ -139,8 +139,9 @@ pub const PIPELINE_FORK_COMMIT: &str = "8c000705422c314b2f7acd81ae9e398db0ae9320
 /// PLE offload spellings, MTP head quant, FP8 PLE scale, text-lane pixel cap) is n/a for the same reason, and so is
 /// v0.14.3-lz.16-ple.5 (single-engine qwen4_exp YaRN rope scaling; the split's ranks build their own rope). So is
 /// v0.14.3-lz.16-ple.6 (single-engine memory guard: hit-step calibration, flat-group fit, cold requeue). So is
-/// v0.14.3-lz.17 (= ple.6 plus a perf doc; no code change).
-pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.17";
+/// v0.14.3-lz.17 (= ple.6 plus a perf doc; no code change) and v0.14.3-lz.18 (single-engine qwen4_exp prompt
+/// lookup under sampling; the split runs its own pinned fork commit).
+pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.18";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
     "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@8c000705422c314b2f7acd81ae9e398db0ae9320";

@@ -179,6 +179,8 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.18 (fork lz/qwen4-pld-sampled 10f0ef3eb) = lz.17 + qwen4_exp prompt lookup under sampling (fork
+/// 201b0bf62: drafts are copied when temperature > 0, lossless, 1.6x on Flash code edits at temperature 1.0).
 /// v0.14.3-lz.17 (fork lz/release-lz17 5ab6da823) = ple.6 as ONE line again: the plain lz.N line (lz.16 stream
 /// whitespace fix) and the qwen4 PLE line (offload, vision, YaRN, reclaim) are the same commit history; the only
 /// change past ple.6 is the merged PLE offload perf doc (no code).
@@ -307,7 +309,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.17",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.18",
     "rapid-mlx",
 ];
 
@@ -3519,7 +3521,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.17",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.18",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -4083,7 +4085,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.17",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.18",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
