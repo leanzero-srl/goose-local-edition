@@ -8,6 +8,7 @@ Moved verbatim from SKILL.md on 2026-10-30 (skills audit). Read by section; the 
 - REVIEW FIXES (round 2, compaction-fix-2); TRAP: TokenCounter ignored reasoning; E2E on Qwen3.5-9B; MUTATION PROOF
 - ROUND 4 (compaction-fix-4): provider-anchored decision, fact sheet beside every summary, structural gate, summary from reasoning
 - ROUND 5 (compaction-fix-5): flagging (size floor, thin sections, future intent), fact sheet first when flagged, "(unverified)" numbers, still-to-do from tool calls
+- ROUND 6 (compaction-fix-6): temp-dir paths are no secret, reasoning summaries start at a named heading, look-ups are not open errors; 5b reconciled
 
 ## goose's compaction on a local model (2026-10-30, branch compaction-fix)
 
@@ -130,3 +131,39 @@ llm_request.9.jsonl = the first request after its compaction, summary text insid
   D4 test: the stored block lists `python3 fitcheck.py` as open while FIX4-2's own Still-to-do only deletes it.
   Real-transcript check (ignored): GOOSE_COMPACTION5_DIR=~/scratch/compaction5 cargo test -p goose
   real_flash_next_summaries -- --ignored --nocapture (flash-next-223.json exported from verifier pre.db).
+- ROUND 6 (2026-10-30, branch compaction-fix-6 from main 1c71262a7d; replaces the unmerged compaction-fix-5b
+  a71e327a19, deleted). The verifier's FIX4 defects (runs/2026-10-30-flash-fixes-verify/NOTES.md) checked one by one
+  against main (round 5): (a) FIXED here: `facts::file_text_now` ran the secret-NAME check on the WHOLE absolute path
+  and "private" is in SECRET_NAME_PARTS, so every file of a workspace under /private/tmp or /private/var/folders
+  (every benchmark run: /private/tmp/gfix, /private/tmp/gvision/...) fell back to "as last written in the
+  conversation". `pillars::is_secret_like_path(path, working_dir)` now judges only the path BELOW the chat's folder,
+  the OS temp dir, /tmp or home (raw + canonical); elsewhere the whole path. Named files (`named_documents`) were
+  never affected: they already judge the path relative to the chat's folder. RULE: secret = a NAME (file or folder
+  below the chosen folder), never a location. (b) ALREADY HANDLED by round 5: the verifier's five bold planning lines
+  pass the structural gate and are stored FLAGGED (3 of 5 sections under one sentence), on a small chat too (test
+  five_bold_planning_lines_are_flagged_on_a_small_chat_too). 5b's fix (refuse an answer without the five names)
+  was NOT ported: it rejects instead of flagging and would refuse translated headings, which round 5 accepts on
+  purpose. (c) FIXED: `summary_in_reasoning` starts a block only at one of the five NAMED headings (reasoning is full
+  of "Constraints:"/"Approach:" colon lines; planning notes were stored unflagged, never re-asked: now re-asked once,
+  then stored flagged) and `without_trailing_thought` cuts the reasoning after the last section's first paragraph
+  ("Wait, I should double-check..."). A visible answer keeps the round-4 reading. (d) FIXED: a failed shell call
+  whose every step only looks (LOOKING_COMMANDS, now also test/[/[[/type/readlink/realpath; `sed -i` excluded) is
+  counted on one line "(N failed look-ups ... are not errors)", not listed; a command's `cd <dir> &&` prefix is
+  dropped from the settle key, so the same command rerun from another folder settles it. Not ported from 5b (not
+  in scope, low): the 1.065 margin on the summary request's own sizing and the post-compaction estimate marker.
+  PROOF: 6/6 mutations killed (~/scratch/compfix6-mutate.py pattern: revert one fix, run its test). REAL MODEL
+  (Qwen3.5-9B-MLX-4bit, rapid-mlx lz.19 on workhorse :8297, e2e_a_real_model_writes test, the Flash-Next 190-row
+  transcript, workspace rsynced to its REAL path /private/tmp/gvision/.../r0): see the round-6 numbers below.
+  Round-6 numbers (same input, kept block is deterministic): BEFORE (main 1c71262a7d code) 0 of 11 written files
+  "on disk now", 11 "as last written in the conversation"; "Errors still open (3)" incl. `find ... ; wc -c
+  app/**/*.py` (a glob matching nothing). AFTER: 11 of 11 on disk now; "Errors still open (2)" + "(1 failed
+  look-ups ...)": read_image /tmp "Operation not permitted" (real, never settled) and `cd /tmp && curl .../v3/
+  reversals | python3 -c ...` (real failure; the later success at row 75 ran a DIFFERENT python snippet, so exact
+  key match does not settle it: left open on purpose, no fuzzy matching). Named contract files kept verbatim in
+  both (SB7-CONTRACT.md, VISUAL-CONTRACT.md, ... under the /private/tmp workdir). Model text (9B, sampled): before
+  passed first ask; after run 1 wrote "# Decisions" for the 4th heading twice -> stored flagged; after run 2
+  passed first ask, unflagged (variance, not the change). Evidence ~/scratch/compfix6-evidence was copied to
+  /Volumes/AI-workhorse/runs/2026-10-30-flash-fixes-verify/compaction6/ (before/after*-seen.txt).
+  TRAP: providers::key_connection only_a_refused_loopback... fails on this workhorse (macOS 27 accept-queue
+  behaviour) on main too: not a compaction regression.
+
