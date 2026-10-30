@@ -77,7 +77,9 @@ it('the prefilter keeps every shape an offending wait can take', () => {
 
 it('every wait in a test runs on the test’s own clock (Q-383)', () => {
   const files = (fs.readdirSync(SRC, { recursive: true }) as string[])
-    .filter((f) => TEST_FILE.test(f))
+    // src/swarm-bench/ is the gitignored benchmark payload `pnpm run package` mirrors in from
+    // evals/swarm-bench (Playwright kit tests with their own waits), not desktop tests.
+    .filter((f) => TEST_FILE.test(f) && !f.startsWith(`swarm-bench${path.sep}`))
     .map((f) => path.join(SRC, f));
   expect(files.length).toBeGreaterThan(100);
   expect(files.flatMap(waitsOnTheirOwnClock)).toEqual([]);
