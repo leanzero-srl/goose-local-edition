@@ -5218,6 +5218,7 @@ dependencies = [
  "sec1",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "test-case",
  "tokio",
