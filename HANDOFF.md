@@ -733,3 +733,8 @@ attached audio as its named placeholder (loud to the model, not an engine error)
 (media pre-pass sends images only when the engine declares audio), so rank 0's vision path is unchanged.
 Readiness notes: /Volumes/AI-workhorse/runs/2026-10-30-mimo-split-regauntlet/NOTES.md. Rig: <scratchpad>/s15
 (gate.sh, build.sh, replay.py growing-session replay from the 10-28 run's real session, probe.sh, wait_free.sh).
+LAUNCH 01:08:20 (10-31) openai-cloud-51bfaccd on 18/30 at 262,144 with nudge v2 (build eca39ae893: split declares
+reasoning_controls ["enable_thinking"], provider sends no graded effort there; the 00:30 launch 48c30cdd died on
+that 400). Planner refuses >= 266,240 today (workhorse available 74.6 GB). A reload under other sessions' voice-qa
+load re-planned 17/31 (rank 1 113.3 planned vs 115.45 ceiling): never run that; stop, free the workhorse, re-plan.
+Vigil: run-causes/20261031-002917-mimo-split-sb72-s15/VIGIL.md; ranks stop at scoring via s15/watch.sh.
