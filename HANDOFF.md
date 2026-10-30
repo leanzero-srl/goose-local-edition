@@ -1,388 +1,70 @@
-# HANDOFF — floating window ("engine glance" pill), branch fix/floating-window
+# HANDOFF: engine memory tunables, goose side (branch lz/memory-tunables)
 
-## Owner spec (2026-10-27)
-"if I press on X I expect it to go away. This should only show up if I choose a tick in the main UI when
-minimizing. Also when I drag and drop it around it will still open the full window."
+Worktree: ~/Projects/goose-memory-tunables (off origin/main 6e34d1e378). Stopped at the 350k context
+limit. Contract: /Volumes/AI-workhorse/runs/2026-10-30-flash-fixes-verify/metal-limit/INTERFACE.md.
+Fork branch lz/metal-tunables is pushed (coordinator says tip 3ed994de9); flag names verified against
+fork cli.py `_MEMORY_TUNABLE_FLAGS` (74a7aa5): all match.
 
-## Real cause (why a click / drag raised goose's main window)
-Electron v41 `type:'panel'` is not an NSPanel (shell/browser/ui/cocoa/electron_ns_panel.mm only ORs
-NSWindowStyleMaskNonactivatingPanel into the styleMask GETTER), so every mouse-down on the glance activates goose.
-The glance was `focusable:false` -> `disableKeyOrMainWindow` -> canBecomeKeyWindow NO (electron_ns_window.mm), so the
-activation had no key window to give the clicked window and AppKit made goose's MAIN window key and ordered it front,
-before the release. `app.on('activate')` is NOT involved (it fires on Dock reopen and only creates a window when
-there are none; the glance is a BaseWindow so it is never counted).
+## Commits (not yet merged, not pushed)
+- d2e9f6bed3 goose-sidecar: tunables reach the argv (memory_tunables.rs, engine_profile.rs supports_memory_tunables)
+- 5a553eac88 acp: DTOs, memoryMachine / wiredLimitApply / wiredLimitRemoveDaemon, status memoryBudget (wired_limit.rs)
+- 51bab82038 desktop: Memory tab (MlxMemorySection.tsx, memoryTunables.ts), i18n 16 catalogs, 5% floor correction
+- 2e0451c552 sdk regenerate
 
-## Fixes (commits on this branch after e8f2e57a90)
-1. engineGlanceWindow.ts: `focusable: mac` — the clicked glance becomes key itself, nothing else moves; still shown
-   with showInactive (never takes focus by appearing).
-2. engineGlanceDesktop.ts: shove-back (gooseRaised / revertRaise / RAISE_*) REMOVED. A press holds the window in place
-   PRESS_HOLD_MS (1.5 s) so the click reaches its control. X: closes every time; if its press is what activated goose
-   (did-become-active within PRESS_PAIR_MS 700 ms) and no goose window was in view, `app.hide()` hands the front back.
-   Close still holds until a NEW process (turn/question/split/rank/route) starts, as before.
-   main.log evidence if the fix ever fails: `engine glance: goose window N came forward right after a press on the glance`.
-   On X with hide: `engine glance: closed from its X; goose hidden again, the press had activated it`.
-3. OPT-IN: `GlancePrefs.desktopOptIn` (default false; a store from an older build with desktop:'away' reads as NOT
-   opted in). `desktopFloatOn(prefs)` gates every rule, the tray "Show the floating glance", Settings' "Show it again".
-   UI: Settings › App switch "Show a floating activity pill when goose is minimized or in the background" (+ When:
-   background / whenever the engine works), and a tick "Float a pill when goose is minimized" under the sidebar card.
-4. Controls: ⤢ (Maximize2) is the only opener, on pill and card. Pill = [⤢ open goose] [▴ show card] [✕]. Body = drag
-   handle only. A press that travels >= DRAG_SLOP_PX (4 px) is never a click, even when it started on a button.
-5. Strings: 4 new keys, 3 dropped, in 16 catalogs. Peer/rank display (6fd39b5348) untouched, now behind the opt-in.
+## Design decisions (put in the final report)
+- Config: `mlx_engine.memory.<snake_name>` (EngineSettings.memory: MemoryTunables); DTO `memory` camelCase.
+- lz.20-only flags are sent only when the launcher tag is >= v0.14.3-lz.20 or the branch `lz/metal-tunables`
+  (engine_profile::supports_memory_tunables). A set lz.20-only tunable on an older pin FAILS the mount by name
+  (no silent ignore). --cache-memory-mb, --prefill-step-size, --max-concurrent-requests go to every engine.
+- Default floor = round(0.05 x physical GB) per coordinator's measurement (was 8%); Workstation preset = 8%,
+  Inference box = cap (physical GiB - 16) GB, floor 4 GB; suggested wired limit = physical MB x 122000/131072.
+- --max-model-len = memory.max_context_tokens, else the mounted model's profile context_limit. NOT
+  GOOSE_CONTEXT_LIMIT (client-side, per session; the engine serves many clients/peers).
+- --max-concurrent-requests: user value also replaces the hybrid-cache count (x3) and sizes the swarm
+  router's sidecar node (swarm_router local_engine_max_concurrent, nodes/project.rs) and status DTO.
+- Prefix budget set -> --cache-memory-mb replaces --cache-memory-percent on unguarded engines.
+- Not exposed: engine `--memory-floor-wait-s` (seconds, not in the INTERFACE table).
+- Wired limit: Rust validates 0 or 8192..physical MB (u64), builds `/usr/sbin/sysctl iogpu.wired_limit_mb=V`,
+  refuses quotes/backslash/newline before osascript `do shell script ... with administrator privileges`.
+  Daemon: plist staged in temp_dir, root cp/chown/chmod, sysctl now, launchctl bootout/enable/bootstrap.
+  Local only (no nodeId). Metal working set is per-process (goosed reads it at start): UI says so.
 
-## Tests
-engineGlanceDesktop.test.ts: describe "OPT-IN" and "X goes away, a drag is not a click, only ⤢ opens" (each with a
-negative control). engineGlanceClicks.test.tsx: pill rows incl. ⤢, drag-from-⤢ not a click (+ control), body drag.
-Fixture `glancePush` defaults desktopOptIn:true. Results: see "Gate results" below.
+## Gate status
+- cargo clippy -p goose-sidecar -p goose-sdk-types -p goose --all-targets -D warnings: green (before the 5% commit;
+  re-run). cargo test goose-sidecar + goose-sdk-types: green. cargo test -p goose -p goose-swarm --no-fail-fast:
+  63 ok, 1 FAILED = providers::key_connection::tests::only_a_refused_loopback_connect_reads_as_a_server_that_is_not_started
+  ("Connection reset by peer"), fails deterministically; not touched by this diff. A probe on the clean main
+  checkout ~/Projects/goose was started to prove it pre-exists: rerun
+  `cd ~/Projects/goose && cargo test -p goose --lib only_a_refused_loopback` to confirm.
+- UI: `pnpm run lint:check` exit 0 (tsc + eslint + i18n). vitest: memoryTunables.test.ts 10/10,
+  MlxMemorySection.test.tsx 9/9 BEFORE the 5% edit (test strings updated to 7 GB / 5%); FULL `pnpm run test:run`
+  NOT run yet (navigationUtils MLX_TABS gained 'memory': check tests that enumerate MLX tabs).
 
-## Packaged dev build (for the real-click check on the workhorse)
-Built on the laptop (workhorse is running Gauntlet). Path on the workhorse after copy: see "Gate results".
-Rebuild recipe (any Mac, from this worktree):
-  source bin/activate-hermit && cd ui && pnpm install --frozen-lockfile && cd desktop
-  cp "/Applications/Goose Swarm.app/Contents/Resources/bin/"{goose,tailscale,tailscaled} src/bin/
-  pnpm run package        # -> ui/desktop/out/Goose-darwin-arm64/Goose.app (name per forge config)
-Launch (ONE GOOSE PER MAC: quit the installed app first; never pkill by pattern):
-  osascript -e 'tell application "Goose Swarm" to quit'
-  open -n "<path>/Goose.app" --args --remote-debugging-port=9898
-  ... checks ... then quit THAT pid, `open -a "Goose Swarm" --args --remote-debugging-port=9897`,
-  `~/Projects/machine-sync/bin/goose-single-guard --check`.
-Needs something live for the pill: start a chat turn on the local engine (or a split / hosted rank).
+## Open items, in order
+1. Re-run gates: `source bin/activate-hermit; export CARGO_TARGET_DIR=~/Projects/goose/target;`
+   `cargo clippy --config 'profile.dev.package."*".strip=false' -p goose-sidecar -p goose-sdk-types -p goose --all-targets -- -D warnings`
+   `cargo test --config '...' -p goose-sidecar -p goose-sdk-types`; `cargo run -p goose --bin generate-acp-schema`
+   (the 5% commit added DTO fields: regenerate acp-schema.json, then `cd ui/desktop && pnpm run build-goose-sdk`, commit).
+   `cd ui/desktop && pnpm run lint:check && pnpm run test:run`.
+2. Live CDP check (not done): binary already copied to ui/desktop/src/bin/goose (debug, pre-5% build: rebuild
+   `cargo build -p goose-cli --bin goose`, cp + `codesign -s -`). `pnpm run package`; quit installed app
+   (`osascript -e 'tell application "Goose Swarm" to quit'`, installed pid was 1513); launch
+   `GOOSE_PATH_ROOT=$SCRATCH/gooseroot GOOSE_USER_DATA_DIR=$SCRATCH/userdata GOOSE_DISABLE_KEYRING=1 nohup "out/Goose Swarm-darwin-arm64/Goose Swarm.app/Contents/MacOS/Goose Swarm" --remote-debugging-port=9333 &`
+   with `$RUN_DIR/config/config.yaml` seeded: `mlx_engine: {port: 8095, models_dir: /Volumes/AI-workhorse/models/goose,
+   spawn_command: [uvx, --from, "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@lz/metal-tunables", rapid-mlx]}`;
+   small model mlx-community/Qwen3.5-9B-MLX-4bit (5.7 GB). Navigate `#/leanzero-swarm?tab=mlx&mlx=memory`
+   (cdp.mjs from ~/.claude/skills/goose-feature-dev/references). Screenshots ->
+   /Volumes/AI-workhorse/media/goose-memory-tunables/ after `~/Projects/machine-sync/bin/ai-disk-guard --need-gb 1 --out /Volumes/AI-workhorse/media/goose-memory-tunables`.
+   Do NOT click the wired-limit buttons unattended (they raise a password prompt). Then quit own pid,
+   `open -a "Goose Swarm"`, `~/Projects/machine-sync/bin/goose-single-guard --check`.
+3. Independent reviewer (fresh general-purpose agent) on `git diff origin/main...HEAD` + owner spec: hard-coded
+   numbers / controls without effect. Verify findings, fix real ones.
+4. Rebase on origin/main (locale JSONs: replay key-by-key), ff-merge to main, push. Do NOT touch ENGINE_LAUNCHER.
+5. Reply to the coordinator (agent a6a0e6be46e66adb0): 5% floor applied, others label applied, new budget fields added.
+6. Cleanup: dev app, ui/desktop/src/bin copies (gitignored), scratch userdata; `git worktree remove` after merge.
 
-## 6-step REAL-click checklist (screen control, goose minimized, another app e.g. Finder in front)
-1. Opt-in OFF (fresh profile or untick): start a turn, minimize goose, focus Finder -> NO pill anywhere.
-2. Tick Settings › App "Show a floating activity pill…" (or the sidebar tick), minimize, focus Finder -> pill bottom-right.
-3. Click ✕ -> pill gone at once; goose main window does NOT appear; Finder is frontmost again (menu bar says Finder).
-   Pill stays gone through the rest of that turn (blur/focus Finder/other apps). main.log: "closed from its X; goose hidden again".
-4. (Next turn, so it is back) DRAG the pill by its body to the top-left -> it moves and snaps; goose main window does NOT
-   appear. Also press on ⤢ and drag off before releasing -> nothing opens. main.log must NOT contain "came forward right after a press".
-5. Click ⤢ -> goose comes forward on the Engine tab (or the chat that needs you). Click ▴ -> the full card; − -> back to pill.
-6. Quit goose, relaunch (new process) with the tick ON -> pill comes back on the next live work; untick -> never.
-If step 3/4 fails (main window appears): read main.log for the warn line; the theory was AppKit key hand-off — next
-lever would be a native NSPanel (no Electron API exists).
-
-## Gate results (2026-10-27, run on the laptop via node-run; workhorse busy with Gauntlet)
-- `pnpm run lint:check` (tsc + eslint --max-warnings 0 + i18n:check + locale validation, 16 catalogs): EXIT 0.
-- Full `vitest run`: 5223 passed, 2 failed (both stale expectations of the new spec: the defaults test and the
-  Settings description text) -> fixed in 15d5a04d4d; re-run of all glance suites (12 files, 243 tests): all pass.
-- Packaged (`pnpm run package`, EXIT 0), commit 15d5a04d4d, goose/tailscale(d) from the laptop's installed app.
-  App asar carries `desktopOptIn` and the new log line.
-  PATH ON THE WORKHORSE: /Users/workhorse/Projects/goose-wt-floatwin/ui/desktop/out/Goose Swarm-darwin-arm64/Goose Swarm.app
-  (ad-hoc signed, same app name as the installed one: quit the installed app by pid, then
-  `open -n "<that path>" --args --remote-debugging-port=9898`; it shares the installed app's settings, where
-  desktopOptIn is absent -> step 1 starts OFF.)
-- NOT verified: real clicks (no Accessibility from ssh anywhere); the AppKit key-handoff theory is from Electron v41
-  source (electron_ns_panel.mm, electron_ns_window.mm, native_window_mac.mm SetFocusable/ShowInactive), not observed.
-  Laptop worktree removed after the build (clutter rule).
-
-
----
-
-# HANDOFF: sticky "Failed" engine card + Engine panel stuck "Checking" (workmule, 3.0.132)
-
-Branch `fix/engine-failure-card-sticks` (created `--no-track` off origin/main 0925b96990), worktree
-`~/Projects/goose-wt-enginecard`. NOTHING edited yet except this file. Do not commit the primary checkout
-(~/Projects/goose has someone else's staged skill edit). Public repo: no Co-Authored-By trailer (hook rejects).
-Push: `git push -u origin HEAD:fix/engine-failure-card-sticks`. No DMG / release.
-
-## The task (owner bug report)
-Sidebar red card "Failed · Single · this Mac · <model> · the engine process (pid 25606) exited: exit status: 143 —
-no goose path stopped it" stayed for hours; Engine panel showed spinner "Checking · Single · this Mac",
-"Served model: no model mounted", RUN IT "Measuring your Macs and the model…" forever. Cause of the death: an
-agent ran `kill -TERM` on the rapid-mlx pid at 15:49 local (13:49Z). App restart cleared it.
-Asked: (1) dismiss works + card clears itself when status moves on; (2) panel never stuck in Checking/Measuring
-(bounded timeout -> real state with retry); (3) external SIGTERM (143) of an idle engine = neutral
-"Stopped outside goose", not red; one rule for every place the state is derived; regression test; live check
-per goose-feature-dev skill (packaged app + CDP, isolated GOOSE_PATH_ROOT/GOOSE_USER_DATA_DIR) or say unverified.
-
-## Findings so far (file:line at origin/main 0925b96990)
-- Sidebar card = `ui/desktop/src/components/engineGlance/EngineGlanceInApp.tsx` `EngineGlanceDockSlot`
-  rendering `EngineGlanceCard` (variant dock). The eye-slash = `engine-glance-hide`
-  (EngineGlanceCard.tsx:990-997, i18n `engineGlance.hide`) -> `setGlancePrefs({inApp:false})`: it HIDES THE
-  WHOLE CARD (persistent pref, replaced by a "Show the engine card" row, `dockRestorable`), it is not a
-  dismiss of the failure. Not broken, means something else. Rules: `utils/engineGlanceRules.ts:56-63`.
-- Card content: `utils/engineGlance.ts:705-740` single engine: `single.mode==='failed'` -> stage 'failed',
-  detail = `single.failedError`. Snapshot built in main by `utils/mlxEngineMonitor.ts` `readSingle` (~588-668):
-  `failedError = report.state==='failed' ? report.lastError`.
-- ENGINE TRUTH keeps "failed" forever: `crates/goose-sidecar/src/engine.rs:2373-2398` — ManagerState::Running
-  with an exited sidecar -> status.state="failed", last_error=`engine_exit_message(&exit)` (engine.rs:1462-1484)
-  on EVERY poll until a Mount/Unmount changes ManagerState. The exit sentence is built in
-  `crates/goose-sidecar/src/lib.rs:1316-1345` `exit_account` (signal case "the signal came from outside").
-  Note: exit status 143 is a normal exit code (launcher/uvx turned SIGTERM into 143), so `signal` is None there —
-  the "outside" branch does not fire; a 143 rule must match exit code 143 OR signal SIGTERM with stopped_by None.
-  Other copies of the "failed" derivation to unify: engine.rs:1871, 2106 (mount failures — keep red),
-  `utils/mlxTray.ts:1027`, `components/leanzero-swarm/MlxStateTile.tsx:1390-1470` (word/phase; Q-254 swap
-  rule `swapStopsEngine`), `MlxEngineView.tsx:913`, `utils/engineGlance.ts:519 nodesNavChip`,
-  fixtures `utils/nodeSwap.fixtures.ts:194` (already models exit 143 = swap's stop).
-- "Checking": `MlxStateTile.tsx:1456` word = state ?? (unreachable ? 'unreachable' : 'checking'); state comes
-  from `MlxEngineView.tsx:2651-2680` via `useLocalEngineStatus` (`components/leanzero-swarm/useMlxEngineStatus.ts`)
-  -> `createSharedPoll` in `components/leanzero-swarm/sharedStatusPoll.ts`. ROOT of "forever": `tick()` returns
-  while `inFlight > 0` and `readNow` has NO timeout — one ACP `mlxEngine/status` call that never resolves freezes
-  every watcher of that store for the life of the window (reads stays 0 -> Checking). Same likely for the
-  placement plan behind "Measuring your Macs and the model…" (`PlacementCard.tsx:1569`, `NewNodeDialog.tsx:112`):
-  check its call for a timeout too.
-- Why a status call could hang on the mule: Engine tab passes `fitModelId` -> `core_status`
-  (`crates/goose/src/acp/server/mlx_engine.rs:650-682`) runs `manager.mount_fit(model_id)` which reads the model
-  folder; the mule's models dir `~/.goose/models` is an NFS mount `192.168.0.2:/` (Thunderbolt from workhorse).
-  A stalled NFS read hangs the call; main's monitor (no fitModelId) kept working, which matches the symptom
-  (card updated, panel stuck). Also `manager.status()` takes the state lock + `sidecar.exited()` ->
-  `last_words()` (lib.rs:313) awaits the stderr reader. NOT PROVEN from logs (only errors are logged;
-  log on mule: ~/.local/state/goose/logs/cli/2026-10-26/20261026_154156.log, 6317 "executing a remote mlx op over
-  the mesh", 16 status errors all peerUnreachable for the Studio). Fix must not depend on which await hung.
-
-## Plan (do all)
-1. sharedStatusPoll.ts: bound every read (e.g. a `timeoutMs` option, default ~3x interval, min 10 s): a read
-   that does not land in time counts as FAILED with a clear error ("goose did not answer the engine status in
-   Ns") so the view shows the err banner + Retry, and the next tick reads again (in-flight slot released;
-   a late answer from the abandoned read is dropped by seq). vitest in sharedStatusPoll test file (fake timers,
-   a never-resolving read -> failed snapshot -> next tick reads again).
-2. Same bound for the placement plan fetch (find it from PlacementCard `loading`), resolving to an error state
-   with retry. Grep every `createSharedPoll(` user; all inherit the bound.
-3. Engine-side bound: wrap `manager.mount_fit` in core_status with `tokio::time::timeout` (few s) ->
-   mount_fit_error "reading the model folder did not finish in Ns (a network-mounted models folder can stall)".
-   Rust test if cheap.
-4. External stop rule, ONE place: sidecar/engine side — classify exit with stopped_by None and (exit code 143
-   or signal SIGTERM/SIGINT) as "stopped outside goose": status.state "stopped" (not "failed") + a neutral
-   `stopped_by`/detail "Stopped outside goose (SIGTERM from another process)". There is already a
-   `status.stopped_by = stopped_by_wire(...)` field (mlx_engine.rs:670) and ENGINE_STOPPED_BY — reuse it. Then
-   UI: mlxEngineMonitor readSingle gets 'off' for stopped -> card goes grey/away (dockShown needs
-   engine.present; stage 'off' => present false). Keep SIGKILL/other codes red. Table test on the pure
-   classifier (engine.rs tests near 4009 already assert exit wording).
-5. Card clears itself: with (4) + engine truth (Mount/Unmount change ManagerState) it already follows status;
-   add a glance-level dismiss of a failure? Prefer: make the eye control's label/tooltip say "Hide the engine
-   card" (it is) and add an explicit "Dismiss" (X) on a failed card that clears it until the status's
-   lastError changes (renderer-side key = lastError string, held in glanceStore). Test in EngineGlanceCard.test.tsx.
-6. i18n: new strings into en.json + all 15 catalogs (file order, not sorted). Gate: see skill (cargo fmt,
-   clippy -D warnings, cargo test -p goose-sidecar, cd ui/desktop && pnpm run lint:check && pnpm run test:run).
-   In a worktree: `cd ui && pnpm install --frozen-lockfile`, `source bin/activate-hermit`,
-   `export CARGO_TARGET_DIR=~/Projects/goose/target` AFTER hermit.
-7. Live: packaged app isolated (skill recipe), crafted ACP override via skill references/cdp-acp-override.mjs to
-   show (a) status that never answers -> panel leaves Checking after the bound, (b) failed 143 -> neutral.
-   Never open a window on the owner's screen without saying so (this is the workhorse; owner may be at it).
-
-## STATE 2026-10-26 (agent 2, stopped at the 160k context guard) — WIP commit, gate NOT run yet
-DONE (uncompiled for Rust; vitest green for the two UI test files below):
-- NEW `ui/desktop/src/utils/timeLimit.ts` (`withTimeLimit`, `TimeLimitError`, `limitWords`); acpConnection.ts's
-  private withTimeout replaced by it.
-- `sharedStatusPoll.ts`: `createSharedPoll(read, {what, limitMs})`, `readLimitMs(i)=max(10s,3*i)`; every read
-  raced against the limit -> failed snapshot "goose did not answer <what> in N s; reading it again", slot freed,
-  late answer dropped (race settled). Users named: useMlxEngineStatus ('the engine status'),
-  useMlxDistributedStatus ('the split’s status'), useChatServedBy ('what the engine is doing').
-  Tests appended to sharedStatusPoll.test.tsx (describe 'a read goose never answers', 3 tests) — PASS.
-- `acp/mlx-placement.ts`: `PLACEMENT_PLAN_LIMIT_MS=45_000` around placementPlan (failure published to
-  latestPlacementPlans). Test `acp/mlx-placement.timeLimit.test.ts` — PASS. PlacementCard already has a refresh
-  button (header) + err banner; NewNodeDialog has Retry; usePlacementPlans -> 'failed'.
-- `MlxEngineView.tsx`: "Engine unreachable" banner gets a "Read again" button (i18n `mlxEngineView.statusRetry`,
-  new prop `onRetryStatus` on EngineSection). i18n catalogs NOT yet updated (run i18n:extract / add to en.json +
-  15 catalogs, see skill changelog 2026-09-23 (1) for the safe catalog script).
-- `crates/goose/src/acp/server/mlx_engine.rs`: core_status mount_fit now via `bounded_fit(MOUNT_FIT_LIMIT=5s,
-  &MOUNT_FIT_BUSY, fut)` — spawn_blocking + Handle::block_on, tokio::time::timeout, single-flight AtomicBool with
-  Drop guard. NOT COMPILED. Rust test still to write in mlx_engine.rs `mod tests` (~line 1600): a future waiting on
-  a std mpsc/oneshot -> Err contains "did not finish in"; second call while busy -> Err "earlier read"; release
-  it, then busy clears (never use std::future::pending in spawn_blocking: runtime drop waits forever).
-
-TODO
-3. External stop rule (design decided, not coded):
-   - goose-sidecar lib.rs `SidecarExit` (372): add `code: Option<i32>`, `signal: Option<i32>` (fill at 474 from
-     `status.code()` / `ExitStatusExt::signal`) + `pub fn stopped_outside_goose(&self)->bool` =
-     stopped_by.is_none() && (code==Some(143)||code==Some(130)||signal==Some(SIGTERM)||signal==Some(SIGINT)).
-     SIGKILL / other codes stay failed.
-   - engine.rs status() Running branch (~2380): if exit.stopped_outside_goose() -> state "stopped", model_id None,
-     last_error None, new `EngineStatus.stopped_outside: bool = true` (add field ~1254, Default false);
-     else unchanged "failed".
-   - mlx_engine.rs `stopped_by_wire(state, stopper, outside: bool)`: outside && stopper None -> "outside"
-     (update its test ~1778 and the caller at core_status). Update doc on `stopped_by` in
-     goose-sdk-types custom_requests.rs:2620 (add `outside`), regenerate schema if a generator touches docs
-     (acp-schema.json carries descriptions: `just generate-acp`-ish; check `git grep -n "stoppedBy" crates/goose/acp-schema.json`).
-   - mlx_remote_single.rs:1028 restore_step: add arm `Some("outside")` -> Decline("something outside goose
-     stopped {peer}'s engine there, so this Mac does not start it again — Run it again to bring '{model}' back")
-     + test beside 2476.
-   - Table test of the classifier in engine.rs tests (~4009): 143/130/SIGTERM/SIGINT none -> outside;
-     137/SIGKILL/1 -> failed; stopped_by Some(..) + 143 -> not outside.
-   - UI: stopped -> mlxEngineMonitor readSingle 'off' -> glance present false (card clears). Show the neutral
-     words "Stopped outside goose" where the stopped state is named: MlxStateTile word (STATE_WORD 'stopped')
-     when status.stoppedBy==='outside' (thread stoppedBy through servingEngine input), test in MlxStateTile test.
-     mlxTray.ts:1027 / engineGlance nodesNavChip follow state, no change needed.
-4. Dismiss (X) on failed card: EngineGlanceCard.tsx (eye = engine-glance-hide at ~990 keeps its meaning). Add
-   `engine-glance-dismiss` X only when stage==='failed'; store dismissed key = detail (lastError) in glanceStore
-   (renderer); card hidden while engine.stage==='failed' && detail===dismissedKey; a changed detail shows it
-   again. i18n `engineGlance.dismissFailure` "Dismiss this failure". Test in EngineGlanceCard.test.tsx.
-5. i18n all 15 catalogs; gate: `source bin/activate-hermit; export CARGO_TARGET_DIR=~/Projects/goose/target`;
-   via ~/Projects/machine-sync/bin/heavy-run: cargo fmt --all; cargo clippy --all-targets -p goose -p goose-sidecar
-   -- -D warnings; cargo test -p goose-sidecar; cargo test -p goose --lib mlx_; cd ui/desktop && pnpm run
-   lint:check && pnpm run test:run. (ui deps already installed in this worktree.)
-6. Live check per skill (packaged + cdp-acp-override): never-answering mlxEngine/status -> banner after 10 s;
-   status {state:'stopped', stoppedBy:'outside'} -> neutral. Or state unverified.
-
-## STATE 2026-10-26 ~19:05 (agent 3, stopped at the 160k guard) — code for (3) and (4) written, gate NOT run
-DONE this round (uncompiled Rust; the two UI test files below PASS in vitest):
-- (3) sidecar lib.rs: `SidecarExit` gained `code`/`signal` (filled in `exited()`), `stopped_outside_goose()`
-  (stopped_by None && code 143/130 or SIGTERM/SIGINT) + table test `a_stop_signal_from_outside_goose_is_a_stop...`.
-  engine.rs: `EngineStatus.stopped_outside: Option<String>` (#[serde(default)]), Running-branch arm -> state
-  "stopped", model_id None, words from new `outside_stop_message`; integration test
-  `an_engine_stopped_from_outside_goose_reads_stopped_not_failed` (SIGTERM signal + a python that exits 143 on TERM).
-  goose-sdk-types custom_requests.rs: `stopped_by` doc names `outside`; NEW DTO field `stopped_outside`.
-  mlx_engine.rs: `stopped_by_wire(state, stopper, outside)` (+ tests), DTO mapping, bounded_fit test
-  `a_fit_read_that_stalls_is_given_up_on_and_no_second_one_joins_it` (oneshot-held future, multi_thread rt).
-  mlx_remote_single.rs: restore_step `Some("outside")` -> Decline + assertion in
-  `only_a_stopped_engine_nobody_stopped_is_restored`.
-  UI: MlxStateTile `stoppedBy` prop, word `stoppedOutside` ("Stopped outside goose", i18n
-  `mlxStateTile.state.stoppedOutside`); passed from MlxEngineView tile + StateBadge. Tests appended to
-  MlxStateTile.test.tsx (describe '3.0.132: ... stopped from outside goose') PASS.
-- (4) glanceStore.ts: `glanceFailureKey`, `dismissGlanceFailure`, `useDismissedGlanceFailure`,
-  `withoutDismissedFailure` (reset in resetEngineGlanceForTests). EngineGlanceInApp DockSlot applies it and passes
-  `onDismissFailure`; EngineGlanceCard draws X `engine-glance-dismiss` only when stage failed (i18n
-  `engineGlance.dismissFailure`); eye `engine-glance-hide` unchanged. Tests appended to EngineGlanceInApp.test.tsx PASS.
-- `cargo fmt --all` ran clean. A background `heavy-run cargo test -p goose-sidecar` was started at ~19:00
-  (log /private/tmp/claude-501/-Users-workhorse-Projects/b3c77359-c57d-472f-be64-067a0ce26b03/scratchpad/t1.log) —
-  result unknown to the next agent: RE-RUN it.
-
-TODO (next agent, in order)
-1. i18n: `cd ui/desktop && pnpm run i18n:extract` exited 127 here (pnpm not on PATH without hermit: run it after
-   `source bin/activate-hermit` from the worktree root). New keys: mlxEngineView.statusRetry,
-   mlxStateTile.state.stoppedOutside, engineGlance.dismissFailure. Add to all 15 catalogs in FILE order after the
-   en.json neighbour (skill changelog: json.dumps(ensure_ascii=False, indent=2)+newline, NOT sorted), translated.
-2. Schema: `just generate-acp-types` (DTO field + doc changed; CI check-acp-schema diffs acp-schema.json,
-   acp-meta.json, ui/sdk/src/generated). Then the UI can read `status.stoppedOutside` if wanted (not used yet).
-3. Gate (heavy-run, one at a time; script
-   /private/tmp/claude-501/-Users-workhorse-Projects/b3c77359-c57d-472f-be64-067a0ce26b03/scratchpad/rs.sh = hermit +
-   CARGO_TARGET_DIR=~/Projects/goose/target + "$@"): cargo build -p goose-cli; cargo clippy --all-targets -p goose
-   -p goose-sidecar -p goose-sdk-types -- -D warnings; cargo test -p goose-sidecar; cargo test -p goose --lib mlx_;
-   cargo test -p goose-sdk-types; ui: pnpm run lint:check && pnpm run test:run.
-   Check other EngineStatus/SidecarExit consumers compile (only struct literals: engine.rs 2307, lib.rs exited()).
-4. Negative controls (copy file to scratchpad, break the fix, run the one test, copy back — never git checkout --):
-   stopped_outside_goose -> return false (sidecar tests fail); stopped_by_wire `None if outside` arm removed;
-   restore_step outside arm removed (test asserts wording "something outside goose stopped" -> fails);
-   MlxStateTile stoppedOutside branch removed; DockSlot `push = live` (dismiss test fails); bounded_fit timeout
-   (replace limit with 60 s -> stall test fails/timeouts).
-5. Live check per skill (packaged app + cdp-acp-override) or state unverified. Commit, push
-   `git push origin HEAD:fix/engine-failure-card-sticks`. No DMG.
-- 19:10 RESULT of that background run: goose-sidecar compiles; lib unit tests 490 passed / 0 failed, incl.
-  `a_stop_signal_from_outside_goose_is_a_stop_everything_else_is_not` and
-  `an_engine_stopped_from_outside_goose_reads_stopped_not_failed` (the latter took >60 s: check whether a settle or
-  wait_exited is slow on the 143 leg before calling it done). Integration tests green. DOCTESTS failed with
-  E0460/E0463 "found possibly newer version of crate" = the shared ~/Projects/goose/target being rebuilt by another
-  worktree at the same time (environmental, not this change): re-run `cargo test -p goose-sidecar --doc` alone.
-  Still uncompiled: crates goose + goose-sdk-types (mlx_engine.rs, mlx_remote_single.rs, custom_requests.rs).
-
-## STATE 2026-10-26 ~19:40 (agent 4, stopped at the context guard) — FULL GATE GREEN, negative controls + live NOT done
-DONE (commits 76bee1293a i18n, 7ed5ed57e8 acp regen, then "MlxEngineView typecheck" fix):
-- i18n: 3 keys in en + all 15 catalogs (file order, translated; script scratchpad add_i18n.py). i18n:check passes (4053 msgs).
-- `just generate-acp-types` ran; acp-schema.json + ui/sdk/src/generated committed.
-- lint:check found `stoppedBy` missing on the hand-written `MlxEngineStatus` (ui/desktop/src/acp/mlx-engine.ts:66):
-  added `stoppedBy?` + `stoppedOutside?`.
-- GATE (all EXIT 0): cargo fmt --check; clippy --all-targets -p goose -p goose-sidecar -p goose-sdk-types -D warnings;
-  cargo test -p goose-sidecar (unit 490/0, integration, doctests all ok); cargo test -p goose-sdk-types (8/0);
-  cargo test -p goose --lib mlx_ (105/0, incl. fit-stall, outside stoppedBy, restore_step outside);
-  cargo build -p goose-cli; pnpm run lint:check; pnpm run test:run (555 files passed).
-- "SIGTERM test >60 s": MEASURED environmental. Same binary: 110 s twice (each mount->running 36 s), then 4.7 s on
-  three runs; sibling a_load_that_ends 26 s -> 2.2 s in the same windows. Per-status calls were <1.2 ms; nothing in
-  the test or fix is slow. No change made.
-TRAPS (cost time this round):
-- Workhorse is macOS 27 now: every cargo cmd needs `--config 'profile.dev.package."*".strip=false'` (sqlx_macros
-  "mis-aligned LINKEDIT"). Own target: CARGO_TARGET_DIR=/Users/workhorse/Projects/goose-wt-enginecard/target
-  (scratchpad rs.sh sets it) — the shared ~/Projects/goose/target raced with the mimo-distributed worktree.
-- Long cargo jobs: heavy-run in background + a foreground `for i in seq; grep -q ^EXIT log; sleep 15` wait (<=600 s).
-TODO (next agent)
-1. Negative controls (copy file to scratchpad, break, run ONE test, cp back; never git checkout --), each must FAIL:
-   lib.rs stopped_outside_goose -> false (a_stop_signal..., an_engine_stopped_from_outside...);
-   mlx_engine.rs stopped_by_wire drop `None if outside` arm (an_engine_stopped_from_outside_goose_says_outside...);
-   bounded_fit: limit ignored (use 60 s) (a_fit_read_that_stalls...); mlx_remote_single restore_step drop outside
-   arm (only_a_stopped_engine_nobody_stopped_is_restored); sharedStatusPoll limit removed (sharedStatusPoll.test.tsx
-   'a read goose never answers'); mlx-placement PLACEMENT_PLAN_LIMIT_MS race removed (mlx-placement.timeLimit.test.ts);
-   MlxStateTile stoppedOutside branch (MlxStateTile.test.tsx); EngineGlanceInApp DockSlot without
-   withoutDismissedFailure (EngineGlanceInApp.test.tsx).
-2. Live check per goose-feature-dev skill (packaged app, isolated GOOSE_PATH_ROOT/GOOSE_USER_DATA_DIR, own CDP port,
-   references/cdp-acp-override.mjs): never-answering mlxEngine/status -> err banner + "Read again" after 10 s;
-   status {state:'stopped', stoppedBy:'outside'} -> tile "Stopped outside goose", sidebar card gone. Else say unverified.
-3. Push `git push origin HEAD:fix/engine-failure-card-sticks`. No DMG.
-
-## STATE 2026-10-26 ~20:45 (agent 5) — NEGATIVE CONTROLS + LIVE CHECK DONE; branch ready to merge
-Negative controls (break -> run that one test -> restore -> green), all FAIL with the fix broken:
-- lib.rs stopped_outside_goose forced false: a_stop_signal_from_outside_goose... FAIL, an_engine_stopped_from_outside_goose_reads_stopped... FAIL
-- mlx_engine.rs `None if outside` arm removed: an_engine_stopped_from_outside_goose_says_outside... FAIL
-- bounded_fit timeout removed: a_fit_read_that_stalls... HUNG 14 min (never passed) -> test now has an outer 10 s limit
-  (fa608fa0e0) and FAILS in 10.0 s; single-flight busy check removed: FAIL
-- mlx_remote_single restore_step outside arm removed: only_a_stopped_engine_nobody_stopped_is_restored FAIL
-- sharedStatusPoll bound removed: 3/3 'a read goose never answers' FAIL; placement limit -> 1e9: FAIL
-- MlxStateTile stoppedOutside branch removed: FAIL; DockSlot without withoutDismissedFailure: FAIL;
-  dismissed failure never coming back (key compare dropped): FAIL
-Restored: cargo test -p goose --lib mlx_ 105/0; goose-sidecar targets ok; the four vitest files green; fmt + clippy -D warnings clean.
-Live (dev package, isolated GOOSE_PATH_ROOT/GOOSE_USER_DATA_DIR, CDP 9461, engine port 8191, mlx-community/Qwen3.5-9B-MLX-4bit):
-(a) SIGTERM uv pid -> status stopped/stoppedBy outside, Engine tile "Stopped outside goose", no sidebar card: PASS
-(b) SIGKILL -> red card with X + eye; X removes the card (Nodes chip + Engine tile still say Failed, by design); a new failure
-    (exit 137) brings the card back: PASS
-(c) never-answering mlxEngine/status -> Checking at 4 s, "Engine unreachable: goose did not answer the engine status in 10 s"
-    + "Read again" at 13 s; lifted hang + Read again -> real state: PASS
-Evidence: /Volumes/AI-workhorse/media/goose/enginecard-2026-10-26/*.png. Traps -> goose-feature-dev skill changelog 2026-10-26.
-Open (not this branch): SIGKILL of the uv launcher orphans the rapid-mlx python (still serves the port; status failed, monitor Idle).
-
-
----
-
-# HANDOFF: n-gram / prompt-lookup decoding lever (branch ngram-decoding)
-
-Updated 2026-10-26 by the second agent (stopped at the 160k ctx-guard; the CLAUDE.md/AGENTS.md
-reminders this repo injects cost ~60k on their own, so budget for that).
-
-## TRAP (cost the first attempt)
-Do NOT load the skills goose-mlx-inference / goose-feature-dev / node-dispatch with the Skill tool.
-`grep -n` them: ~/.claude/skills/<name>/SKILL.md. Never cat engine.rs (5400 lines): grep -n + sed -n.
-
-## DONE (commit 7e360e4223, step A Rust core)
-- NEW crates/goose-sidecar/src/prompt_lookup.rs: `PromptLookupMode {On,Off}` (auto = None),
-  `PromptLookupProfile {mode, min_ngram, max_ngram, max_draft}` (serde default, snake_case),
-  `PromptLookupLane {Mtp, Suffix, Unavailable(reason)}`, `lane()`, `model_is_hybrid(dir)` (config.json:
-  layer_types with linear_attention/mamba/ssm..., full_attention_interval>1, or model_type in a hybrid
-  list incl. qwen3_5/qwen3_next/granitemoehybrid/nemotron_h/lfm2), `engine_env()` (MTP lane only:
-  RAPID_MLX_MTP_PROMPT_LOOKUP=1/0 + _MIN_NGRAM(clamped>=2) _MAX_NGRAM(>=min) _MAX_TOKENS; Off sends only
-  =0), `engine_flags()` (Suffix lane + On only: --suffix-decoding, --suffix-max-draft <max_draft>,
-  --suffix-max-suffix-len <max_ngram>; min_ngram has no suffix-lane meaning). 10 unit tests.
-- engine.rs: `ModelProfile.prompt_lookup: PromptLookupProfile` (non-Option, default = auto);
-  `serves_mtp()` extracted from build_serve_command (same logic); build_serve_command appends
-  engine_flags when not auto; `pub fn prompt_lookup_lane(settings, model_id)`;
-  `pub fn build_serve_env(settings, model_id)`; `ManagerState::Running` carries `env`; mount reuse
-  compares argv AND env; config.env = sidecar_spawn_env() + serve env; restart_required compares both.
-  Test `prompt_lookup_rides_env_on_mtp_flags_on_pure_attention_and_nothing_on_a_hybrid`.
-- Gate at 7e360e4223: `cargo clippy -p goose-sidecar --all-targets -D warnings` clean;
-  `cargo test -p goose-sidecar` all green (lib 499 passed, 12 ignored; integration suites ok).
-
-## DONE 2026-10-26 (third agent)
-- A2 ACP wire 4bc16dcddd: MlxModelProfileDto.promptLookup (MlxPromptLookupDto, auto = absent),
-  MlxLocalModelDto.hasMtpHead/hybrid/hybridError; profile_to/from_dto + core_models_list; acp-schema +
-  ui/sdk generated regenerated; round-trip test in mlx_engine.rs tests.
-- B UI b16fa1a3d4: MlxPromptLookupFields.tsx (+ .test.tsx), Segmented Auto/On/Off, lane chip, numbers
-  (shortest n-gram MTP only), hybrid-without-MTP locked with reason, Auto reachable; NumericField exported
-  (spec key widened); drafts promptLookup* in MlxEngineView (draftsEqual uses DRAFT_KEYS); i18n 16 catalogs.
-  Gate: pnpm lint:check (typecheck+eslint+i18n) green, pnpm test:run 555 files / 5195 tests green.
-- D skill bf9e236db0: references/prompt-lookup-ngram.md + SKILL.md pointer; ~/.claude/skills/goose-knob-turning
-  changelog line (not git; projsync).
-- TRAP: workhorse is macOS 27 now: every cargo needs `--config 'profile.dev.package."*".strip=false'`
-  (else sqlx_macros "mis-aligned LINKEDIT").
-
-## OPEN
-- Live CDP check of a packaged build from this branch (saved profile -> engine env/argv) NOT done.
-- Engine owner: streaming space-drop before " [" / " &".
-- DONE 2026-10-27 (83ef968895, 5516c12e24): Flash-Next served WITH MTP (in-shard head, K=2); live proof
-  on workmule 106.88 tok/s code_edit 8k, see references/qwen4-flash-offload.md. Packaged-app CDP check NOT done.
-- Merge ngram-decoding to main.
-
-## Engine facts (verified in /Users/workhorse/Projects/Rapid-MLX-wt-offload @ v0.14.3-lz.14, READ-ONLY)
-- spec_decode/mtp/generator.py `_effective_prompt_lookup_policy`: env read per request; MIN>=2,
-  MAX>=MIN, MAX_TOKENS>=1; `_SAMPLED` is disable-only. `_prompt_lookup_is_enabled` needs
-  model.mtp_prompt_lookup_supported (qwen3_5_inject.py and qwen4_exp_inject.py set it).
-- qwen3_5_inject.py ~1009: family policy enabled_by_default=True, enabled_under_sampling=True,
-  min 8, max 64, max_tokens MAX_COPY_DRAFT_TOKENS (=31, prompt_lookup.py:175). Legacy default: off.
-- Suffix: cli.py ~12417 flags (store_true, defaults None -> drafter defaults max_draft 8, max_suffix_len 4,
-  min_confidence 0.3, min_draft_len 2); scheduler.py `_install_suffix_decoding` ~3418 logs
-  "[SuffixDecoding] disabled: model is hybrid" and returns (no crash) when !supports_spec_decode;
-  greedy-only, batch 1. Status counters: prompt_lookup_{proposals,drafted_tokens,accepted_tokens,
-  rejections,ev_declines,cache_fallthroughs,matched_suffix_tokens,mtp_sync_seconds}.
-
-## Unverified / risks
-- goose-side hybrid detection is a heuristic list; the engine's own `supports_spec_decode` is the authority
-  (it degrades silently-with-a-log, not by refusing). Distributed / remote-single engines do NOT get the env.
-
-## Rules
-`source bin/activate-hermit`, then `export CARGO_TARGET_DIR=/Users/workhorse/Projects/goose-wt-ngram/target`.
-Commits: `git -c user.name=leanzero.srl -c user.email=office@leanzero.net commit`, NO Co-Authored-By.
-Push: `git push -u origin HEAD:ngram-decoding`. Port 8471 only; never pkill by pattern; heavy runs via
-~/Projects/machine-sync/bin/node-run (workhorse or gabee, not workmule).
+## Traps hit
+- sanitizeSettingsForWrite dropped unknown fields: it now carries `memory` (else a Sampling save wiped tunables).
+- flag_value helper already existed in engine.rs tests (duplicate name compile error).
+- i18n: other locales must carry every en key (i18n-validate-locale); merge script kept en order (moved one
+  pre-existing out-of-order key mlxSetup.step2Reading, harmless).
