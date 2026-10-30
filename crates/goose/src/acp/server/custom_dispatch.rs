@@ -1052,6 +1052,30 @@ impl GooseAcpAgent {
         self.on_mlx_engine_settings_read(req).await
     }
 
+    #[custom_method(MlxEngineMemoryMachineRequest)]
+    async fn dispatch_mlx_engine_memory_machine(
+        &self,
+        req: MlxEngineMemoryMachineRequest,
+    ) -> Result<MlxEngineMemoryMachineResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_memory_machine(req).await
+    }
+
+    #[custom_method(MlxEngineWiredLimitApplyRequest)]
+    async fn dispatch_mlx_engine_wired_limit_apply(
+        &self,
+        req: MlxEngineWiredLimitApplyRequest,
+    ) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_wired_limit_apply(req).await
+    }
+
+    #[custom_method(MlxEngineWiredLimitRemoveDaemonRequest)]
+    async fn dispatch_mlx_engine_wired_limit_remove_daemon(
+        &self,
+        req: MlxEngineWiredLimitRemoveDaemonRequest,
+    ) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_wired_limit_remove_daemon(req).await
+    }
+
     #[custom_method(MlxEngineSettingsUpdateRequest)]
     async fn dispatch_mlx_engine_settings_update(
         &self,

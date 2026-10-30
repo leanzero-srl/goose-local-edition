@@ -641,6 +641,21 @@
       "responseType": "MlxEngineSettingsResponse_unstable"
     },
     {
+      "method": "_goose/unstable/mlxEngine/memoryMachine",
+      "requestType": "MlxEngineMemoryMachineRequest_unstable",
+      "responseType": "MlxEngineMemoryMachineResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/wiredLimitApply",
+      "requestType": "MlxEngineWiredLimitApplyRequest_unstable",
+      "responseType": "MlxEngineWiredLimitResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/wiredLimitRemoveDaemon",
+      "requestType": "MlxEngineWiredLimitRemoveDaemonRequest_unstable",
+      "responseType": "MlxEngineWiredLimitResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/mlxEngine/settingsUpdate",
       "requestType": "MlxEngineSettingsUpdateRequest_unstable",
       "responseType": "MlxEngineSettingsResponse_unstable"

@@ -7283,6 +7283,23 @@
           "description": "The admission cap this goose starts its engine with (`--max-concurrent-requests`) — what\na Link peer routing chat here sizes its node to. Absent from goose builds before it.",
           "minimum": 0
         },
+        "memoryBudget": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxEngineMemoryBudgetDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The engine's own memory plan and use (`/v1/status` `memory_budget`, lz.20+)."
+        },
+        "memoryBudgetError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "gateMessage": {
           "type": [
             "string",
@@ -7503,6 +7520,158 @@
         "restartRequired"
       ],
       "description": "Live MLX engine state. `state` is one of \"stopped\" | \"mounting\" | \"running\" | \"failed\".\n`context_window` / `tool_call_parser` come from a live `/v1/models` probe and are never\nfabricated: a failed probe leaves them unset and reports `probe_error` instead."
+    },
+    "MlxEngineMemoryBudgetDto": {
+      "type": "object",
+      "properties": {
+        "physicalBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "deviceWorkingSetBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "wiredLimitMb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "mode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "\"auto\" | \"manual\"."
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "\"auto-context\" | \"auto-weights\" | \"manual-utilization\" | \"manual-gb\"."
+        },
+        "resolvedUtilization": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "limitBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "binding": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "\"engine\" | \"macos_working_set\" | \"memory_floor\": which bound holds the cap."
+        },
+        "weightsBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "planContextTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "kvBytesPerToken": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "planNeedBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "prefixBudgetBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "memoryFloorBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "othersBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "freeBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "effectiveCeilingBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "activeBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "peakBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "maxContextAtCeiling": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "tunables": {
+          "type": "object",
+          "additionalProperties": {},
+          "description": "The tunables the engine resolved, by its own names.",
+          "default": {}
+        }
+      },
+      "description": "The running engine's `/v1/status` `memory_budget` (Rapid-MLX lz.20+), bytes unless named.\nEvery field is absent when the engine did not report it — never a guessed 0."
     },
     "MlxMountFitDto": {
       "type": "object",
@@ -9326,6 +9495,11 @@
           },
           "description": "Per-model sampling/context profiles keyed by HF model id — the source of truth\nfor the flags each model mounts with.",
           "default": {}
+        },
+        "memory": {
+          "$ref": "#/$defs/MlxEngineMemoryTunablesDto",
+          "description": "This Mac's engine memory tunables (`mlx_engine.memory`), the same for every model.",
+          "default": {}
         }
       },
       "required": [
@@ -9531,6 +9705,238 @@
         "on",
         "off"
       ]
+    },
+    "MlxEngineMemoryTunablesDto": {
+      "type": "object",
+      "properties": {
+        "metalLimitGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "`--metal-limit-gb`; absent = auto."
+        },
+        "memoryFloorGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "`--memory-floor-gb`."
+        },
+        "prefixCacheGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "`--cache-memory-mb`, entered in GB."
+        },
+        "prefillStepSize": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "`--prefill-step-size` (tokens).",
+          "minimum": 0
+        },
+        "maxContextTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "`--max-model-len` (tokens); wins over the mounted model's profile `contextLimit`.",
+          "minimum": 0
+        },
+        "guardMarginGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "`--memory-guard-margin-gb`."
+        },
+        "maxConcurrentRequests": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "`--max-concurrent-requests`.",
+          "minimum": 0
+        },
+        "autoUtilizationFloor": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "`--auto-utilization-floor`."
+        },
+        "autoUtilizationCeiling": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "`--auto-utilization-ceiling`."
+        },
+        "autoHeadroomFraction": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "`--auto-headroom-fraction`."
+        },
+        "systemReserveFraction": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "`--system-reserve-fraction`."
+        }
+      },
+      "description": "The engine memory tunables (goose-sidecar `memory_tunables::MemoryTunables`), each its own\nengine flag (fork lz/metal-tunables INTERFACE.md). Absent = the engine's default, except\n`memoryFloorGb`, whose absence means goose's per-machine default (round(8% x physical GB))."
+    },
+    "MlxEngineMemoryMachineRequest_unstable": {
+      "type": "object",
+      "description": "This Mac's memory facts for the Memory tab, readable while no engine runs. Local only: the\nGPU wired limit can only be changed at the Mac whose password prompt appears.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/memoryMachine"
+    },
+    "MlxEngineMemoryMachineResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "physicalBytes": {
+          "type": "integer",
+          "description": "`hw.memsize`.",
+          "minimum": 0
+        },
+        "availableBytes": {
+          "type": "integer",
+          "description": "Free pages plus reclaimable file cache right now.",
+          "minimum": 0
+        },
+        "workingSetBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Metal's recommended working set as goose read it at its start (Metal fixes it per\nprocess; a new wired limit reaches it at the next engine start).",
+          "minimum": 0
+        },
+        "workingSetError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "wiredLimitMb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "`sysctl -n iogpu.wired_limit_mb` (0 = macOS default).",
+          "minimum": 0
+        },
+        "wiredLimitError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "daemonWiredLimitMb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The boot-time LaunchDaemon's value; absent when none is installed.",
+          "minimum": 0
+        },
+        "daemonError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "defaultFloorGb": {
+          "type": "number",
+          "format": "double",
+          "description": "goose's default free-memory floor on this Mac: round(8% x physical GB)."
+        },
+        "tunablesSupported": {
+          "type": "boolean",
+          "description": "Whether the configured engine launcher reads the lz.20 memory flags."
+        },
+        "launcher": {
+          "type": "string",
+          "description": "The configured launcher, for the \"needs lz.20\" line."
+        }
+      },
+      "required": [
+        "physicalBytes",
+        "availableBytes",
+        "defaultFloorGb",
+        "tunablesSupported",
+        "launcher"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/memoryMachine"
+    },
+    "MlxEngineWiredLimitApplyRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "mb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "persist": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "mb"
+      ],
+      "description": "Set the macOS GPU wired limit through the macOS administrator prompt (the person types their\npassword). `persist` also installs the boot-time LaunchDaemon. `mb` is 0 or 8192..physical MB.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/wiredLimitApply"
+    },
+    "MlxEngineWiredLimitResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "wiredLimitMb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The limit read back after the change.",
+          "minimum": 0
+        },
+        "daemonWiredLimitMb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "command": {
+          "type": "string",
+          "description": "The root command macOS ran."
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "x-side": "agent"
+    },
+    "MlxEngineWiredLimitRemoveDaemonRequest_unstable": {
+      "type": "object",
+      "description": "Remove the boot-time LaunchDaemon (the live limit stays until reboot).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/wiredLimitRemoveDaemon"
     },
     "MlxEngineSettingsUpdateRequest_unstable": {
       "type": "object",
@@ -21998,6 +22404,33 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/MlxEngineMemoryMachineRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/memoryMachine",
+                  "title": "MlxEngineMemoryMachineRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineWiredLimitApplyRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/wiredLimitApply",
+                  "title": "MlxEngineWiredLimitApplyRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineWiredLimitRemoveDaemonRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/wiredLimitRemoveDaemon",
+                  "title": "MlxEngineWiredLimitRemoveDaemonRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/MlxEngineSettingsUpdateRequest_unstable"
                     }
                   ],
@@ -23457,6 +23890,22 @@
                         }
                       ],
                       "title": "MlxEngineSettingsResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineMemoryMachineResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineMemoryMachineResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineWiredLimitResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineWiredLimitResponse_unstable"
                     },
                     {
                       "allOf": [

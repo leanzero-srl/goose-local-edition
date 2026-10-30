@@ -2545,6 +2545,179 @@ pub struct MlxEngineSettingsDto {
     /// for the flags each model mounts with.
     #[serde(default)]
     pub model_profiles: BTreeMap<String, MlxModelProfileDto>,
+    /// This Mac's engine memory tunables (`mlx_engine.memory`), the same for every model.
+    #[serde(default)]
+    pub memory: MlxEngineMemoryTunablesDto,
+}
+
+/// The engine memory tunables (goose-sidecar `memory_tunables::MemoryTunables`), each its own
+/// engine flag (fork lz/metal-tunables INTERFACE.md). Absent = the engine's default, except
+/// `memoryFloorGb`, whose absence means goose's per-machine default (round(8% x physical GB)).
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMemoryTunablesDto {
+    /// `--metal-limit-gb`; absent = auto.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metal_limit_gb: Option<f64>,
+    /// `--memory-floor-gb`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_floor_gb: Option<f64>,
+    /// `--cache-memory-mb`, entered in GB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_cache_gb: Option<f64>,
+    /// `--prefill-step-size` (tokens).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill_step_size: Option<u32>,
+    /// `--max-model-len` (tokens); wins over the mounted model's profile `contextLimit`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<u32>,
+    /// `--memory-guard-margin-gb`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard_margin_gb: Option<f64>,
+    /// `--max-concurrent-requests`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_requests: Option<u32>,
+    /// `--auto-utilization-floor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_utilization_floor: Option<f64>,
+    /// `--auto-utilization-ceiling`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_utilization_ceiling: Option<f64>,
+    /// `--auto-headroom-fraction`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_headroom_fraction: Option<f64>,
+    /// `--system-reserve-fraction`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_reserve_fraction: Option<f64>,
+}
+
+/// The running engine's `/v1/status` `memory_budget` (Rapid-MLX lz.20+), bytes unless named.
+/// Every field is absent when the engine did not report it — never a guessed 0.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMemoryBudgetDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physical_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_working_set_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wired_limit_mb: Option<u64>,
+    /// "auto" | "manual".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// "auto-context" | "auto-weights" | "manual-utilization" | "manual-gb".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_utilization: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit_bytes: Option<u64>,
+    /// "engine" | "macos_working_set" | "memory_floor": which bound holds the cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weights_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_context_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_bytes_per_token: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_need_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix_budget_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_floor_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub others_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_ceiling_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_at_ceiling: Option<u64>,
+    /// The tunables the engine resolved, by its own names.
+    #[serde(default)]
+    pub tunables: BTreeMap<String, serde_json::Value>,
+}
+
+/// This Mac's memory facts for the Memory tab, readable while no engine runs. Local only: the
+/// GPU wired limit can only be changed at the Mac whose password prompt appears.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/memoryMachine",
+    response = MlxEngineMemoryMachineResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMemoryMachineRequest {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMemoryMachineResponse {
+    /// `hw.memsize`.
+    pub physical_bytes: u64,
+    /// Free pages plus reclaimable file cache right now.
+    pub available_bytes: u64,
+    /// Metal's recommended working set as goose read it at its start (Metal fixes it per
+    /// process; a new wired limit reaches it at the next engine start).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_set_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_set_error: Option<String>,
+    /// `sysctl -n iogpu.wired_limit_mb` (0 = macOS default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wired_limit_mb: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wired_limit_error: Option<String>,
+    /// The boot-time LaunchDaemon's value; absent when none is installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daemon_wired_limit_mb: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daemon_error: Option<String>,
+    /// goose's default free-memory floor on this Mac: round(8% x physical GB).
+    pub default_floor_gb: f64,
+    /// Whether the configured engine launcher reads the lz.20 memory flags.
+    pub tunables_supported: bool,
+    /// The configured launcher, for the "needs lz.20" line.
+    pub launcher: String,
+}
+
+/// Set the macOS GPU wired limit through the macOS administrator prompt (the person types their
+/// password). `persist` also installs the boot-time LaunchDaemon. `mb` is 0 or 8192..physical MB.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/wiredLimitApply",
+    response = MlxEngineWiredLimitResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineWiredLimitApplyRequest {
+    pub mb: u64,
+    #[serde(default)]
+    pub persist: bool,
+}
+
+/// Remove the boot-time LaunchDaemon (the live limit stays until reboot).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/wiredLimitRemoveDaemon",
+    response = MlxEngineWiredLimitResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineWiredLimitRemoveDaemonRequest {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineWiredLimitResponse {
+    /// The limit read back after the change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wired_limit_mb: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daemon_wired_limit_mb: Option<u64>,
+    /// The root command macOS ran.
+    pub command: String,
 }
 
 /// Live MLX engine state. `state` is one of "stopped" | "mounting" | "running" | "failed".
@@ -2582,6 +2755,11 @@ pub struct MlxEngineStatusDto {
     /// a Link peer routing chat here sizes its node to. Absent from goose builds before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_concurrent_requests: Option<u32>,
+    /// The engine's own memory plan and use (`/v1/status` `memory_budget`, lz.20+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_budget: Option<MlxEngineMemoryBudgetDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_budget_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate_message: Option<String>,
     /// The last memory-gate verdict for `gate_message`: "allow" | "warn" | "block".
@@ -5545,6 +5723,47 @@ pub struct LeanzeroLinkJobsPlaceResponse {
 #[cfg(test)]
 mod mlx_engine_status_dto_tests {
     use super::*;
+
+    #[test]
+    fn memory_tunables_round_trip_and_absent_stays_absent() {
+        let settings = MlxEngineSettingsDto {
+            models_dir: "~/.goose/models".into(),
+            port: 8090,
+            memory: MlxEngineMemoryTunablesDto {
+                metal_limit_gb: Some(112.0),
+                memory_floor_gb: Some(4.0),
+                max_context_tokens: Some(262_144),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&settings).unwrap();
+        assert_eq!(value["memory"]["metalLimitGb"], 112.0);
+        assert_eq!(value["memory"]["maxContextTokens"], 262_144);
+        assert!(value["memory"].get("prefixCacheGb").is_none());
+        let back: MlxEngineSettingsDto = serde_json::from_value(value).unwrap();
+        assert_eq!(back.memory, settings.memory);
+        let legacy: MlxEngineSettingsDto = serde_json::from_value(serde_json::json!({
+            "modelsDir": "~/.goose/models", "port": 8090, "spawnCommand": []
+        }))
+        .unwrap();
+        assert_eq!(legacy.memory, MlxEngineMemoryTunablesDto::default());
+
+        let status = MlxEngineStatusDto {
+            state: "running".into(),
+            memory_budget: Some(MlxEngineMemoryBudgetDto {
+                kv_bytes_per_token: Some(65_536),
+                binding: Some("macos_working_set".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&status).unwrap();
+        assert_eq!(value["memoryBudget"]["kvBytesPerToken"], 65_536);
+        assert!(value["memoryBudget"].get("activeBytes").is_none());
+        let back: MlxEngineStatusDto = serde_json::from_value(value).unwrap();
+        assert_eq!(back.memory_budget, status.memory_budget);
+    }
 
     // Q1: `activeRequests` is the engine's own in-flight count. Absent must stay absent on
     // the wire (no `null`), an explicit 0 is a FACT (idle) distinct from absent, and a body

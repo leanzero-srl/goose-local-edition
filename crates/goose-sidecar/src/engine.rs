@@ -22,7 +22,7 @@ use crate::kv_cache::{self, KvCacheMode};
 use crate::machine::{
     self, LoadClaim, LoadHolder, LoadLock, LoadLockAttempt, LoadLockHeld, OtherEngine,
 };
-use crate::memory_tunables::MemoryTunables;
+use crate::memory_tunables::{EngineMemoryBudget, MemoryTunables};
 use crate::model_identity::{NodeModel, ServedNames};
 use crate::ple_offload;
 use crate::port_holder;
@@ -1693,6 +1693,11 @@ pub struct EngineStatus {
     /// or its body lacked the counts. Kept apart from `probe_error` (the `/v1/models`
     /// probe) so a served id and a missing busy fact are two visible facts, not one.
     pub active_requests_error: Option<String>,
+    /// The engine's `/v1/status` `memory_budget` (lz.20+): its resolved cap, binding, KV per
+    /// token and live use. `None` while no engine runs, on an older engine, or exactly when
+    /// `memory_budget_error` says why it could not be read.
+    pub memory_budget: Option<EngineMemoryBudget>,
+    pub memory_budget_error: Option<String>,
     pub gate_message: Option<String>,
     pub gate_verdict: Option<String>,
     /// The last memory-gate verdict whole, with the model it judged — what `gate_message` and
@@ -1996,6 +2001,7 @@ pub struct MlxEngineManager {
     /// engine answers to (`build_serve_command`). Empty until the owner of the config hands them over.
     nodes: StdMutex<Vec<NodeModel>>,
     last_gate: StdMutex<Option<GateJudged>>,
+    last_memory_budget: StdMutex<Option<(String, EngineMemoryBudget)>>,
     /// The model a mount is making room for (macOS compaction runs before the gate judges again).
     making_room: StdMutex<Option<(String, u64)>>,
     /// The mount waiting for another load to leave this Mac (`mount_after_load`).
@@ -2040,6 +2046,7 @@ impl MlxEngineManager {
             settings: StdMutex::new(Self::initial_settings()),
             nodes: StdMutex::new(Vec::new()),
             last_gate: StdMutex::new(None),
+            last_memory_budget: StdMutex::new(None),
             making_room: StdMutex::new(None),
             waiting_for_load: StdMutex::new(None),
             wait_tickets: std::sync::atomic::AtomicU64::new(0),
@@ -2834,6 +2841,8 @@ impl MlxEngineManager {
             probe_error: None,
             active_requests: None,
             active_requests_error: None,
+            memory_budget: None,
+            memory_budget_error: None,
             gate_message,
             gate_verdict,
             gate,
@@ -2991,9 +3000,9 @@ impl MlxEngineManager {
                 }
             };
             let base_url = status.base_url.as_deref().expect("set for running state");
-            let (model_info, active_requests) = tokio::join!(
+            let (model_info, status_body) = tokio::join!(
                 self.probe_model_info(base_url),
-                self.probe_active_requests(base_url)
+                self.probe_status_body(base_url)
             );
             match model_info {
                 Ok((served_model_id, context_window, tool_call_parser)) => {
@@ -3003,18 +3012,45 @@ impl MlxEngineManager {
                 }
                 Err(e) => status.probe_error = Some(format!("{e:#}")),
             }
-            match active_requests {
-                Ok(count) => status.active_requests = Some(count),
-                Err(e) => status.active_requests_error = Some(format!("{e:#}")),
+            match status_body.map(|body| {
+                (
+                    parse_active_requests(&body),
+                    crate::memory_tunables::parse_memory_budget(&body),
+                )
+            }) {
+                Ok((count, budget)) => {
+                    match count {
+                        Ok(count) => status.active_requests = Some(count),
+                        Err(e) => status.active_requests_error = Some(format!("{e:#}")),
+                    }
+                    match budget {
+                        Ok(budget) => status.memory_budget = budget,
+                        Err(e) => status.memory_budget_error = Some(format!("{e:#}")),
+                    }
+                }
+                Err(e) => {
+                    status.active_requests_error = Some(format!("{e:#}"));
+                    status.memory_budget_error = Some(format!("{e:#}"));
+                }
+            }
+            if let Some(budget) = &status.memory_budget {
+                *self.last_memory_budget.lock().unwrap() =
+                    Some((running_model.clone(), budget.clone()));
             }
         }
         status
     }
 
+    /// The last `memory_budget` a running engine reported, with the model it served: the KV per
+    /// token a settings change is validated against.
+    pub fn last_memory_budget(&self) -> Option<(String, EngineMemoryBudget)> {
+        self.last_memory_budget.lock().unwrap().clone()
+    }
+
     /// GET `/v1/status` — Rapid-MLX 0.13.1 `routes/health.py:304`, on the router that is
     /// auth-gated only when the engine was given an API key (the serve argv passes none).
     /// The same probe client and cadence as `/v1/models`; no clock of its own.
-    async fn probe_active_requests(&self, base_url: &str) -> Result<u32> {
+    async fn probe_status_body(&self, base_url: &str) -> Result<String> {
         let url = format!("{base_url}/v1/status");
         let resp = self
             .probe_client
@@ -3025,7 +3061,7 @@ impl MlxEngineManager {
         let status = resp.status();
         let body = resp.text().await.context("reading /v1/status body")?;
         ensure!(status.is_success(), "GET {url} returned HTTP {status}");
-        parse_active_requests(&body)
+        Ok(body)
     }
 
     #[allow(clippy::type_complexity)]

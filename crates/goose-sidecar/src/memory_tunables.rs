@@ -318,6 +318,53 @@ impl MemoryTunables {
     }
 }
 
+/// This Mac's (physical, available) bytes, read while no engine runs (hw.memsize and the live
+/// page counters `host_statistics64` copies, `memory::measure`).
+pub fn machine_memory() -> anyhow::Result<(u64, u64)> {
+    let reading = crate::memory::measure()?;
+    Ok((reading.total_bytes, reading.available_bytes))
+}
+
+/// The engine's `/v1/status` `memory_budget` block (fork INTERFACE.md): what it planned under and
+/// what it holds now. Every figure is `None` when the engine did not report it, never a guessed 0.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EngineMemoryBudget {
+    pub physical_bytes: Option<u64>,
+    pub device_working_set_bytes: Option<u64>,
+    pub wired_limit_mb: Option<u64>,
+    pub mode: Option<String>,
+    pub source: Option<String>,
+    pub resolved_utilization: Option<f64>,
+    pub limit_bytes: Option<u64>,
+    pub binding: Option<String>,
+    pub weights_bytes: Option<u64>,
+    pub plan_context_tokens: Option<u64>,
+    pub kv_bytes_per_token: Option<u64>,
+    pub plan_need_bytes: Option<u64>,
+    pub prefix_budget_bytes: Option<u64>,
+    pub memory_floor_bytes: Option<u64>,
+    pub others_bytes: Option<u64>,
+    pub free_bytes: Option<u64>,
+    pub effective_ceiling_bytes: Option<u64>,
+    pub active_bytes: Option<u64>,
+    pub peak_bytes: Option<u64>,
+    pub max_context_at_ceiling: Option<u64>,
+    pub tunables: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+/// The `memory_budget` block of a `/v1/status` body: `Ok(None)` when the engine has none (an
+/// engine before lz.20), `Err` when it has one goose cannot read.
+pub fn parse_memory_budget(body: &str) -> anyhow::Result<Option<EngineMemoryBudget>> {
+    let parsed: serde_json::Value = serde_json::from_str(body)?;
+    match parsed.get("memory_budget") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(block) => Ok(Some(serde_json::from_value(block.clone()).map_err(
+            |e| anyhow::anyhow!("/v1/status memory_budget is unreadable: {e}"),
+        )?)),
+    }
+}
+
 /// A float the way an engine flag reads it: no trailing `.0` on whole numbers.
 fn fmt_num(v: f64) -> String {
     if v.fract() == 0.0 && v.abs() < 1e15 {
@@ -336,6 +383,33 @@ mod tests {
     use super::*;
 
     const GIB: u64 = 1024 * 1024 * 1024;
+
+    #[test]
+    fn the_status_memory_budget_parses_and_its_absence_is_none() {
+        let body = serde_json::json!({
+            "num_running": 0,
+            "memory_budget": {
+                "physical_bytes": 103079215104u64,
+                "device_working_set_bytes": 77309411328u64,
+                "wired_limit_mb": 0,
+                "mode": "auto",
+                "source": "auto-context",
+                "binding": "engine",
+                "limit_bytes": 70000000000u64,
+                "kv_bytes_per_token": 65536,
+                "active_bytes": null,
+                "tunables": {"metal_limit_gb": null, "memory_floor_gb": 8}
+            }
+        })
+        .to_string();
+        let b = parse_memory_budget(&body).unwrap().unwrap();
+        assert_eq!(b.kv_bytes_per_token, Some(65536));
+        assert_eq!(b.binding.as_deref(), Some("engine"));
+        assert_eq!(b.active_bytes, None);
+        assert_eq!(b.tunables["memory_floor_gb"], 8);
+        assert_eq!(parse_memory_budget(r#"{"num_running":0}"#).unwrap(), None);
+        assert!(parse_memory_budget(r#"{"memory_budget":{"limit_bytes":"x"}}"#).is_err());
+    }
 
     #[test]
     fn the_default_floor_is_eight_percent_of_physical_gb() {

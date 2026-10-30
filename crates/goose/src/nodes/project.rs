@@ -11,7 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use goose_sidecar::engine::{served_model_id, EngineSettings, MAX_CONCURRENT_REQUESTS};
+use goose_sidecar::engine::{max_concurrent_requests, served_model_id, EngineSettings};
 use serde_json::{json, Map, Value};
 
 use super::{
@@ -363,7 +363,7 @@ fn device_for(
             json!({
                 "id": def.id,
                 "model_id": served_model_id(engine, configured),
-                "weight": MAX_CONCURRENT_REQUESTS,
+                "weight": max_concurrent_requests(engine),
                 "enabled": true,
                 "instances": 1,
                 "engine": "mlx-sidecar",

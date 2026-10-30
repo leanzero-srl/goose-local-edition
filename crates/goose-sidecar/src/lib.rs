@@ -52,6 +52,7 @@ pub mod port_holder;
 pub mod prompt_lookup;
 mod subprocess;
 pub mod thinking;
+pub mod wired_limit;
 
 pub use fit::{FitVerdict, Verdict, GIB};
 pub use memory::{dir_size_bytes, disk_space, measure, MemoryReading};

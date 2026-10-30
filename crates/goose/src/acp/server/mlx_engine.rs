@@ -18,10 +18,12 @@ use goose_sidecar::hf::{self, DownloadTracker};
 use goose_sidecar::kv_cache::{
     self, KvCacheFacts, KvCacheMeasurement, KvCacheMode, KvModeMeasurement,
 };
+use goose_sidecar::memory_tunables::{self, EngineMemoryBudget, MemoryTunables};
 use goose_sidecar::model_identity::NodeModel;
 use goose_sidecar::ple_offload;
 use goose_sidecar::prompt_lookup::{self, PromptLookupMode, PromptLookupProfile};
 use goose_sidecar::thinking::{self, ThinkingCapabilities};
+use goose_sidecar::wired_limit;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::sync::{LazyLock, Mutex as StdMutex, OnceLock};
@@ -505,6 +507,64 @@ fn validate_changed_thinking_choices(
     Ok(())
 }
 
+fn memory_to_dto(m: MemoryTunables) -> MlxEngineMemoryTunablesDto {
+    MlxEngineMemoryTunablesDto {
+        metal_limit_gb: m.metal_limit_gb,
+        memory_floor_gb: m.memory_floor_gb,
+        prefix_cache_gb: m.prefix_cache_gb,
+        prefill_step_size: m.prefill_step_size,
+        max_context_tokens: m.max_context_tokens,
+        guard_margin_gb: m.guard_margin_gb,
+        max_concurrent_requests: m.max_concurrent_requests,
+        auto_utilization_floor: m.auto_utilization_floor,
+        auto_utilization_ceiling: m.auto_utilization_ceiling,
+        auto_headroom_fraction: m.auto_headroom_fraction,
+        system_reserve_fraction: m.system_reserve_fraction,
+    }
+}
+
+fn memory_from_dto(m: MlxEngineMemoryTunablesDto) -> MemoryTunables {
+    MemoryTunables {
+        metal_limit_gb: m.metal_limit_gb,
+        memory_floor_gb: m.memory_floor_gb,
+        prefix_cache_gb: m.prefix_cache_gb,
+        prefill_step_size: m.prefill_step_size,
+        max_context_tokens: m.max_context_tokens,
+        guard_margin_gb: m.guard_margin_gb,
+        max_concurrent_requests: m.max_concurrent_requests,
+        auto_utilization_floor: m.auto_utilization_floor,
+        auto_utilization_ceiling: m.auto_utilization_ceiling,
+        auto_headroom_fraction: m.auto_headroom_fraction,
+        system_reserve_fraction: m.system_reserve_fraction,
+    }
+}
+
+fn memory_budget_to_dto(b: EngineMemoryBudget) -> MlxEngineMemoryBudgetDto {
+    MlxEngineMemoryBudgetDto {
+        physical_bytes: b.physical_bytes,
+        device_working_set_bytes: b.device_working_set_bytes,
+        wired_limit_mb: b.wired_limit_mb,
+        mode: b.mode,
+        source: b.source,
+        resolved_utilization: b.resolved_utilization,
+        limit_bytes: b.limit_bytes,
+        binding: b.binding,
+        weights_bytes: b.weights_bytes,
+        plan_context_tokens: b.plan_context_tokens,
+        kv_bytes_per_token: b.kv_bytes_per_token,
+        plan_need_bytes: b.plan_need_bytes,
+        prefix_budget_bytes: b.prefix_budget_bytes,
+        memory_floor_bytes: b.memory_floor_bytes,
+        others_bytes: b.others_bytes,
+        free_bytes: b.free_bytes,
+        effective_ceiling_bytes: b.effective_ceiling_bytes,
+        active_bytes: b.active_bytes,
+        peak_bytes: b.peak_bytes,
+        max_context_at_ceiling: b.max_context_at_ceiling,
+        tunables: b.tunables,
+    }
+}
+
 fn settings_to_dto(settings: EngineSettings) -> MlxEngineSettingsDto {
     MlxEngineSettingsDto {
         model_id: settings.model_id,
@@ -525,6 +585,7 @@ fn settings_to_dto(settings: EngineSettings) -> MlxEngineSettingsDto {
             .into_iter()
             .map(|(id, p)| (id, profile_to_dto(p)))
             .collect(),
+        memory: memory_to_dto(settings.memory),
     }
 }
 
@@ -548,6 +609,7 @@ pub(super) fn settings_from_dto(dto: MlxEngineSettingsDto) -> EngineSettings {
             .into_iter()
             .map(|(id, p)| (id, profile_from_dto(p)))
             .collect(),
+        memory: memory_from_dto(dto.memory),
     }
 }
 
@@ -562,7 +624,11 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         served_model_id: status.served_model_id,
         active_requests: status.active_requests,
         active_requests_error: status.active_requests_error,
-        max_concurrent_requests: Some(goose_sidecar::engine::MAX_CONCURRENT_REQUESTS),
+        max_concurrent_requests: Some(goose_sidecar::engine::max_concurrent_requests(
+            &global_manager().settings(),
+        )),
+        memory_budget: status.memory_budget.map(memory_budget_to_dto),
+        memory_budget_error: status.memory_budget_error,
         stray_listener_port: status.stray_listener_port,
         stray_listener_holders: status
             .stray_listener_holders
@@ -947,6 +1013,7 @@ async fn core_settings_update(
     // so what persists is always profile truth.
     settings.migrate_legacy();
     validate_changed_thinking_choices(&load_engine_settings()?, &settings).invalid_params_err()?;
+    validate_memory_tunables(&settings).invalid_params_err()?;
     Config::global()
         .set_param(MLX_ENGINE_CONFIG_KEY, &settings)
         .internal_err_ctx("persisting mlx_engine config")?;
@@ -954,6 +1021,102 @@ async fn core_settings_update(
     Ok(MlxEngineSettingsResponse {
         settings: settings_to_dto(settings),
     })
+}
+
+/// The memory tunables judged on this Mac: its RAM, and the KV per token the running engine
+/// reported for the model it serves when that is the model these settings mount.
+fn validate_memory_tunables(settings: &EngineSettings) -> anyhow::Result<()> {
+    let physical = memory_tunables::machine_memory().ok().map(|(p, _)| p);
+    let kv_per_token = global_manager()
+        .last_memory_budget()
+        .filter(|(model, _)| settings.model_id.as_deref().is_none_or(|m| m == model))
+        .and_then(|(_, budget)| budget.kv_bytes_per_token);
+    settings
+        .memory
+        .validate(physical, kv_per_token)
+        .map_err(|e| anyhow::anyhow!("engine memory settings: {e}"))
+}
+
+async fn core_memory_machine(
+    _req: MlxEngineMemoryMachineRequest,
+) -> Result<MlxEngineMemoryMachineResponse, agent_client_protocol::Error> {
+    let settings = load_engine_settings()?;
+    let (physical_bytes, available_bytes) =
+        memory_tunables::machine_memory().internal_err_ctx("reading this Mac's memory")?;
+    let (working_set_bytes, working_set_error) = match goose_sidecar::engine::local_gpu_ceiling() {
+        Ok(bytes) => (Some(bytes), None),
+        Err(e) => (None, Some(format!("{e:#}"))),
+    };
+    let (wired_limit_mb, wired_limit_error) = match wired_limit::read_wired_limit_mb() {
+        Ok(mb) => (Some(mb), None),
+        Err(e) => (None, Some(format!("{e:#}"))),
+    };
+    let (daemon_wired_limit_mb, daemon_error) = match wired_limit::installed_daemon_mb() {
+        Ok(mb) => (mb, None),
+        Err(e) => (None, Some(format!("{e:#}"))),
+    };
+    Ok(MlxEngineMemoryMachineResponse {
+        physical_bytes,
+        available_bytes,
+        working_set_bytes,
+        working_set_error,
+        wired_limit_mb,
+        wired_limit_error,
+        daemon_wired_limit_mb,
+        daemon_error,
+        default_floor_gb: memory_tunables::default_memory_floor_gb(physical_bytes),
+        tunables_supported: goose_sidecar::engine_profile::supports_memory_tunables(
+            &settings.spawn_command,
+        ),
+        launcher: settings.spawn_command.join(" "),
+    })
+}
+
+fn wired_limit_after(command: String) -> MlxEngineWiredLimitResponse {
+    MlxEngineWiredLimitResponse {
+        wired_limit_mb: wired_limit::read_wired_limit_mb().ok(),
+        daemon_wired_limit_mb: wired_limit::installed_daemon_mb().ok().flatten(),
+        command,
+    }
+}
+
+async fn core_wired_limit_apply(
+    req: MlxEngineWiredLimitApplyRequest,
+) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
+    let (physical, _) =
+        memory_tunables::machine_memory().internal_err_ctx("reading this Mac's memory")?;
+    let mb = wired_limit::validate_mb(req.mb, physical).invalid_params_err()?;
+    let shell = if req.persist {
+        let staged = wired_limit::staged_plist_path();
+        std::fs::write(&staged, wired_limit::daemon_plist(mb))
+            .internal_err_ctx("staging the wired-limit LaunchDaemon")?;
+        let shell = wired_limit::install_daemon_shell(mb, &staged).invalid_params_err();
+        let ran = match &shell {
+            Ok(shell) => wired_limit::run_as_admin(shell).await,
+            Err(_) => Ok(()),
+        };
+        let _ = std::fs::remove_file(&staged);
+        let shell = shell?;
+        ran.invalid_params_err()?;
+        shell
+    } else {
+        let shell = wired_limit::sysctl_command(mb);
+        wired_limit::run_as_admin(&shell)
+            .await
+            .invalid_params_err()?;
+        shell
+    };
+    Ok(wired_limit_after(shell))
+}
+
+async fn core_wired_limit_remove_daemon(
+    _req: MlxEngineWiredLimitRemoveDaemonRequest,
+) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
+    let shell = wired_limit::remove_daemon_shell();
+    wired_limit::run_as_admin(&shell)
+        .await
+        .invalid_params_err()?;
+    Ok(wired_limit_after(shell))
 }
 
 async fn core_models_list(
@@ -1370,6 +1533,27 @@ impl GooseAcpAgent {
                 .await;
         }
         core_settings_read(req).await
+    }
+
+    pub(super) async fn on_mlx_engine_memory_machine(
+        &self,
+        req: MlxEngineMemoryMachineRequest,
+    ) -> Result<MlxEngineMemoryMachineResponse, agent_client_protocol::Error> {
+        core_memory_machine(req).await
+    }
+
+    pub(super) async fn on_mlx_engine_wired_limit_apply(
+        &self,
+        req: MlxEngineWiredLimitApplyRequest,
+    ) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
+        core_wired_limit_apply(req).await
+    }
+
+    pub(super) async fn on_mlx_engine_wired_limit_remove_daemon(
+        &self,
+        req: MlxEngineWiredLimitRemoveDaemonRequest,
+    ) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
+        core_wired_limit_remove_daemon(req).await
     }
 
     pub(super) async fn on_mlx_engine_settings_update(

@@ -61,6 +61,23 @@ const LMSTUDIO_TOKEN_KEY: &str = "LMSTUDIO_API_KEY";
 const OMLX_HOST_ENV: &str = "OMLX_HOST";
 const MLX_ENGINE_CONFIG_KEY: &str = "mlx_engine";
 
+/// The local engine's admission cap from this Mac's `mlx_engine.memory`: the swarm never routes
+/// more requests at the sidecar than it admits. An unreadable block keeps the shipped cap and
+/// says so.
+fn local_engine_max_concurrent() -> u32 {
+    match Config::global().get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY) {
+        Ok(settings) => goose_sidecar::engine::max_concurrent_requests(&settings),
+        Err(ConfigError::NotFound(_)) => goose_sidecar::engine::MAX_CONCURRENT_REQUESTS,
+        Err(e) => {
+            tracing::warn!(
+                "the `{MLX_ENGINE_CONFIG_KEY}` config block is unreadable ({e}); the sidecar node keeps the shipped admission cap {}",
+                goose_sidecar::engine::MAX_CONCURRENT_REQUESTS
+            );
+            goose_sidecar::engine::MAX_CONCURRENT_REQUESTS
+        }
+    }
+}
+
 /// The `swarm` config block, as much of it as routing needs. Mirrors `SwarmDevice` in
 /// goose-cli's swarm.rs (id, model_id, weight, enabled, instances, provider, engine) plus the
 /// block's `endpoint`; unknown fields are ignored so the engine's config stays the one source.
@@ -365,7 +382,7 @@ fn node_from_device(endpoint: &str, d: &PoolDevice) -> Node {
     };
     let capacity = match kind {
         // The sidecar's admission cap is the engine's, not the device's instance count.
-        NodeKind::MlxSidecar => goose_sidecar::engine::MAX_CONCURRENT_REQUESTS,
+        NodeKind::MlxSidecar => local_engine_max_concurrent(),
         _ => d.instances.max(1),
     };
     Node {
@@ -2655,9 +2672,9 @@ fn pinned_member(
         NodesServingKind::Single | NodesServingKind::Split => Node {
             id: def.def.id.clone(),
             model_id: model,
-            weight: goose_sidecar::engine::MAX_CONCURRENT_REQUESTS,
+            weight: local_engine_max_concurrent(),
             share: None,
-            capacity: goose_sidecar::engine::MAX_CONCURRENT_REQUESTS,
+            capacity: local_engine_max_concurrent(),
             kind: NodeKind::MlxSidecar,
         },
         NodesServingKind::RemoteSingle => {
