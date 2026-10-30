@@ -545,3 +545,10 @@ Moved verbatim from SKILL.md on 2026-10-30 (skills audit). Read by section; the 
   only real new failure = stream_chat reading self._is_mllm on test-built engines (fixed b25e42091).
 - Packaged app on Gabee: default --text-only withholds media; on the MLLM lane goose's ~21k-token prompt trips the
   8,192 media cap; measured memory table in references/omni-media.md. Next: goose media pre-pass.
+
+## OMNI CLIP-SET PROOF (2026-10-30 night, Gabee + laptop)
+Gemma 4 E4B through goose's real pre-pass on 12 clips (say, LibriSpeech, Romanian, 2 speakers, music, noise,
+wav/mp3/m4a, video): WER 0-1 % clean, 6.3 % real reading, 5.6 % Romanian, 2-3 % long under noise/music; piece
+boundaries were the main loss -> cut now picks the quietest 100 ms (6a611e3bb4). Qwen3-Omni 4bit on lz.19: not
+servable (empty/garbled audio, vision broken). Updater: works on quit and via install-now; startup-only check
+fixed (4 h re-check). Details: omni-media.md "Clip-set proof".

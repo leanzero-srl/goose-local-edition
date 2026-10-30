@@ -27,6 +27,27 @@
 - Evidence: /Volumes/AI-workhorse/media/goose/2026-10-30-omni-media/ (packaged-app-gabee/ for the app probe). Branch state + release chain:
   goose omni-media HANDOFF-omni.md.
 
+## Clip-set proof, 3.0.136 (2026-10-30 night, Gabee M3 Max, lz.19 app argv)
+Harness: goose's REAL pre-pass via the ignored test `live_prepass_of_real_clips` (goose-providers openai.rs,
+env OMNI_LIVE_URL/MODEL/CLIPS/OUT); input = the exact 16 kHz mono WAV the installed renderer makes
+(decode.mjs over CDP: wav/mp3/m4a all decode). Scripts, clips, rows, scores:
+/Volumes/AI-workhorse/media/goose/2026-10-30-omni-proof/ (run_clips.sh, score.py = WER + cut energy).
+Gemma 4 E4B 8bit, WER (numbers/Mr normalised), wall, engine peak Metal:
+- short say 9 s 0 %, 1.3 s | 2 speakers m4a 34 s 1 % (colour/color) | music+speech 20 s 0 % | noisy 20 s 0 %
+- long say 130 s (wav = mp3 = m4a, identical) 0.7 %, 12.7 s, 2 of 4 piece boundaries damaged
+- LibriSpeech real reading 135 s 6.3 % (mostly names/compounds; "really" lost at a cut), 10.6 s
+- Romanian 46 s 5.6 % (names: Prahovei>Prajovei, Tâmpa>Timpa), 5.4 s
+- long under pink noise 3.2 %, long under music 2.0 % (all 9 errors at the 4 cuts)
+- video 20 s: colours, both words, colour change right; the moving square called static; sound track not heard
+- memory: 8.9 GB idle, 9.96 GB peak on audio, 14.6 GB after the 16-frame video.
+100 ms quiet-span cut (6a611e3bb4): long say 0.5 %, music 0.9 %, noisy 2.7 %; the first word of a piece is
+still misheard sometimes ("The owner" > "Leona") - piece onsets, not cuts, are the residual.
+Qwen3-Omni-30B-A3B-Instruct-4bit (21.8 GB, SSD models/goose/mlx-community/) on lz.19 = NOT SERVABLE for goose:
+goose's pre-pass shape (text then audio) returns "\n" on every clip; audio-first works on 9 s and 15 s pieces
+(with a leaked "assistant\n" prefix) but returns "\n"/"ent"/" by the" on 10, 20, 28 s and noisy pieces
+(mlx-vlm 0.7.1; upstream #1768/#1770 open, latest mlx-vlm 0.7.11 fixes only frames). Missing for it: mlx-vlm
+pin >= 0.7.11 (vision), a fix for empty/garbled audio output, media-before-text order. Peak 22-24 GB.
+
 ## Wire path
 desktop drop/picker -> ImageData{kind,name} -> MessageContent `media` -> ACP audio block / blob resource (video)
 -> goosed `MessageContent::Media` -> OpenAI `input_audio{data,format}` / `video_url` data URL (withheld behind a
@@ -36,6 +57,9 @@ marker, video -> label + JPEG data-URL frames (1 fps, max 16; RAPID_MLX_VIDEO_FR
 MLLMScheduler `audios` -> prepare_inputs(audio=). Audio requests skip pixel/feature/boundary caches (image-keyed).
 
 ## Traps
+- The ignored test's filter is `live_prepass_of_real_clips` (no --exact: its path is openai::media_input_tests::...).
+- zsh: `$D:a` in a string is a history modifier: write `${D}`.
+- Never `npm i -g pnpm` on a Mac: use `source bin/activate-hermit` (pnpm 10.30.3).
 - mlx-vlm 0.7.1 already ships mlx-audio + opencv as deps: the [mtp] env has every decoder; no extra install.
 - The image loader refuses local paths in image_url: send frames as data URLs.
 - /v1/models ids are SERVED names: read cfg.model_path before checking the checkpoint config.
