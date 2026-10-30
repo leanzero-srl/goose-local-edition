@@ -482,11 +482,15 @@ impl OpenAiProvider {
     /// `reasoning_effort` (low / medium / high; Max sends high), which the engine maps onto the
     /// template's own vocabulary (#3043: Qwen3.8 low / medium / xhigh) or onto a reasoning cap.
     /// Off rides as `enable_thinking = false`, as on omlx. An explicit value already in the body
-    /// wins; no effort configured = the body is unchanged.
+    /// wins; no effort configured = the body is unchanged. An engine that declares it honours only
+    /// the template switch (`effort_graded` false, see [`declared_effort_grading`]: the goose
+    /// distributed split, which refuses a graded effort by name) gets the switch alone, and the
+    /// ungraded level is logged, never sent.
     fn carry_effort_to_lz_engine(
         model_config: &ModelConfig,
         payload: &mut serde_json::Value,
         lz_engine: bool,
+        effort_graded: bool,
     ) -> Result<(), ProviderError> {
         let Some(effort) = model_config.thinking_effort().filter(|_| lz_engine) else {
             return Ok(());
@@ -518,11 +522,41 @@ impl OpenAiProvider {
                 )))
             }
         }
-        if let Some(level) = level {
-            obj.entry("reasoning_effort")
-                .or_insert_with(|| serde_json::Value::String(level.to_string()));
+        match level {
+            Some(level) if effort_graded => {
+                obj.entry("reasoning_effort")
+                    .or_insert_with(|| serde_json::Value::String(level.to_string()));
+            }
+            Some(level) => tracing::warn!(
+                model = %model_config.model_name,
+                effort = level,
+                "effort_not_graded: the engine declares reasoning_controls without \
+                 reasoning_effort; thinking rides on, the {level} grade is not sent"
+            ),
+            None => {}
         }
         Ok(())
+    }
+
+    /// Whether the engine serving `model_name` translates a graded `reasoning_effort`
+    /// ([`declared_effort_grading`]). Asked only at a loopback fork engine with an effort set; an
+    /// unanswered probe keeps the graded field (the engine's own refusal then names it) and is logged.
+    async fn engine_grades_effort(&self, model_name: &str) -> bool {
+        let models_path =
+            Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
+        match self.fetch_models_json(&models_path).await {
+            Ok(json) => declared_effort_grading(&json, model_name),
+            Err(e) => {
+                tracing::warn!(
+                    host = %sanitize_url(self.api_client.host()),
+                    model = %model_name,
+                    error = %e,
+                    "effort_grading_probe_failed: the graded effort rides this request; the \
+                     probe is retried on the next request"
+                );
+                true
+            }
+        }
     }
 
     /// Whether this endpoint declared it honours `rapid_mlx_transient_tail` (the LeanZero Rapid-MLX
@@ -873,10 +907,11 @@ impl OpenAiProvider {
         payload: serde_json::Value,
         transient_tail: bool,
         lz_engine: bool,
+        effort_graded: bool,
     ) -> Result<serde_json::Value, ProviderError> {
         let mut payload = self.sanitize_request_for_compat(payload);
         self.carry_thinking_off_to_mlx(model_config, &mut payload)?;
-        Self::carry_effort_to_lz_engine(model_config, &mut payload, lz_engine)?;
+        Self::carry_effort_to_lz_engine(model_config, &mut payload, lz_engine, effort_graded)?;
         if transient_tail {
             if let Some(tail) = turn_context_tail_suffix(messages, &payload) {
                 payload[RAPID_MLX_TRANSIENT_TAIL] = serde_json::Value::String(tail);
@@ -1090,6 +1125,22 @@ const RAPID_MLX_TRANSIENT_TAIL: &str = "rapid_mlx_transient_tail";
 
 /// Whether `/v1/models` lists `extension` in the `request_extensions` of `model_name`'s entry (or of
 /// the sole entry, the single-model server serving under another id).
+/// Whether `model_name`'s `/v1/models` entry translates a graded `reasoning_effort`: an entry that
+/// lists `reasoning_controls` (the controls it honours; the goose distributed split lists only
+/// `enable_thinking`, its rank_thinking.py refuses the graded field by name) translates it only when
+/// listed; an entry without the field (the single Rapid-MLX engine) translates it.
+fn declared_effort_grading(json: &serde_json::Value, model_name: &str) -> bool {
+    match served_entry(json, model_name)
+        .and_then(|e| e.get("reasoning_controls"))
+        .and_then(|v| v.as_array())
+    {
+        Some(controls) => controls
+            .iter()
+            .any(|c| c.as_str() == Some("reasoning_effort")),
+        None => true,
+    }
+}
+
 fn declares_request_extension(json: &serde_json::Value, model_name: &str, extension: &str) -> bool {
     served_entry(json, model_name)
         .and_then(|e| e.get("request_extensions"))
@@ -1683,6 +1734,8 @@ impl Provider for OpenAiProvider {
             // what it sent before (no extra /v1/models GET either).
             let lz_engine = model_config.thinking_effort().is_some()
                 && self.openai_at_lz_engine(&model_config.model_name).await;
+            let effort_graded =
+                lz_engine && self.engine_grades_effort(&model_config.model_name).await;
             let format_options = OpenAiFormatOptions {
                 preserve_thinking_context: self.preserve_thinking_context,
                 // Q-94: a chat's block rides the tool results it follows, never a user
@@ -1703,6 +1756,7 @@ impl Provider for OpenAiProvider {
                 payload,
                 transient_tail,
                 lz_engine,
+                effort_graded,
             )?;
             let mut log = start_log(model_config, &payload)?;
 
@@ -1742,6 +1796,7 @@ impl Provider for OpenAiProvider {
                         retry,
                         transient_tail,
                         lz_engine,
+                        effort_graded,
                     )?;
                     log = start_log(model_config, &retry)?;
                     telemetry_t0 = std::time::Instant::now();
@@ -2603,6 +2658,16 @@ mod tests {
         model_config: &ModelConfig,
         request_extensions: serde_json::Value,
     ) -> serde_json::Value {
+        let entry = json!({"id": "served", "request_extensions": request_extensions});
+        body_sent_to_entry(name, model_config, entry).await
+    }
+
+    /// `body_sent_to_engine` with the whole `/v1/models` entry given.
+    async fn body_sent_to_entry(
+        name: &str,
+        model_config: &ModelConfig,
+        entry: serde_json::Value,
+    ) -> serde_json::Value {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -2611,7 +2676,7 @@ mod tests {
             .and(path("/v1/models"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "object": "list",
-                "data": [{"id": "served", "request_extensions": request_extensions}],
+                "data": [entry],
             })))
             .mount(&server)
             .await;
@@ -2694,6 +2759,36 @@ mod tests {
             json!({"enable_thinking": true, "reasoning_effort": "low"}),
             "an explicit profile value wins"
         );
+    }
+
+    /// The goose distributed split declares `reasoning_controls: ["enable_thinking"]` and refuses a
+    /// graded `reasoning_effort` by name (rank_thinking.py; the 2026-10-31 MiMo Gauntlet died on its
+    /// first call with "reasoning_effort='medium': the distributed engine does not translate these
+    /// reasoning controls"): it gets the template switch alone. An entry listing `reasoning_effort`
+    /// and one without the field (the single engine) keep the graded field.
+    #[tokio::test]
+    async fn an_engine_that_declares_only_the_thinking_switch_gets_no_graded_effort() {
+        let medium = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Medium);
+        let split = json!({"id": "served", "request_extensions": ["rapid_mlx_transient_tail"],
+                           "reasoning_controls": ["enable_thinking"]});
+        let body = body_sent_to_entry("openai", &medium, split.clone()).await;
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({"enable_thinking": true})
+        );
+        assert!(body.get("reasoning_effort").is_none(), "{body}");
+
+        let off = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Off);
+        let body = body_sent_to_entry("openai", &off, split).await;
+        assert_eq!(
+            body["chat_template_kwargs"],
+            json!({"enable_thinking": false})
+        );
+
+        let graded = json!({"id": "served", "request_extensions": ["rapid_mlx_transient_tail"],
+                            "reasoning_controls": ["enable_thinking", "reasoning_effort"]});
+        let body = body_sent_to_entry("openai", &medium, graded).await;
+        assert_eq!(body["reasoning_effort"], json!("medium"));
     }
 
     fn with_profile_kwargs(config: ModelConfig) -> ModelConfig {
@@ -3540,7 +3635,7 @@ mod media_input_tests {
         let mut provider = super::tests::make_provider("omlx");
         provider.api_client =
             ApiClient::new_with_tls(env("OMNI_LIVE_URL"), AuthMethod::NoAuth, None).unwrap();
-        let model = ModelConfig::new(&env("OMNI_LIVE_MODEL"));
+        let model = ModelConfig::new(env("OMNI_LIVE_MODEL"));
         let mut out = std::fs::File::create(env("OMNI_LIVE_OUT")).unwrap();
         for line in std::fs::read_to_string(env("OMNI_LIVE_CLIPS"))
             .unwrap()

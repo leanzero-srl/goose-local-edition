@@ -3309,6 +3309,12 @@ print("GOOSE_TEST " + json.dumps({
                 "mlx_lm.server reads text only, and says so: goose's omlx provider sends an \
                  image's placeholder, never the image (Q-260)"
             );
+            assert_eq!(
+                model["reasoning_controls"],
+                serde_json::json!(["enable_thinking"]),
+                "rank_thinking.py refuses a graded reasoning_effort, and says so: goose's openai \
+                 provider sends the template switch alone (the 2026-10-31 MiMo Gauntlet 400)"
+            );
         }
         assert_eq!(
             seen["wrong_model"],

@@ -1945,6 +1945,10 @@ def do_GET(self):
                         # an engine that declares it reads text only a placeholder per image) —
                         # unless rank_media.py wired an omni MiMo checkpoint's vision tower.
                         "capabilities": ["text", *globals().get("media_capabilities", []), "tools"],
+                        # The reasoning controls this engine honours: rank_thinking.py refuses a
+                        # graded reasoning_effort by name, so goose's provider sends the template
+                        # switch alone here (openai.rs declared_effort_grading).
+                        "reasoning_controls": ["enable_thinking"],
                         **(
                             {"request_extensions": list(TRANSIENT_TAIL_EXTENSIONS)}
                             if transient_tail_boundary
