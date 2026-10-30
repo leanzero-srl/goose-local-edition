@@ -586,6 +586,13 @@ impl Agent {
         self.swarm_worker.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// The golden swarm compacted at the configured ratio (0.8 by default) and keeps it; a chat's
+    /// point is `context_mgmt::compaction_threshold`'s reserve rule.
+    fn worker_compaction_threshold(&self) -> Option<f64> {
+        self.is_swarm_worker()
+            .then(crate::context_mgmt::configured_or_default_threshold)
+    }
+
     /// SWARM: register the task's single owned file so a pathless `write`/`edit` gets repaired (see the field
     /// doc + `repair_swarm_tool_call`). Pass `None` to disable. Set by the swarm per worker task; opt-in.
     pub fn set_swarm_single_owned_file(&self, path: Option<String>) {
@@ -1067,14 +1074,16 @@ impl Agent {
                     },
                     Err(_) => model_config.context_limit,
                 };
-                let compaction_threshold = Config::global()
-                    .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
-                    .unwrap_or(crate::context_mgmt::DEFAULT_COMPACTION_THRESHOLD);
                 // An unknown window sizes no cutoff: old tool pairs are summarized against a
                 // window, and without one nothing is (the provider's context-length error still
                 // triggers recovery compaction).
                 context_limit.map_or(usize::MAX, |limit| {
-                    crate::context_mgmt::compute_tool_call_cutoff(limit, compaction_threshold)
+                    crate::context_mgmt::compute_tool_call_cutoff(
+                        limit,
+                        self.worker_compaction_threshold().unwrap_or_else(|| {
+                            crate::context_mgmt::compaction_threshold(limit, &model_config)
+                        }),
+                    )
                 })
             }
         };
@@ -2062,7 +2071,7 @@ impl Agent {
         let needs_auto_compact = check_if_compaction_needed(
             self.provider().await?.as_ref(),
             &conversation,
-            None,
+            self.worker_compaction_threshold(),
             &session,
         )
         .await?;
@@ -3538,7 +3547,7 @@ impl Agent {
                         let needs_proactive_compact = check_if_compaction_needed(
                             self.provider().await?.as_ref(),
                             &conversation,
-                            None,
+                            self.worker_compaction_threshold(),
                             &check_session,
                         )
                         .await

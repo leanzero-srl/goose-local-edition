@@ -114,9 +114,12 @@ async fn turn_context_inputs(
     let total_tokens = session
         .as_ref()
         .and_then(|session| session.usage.total_tokens);
-    let compaction_threshold = crate::config::Config::global()
-        .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
-        .unwrap_or(crate::context_mgmt::DEFAULT_COMPACTION_THRESHOLD);
+    let compaction_threshold = match (context_limit, session_model_config.as_ref()) {
+        (Some(limit), Some(model_config)) => {
+            crate::context_mgmt::compaction_threshold(limit, model_config)
+        }
+        _ => crate::context_mgmt::configured_or_default_threshold(),
+    };
     let extension_parts = extension_manager.collect_moim_parts(session_id).await;
     Some(TurnContextInputs {
         working_dir,
