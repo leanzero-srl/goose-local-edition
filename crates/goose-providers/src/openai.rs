@@ -1325,6 +1325,10 @@ fn prepass_payload(
             {"role": "user", "content": [{"type": "text", "text": text}, part]},
         ],
         "max_tokens": MEDIA_PREPASS_MAX_TOKENS,
+        // Greedy: at the engine's default temperature Gemma 4 E4B answered a 60 s video once
+        // with "(No video was provided.)" and once as 16 identical first frames; at 0 it named
+        // all three scenes in order on every run (Gabee, 2026-10-30).
+        "temperature": 0.0,
         "stream": false,
         "chat_template_kwargs": {"enable_thinking": false},
     })
@@ -3375,6 +3379,7 @@ mod media_input_tests {
         assert!(audio_side.get("tools").is_none());
         assert_eq!(audio_side["messages"].as_array().unwrap().len(), 2);
         assert_eq!(audio_side["max_tokens"], MEDIA_PREPASS_MAX_TOKENS);
+        assert_eq!(audio_side["temperature"], 0.0);
         let ask = audio_side["messages"][1]["content"][0]["text"]
             .as_str()
             .unwrap();
