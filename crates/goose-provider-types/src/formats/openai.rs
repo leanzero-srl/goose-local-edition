@@ -7664,7 +7664,7 @@ mod text_only_engine_tests {
     }
 
     #[test]
-    fn attached_audio_goes_as_input_audio_and_video_as_a_video_url() {
+    fn attached_media_audio_goes_as_input_audio_and_video_as_a_video_url() {
         let (content, report) = formatted_media(OpenAiFormatOptions::default());
         assert_eq!(
             content[1],
