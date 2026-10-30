@@ -314,6 +314,12 @@ fn format_messages_with_options(
                 MessageContent::Image(image) => {
                     content.push(convert_image(image, &ImageFormat::Anthropic));
                 }
+                MessageContent::Media(media) => {
+                    content.push(json!({
+                        TYPE_FIELD: TEXT_TYPE,
+                        TEXT_TYPE: media.placeholder()
+                    }));
+                }
                 MessageContent::FrontendToolRequest(tool_request) => {
                     if let Ok(tool_call) = &tool_request.tool_call {
                         content.push(json!({

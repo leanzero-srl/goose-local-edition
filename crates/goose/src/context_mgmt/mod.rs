@@ -2378,6 +2378,7 @@ pub fn format_message_for_compacting(msg: &Message) -> String {
             }
             MessageContent::Image(img) => audience_includes(img.audience(), &Role::Assistant)
                 .then(|| format!("[image: {}]", img.mime_type)),
+            MessageContent::Media(media) => Some(media.placeholder()),
             MessageContent::ToolRequest(req) => {
                 if let Ok(call) = &req.tool_call {
                     Some(format!(

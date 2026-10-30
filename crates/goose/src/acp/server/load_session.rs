@@ -70,6 +70,9 @@ fn replay_conversation_to_client(
                         ContentBlock::Image(image_content),
                     )?;
                 }
+                MessageContent::Media(media) => {
+                    send_replay_content_chunk(cx, &session_id, message, media_content_block(media))?;
+                }
                 MessageContent::ToolRequest(tool_request) => {
                     replay_tool_requests.insert(tool_request.id.clone(), tool_request.clone());
 

@@ -209,6 +209,7 @@ pub fn map_message(message: &Message) -> Vec<Mapped> {
             }
             MessageContent::Text(_)
             | MessageContent::Image(_)
+            | MessageContent::Media(_)
             | MessageContent::Thinking(_)
             | MessageContent::RedactedThinking(_)
             | MessageContent::FrontendToolRequest(_)

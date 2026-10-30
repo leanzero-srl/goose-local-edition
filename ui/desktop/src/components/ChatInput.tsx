@@ -22,7 +22,8 @@ import { mentionTriggerStart } from './mentionTrigger';
 import { COST_TRACKING_ENABLED } from '../updates';
 import { CostTracker } from './bottom_menu/CostTracker';
 import { ContextWindowIndicator } from './bottom_menu/ContextWindowIndicator';
-import { DroppedFile, useFileDrop } from '../hooks/useFileDrop';
+import { DroppedFile, readMediaFile, useFileDrop } from '../hooks/useFileDrop';
+import { MediaAttachment } from './media/MediaAttachment';
 import { Recipe } from '../recipe';
 import { MessageQueue, QueuedMessage } from './MessageQueue';
 import { compactingNow } from './compaction/compactionStatus';
@@ -33,7 +34,7 @@ import { getInitialWorkingDir } from '../utils/workingDir';
 import { getPredefinedModelsFromEnv } from './settings/models/predefinedModelsUtils';
 import { trackFileAttached, trackVoiceDictation, trackDiagnosticsOpened } from '../utils/analytics';
 import { getNavigationShortcutText } from '../utils/keyboardShortcuts';
-import { UserInput, ImageData } from '../types/message';
+import { UserInput, ImageData, mediaKindOf } from '../types/message';
 import { compressImageDataUrl } from '../utils/conversionUtils';
 import { fetchCanonicalModelInfo } from '../utils/canonical';
 import { fetchSwarmPoolContextLimit } from './swarm/swarmContextLimit';
@@ -1008,6 +1009,20 @@ export default function ChatInput({
       })
       .filter((img): img is ImageData => img !== null);
 
+    const droppedMediaData: ImageData[] = allDroppedFiles
+      .filter((file) => file.mediaKind && file.dataUrl && !file.error && !file.isLoading)
+      .map((file) => {
+        const matches = file.dataUrl!.match(/^data:([^;]+);base64,(.+)$/);
+        if (!matches) return null;
+        return {
+          data: matches[2],
+          mimeType: matches[1],
+          kind: file.mediaKind,
+          name: file.name,
+        } as ImageData;
+      })
+      .filter((media): media is ImageData => media !== null);
+
     const droppedImageData: ImageData[] = allDroppedFiles
       .filter((file) => file.isImage && file.dataUrl && !file.error && !file.isLoading)
       .map((file) => {
@@ -1022,13 +1037,13 @@ export default function ChatInput({
       })
       .filter((img): img is ImageData => img !== null);
 
-    return [...pastedImageData, ...droppedImageData];
+    return [...pastedImageData, ...droppedImageData, ...droppedMediaData];
   }, [pastedImages, allDroppedFiles]);
 
   const appendDroppedFilePaths = useCallback(
     (text: string): string => {
       const droppedFilePaths = allDroppedFiles
-        .filter((file) => !file.isImage && !file.error && !file.isLoading)
+        .filter((file) => !file.isImage && !file.mediaKind && !file.error && !file.isLoading)
         .map((file) => file.path);
 
       if (droppedFilePaths.length > 0) {
@@ -1350,7 +1365,7 @@ export default function ChatInput({
           LocalMessageStorage.addMessage(displayValue);
         } else {
           const droppedFilePaths = allDroppedFiles
-            .filter((file) => !file.isImage && !file.error && !file.isLoading)
+            .filter((file) => !file.isImage && !file.mediaKind && !file.error && !file.isLoading)
             .map((file) => file.path);
           if (droppedFilePaths.length > 0) {
             LocalMessageStorage.addMessage(droppedFilePaths.join(' '));
@@ -1500,8 +1515,24 @@ export default function ChatInput({
     setIsFilePickerOpen(true);
     const file = files[0];
     const isImage = file.type.startsWith('image/');
+    const mediaKind = mediaKindOf(file.type);
 
-    if (isImage) {
+    if (mediaKind) {
+      trackFileAttached('file');
+      const entry: DroppedFile = {
+        id: `picked-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        path: window.electron.getPathForFile(file),
+        name: file.name,
+        type: file.type,
+        isImage: false,
+        mediaKind,
+        isLoading: true,
+      };
+      setLocalDroppedFiles((prev) => [...prev, entry]);
+      readMediaFile(file, entry, (id, patch) =>
+        setLocalDroppedFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f)))
+      );
+    } else if (isImage) {
       trackFileAttached('file');
 
       if (pastedImages.length >= MAX_IMAGES_PER_MESSAGE) {
@@ -1902,7 +1933,27 @@ export default function ChatInput({
           {/* Render dropped files after pasted images */}
           {allDroppedFiles.map((file) => (
             <div key={file.id} className="relative group">
-              {file.isImage ? (
+              {file.mediaKind ? (
+                <div className="relative">
+                  <MediaAttachment
+                    kind={file.mediaKind}
+                    src={file.dataUrl}
+                    name={file.name}
+                    mimeType={file.type}
+                    compact
+                  />
+                  {file.isLoading && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-lz-surface-2 rounded-lg">
+                      <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-lz-ink"></div>
+                    </div>
+                  )}
+                  {file.error && !file.isLoading && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-lz-err-solid rounded-lg p-1 text-center">
+                      <p className="text-white text-lz-meta leading-tight">{file.error}</p>
+                    </div>
+                  )}
+                </div>
+              ) : file.isImage ? (
                 // Image preview
                 <div className="w-20 h-20">
                   {file.dataUrl && (

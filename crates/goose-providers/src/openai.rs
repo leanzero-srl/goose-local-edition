@@ -2,7 +2,7 @@ use super::api_client::ApiClient;
 use super::base::{ConfigKey, ModelInfo, Provider, ProviderMetadata};
 use super::retry::ProviderRetry;
 use crate::api_client::{AuthMethod, TlsConfig};
-use crate::conversation::message::Message;
+use crate::conversation::message::{Message, MessageContent};
 use crate::conversation::token_usage::ProviderUsage;
 use crate::declarative::{DeclarativeProviderConfig, KeyResolver};
 use crate::errors::ProviderError;
@@ -597,6 +597,55 @@ impl OpenAiProvider {
         Ok(declared_image_input(&json, model_name))
     }
 
+    /// The format options with attached audio/video withheld behind their named placeholders when
+    /// a goose MLX engine's `/v1/models` lists capabilities for the model without `audio` /
+    /// `video`. A request without media, a provider that does not front a goose MLX engine and an
+    /// engine that declares nothing (or cannot be asked) keep the options as given.
+    async fn media_format_options(
+        &self,
+        model_name: &str,
+        messages: &[Message],
+        options: OpenAiFormatOptions,
+    ) -> OpenAiFormatOptions {
+        let carries_media = messages
+            .iter()
+            .any(|m| m.content.iter().any(|c| matches!(c, MessageContent::Media(_))));
+        if !carries_media || !self.asks_engine_for_image_input() {
+            return options;
+        }
+        let models_path =
+            Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
+        match self.fetch_models_json(&models_path).await {
+            Ok(json) => {
+                let (withhold_audio, withhold_video) = withheld_media(&json, model_name);
+                if withhold_audio || withhold_video {
+                    tracing::info!(
+                        host = %sanitize_url(self.api_client.host()),
+                        model = %model_name,
+                        withhold_audio,
+                        withhold_video,
+                        "media_withheld: the engine does not declare audio/video input for this \
+                         model; those parts went as named placeholders"
+                    );
+                }
+                OpenAiFormatOptions {
+                    withhold_audio: options.withhold_audio || withhold_audio,
+                    withhold_video: options.withhold_video || withhold_video,
+                    ..options
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    host = %sanitize_url(self.api_client.host()),
+                    model = %model_name,
+                    error = %e,
+                    "media_input_probe_failed: the attached audio/video is sent as it is"
+                );
+                options
+            }
+        }
+    }
+
     /// Whether this provider asks the endpoint's `/v1/models` if it reads images before sending
     /// one: the `omlx` lane, and the built-in `openai` provider pointed at a loopback host, which is
     /// how a benchmark's "Single model" entrant reaches the app's MLX engine (provider openai, host
@@ -696,6 +745,9 @@ impl OpenAiProvider {
                 options,
             )?)
         };
+        let format_options = self
+            .media_format_options(&model_config.model_name, messages, format_options)
+            .await;
         let (payload, images) = build(format_options)?;
         if images.sent == 0 || !self.asks_engine_for_image_input() {
             return Ok((payload, None));
@@ -927,6 +979,21 @@ fn declared_image_input(json: &serde_json::Value, model_name: &str) -> ImageInpu
         Some(caps) if caps.iter().any(|c| c.as_str() == Some("vision")) => ImageInput::Reads,
         Some(_) => ImageInput::TextOnly,
         None => ImageInput::Undeclared,
+    }
+}
+
+/// `(withhold_audio, withhold_video)` for `model_name` from a `/v1/models` body: a part is withheld
+/// only when the served entry lists capabilities and that list lacks `audio` / `video`.
+fn withheld_media(json: &serde_json::Value, model_name: &str) -> (bool, bool) {
+    match served_entry(json, model_name)
+        .and_then(|e| e.get("capabilities"))
+        .and_then(|v| v.as_array())
+    {
+        Some(caps) => {
+            let has = |tag: &str| caps.iter().any(|c| c.as_str() == Some(tag));
+            (!has("audio"), !has("video"))
+        }
+        None => (false, false),
     }
 }
 
@@ -1255,6 +1322,7 @@ impl Provider for OpenAiProvider {
                 // user message to snapshot its cache before it.
                 turn_context_joins_tool_results: true,
                 text_only_engine: false,
+                ..Default::default()
             };
             let (payload, mut images_notice) = self
                 .chat_request(model_config, system, messages, tools, format_options)

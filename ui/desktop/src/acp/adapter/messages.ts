@@ -4,7 +4,13 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { parseTickId } from '../../components/loops/model';
 import { NOTE_MESSAGE_PREFIX } from '../../components/notes/noteIds';
-import type { ContentBlock, LoopTickMetadata, Message } from '../../types/message';
+import {
+  type ContentBlock,
+  type LoopTickMetadata,
+  type MediaContent,
+  type Message,
+  mediaKindOf,
+} from '../../types/message';
 import {
   type AcpChatStateChange,
   type AdapterState,
@@ -13,7 +19,9 @@ import {
   messagesChange,
 } from './shared';
 
-type StreamedContentBlock = Extract<ContentBlock, { type: 'text' | 'image' }>;
+type StreamedContentBlock =
+  | Extract<ContentBlock, { type: 'text' | 'image' }>
+  | (MediaContent & { type: 'media' });
 
 export function applyContentChunk(
   state: AdapterState,
@@ -44,6 +52,8 @@ export function applyContentChunk(
     if (lastContent?.type === 'text' && content.type === 'text') {
       lastContent.text += content.text;
     } else if (content.type === 'image' && hasImageContent(existing, content)) {
+      return messagesChangeWithLocalSteerConfirmation(state, existing, gooseMeta.steer);
+    } else if (content.type === 'media' && hasMediaContent(existing, content)) {
       return messagesChangeWithLocalSteerConfirmation(state, existing, gooseMeta.steer);
     } else {
       existing.content.push(content);
@@ -161,9 +171,31 @@ function messageContentFromAcpContentBlock(
         ...(content._meta ? { _meta: content._meta } : {}),
         ...(content.annotations ? { annotations: content.annotations } : {}),
       };
+    case 'audio':
+      return { type: 'media', kind: 'audio', data: content.data, mimeType: content.mimeType };
+    case 'resource': {
+      const resource = content.resource as { blob?: string; mimeType?: string | null; uri?: string };
+      const kind = resource.mimeType ? mediaKindOf(resource.mimeType) : null;
+      if (!kind || typeof resource.blob !== 'string') return undefined;
+      const name = resource.uri ? decodeURIComponent(resource.uri.split('/').pop() || '') : '';
+      return {
+        type: 'media',
+        kind,
+        data: resource.blob,
+        mimeType: resource.mimeType as string,
+        ...(name ? { name } : {}),
+      };
+    }
     default:
       return undefined;
   }
+}
+
+function hasMediaContent(message: Message, media: MediaContent) {
+  return message.content.some(
+    (content) =>
+      content.type === 'media' && content.data === media.data && content.mimeType === media.mimeType
+  );
 }
 
 export function findMessageForChunk(

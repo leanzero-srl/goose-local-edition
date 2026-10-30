@@ -1,8 +1,9 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Repeat } from 'lucide-react';
+import { MediaAttachment } from './media/MediaAttachment';
 import ImagePreview from './ImagePreview';
 import MarkdownContent from './MarkdownContent';
-import { getTextAndImageContent, type Message } from '../types/message';
+import { getTextAndImageContent, getMediaContent, type Message } from '../types/message';
 import MessageCopyLink from './MessageCopyLink';
 import { formatMessageTimestamp } from '../utils/timeUtils';
 import Edit from './icons/Edit';
@@ -156,6 +157,7 @@ function PersonMessage({ message, onMessageUpdate, opensConversation = false }: 
   const [error, setError] = useState<string | null>(null);
 
   const { textContent, imagePaths } = getTextAndImageContent(message);
+  const media = getMediaContent(message);
   const timestamp = formatMessageTimestamp(message.created);
   const isWall = useIsWall(contentRef, [textContent, isEditing]);
   const [expanded, setExpanded] = useState(false);
@@ -401,6 +403,20 @@ function PersonMessage({ message, onMessageUpdate, opensConversation = false }: 
                   <div className="flex flex-wrap gap-2 mt-2">
                     {imagePaths.map((imagePath, index) => (
                       <ImagePreview key={index} src={imagePath} />
+                    ))}
+                  </div>
+                )}
+
+                {media.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-2" data-testid="message-media">
+                    {media.map((m, index) => (
+                      <MediaAttachment
+                        key={index}
+                        kind={m.kind}
+                        src={`data:${m.mimeType};base64,${m.data}`}
+                        name={m.name}
+                        mimeType={m.mimeType}
+                      />
                     ))}
                   </div>
                 )}

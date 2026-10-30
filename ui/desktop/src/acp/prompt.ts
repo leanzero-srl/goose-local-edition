@@ -1,6 +1,6 @@
 import type { ContentBlock, PromptResponse } from '@agentclientprotocol/sdk';
 import type { SteerSessionRequest_unstable, SteerSessionResponse_unstable } from '@aaif/goose-sdk';
-import type { Message } from '../types/message';
+import type { MediaContent, Message } from '../types/message';
 import { getAcpClient } from './acpConnection';
 
 /**
@@ -89,8 +89,29 @@ export function messageToAcpPromptContent(message: Message): ContentBlock[] {
           mimeType: content.mimeType,
         });
         break;
+      case 'media':
+        prompt.push(mediaToAcpContentBlock(content));
+        break;
     }
   }
 
   return prompt;
+}
+
+/**
+ * Audio goes as an ACP audio block; video has no ACP block of its own, so it rides an embedded blob
+ * resource with its MIME type (goosed turns `audio/*` and `video/*` blobs into media parts).
+ */
+export function mediaToAcpContentBlock(media: MediaContent): ContentBlock {
+  if (media.kind === 'audio') {
+    return { type: 'audio', data: media.data, mimeType: media.mimeType };
+  }
+  return {
+    type: 'resource',
+    resource: {
+      uri: `attachment:///${encodeURIComponent(media.name || 'video')}`,
+      mimeType: media.mimeType,
+      blob: media.data,
+    },
+  };
 }

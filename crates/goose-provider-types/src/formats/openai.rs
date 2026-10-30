@@ -5813,6 +5813,7 @@ data: [DONE]"#;
                 preserve_thinking_context: true,
                 turn_context_joins_tool_results: true,
                 text_only_engine: false,
+                ..Default::default()
             },
         )
     }
@@ -7686,6 +7687,7 @@ mod text_only_engine_tests {
                         new: true,
                     },
                 ],
+                ..Default::default()
             }
         );
     }
@@ -7708,6 +7710,7 @@ mod text_only_engine_tests {
             ImageReport {
                 sent: 2,
                 withheld: Vec::new(),
+                ..Default::default()
             }
         );
         let wire = serde_json::to_string(&spec).unwrap();

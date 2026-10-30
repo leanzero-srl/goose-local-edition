@@ -31,6 +31,14 @@ export type ImageContent = {
   mimeType: string;
 };
 
+/** An attached audio or video file (engine `MessageContent::Media`, serde tag `media`). */
+export type MediaContent = {
+  kind: 'audio' | 'video';
+  data: string;
+  mimeType: string;
+  name?: string | null;
+};
+
 export type ContentBlock =
   | ({ type: 'text' } & RawTextContent)
   | ({ type: 'image' } & RawImageContent)
@@ -200,6 +208,7 @@ export type MessageMetadata = {
 export type MessageContent =
   | (TextContent & { type: 'text' })
   | (ImageContent & { type: 'image' })
+  | (MediaContent & { type: 'media' })
   | (ToolRequest & { type: 'toolRequest' })
   | (ToolResponse & { type: 'toolResponse' })
   | (ToolConfirmationRequest & { type: 'toolConfirmationRequest' })
@@ -259,8 +268,11 @@ export type ToolConfirmationRequestContent = ToolConfirmationRequest & {
 export type NotificationEvent = Extract<MessageEvent, { type: 'Notification' }>;
 
 export interface ImageData {
-  data: string; // base64 encoded image data
+  data: string; // base64 encoded data
   mimeType: string;
+  /** Absent = an image. Audio and video go to the model as media parts. */
+  kind?: 'image' | 'audio' | 'video';
+  name?: string;
 }
 
 export interface UserInput {
@@ -302,6 +314,16 @@ export function createUserMessage(text: string, images?: ImageData[]): Message {
 
   if (images && images.length > 0) {
     images.forEach((img) => {
+      if (img.kind === 'audio' || img.kind === 'video') {
+        content.push({
+          type: 'media',
+          kind: img.kind,
+          data: img.data,
+          mimeType: img.mimeType,
+          ...(img.name ? { name: img.name } : {}),
+        });
+        return;
+      }
       content.push({
         type: 'image',
         data: img.data,
@@ -321,6 +343,21 @@ export function createUserMessage(text: string, images?: ImageData[]): Message {
 
 export function generateMessageId(): string {
   return Math.random().toString(36).substring(2, 10);
+}
+
+/** The audio and video files attached to a message, in order. */
+export function getMediaContent(message: Message): MediaContent[] {
+  return message.content
+    .filter((c): c is MediaContent & { type: 'media' } => c.type === 'media')
+    .map(({ kind, data, mimeType, name }) => ({ kind, data, mimeType, name }));
+}
+
+/** The kind of media a MIME type names, or null for anything that is not audio or video. */
+export function mediaKindOf(mimeType: string): 'audio' | 'video' | null {
+  const m = mimeType.trim().toLowerCase();
+  if (m.startsWith('audio/')) return 'audio';
+  if (m.startsWith('video/')) return 'video';
+  return null;
 }
 
 export function getTextAndImageContent(message: Message): {

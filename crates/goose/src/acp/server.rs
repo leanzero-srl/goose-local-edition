@@ -41,7 +41,7 @@ use crate::session::{
 use crate::source_roots::SourceRoot;
 use crate::utils::sanitize_unicode_tags;
 use agent_client_protocol::schema::v1::{
-    AgentCapabilities, Annotations, AuthMethod, AuthMethodAgent, AuthenticateRequest,
+    AgentCapabilities, Annotations, AudioContent, AuthMethod, AuthMethodAgent, AuthenticateRequest,
     AuthenticateResponse, BlobResourceContents, CancelNotification, CloseSessionRequest,
     CloseSessionResponse, ConfigOptionUpdate, Content, ContentBlock, ContentChunk, Cost,
     CurrentModeUpdate, EmbeddedResource, EmbeddedResourceResource, FileSystemCapabilities,
@@ -809,6 +809,28 @@ fn extract_first_line_number(text: &str) -> Option<usize> {
         return caps.get(1)?.as_str().parse::<usize>().ok();
     }
     None
+}
+
+/// The ACP block an attached media part replays as: audio as an audio block, video as the embedded
+/// blob resource the desktop sent it in (ACP has no video block).
+fn media_content_block(media: &MediaContent) -> ContentBlock {
+    match media.kind {
+        MediaKind::Audio => {
+            ContentBlock::Audio(AudioContent::new(media.data.clone(), media.mime_type.clone()))
+        }
+        MediaKind::Video => ContentBlock::Resource(EmbeddedResource::new(
+            EmbeddedResourceResource::BlobResourceContents(
+                BlobResourceContents::new(
+                    media.data.clone(),
+                    format!(
+                        "attachment:///{}",
+                        media.name.as_deref().unwrap_or("video")
+                    ),
+                )
+                .mime_type(media.mime_type.clone()),
+            ),
+        )),
+    }
 }
 
 /// An embedded blob the desktop attached as audio or video (`audio/*`, `video/*`): the bytes go to

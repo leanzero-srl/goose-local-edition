@@ -1,5 +1,34 @@
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { compressImageDataUrl, errorMessage } from '../utils/conversionUtils';
+import { mediaKindOf } from '../types/message';
+
+/** Largest audio/video file attached inline (it travels base64 in the prompt). */
+export const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
+
+/** Read an audio/video file into its DroppedFile entry: dataUrl when done, error when not. */
+export function readMediaFile(
+  file: File,
+  entry: DroppedFile,
+  update: (id: string, patch: Partial<DroppedFile>) => void,
+  readers?: Set<FileReader>
+): void {
+  if (file.size > MAX_MEDIA_BYTES) {
+    update(entry.id, { isLoading: false, error: 'Over 50 MB' });
+    return;
+  }
+  const reader = new FileReader();
+  readers?.add(reader);
+  reader.onload = (event) => {
+    update(entry.id, { dataUrl: event.target?.result as string, isLoading: false });
+    readers?.delete(reader);
+  };
+  reader.onerror = () => {
+    update(entry.id, { isLoading: false, error: 'Failed to read file' });
+    readers?.delete(reader);
+  };
+  reader.onabort = () => readers?.delete(reader);
+  reader.readAsDataURL(file);
+}
 
 export interface DroppedFile {
   id: string;
@@ -7,6 +36,8 @@ export interface DroppedFile {
   name: string;
   type: string;
   isImage: boolean;
+  /** Audio or video: read whole as a data URL and sent to the model as a media part. */
+  mediaKind?: 'audio' | 'video';
   dataUrl?: string;
   isLoading?: boolean;
   error?: string;
@@ -47,6 +78,7 @@ export const useFileDrop = () => {
         try {
           const path = window.electron.getPathForFile(file);
           const isImage = file.type.startsWith('image/');
+          const mediaKind = mediaKindOf(file.type) ?? undefined;
 
           droppedFile = {
             id: `dropped-${Date.now()}-${i}`,
@@ -54,7 +86,9 @@ export const useFileDrop = () => {
             name: file.name,
             type: file.type,
             isImage,
-            isLoading: isImage, // Only images need loading state for preview generation
+            ...(mediaKind ? { mediaKind } : {}),
+            // Images and media need a loading state while they are read
+            isLoading: isImage || mediaKind !== undefined,
           };
         } catch (error) {
           console.error('Error processing file:', file.name, error);
@@ -71,6 +105,16 @@ export const useFileDrop = () => {
         }
 
         droppedFileObjects.push(droppedFile);
+
+        if (droppedFile.mediaKind && !droppedFile.error) {
+          readMediaFile(
+            file,
+            droppedFile,
+            (id, patch) =>
+              setDroppedFiles((prev) => prev.map((f) => (f.id === id ? { ...f, ...patch } : f))),
+            activeReadersRef.current
+          );
+        }
 
         if (droppedFile.isImage && !droppedFile.error) {
           const reader = new FileReader();

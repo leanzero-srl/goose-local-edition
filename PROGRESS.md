@@ -33,3 +33,16 @@
   mlx-vlm 0.7.11 next (the judge run 2026-10-30 had working frames on 0.7.11, 8bit).
 - 15:27 goose: MessageContent::Media(MediaContent{kind audio|video, data b64, mime_type, name}) added in
   goose-provider-types; formatter/ACP/desktop next.
+- 15:35 PROBES 2-6 (workmule):
+  mlx-vlm 0.7.11 standalone: AUDIO verbatim transcript; FRAMES-as-images describe the blue->red square
+  (partly wrong: invents black frames, misses motion + "GATE OPEN"); AUDIO+FRAMES together and native VIDEO
+  return empty. 0.7.1 single image: blank. prefill-step 65536 on 0.7.1: still "!!!!" (not chunking alone).
+  Vendored 0.7.11 qwen3_omni_moe package (rapid_mlx/models/qwen3_omni_vendored, aliased over mlx_vlm's) under
+  0.7.1's generate loop: fault gone but still "!!!!" / blank -> the fix also lives in 0.7.11's generate code.
+  => Qwen3-Omni needs the mlx-vlm pin at 0.7.11 (affects every model: own fork branch + tests), OR use a model
+  whose vision already works on 0.7.1. Probing both: fork lz.18 with an mlx-vlm 0.7.11 override, and
+  gemma-4-e4b-it-8bit (audio + frames) on 0.7.1.
+  Decision for goose: video goes to the engine as a video_url part, the ENGINE samples frames into image parts
+  (model-agnostic; native video paths are broken on both mlx-vlm versions); audio goes as input_audio.
+- 15:35 workmule cargo: llama-cpp-sys-2's httplib fails against Homebrew OpenSSL 4 (only openssl@4 installed).
+  Installed keg-only openssl@3 on workmule, build with OPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3.
