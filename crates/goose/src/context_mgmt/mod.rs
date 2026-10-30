@@ -2042,7 +2042,11 @@ fn summary_in_reasoning(response: &Message) -> Option<String> {
                 .get(at..)
                 .and_then(|rest| rest.lines().next())
                 .unwrap_or("");
-            !pillars::written_sections(line).is_empty() || generic_heading(line).is_some()
+            // Round 6: only a line that heads one of the five NAMED sections starts it. Reasoning
+            // is full of colon lines ("Constraints:", "Approach:", "Risks:"): the verifier's
+            // planning notes passed the gate as five sections of their own and were stored as
+            // the summary, never re-asked. A visible answer keeps the round-4 reading.
+            !pillars::written_sections(line).is_empty()
         })
         .collect();
     let mut starts = starts;
@@ -2050,9 +2054,45 @@ fn summary_in_reasoning(response: &Message) -> Option<String> {
     starts
         .into_iter()
         .rev()
-        .filter_map(|at| reasoning.get(at..).map(str::trim))
+        .filter_map(|at| reasoning.get(at..))
+        .map(without_trailing_thought)
         .find(|block| summary_shortfall(block).is_none())
-        .map(str::to_string)
+}
+
+/// A summary drafted in reasoning, without the thinking that goes on after it: the last section
+/// (`## Next step`, one step) ends at its first blank line once it holds something, so "Wait, I
+/// should double-check…" written after the draft is not stored as part of the step. Structural:
+/// a paragraph break, never the words. Only for a summary taken from reasoning — a visible answer
+/// is the model's answer as written.
+fn without_trailing_thought(block: &str) -> String {
+    let block = block.trim();
+    let last_heading = block
+        .match_indices('\n')
+        .map(|(at, _)| at + 1)
+        .rfind(|&at| {
+            let line = block.get(at..).and_then(|rest| rest.lines().next());
+            !pillars::written_sections(line.unwrap_or("")).is_empty()
+        })
+        .unwrap_or(0);
+    let mut lines = block
+        .get(last_heading..)
+        .unwrap_or("")
+        .split_inclusive('\n');
+    let heading = lines.next().unwrap_or("");
+    // `**Next step:** fix the framing` holds its step on the heading's own line.
+    let mut written = pillars::written_sections(heading)
+        .first()
+        .is_some_and(|(_, inline)| !inline.trim().is_empty());
+    let mut kept = last_heading + heading.len();
+    for line in lines {
+        let blank = line.trim().is_empty();
+        if blank && written {
+            break;
+        }
+        written |= !blank;
+        kept += line.len();
+    }
+    block.get(..kept).unwrap_or(block).trim_end().to_string()
 }
 
 /// Of two answers that were not the summary, the one with more written in it, as text only (a
@@ -6040,6 +6080,136 @@ mod tests {
             Message::assistant().with_tool_request(id, Ok(params)),
             Message::user().with_tool_response(id, Ok(shell_result(stdout, "", exit_code))),
         ]
+    }
+
+    /// Round 6 (2026-10-30, verifier's FIX4 defect 3, mocks m4-reason-plan and
+    /// m4-reason-trailing): planning notes in the reasoning ("Constraints:", "Approach:", … five
+    /// colon lines) with an empty visible answer were stored as the summary, unflagged and never
+    /// re-asked; a summary drafted in the reasoning was stored with the thinking after it ("Wait,
+    /// I should double-check…").
+    #[tokio::test]
+    async fn planning_notes_in_the_reasoning_are_not_the_summary_and_trailing_thought_is_cut() {
+        let plan =
+            "The user wants a summary of this conversation.\nConstraints:\n- five sections, \
+            no tools.\nWhat I know:\n- lots of files were written.\nApproach:\n- go section by \
+            section.\nOutput format:\n- markdown headings.\nRisks:\n- running long.\n";
+        let provider = FixedProvider {
+            answer: Message::assistant().with_thinking(plan, ""),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let ChatCompacted::Compacted { conversation, .. } = compact_chat(
+            &provider,
+            &ModelConfig::new("fixed"),
+            "s",
+            &two_turn_chat(),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap() else {
+            panic!("compacted");
+        };
+        assert_eq!(
+            provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "re-asked once"
+        );
+        let stored = conversation.agent_visible_messages()[0].as_concat_text();
+        assert!(stored.starts_with(pillars::FLAG_LEAD), "{stored}");
+
+        let trailing = "Let me draft the summary.\n\n## Where we are\n\nServices on 8121.\n\n\
+            ## What each file does\n\napp/ledgerd.py serves the API.\n\n## Decisions and reasons\n\n\
+            SQLite DELETE.\n\n## Still to do\n\nframing.\n\n## Next step\n\nFix the camera \
+            framing.\n\nWait, I should double-check whether fitcheck.py really crashed. Hmm.";
+        let summary = summary_in_reasoning(&Message::assistant().with_thinking(trailing, ""))
+            .expect("taken from the reasoning");
+        assert!(summary.ends_with("Fix the camera framing."), "{summary}");
+        assert!(summary.starts_with("## Where we are"), "{summary}");
+        let inline = "**Where we are:** a\n**What each file does:** b\n**Decisions and reasons:** \
+            c\n**Still to do:** d\n**Next step:** fix it\n\nWait, let me re-check.";
+        let summary =
+            summary_in_reasoning(&Message::assistant().with_thinking(inline, "")).unwrap();
+        assert!(summary.ends_with("**Next step:** fix it"), "{summary}");
+    }
+
+    /// Round 6 check of the verifier's FIX4 defect 2 (five bold headings of planning,
+    /// "**Thinking:** I should continue …"): round 5 already stores it FLAGGED, on a small chat as
+    /// on a big one (most sections under a sentence) — pinned here, no new rule needed. A
+    /// translated summary stays unflagged (round 5's design).
+    #[tokio::test]
+    async fn five_bold_planning_lines_are_flagged_on_a_small_chat_too() {
+        let bold = "**Thinking:** I should continue.\n\n**Plan:** look at files.\n\n**Step one:** \
+                    run ls.\n\n**Step two:** read output.\n\n**Then:** carry on.\n";
+        let stored = compacted_with(bold, &two_turn_chat()).await;
+        assert!(stored.starts_with(pillars::FLAG_LEAD), "{stored}");
+        assert!(stored.contains("under one sentence"), "{stored}");
+    }
+
+    /// Round 6 (2026-10-30, verifier's FIX4 defect 4, the real Flash-Next transcript): of 3
+    /// "Errors still open" 2 were noise — `wc -c app/**/*.py` exiting 1 on a glob that matched
+    /// nothing, and `cd /tmp && curl …` that later worked as `cd . && curl …`. A look-up finding
+    /// nothing is not an error, a later success of the same command from any folder settles it;
+    /// real failures (a crash, a compile error, a pipe into a script, `sed -i`) stay open.
+    #[test]
+    fn a_look_up_finding_nothing_or_a_command_rerun_elsewhere_is_not_an_open_error() {
+        let mut messages = vec![Message::user().with_text("build the ledger")];
+        for (id, command, out, code) in [
+            (
+                "p1",
+                "find app web -type f | head -50; echo \"---\"; wc -c app/**/*.py 2>/dev/null",
+                "app/transport.py",
+                1,
+            ),
+            ("p2", "ls /w/DECISIONS.md", "", 2),
+            ("p3", "test -f /w/out.json && cat /w/out.json", "", 1),
+            ("p4", "grep -n TODO /w/app/sync.py", "", 1),
+            (
+                "c1",
+                "cd /tmp && curl -s http://127.0.0.1:8850/v3 | python3 -c 'print(1)'",
+                "Traceback",
+                1,
+            ),
+            (
+                "c2",
+                "cd . && curl -s http://127.0.0.1:8850/v3 | python3 -c 'print(1)'",
+                "1",
+                0,
+            ),
+            (
+                "f1",
+                "cd . && python3 fitcheck.py",
+                "Traceback (most recent call last):",
+                1,
+            ),
+            ("f2", "cargo build", "error[E0425]: cannot find value", 101),
+            ("f3", "cat data.json | python3 parse.py", "KeyError", 1),
+            ("f4", "sed -i 's/a/b/' /w/app/missing.py", "No such file", 1),
+        ] {
+            messages.extend(shelled(id, command, out, code));
+        }
+        let kept = Pillars::build(
+            &messages,
+            &KeptSources::default(),
+            LedgerRead::Entries(Vec::new()),
+        );
+        let rendered = kept.render();
+        let open = rendered
+            .split_once("## Errors still open (4)")
+            .unwrap_or_else(|| panic!("{rendered}"))
+            .1;
+        let open = open.split_once("\n## ").map_or(open, |(open, _)| open);
+        for real in ["fitcheck.py", "cargo build", "parse.py", "sed -i"] {
+            assert!(open.contains(real), "{real}: {open}");
+        }
+        for noise in ["wc -c", "DECISIONS.md", "test -f", "grep -n", "cd /tmp"] {
+            assert!(!open.contains(noise), "{noise}: {open}");
+        }
+        assert!(
+            open.contains("1 earlier failed calls were settled"),
+            "{open}"
+        );
+        assert!(open.contains("4 failed look-ups"), "{open}");
     }
 
     const SYNC_PY: &str =

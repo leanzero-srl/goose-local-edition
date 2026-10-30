@@ -130,6 +130,9 @@ pub struct Pillars {
     pub failed: Vec<Failed>,
     pub failed_left_out: usize,
     pub failed_settled: usize,
+    /// Failed shell calls that only looked (`ls`, `wc`, `test`, `grep` finding nothing): not
+    /// errors, counted on one line (`facts::look_up_failures`).
+    pub failed_looked: usize,
     /// What is still to do by the tool calls themselves (round 5): each error still open, the
     /// `TODO`/`FIXME` markers the written files carry, and the items the newest scratchpad left
     /// unchecked. Why: three real Flash-Next summaries (2026-10-30) dropped an open item the
@@ -182,16 +185,21 @@ impl Pillars {
         let files = absolute_files(written_files(messages), sources.working_dir);
         let documents = named_documents(&asked, sources.preserved, sources.working_dir);
         let settled = super::facts::settled_failures(messages);
+        let looked = super::facts::look_up_failures(messages);
         let failed = failed_of(messages);
-        let failed_settled = failed.len();
+        let failed_settled = failed.iter().filter(|(id, _)| settled.contains(id)).count();
+        let failed_looked = failed
+            .iter()
+            .filter(|(id, _)| !settled.contains(id) && looked.contains(id))
+            .count();
         let failed: Vec<Failed> = failed
             .into_iter()
-            .filter(|(id, _)| !settled.contains(id))
+            .filter(|(id, _)| !settled.contains(id) && !looked.contains(id))
             .map(|(_, failed)| failed)
             .collect();
         let texts: Vec<Option<(String, bool)>> = files
             .iter()
-            .map(|file| super::facts::file_text_now(&file.path, messages))
+            .map(|file| super::facts::file_text_now(&file.path, messages, sources.working_dir))
             .collect();
         let todo = still_to_do(&failed, &files, &texts, messages);
         Self {
@@ -204,7 +212,8 @@ impl Pillars {
                 })
                 .collect(),
             todo,
-            failed_settled: failed_settled - failed.len(),
+            failed_settled,
+            failed_looked,
             worked: super::facts::worked_commands(messages),
             calls: super::facts::last_calls(messages),
             earlier: super::facts::earlier_summaries(messages),
@@ -477,6 +486,7 @@ impl Pillars {
                     || !self.todo.is_empty()
                     || self.failed_left_out > 0
                     || self.failed_settled > 0
+                    || self.failed_looked > 0
                     || !self.worked.is_empty()
                     || !self.calls.is_empty() =>
             {
@@ -490,7 +500,11 @@ impl Pillars {
                         out.push_str(&format!("- {item}\n"));
                     }
                 }
-                if !self.failed.is_empty() || self.failed_left_out > 0 || self.failed_settled > 0 {
+                if !self.failed.is_empty()
+                    || self.failed_left_out > 0
+                    || self.failed_settled > 0
+                    || self.failed_looked > 0
+                {
                     out.push_str(&format!(
                         "\n## Errors still open ({})\n",
                         self.failed.len() + self.failed_left_out
@@ -499,6 +513,13 @@ impl Pillars {
                         out.push_str(&format!(
                             "({} earlier failed calls were settled: the same call succeeded later)\n",
                             self.failed_settled
+                        ));
+                    }
+                    if self.failed_looked > 0 {
+                        out.push_str(&format!(
+                            "({} failed look-ups - ls, wc, test, grep and the like finding \
+                             nothing - are not errors)\n",
+                            self.failed_looked
                         ));
                     }
                     if self.failed_left_out > 0 {
@@ -790,11 +811,33 @@ const SECRET_NAME_PARTS: [&str; 34] = [
     "ed25519",
 ];
 
-/// Whether a path under the chat's folder names a secret-holding file (see [`SECRET_NAME_PARTS`]).
-/// Whether a written file's path looks like a secret's ([`is_secret_like`] on its whole path):
-/// its text is then never read for the facts.
-pub(crate) fn is_secret_like_path(path: &Path) -> bool {
-    is_secret_like(path)
+/// Whether a written file's path names a secret-holding file: its text is then never read for the
+/// facts. The rule is about NAMES, never a location: only the part of the path BELOW the folder
+/// the machine or the session chose is judged — the chat's folder, the OS temp folder, `/tmp`,
+/// the home folder (each raw and canonical). Round 6 (2026-10-30): the check ran on the whole
+/// absolute path and "private" is a secret word, so every file under macOS `/private/tmp` or
+/// `/private/var/folders/…/T` — where every benchmark workspace lives (`/private/tmp/gfix`) — was
+/// never read from disk, and the facts fell back to the conversation's last write of it.
+pub(crate) fn is_secret_like_path(path: &Path, working_dir: Option<&Path>) -> bool {
+    is_secret_like(below_chosen_folder(path, working_dir))
+}
+
+/// `path` less the longest of the folders [`is_secret_like_path`] does not judge that it sits
+/// under; the whole path when it sits under none of them.
+fn below_chosen_folder<'a>(path: &'a Path, working_dir: Option<&Path>) -> &'a Path {
+    let mut roots: Vec<PathBuf> = working_dir.map(Path::to_path_buf).into_iter().collect();
+    roots.push(std::env::temp_dir());
+    roots.push(PathBuf::from("/tmp"));
+    roots.extend(dirs::home_dir());
+    let canonical: Vec<PathBuf> = roots.iter().filter_map(|r| r.canonicalize().ok()).collect();
+    roots
+        .into_iter()
+        .chain(canonical)
+        // The root folder itself is never a chosen folder: the whole path is judged then.
+        .filter(|root| root.components().count() > 1)
+        .filter_map(|root| path.strip_prefix(&root).ok().map(Path::components))
+        .min_by_key(|rest| rest.clone().count())
+        .map_or(path, |rest| rest.as_path())
 }
 
 fn is_secret_like(inside: &Path) -> bool {
@@ -2159,5 +2202,92 @@ mod tests {
         assert!(kept.documents[1].left_out, "over the size cap");
         assert!(!negated(&["please", "read"]) && negated(&["don't", "touch"]));
         assert!(!negated(&["never.", "Then", "read"]), "a sentence ends");
+    }
+
+    /// Round 6 (2026-10-30, verifier's FIX4 defect 1): the secret check ran on the WHOLE absolute
+    /// path, and "private" is a secret word, so every file of a benchmark workspace — macOS keeps
+    /// them under `/private/tmp` (the Gauntlet's `/private/tmp/gfix`) — was never read from disk.
+    /// A real benchmark workdir: under `/tmp`, its own name holding secret words. The contract the
+    /// task names is kept whole, a written file is read from disk (a shell changed it after the
+    /// write), and secret NAMES below the folder are still refused.
+    #[test]
+    fn a_benchmark_workdir_under_private_tmp_is_read_but_secret_names_are_not() {
+        let dir = tempfile::Builder::new()
+            .prefix("gfix-private-token-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let work = dir.path().canonicalize().unwrap();
+        assert!(work.starts_with("/private/tmp"), "{}", work.display());
+        std::fs::write(
+            work.join("SB7-CONTRACT.md"),
+            "# Contract\nframing must go through the camera",
+        )
+        .unwrap();
+        std::fs::write(work.join("prod.env"), "KEY=1").unwrap();
+        std::fs::create_dir(work.join("config")).unwrap();
+        let app = work.join("app.js");
+        let creds = work.join("config/credentials.json");
+        std::fs::write(
+            &app,
+            "export function start() {}\nexport function stop() {}\n",
+        )
+        .unwrap();
+        std::fs::write(&creds, "{\"token\": \"abc\"}").unwrap();
+        let mut messages =
+            vec![Message::user().with_text("Read SB7-CONTRACT.md and prod.env, then build app.js")];
+        messages.extend(written(
+            "w1",
+            &app.display().to_string(),
+            "export function start() {}\n",
+        ));
+        messages.extend(written("w2", &creds.display().to_string(), "{}"));
+        for working_dir in [dir.path(), work.as_path()] {
+            let kept = Pillars::build(
+                &messages,
+                &KeptSources {
+                    working_dir: Some(working_dir),
+                    ..Default::default()
+                },
+                LedgerRead::Entries(Vec::new()),
+            )
+            .fit(Some(100_000));
+            let rendered = kept.render();
+            assert!(
+                rendered.contains("framing must go through the camera"),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("KEY=1"), "{rendered}");
+            assert!(
+                kept.documents.iter().all(|d| !d.path.ends_with("prod.env")),
+                "{:?}",
+                kept.documents
+            );
+            let app_now = kept.files_now[0].as_ref().expect("app.js");
+            assert!(app_now.from_disk, "read from disk: {app_now:?}");
+            assert_eq!(app_now.lines, 2, "the shell's change on disk: {app_now:?}");
+            let creds_now = kept.files_now[1].as_ref().expect("credentials.json");
+            assert!(
+                !creds_now.from_disk,
+                "a secret name is never read: {creds_now:?}"
+            );
+        }
+        // Outside the chat's folder, under /tmp: judged by the names below /tmp only.
+        assert!(!is_secret_like_path(
+            Path::new("/private/tmp/gfix/app.js"),
+            None
+        ));
+        assert!(!is_secret_like_path(
+            Path::new("/tmp/gfix/web/index.html"),
+            None
+        ));
+        assert!(is_secret_like_path(
+            Path::new("/private/tmp/gfix/config/credentials.json"),
+            None
+        ));
+        assert!(is_secret_like_path(&creds, Some(dir.path())));
+        assert!(
+            is_secret_like_path(Path::new("/private/etc/app.conf"), None),
+            "no chosen folder: the whole path is judged"
+        );
     }
 }

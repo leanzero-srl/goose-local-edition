@@ -94,14 +94,20 @@ impl FileNow {
 /// The file as it reads on disk, else as the conversation last left it: its last whole `write`,
 /// with the `edit` calls after it applied (each replaces its `before` text with its `after`) —
 /// `None` when neither is there.
-pub fn file_now(path: &str, messages: &[Message]) -> Option<FileNow> {
-    file_text_now(path, messages).map(|(text, from_disk)| FileNow::of(&text, from_disk))
+pub fn file_now(path: &str, messages: &[Message], working_dir: Option<&Path>) -> Option<FileNow> {
+    file_text_now(path, messages, working_dir)
+        .map(|(text, from_disk)| FileNow::of(&text, from_disk))
 }
 
-/// The text [`file_now`] reads, and whether it came from the disk.
-pub fn file_text_now(path: &str, messages: &[Message]) -> Option<(String, bool)> {
+/// The text [`file_now`] reads, and whether it came from the disk. `working_dir` is the chat's
+/// folder: only the path below it is judged secret-like (`pillars::is_secret_like_path`).
+pub fn file_text_now(
+    path: &str,
+    messages: &[Message],
+    working_dir: Option<&Path>,
+) -> Option<(String, bool)> {
     let on_disk = Path::new(path);
-    if !super::pillars::is_secret_like_path(on_disk) {
+    if !super::pillars::is_secret_like_path(on_disk, working_dir) {
         if let Ok(meta) = std::fs::metadata(on_disk) {
             if meta.is_file() && meta.len() <= MAX_OUTLINE_BYTES {
                 if let Ok(text) = std::fs::read_to_string(on_disk) {
@@ -357,7 +363,9 @@ fn calls_of(messages: &[Message]) -> Vec<Call> {
             .or_else(|| arg("file_path"))
             .unwrap_or_default();
         let targetless = target.is_empty();
-        let key = format!("{} {target}", call.name);
+        // A command is the same command from any folder: `cd /tmp && curl …` that failed is
+        // settled by `cd . && curl …` that worked (the verifier's real run listed it as open).
+        let key = format!("{} {}", call.name, without_cwd(&target));
         let (failed, outcome) = match results.get(request.id.as_str()).map(|r| &r.tool_result) {
             Some(Ok(result)) => {
                 let exit = result
@@ -403,8 +411,9 @@ pub fn last_calls(messages: &[Message]) -> Vec<String> {
     calls[from..].iter().map(|c| c.line.clone()).collect()
 }
 
-/// The ids of the failed calls a LATER call of the same tool on the same command or path settled
-/// by succeeding: what is left of the failures are the errors still open.
+/// The ids of the failed calls a LATER call of the same tool on the same command (from any folder,
+/// [`without_cwd`]) or path settled by succeeding: what is left of the failures, less the
+/// [`look_up_failures`], are the errors still open.
 pub fn settled_failures(messages: &[Message]) -> std::collections::HashSet<String> {
     let calls = calls_of(messages);
     calls
@@ -421,11 +430,65 @@ pub fn settled_failures(messages: &[Message]) -> std::collections::HashSet<Strin
         .collect()
 }
 
-/// Commands that only look (read, list, search, print): they are not the commands that "worked".
-const LOOKING_COMMANDS: [&str; 16] = [
+/// `command` without the `cd <folder> &&` (or `;`) steps it opens with: the folder it ran in.
+fn without_cwd(command: &str) -> &str {
+    let mut rest = command.trim();
+    while let Some(after) = rest.strip_prefix("cd ") {
+        let Some(end) = after.find(['&', ';']) else {
+            break;
+        };
+        rest = after
+            .get(end..)
+            .unwrap_or("")
+            .trim_start_matches(['&', ';'])
+            .trim_start();
+    }
+    rest
+}
+
+/// Commands that only look (read, list, search, test, print): they are not the commands that
+/// "worked", and when one exits non-zero it found nothing (`ls` of a missing file, `wc` on a glob
+/// that matched none, `test -f`, `grep` with no match) — an answer, not an error still open.
+const LOOKING_COMMANDS: [&str; 22] = [
     "cat", "ls", "head", "tail", "grep", "rg", "find", "wc", "sed", "echo", "pwd", "which", "tree",
-    "stat", "file", "diff",
+    "stat", "file", "diff", "test", "[", "[[", "type", "readlink", "realpath",
 ];
+
+/// Whether every step of `command` (split at `&&`, `||`, `;` and `|`; its `cd` steps and
+/// `NAME=value` prefixes aside) is one of the [`LOOKING_COMMANDS`].
+fn only_looks(command: &str) -> bool {
+    let mut steps = 0;
+    for step in command.split(['&', '|', ';']) {
+        let mut words = step
+            .split_whitespace()
+            .skip_while(|w| w.contains('=') && !w.starts_with(['-', '=']));
+        let Some(first) = words.next() else {
+            continue;
+        };
+        let first = first.rsplit('/').next().unwrap_or(first);
+        if first == "cd" {
+            continue;
+        }
+        // `sed -i` writes the file it names: its failure is an error.
+        let writes = first == "sed" && words.any(|w| w.starts_with("-i"));
+        if !LOOKING_COMMANDS.contains(&first) || writes {
+            return false;
+        }
+        steps += 1;
+    }
+    steps > 0
+}
+
+/// The ids of the failed shell calls that only looked ([`only_looks`]): not errors still open.
+/// Round 6 (2026-10-30): of the real Flash-Next run's 3 open errors, 2 were `wc` on a glob that
+/// matched nothing and a `cd /tmp && curl …` later run from another folder.
+pub fn look_up_failures(messages: &[Message]) -> std::collections::HashSet<String> {
+    calls_of(messages)
+        .into_iter()
+        .filter(|call| call.failed == Some(true) && call.command.as_deref().is_some_and(only_looks))
+        .map(|call| call.id)
+        .collect()
+}
 
 /// The shell commands that ran and exited 0 and did more than look — the tests, runs, builds
 /// and checks the work can repeat — newest last, each once, at most [`WORKED_COMMANDS`].
