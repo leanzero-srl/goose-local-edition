@@ -3526,4 +3526,53 @@ mod media_input_tests {
             (false, false)
         );
     }
+
+    /// The pre-pass against a REAL engine, clip by clip, to measure transcripts and descriptions
+    /// outside the app: `OMNI_LIVE_URL` (the engine, e.g. http://127.0.0.1:8395),
+    /// `OMNI_LIVE_MODEL` (its served name), `OMNI_LIVE_CLIPS` (lines `audio|video<TAB>path`, audio
+    /// as the 16 kHz mono PCM WAV the desktop sends) and `OMNI_LIVE_OUT` (one JSON line per clip).
+    #[tokio::test]
+    #[ignore = "needs a running engine and clip files"]
+    async fn live_prepass_of_real_clips() {
+        use base64::Engine;
+        use std::io::Write;
+        let env = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("{k} is not set"));
+        let mut provider = super::tests::make_provider("omlx");
+        provider.api_client =
+            ApiClient::new_with_tls(env("OMNI_LIVE_URL"), AuthMethod::NoAuth, None).unwrap();
+        let model = ModelConfig::new(&env("OMNI_LIVE_MODEL"));
+        let mut out = std::fs::File::create(env("OMNI_LIVE_OUT")).unwrap();
+        for line in std::fs::read_to_string(env("OMNI_LIVE_CLIPS"))
+            .unwrap()
+            .lines()
+        {
+            let (kind, path) = line.split_once('\t').unwrap();
+            let (kind, mime_type) = match kind {
+                "audio" => (MediaKind::Audio, "audio/wav"),
+                "video" => (MediaKind::Video, "video/mp4"),
+                other => panic!("unknown kind {other}"),
+            };
+            let data =
+                base64::engine::general_purpose::STANDARD.encode(std::fs::read(path).unwrap());
+            let name = std::path::Path::new(path)
+                .file_name()
+                .unwrap()
+                .to_string_lossy();
+            let message = Message::user().with_media(MediaContent {
+                kind,
+                data,
+                mime_type: mime_type.to_string(),
+                name: Some(name.to_string()),
+            });
+            let started = std::time::Instant::now();
+            let prepared = provider.media_prepass(&model, &[message]).await;
+            let text = prepared
+                .as_ref()
+                .and_then(|m| m.first())
+                .map(|m| m.as_concat_text())
+                .unwrap_or_else(|| "(no pre-pass: the engine does not take this kind)".into());
+            let row = json!({"path": path, "elapsed_ms": started.elapsed().as_millis() as u64, "text": text});
+            writeln!(out, "{row}").unwrap();
+        }
+    }
 }
