@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "controller": "Work's Mac Studio",
+  "rank": 1,
+  "size": 2,
+  "modelId": "mlx-community/MiMo-V2.6-Flash",
+  "state": "serving",
+  "loadPhase": "ready",
+  "loadedBytes": null,
+  "plannedBytes": null,
+  "title": "Benchmark · MiMo-V2.6-Flash · 86/150",
+  "lines": ["Benchmark running: Gauntlet sb-7.2", "Calls: 86 of 150"],
+  "error": null,
+  "rankPid": 7452,
+  "updatedMs": 1761900000000,
+  "staleAfterS": 30
+}

@@ -35,6 +35,7 @@ use super::launch::{self, RankMemory, RankPhase, RankProcess};
 use super::link_control::{self, ControlEvent, LinkRoutedExec};
 use super::local_network;
 use super::node_op::{NodeOp, Signal};
+use super::peer_tray;
 use super::preflight::{self, now_ms, PreflightReport};
 use super::probe::{self, Pressure, SseVerdict};
 use super::runner_update::{self, Preflighted, RunnerUpdate};
@@ -2303,6 +2304,41 @@ fn launch_specs(
     Ok(specs)
 }
 
+/// The run as `peer_tray`'s relay reads it: the status's states and pids, each node's exec host.
+fn peer_tray_view(
+    shared: Arc<StdMutex<Shared>>,
+    config: DistributedConfig,
+) -> impl Fn() -> peer_tray::RelayView + Send + Sync + 'static {
+    move || {
+        let shared = shared.lock().unwrap();
+        let status = &shared.status;
+        peer_tray::RelayView {
+            state: status.state.as_str().to_string(),
+            model_id: status
+                .model_id
+                .clone()
+                .or_else(|| Some(config.model_id.clone())),
+            error: matches!(status.state, RunState::Failed)
+                .then(|| status.last_error.clone())
+                .flatten(),
+            nodes: status
+                .nodes
+                .iter()
+                .zip(&config.nodes)
+                .map(|(node, configured)| peer_tray::RelayNode {
+                    name: node.name.clone(),
+                    rank: node.rank,
+                    host: configured.ssh.clone(),
+                    pid: node.pid,
+                    load_phase: node.load_phase.map(|p| p.as_str().to_string()),
+                    loaded_bytes: node.active_bytes,
+                    planned_bytes: node.planned_weight_bytes,
+                })
+                .collect(),
+        }
+    }
+}
+
 async fn supervise(
     ctx: RunContext,
     mut preflight: PreflightReport,
@@ -2315,6 +2351,14 @@ async fn supervise(
     // One restart per memory outage: spent by a memory death's restart, re-armed once the
     // restarted pair has served a request to its end.
     let mut memory_restart_armed = true;
+    // Every peer's menu bar mirrors this Mac's for as long as the run is supervised; the guard's
+    // drop (any return below) sends the last record.
+    let _peer_tray = peer_tray::spawn_relay(
+        peer_tray_view(Arc::clone(&ctx.shared), ctx.config.clone()),
+        Arc::clone(&ctx.exec),
+        peer_tray::controller_path(),
+        peer_tray::Tuning::from_env(),
+    );
     loop {
         let context = preflight.context_limit.unwrap_or_default();
         let specs = match launch_specs(&ctx, &preflight, context) {
