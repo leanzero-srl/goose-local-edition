@@ -88,3 +88,4 @@
   refrozen in a clean worktree (7b20f73052), forge2 already matches; sb7.1/forge manifests are old receipts, not shipped.
   key_connection test fails 3/3 isolated on the laptop (kernel RST on a full backlog) = environment, untouched file.
   Repackaging (node-run workhorse-20261030-163030-1a49).
+- 16:44 packaged dev app (7bbd8cfb6e tree, debug goose-cli) built on the laptop (vitest 560 files/5,259 pass incl. benchReleaseManifest), copied to the workhorse ~/goose-builds/omni-pkg/. Waiting: fork suite base arm (laptop), then tag lz.19; ep3 4K render on the workhorse (live media test + notarized build wait for it).
