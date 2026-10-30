@@ -102,3 +102,13 @@
   (node-run workhorse-20261030-183217-35d2, ~/gate2-omni.log). Memory probe of the exact side requests (default cap,
   2-min audio + 60 s video) on Gabee (node-run workhorse-20261030-183333-ddf1, ~/omni-test/prepass_probe.out).
   Test media: /Volumes/AI-workhorse/media/goose/2026-10-30-omni-media/release-media/.
+- 18:50 MEASURED (Gabee M3 Max 64 GB, gemma-4-e4b-it-8bit, app argv, DEFAULT 8,192 media cap, exact side requests):
+  engine idle 8.88 GB metal. 2-min speech WHOLE = only its first 30 s heard (842 prompt tokens) -> Gemma 4 audio hears
+  30 s per clip -> pre-pass cuts PCM WAV into 30 s pieces (images.rs split_pcm_wav) and the desktop re-encodes attached
+  audio to 16 kHz mono WAV (utils/speechWav.ts): 4 pieces x ~800 tokens, 2-3 s each, peak 9.94 GB, every word incl.
+  the 3 code words (lighthouse/volcano/saxophone). 60 s video (16 frames, 4,333 tokens): peak 14.61 GB (RSS 10.3),
+  14-20 s; at the engine default temperature 2 of 3 runs were WRONG ("No video was provided", all-ALPHA) -> side
+  request pinned temperature 0: ALPHA->BRAVO->CHARLIE in order on 2/2 runs (frame counts approximate). Evidence:
+  Gabee ~/omni-test/{prepass_probe,var_probe,probe3}.out (copied to the SSD release-media/ at the end).
+  Also fixed: waitClock vitest scanned the gitignored src/swarm-bench mirror (failed on any Mac that had packaged).
+  Gate + package on the laptop: node-run workhorse-20261030-184609-0bdd (~/gate2-omni.log then ~/pkg-omni.log).
