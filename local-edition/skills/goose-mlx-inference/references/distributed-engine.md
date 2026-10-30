@@ -9,6 +9,7 @@ Moved verbatim from SKILL.md on 2026-10-30 (skills audit). Read by section; the 
 - MiMo-V2.6 VISION on the split
 
 ## The distributed engine (2026-09-24 — one model split across Macs; isolated from the single engine)
+- PEER TRAY (2026-10-31, merge 50647a9959): every Mac in a split shows the controller's menu-bar title + " · rank r/N (for <controller>)". Controller main writes `~/.goose/distributed/tray/controller.json` (3 s heartbeat) -> supervisor relay `distributed/peer_tray.rs` (spawned in `supervise`, runs through load/serve/restarts) sends `NodeOp::TrayStatus` per peer on change + every stale/3 s -> peer writes `~/.goose/distributed/tray/rank-status.json` -> peer main (`peerTray.ts`) polls 2 s. Stale (`GOOSE_DISTRIBUTED_PEER_TRAY_STALE_SECS`, default 30) or rank pid gone -> "Rank r/N stopped" for 30 s, then clears + deletes the file; `GOOSE_DISTRIBUTED_PEER_TRAY=off` disables. No controller app -> the peer composes "Split · <model> · loading shards x/y GB|serving". Older Link peers refuse the new op kind (one warn). Wire contract = `ui/desktop/src/peerTray.fixture.json` (Rust + vitest both pin it). Needs a build with it on BOTH Macs.
 - Code: `crates/goose-sidecar/src/distributed/` (own manager `distributed::global_manager()`, own port, own config key
   `mlx_distributed`); ACP `_goose/unstable/mlxEngine/distributed{Status,Preflight,Start,Stop,ConfigUpdate}` in
   `crates/goose/src/acp/server/mlx_distributed.rs`; capability `mlxDistributed`. engine.rs/Sidecar unchanged (visibility only);
