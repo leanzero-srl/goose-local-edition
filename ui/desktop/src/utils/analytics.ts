@@ -146,7 +146,7 @@ export type AnalyticsEvent =
   // Auto-update tracking events
   | {
       name: 'update_check_started';
-      properties: { trigger: 'startup' | 'manual'; current_version: string };
+      properties: { trigger: 'startup' | 'scheduled' | 'manual'; current_version: string };
     }
   | {
       name: 'update_check_completed';
