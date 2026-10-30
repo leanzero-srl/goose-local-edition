@@ -140,7 +140,9 @@ export function peerTrayView(
     const failed = record.state === 'failed';
     return {
       view: {
-        title: failed ? `Split failed · ${role(record)}` : `Rank ${record.rank}/${record.size} stopped (for ${record.controller})`,
+        title: failed
+          ? `Split failed · ${role(record)}`
+          : `Rank ${record.rank}/${record.size} stopped (for ${record.controller})`,
         lines: [header, ...(failed && record.error ? [`Error: ${record.error}`] : [])],
       },
       expired: false,
@@ -163,11 +165,7 @@ export function peerTrayView(
       .filter((part): part is string => part != null)
       .join(' · ');
   const lines =
-    record.lines.length > 0
-      ? record.lines
-      : record.modelId
-        ? [`Model: ${record.modelId}`]
-        : [];
+    record.lines.length > 0 ? record.lines : record.modelId ? [`Model: ${record.modelId}`] : [];
   return {
     view: {
       title: `${base} · ${role(record)}`,

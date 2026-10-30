@@ -2616,7 +2616,9 @@ app.on('browser-window-focus', (_event, win) => {
   // The live click check's evidence: a goose window that came forward right after a press on the
   // floating window that opened nothing means the focusable-panel fix did not hold on this macOS.
   if (engineGlanceDesktop.raisedByPress()) {
-    log.warn(`engine glance: goose window ${win.id} came forward right after a press on the glance`);
+    log.warn(
+      `engine glance: goose window ${win.id} came forward right after a press on the glance`
+    );
   }
   refreshGlanceSoon();
 });
@@ -2923,10 +2925,14 @@ const publishControllerTray = (title: string, lines: string[], active: boolean) 
     (next == null) !== (controllerTray == null) ||
     (next != null &&
       controllerTray != null &&
-      (next.title !== controllerTray.title || next.lines.join('\n') !== controllerTray.lines.join('\n')));
+      (next.title !== controllerTray.title ||
+        next.lines.join('\n') !== controllerTray.lines.join('\n')));
   controllerTray = next;
   if (next && !controllerTrayHeartbeat) {
-    controllerTrayHeartbeat = setInterval(() => void writeControllerTray(), CONTROLLER_TRAY_HEARTBEAT_MS);
+    controllerTrayHeartbeat = setInterval(
+      () => void writeControllerTray(),
+      CONTROLLER_TRAY_HEARTBEAT_MS
+    );
   } else if (!next && controllerTrayHeartbeat) {
     clearInterval(controllerTrayHeartbeat);
     controllerTrayHeartbeat = null;
@@ -2981,9 +2987,7 @@ const startPeerTray = () => {
   void pollPeerTray();
 };
 const peerTrayMenuItems = (): MenuItemConstructorOptions[] =>
-  peerTray
-    ? peerTray.lines.map((line) => ({ label: clipTrayText(line), click: showWindow }))
-    : [];
+  peerTray ? peerTray.lines.map((line) => ({ label: clipTrayText(line), click: showWindow })) : [];
 
 let lastMlxTrayMenu = '';
 const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
@@ -3061,7 +3065,13 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
   const glanceItems: MenuItemConstructorOptions[] = glanceBack
     ? [{ label: SHOW_GLANCE_TRAY_LABEL, click: showDesktopGlanceAgain }]
     : [];
-  const section = [peerItems, benchItems, linkTrayMenuItems(), items.map(mlxTrayMenuItem), glanceItems]
+  const section = [
+    peerItems,
+    benchItems,
+    linkTrayMenuItems(),
+    items.map(mlxTrayMenuItem),
+    glanceItems,
+  ]
     .filter((group) => group.length > 0)
     .flatMap((group, i) => (i === 0 ? group : [{ type: 'separator' as const }, ...group]));
   setTrayEngineSection(section, () => {
