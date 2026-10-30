@@ -28,6 +28,7 @@ TITLE_MODEL = 'google/gemini-2.5-flash'
 FAKE_ENGINE = '''
 import json, os, pathlib, sys, time
 pathlib.Path('request.json').write_text(json.dumps(sys.argv[1:]))
+pathlib.Path('wrap-up-env.json').write_text(json.dumps({k: v for k, v in os.environ.items() if k.startswith('GOOSE_WRAP_UP_')}))
 sink = os.environ['GOOSE_SWARM_TELEMETRY_FILE']
 def call(model, n):
     with open(sink, 'a') as fh:
@@ -122,8 +123,12 @@ class CallBudgetTests(IsolatedInvoke):
         self.assertEqual(result['budget'], {
             'max_calls': bench_budget.CALL_BUDGET, 'calls_used': 1,
             'calls_source': 'telemetry (provider calls on the entrant model)',
-            'calls_other_models': {TITLE_MODEL: 1}, 'stopped_by': 'model_finished'})
+            'calls_other_models': {TITLE_MODEL: 1}, 'stopped_by': 'model_finished',
+            'wrap_up_nudge': True, 'wrap_up_nudge_version': bench_budget.WRAP_UP_NUDGE_VERSION})
         self.assertIn('BENCH_BUDGET ', out)
+        self.assertIn('"wrap_up_nudge": true', out)
+        self.assertEqual(json.loads((self.work / 'wrap-up-env.json').read_text()),
+                         {'GOOSE_WRAP_UP_NUDGE': 'true'})
         self.assertNotIn('wallet', result['budget'])
 
     def test_a_session_ended_by_the_budget_is_recorded_as_a_budget_stop(self):
@@ -155,6 +160,20 @@ class CallBudgetTests(IsolatedInvoke):
                 with self.subTest(contract=contract):
                     for stated in bench_budget.stated_budgets((root / contract).read_text()):
                         self.assertEqual(stated, tier.call_budget)
+
+    def test_the_operators_wrap_up_settings_never_reach_a_budgeted_entrant(self):
+        snapshot = {'version': 1, 'config': {'GOOSE_WRAP_UP_NUDGE': False, 'goose_wrap_up_finish_at': 0.2,
+                                             'GOOSE_MODEL': 'm'}}
+        self.assertEqual(bench_budget.wrap_up_snapshot(snapshot)['config'], {'GOOSE_MODEL': 'm'})
+        self.assertEqual(snapshot['config']['GOOSE_WRAP_UP_NUDGE'], False, 'the caller keeps its own copy')
+        self.assertIsNone(bench_budget.wrap_up_snapshot(None))
+        self.assertEqual(bench_budget.wrap_up_record(False), {'wrap_up_nudge': False})
+
+    @unittest.skipUnless(GOOSE_AGENT_RS.is_file(), 'the goose sources ship only with the checkout')
+    def test_the_recorded_nudge_version_is_the_one_goose_runs(self):
+        source = (GOOSE_AGENT_RS.parent / 'wrap_up.rs').read_text()
+        self.assertIn(f'WRAP_UP_NUDGE_VERSION: u32 = {bench_budget.WRAP_UP_NUDGE_VERSION};', source)
+        self.assertIn(f'WRAP_UP_NUDGE_KEY: &str = "{bench_budget.WRAP_UP_SWITCH}";', source)
 
     @unittest.skipUnless(GOOSE_AGENT_RS.is_file(), 'the goose sources ship only with the checkout')
     def test_the_budget_closing_is_the_sentence_goose_writes(self):

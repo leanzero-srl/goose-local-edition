@@ -1,4 +1,5 @@
 use crate::agents::extension_manager::ExtensionManager;
+use crate::agents::wrap_up::{self, WrapUp};
 use crate::context_mgmt::context_line::{context_line, LastCallUsage};
 use crate::conversation::message::{Message, MessageContent};
 use crate::conversation::{
@@ -136,6 +137,7 @@ pub async fn inject_moim(
     turns_taken: u32,
     max_turns: u32,
     report: ContextReport,
+    wrap_up: Option<&WrapUp>,
 ) -> Conversation {
     if SKIP.with(|f| f.get()) {
         return conversation;
@@ -143,6 +145,16 @@ pub async fn inject_moim(
     let Some(inputs) = turn_context_inputs(session_id, extension_manager).await else {
         return conversation;
     };
+    // A worker's block is rebuilt for every request, so the current stage rides every one of them.
+    let wrap_up_line = wrap_up.and_then(|wrap_up| {
+        wrap_up.nudge(
+            turns_taken,
+            max_turns,
+            conversation.messages(),
+            &inputs.working_dir,
+            false,
+        )
+    });
     let moim = compose_moim(
         &inputs.working_dir,
         inputs.total_tokens,
@@ -153,6 +165,10 @@ pub async fn inject_moim(
         inputs.extension_parts,
         report,
     );
+    let moim = match wrap_up_line {
+        Some(line) => wrap_up::with_line(&moim, &line),
+        None => moim,
+    };
 
     let mut messages = conversation.messages().clone();
     let Some(idx) = messages
@@ -219,6 +235,7 @@ pub async fn turn_context_message(
     turns_taken: u32,
     max_turns: u32,
     report: ContextReport,
+    wrap_up: Option<&WrapUp>,
 ) -> Option<Message> {
     if SKIP.with(|f| f.get()) {
         return None;
@@ -234,8 +251,20 @@ pub async fn turn_context_message(
     }
     let inputs = turn_context_inputs(session_id, extension_manager).await?;
     let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:00").to_string();
-    next_chat_block(messages, &timestamp, inputs, turns_taken, max_turns, report)
-        .map(|block| Message::user().with_text(block).agent_only())
+    // A chat keeps its blocks, so each stage is said once after the person's words and stays in view.
+    let wrap_up_line = wrap_up.and_then(|wrap_up| {
+        wrap_up.nudge(turns_taken, max_turns, messages, &inputs.working_dir, true)
+    });
+    next_chat_block(
+        messages,
+        &timestamp,
+        inputs,
+        turns_taken,
+        max_turns,
+        report,
+        wrap_up_line,
+    )
+    .map(|block| Message::user().with_text(block).agent_only())
 }
 
 /// [`turn_context_message`]'s decision, on the inputs it read: the block to keep, or `None`.
@@ -246,6 +275,7 @@ fn next_chat_block(
     turns_taken: u32,
     max_turns: u32,
     report: ContextReport,
+    wrap_up_line: Option<String>,
 ) -> Option<String> {
     let listed = extension_section(&inputs.extension_parts);
     let last_listed = last_listed_extension_section(messages);
@@ -266,6 +296,10 @@ fn next_chat_block(
         extension_parts,
         report,
     );
+    let block = match wrap_up_line {
+        Some(line) => wrap_up::with_line(&block, &line),
+        None => block,
+    };
     let newest = messages.iter().enumerate().rev().find_map(|(at, m)| {
         m.is_agent_visible()
             .then(|| {
@@ -638,7 +672,7 @@ mod tests {
             Message::assistant().with_text("Hi"),
             Message::user().with_text("Bye"),
         ]);
-        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT, None).await;
         let msgs = result.messages();
 
         assert_eq!(msgs.len(), 3);
@@ -665,7 +699,7 @@ mod tests {
             .unwrap();
 
         let conv = Conversation::new_unvalidated(vec![Message::user().with_text("Hello")]);
-        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT, None).await;
 
         assert_eq!(result.messages().len(), 1);
         assert!(is_moim(&result.messages()[0].content[0]));
@@ -693,7 +727,7 @@ mod tests {
             Message::assistant().with_text("reply"),
             Message::user().with_text("user only").user_only(),
         ]);
-        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT, None).await;
         let msgs = result.messages();
 
         assert_eq!(msgs.len(), 2);
@@ -728,7 +762,7 @@ mod tests {
                 .with_tool_response("search_1", Ok(rmcp::model::CallToolResult::success(vec![]))),
         ]);
 
-        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, CHAT, None).await;
         let msgs = result.messages();
 
         assert_eq!(msgs.len(), 3);
@@ -770,7 +804,7 @@ mod tests {
             ])
         };
 
-        let block = turn_context_message(&session.id, &tool_tail(), &em, 0, 100, CHAT)
+        let block = turn_context_message(&session.id, &tool_tail(), &em, 0, 100, CHAT, None)
             .await
             .expect("a chat request gets a block");
         assert!(is_turn_context_message(&block), "{block:?}");
@@ -779,7 +813,7 @@ mod tests {
         let mut retried = tool_tail();
         retried.push(block);
         assert!(
-            turn_context_message(&session.id, &retried, &em, 0, 100, CHAT)
+            turn_context_message(&session.id, &retried, &em, 0, 100, CHAT, None)
                 .await
                 .is_none(),
             "the block the failed request was sent with still stands"
@@ -792,10 +826,41 @@ mod tests {
             0,
             100,
             ContextReport::CompactionCountdown,
+            None,
         )
         .await;
         assert!(is_moim(&swarm.messages()[0].content[0]));
         assert_eq!(swarm.messages()[2].content.len(), 1);
+
+        // A worker armed with the nudge carries its stage on every request (its block is not kept),
+        // and an unarmed worker's block has no line at all.
+        let wrap_up = crate::agents::wrap_up::WrapUp::default();
+        for _ in 0..2 {
+            let armed = inject_moim(
+                &session.id,
+                tool_tail(),
+                &em,
+                25,
+                30,
+                ContextReport::CompactionCountdown,
+                Some(&wrap_up),
+            )
+            .await;
+            assert!(armed.messages()[0]
+                .as_concat_text()
+                .contains("<wrap-up stage=\"finish\">5 of 30 model calls left"));
+        }
+        let unarmed = inject_moim(
+            &session.id,
+            tool_tail(),
+            &em,
+            25,
+            30,
+            ContextReport::CompactionCountdown,
+            None,
+        )
+        .await;
+        assert!(!unarmed.messages()[0].as_concat_text().contains("wrap-up"));
     }
 
     /// The history keeps every block, so a block repeats the extension context (scratchpad,
@@ -883,6 +948,7 @@ mod tests {
             0,
             0,
             REPORTED,
+            None,
         )
         .expect("the first request carries a block");
         let mut history = vec![
@@ -892,7 +958,15 @@ mod tests {
         history.extend(tool_step("c1"));
 
         let next = |history: &[Message], time: &str, dir: &str, used: i32, parts: &[&str]| {
-            next_chat_block(history, time, inputs(dir, used, parts), 0, 0, REPORTED)
+            next_chat_block(
+                history,
+                time,
+                inputs(dir, used, parts),
+                0,
+                0,
+                REPORTED,
+                None,
+            )
         };
         assert_eq!(
             next(
@@ -1068,7 +1142,7 @@ mod tests {
                         let mut draft = inputs("/Users/me/code/parser", used, &parts);
                         draft.context_limit = Some(window);
                         if let Some(block) =
-                            next_chat_block(&history, &time, draft, call as u32, 0, report)
+                            next_chat_block(&history, &time, draft, call as u32, 0, report, None)
                         {
                             history.push(Message::user().with_text(block).agent_only());
                             blocks_kept += 1;
@@ -1225,6 +1299,18 @@ mod tests {
                 (
                     "fully populated",
                     moim(Some(100_000), Some(200_000), 20, 40, guardrail(), chat),
+                ),
+                (
+                    "with a wrap-up line",
+                    crate::agents::wrap_up::with_line(
+                        &moim(Some(100_000), Some(200_000), 38, 40, guardrail(), chat),
+                        &crate::agents::wrap_up::WrapUp::default().line(
+                            crate::agents::wrap_up::Stage::Final,
+                            38,
+                            40,
+                            &["DECISIONS.md".to_string()],
+                        ),
+                    ),
                 ),
             ];
 
