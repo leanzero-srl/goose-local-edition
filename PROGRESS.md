@@ -112,3 +112,10 @@
   Gabee ~/omni-test/{prepass_probe,var_probe,probe3}.out (copied to the SSD release-media/ at the end).
   Also fixed: waitClock vitest scanned the gitignored src/swarm-bench mirror (failed on any Mac that had packaged).
   Gate + package on the laptop: node-run workhorse-20261030-184609-0bdd (~/gate2-omni.log then ~/pkg-omni.log).
+- 22:20 FINAL. v3.0.135 published 20:05 (notarized); the independent check found its transcription request carried
+  the question and Gemma answered it inside the last audio piece (2 of 3 runs wrong) -> v3.0.136 (instruction only,
+  quiet cuts, converted-audio 50 MB cap) built from 3.0.135 + fix (main's unfrozen bench change 1c71262a7d left out),
+  proven in the packaged candidate and the INSTALLED app on Gabee (wav + mp3: full transcripts, right answers; video;
+  image; peak 15.5 GB), published 21:49, installed on Gabee + workhorse, merged into main (ed0d7d1303, gate green);
+  second independent check: PASS (only the "19 facts" wording, fixed: Brandt -> Brand). Evidence:
+  /Volumes/AI-workhorse/media/goose/2026-10-30-omni-media/packaged-app-gabee-3.0.13{5,6}*.
