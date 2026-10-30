@@ -24,12 +24,17 @@ export function readMediaFile(
     reader.onload = (event) => {
       readers?.delete(reader);
       const bytes = event.target?.result as ArrayBuffer;
-      void speechWavDataUrl(bytes).then((wav) =>
+      void speechWavDataUrl(bytes).then((wav) => {
+        // The 16 kHz WAV of a compressed file is larger than the file (about 1.9 MB a minute).
+        if (wav && (wav.length * 3) / 4 > MAX_MEDIA_BYTES) {
+          update(entry.id, { isLoading: false, error: 'Over 50 MB as audio (about 26 minutes)' });
+          return;
+        }
         update(entry.id, {
           dataUrl: wav ?? `data:${file.type || 'audio/wav'};base64,${arrayBufferToBase64(bytes)}`,
           isLoading: false,
-        })
-      );
+        });
+      });
     };
     reader.onerror = () => {
       update(entry.id, { isLoading: false, error: 'Failed to read file' });
