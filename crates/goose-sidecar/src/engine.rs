@@ -179,7 +179,7 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
-/// v0.14.3-lz.19 (fork lz/omni-media 17df97b85) = lz.18 + audio and video input on the MLLM lane (fork
+/// v0.14.3-lz.19 (fork lz/omni-media 813e97e0b) = lz.18 + audio and video input on the MLLM lane (fork
 /// api/media_parts.py: `input_audio` parts become files for mlx_vlm.prepare_inputs(audio=), `video_url` parts become
 /// sampled JPEG frames, /v1/models tags `audio` / `video`; measured on gemma-4-e4b-it-8bit).
 /// v0.14.3-lz.18 (fork lz/qwen4-pld-sampled 10f0ef3eb) = lz.17 + qwen4_exp prompt lookup under sampling (fork

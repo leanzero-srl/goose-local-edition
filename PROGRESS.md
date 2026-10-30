@@ -89,3 +89,4 @@
   key_connection test fails 3/3 isolated on the laptop (kernel RST on a full backlog) = environment, untouched file.
   Repackaging (node-run workhorse-20261030-163030-1a49).
 - 16:44 packaged dev app (7bbd8cfb6e tree, debug goose-cli) built on the laptop (vitest 560 files/5,259 pass incl. benchReleaseManifest), copied to the workhorse ~/goose-builds/omni-pkg/. Waiting: fork suite base arm (laptop), then tag lz.19; ep3 4K render on the workhorse (live media test + notarized build wait for it).
+- 17:04 FORK TAGGED v0.14.3-lz.19 = 813e97e0b (pushed). Fork suite head vs lz.18: the only new failures were 8 test_api_models streaming tests - a REAL regression: stream_chat read self._is_mllm on engines the tests build without __init__ (AttributeError) -> getattr default False (b25e42091); ruff I001/format fixed on the new lines; focused rerun head = base (923 passed, 0 new; media 9 passed). uvx --from ...@v0.14.3-lz.19 rapid-mlx serve --help OK.
