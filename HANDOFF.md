@@ -39,6 +39,11 @@ Do NOT load the skills goose-mlx-inference / goose-feature-dev / node-dispatch w
   (else sqlx_macros "mis-aligned LINKEDIT").
 
 ## OPEN
+- 2026-10-30 PLD UNDER SAMPLING SHIPPED: fork tag v0.14.3-lz.18 = v0.14.3-lz.17 + 201b0bf62 (branch lz/qwen4-pld-sampled).
+  qwen4_exp copy drafts now run at temp > 0 (were greedy-only: 0 proposals in the Gauntlet). Lossless (exact
+  speculative sampling, statistical test in tests/test_qwen4_pld_sampled.py). Flash-Next temp 1.0 code_edit 8k on
+  workmule: 99.4% accepted, 1.6x decode, 16/16 exact. Disable sampled route only: RAPID_MLX_MTP_PROMPT_LOOKUP_SAMPLED=0.
+  Goose pin NOT bumped (ENGINE_LAUNCHER still ple.6). Evidence /Volumes/AI-workhorse/experiments/2026-10-30-qwen4-pld-sampled/.
 - YaRN for Qwen3.8-Flash-Next RELEASED 2026-10-29: fork tag v0.14.3-lz.16-ple.5 = v0.14.3-lz.16-ple.4 + one commit
   (6579627b9, branch lz/qwen4-yarn). Opt-in; default rope byte-identical to ple.4 (greedy code_edit 8k f9dca5e1,
   doc_quote 8k db086b90, MTP off, both builds). Enable with the serve flag `--qwen4-rope-scaling yarn` (= Qwen card:
