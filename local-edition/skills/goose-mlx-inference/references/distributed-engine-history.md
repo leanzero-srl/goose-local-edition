@@ -1,5 +1,37 @@
 # Distributed engine history (moved here from the mlx-jaccl-cluster skill, 2026-10-03)
 
+## Contents
+- Distributed engine — owner requirements & guardrail design (2026-09-23, not yet built)
+- 2026-09-23 — Flash landed
+- Pipeline split for qwen4_exp (Qwen3.8-Flash-Next) — built 2026-09-23, NOT yet run on two Macs
+- Copying a model to the other Mac over TB5 (goose replica, built 2026-09-23)
+- Flash (qwen4_exp, 95.7 GiB text) on BOTH Macs — measured 2026-09-24
+- goose's DISTRIBUTED engine — BUILT 2026-09-24 (goose main, crates/goose-sidecar/src/distributed/)
+- goose's distributed engine SETS ITSELF UP — 2026-09-24 (night), commits ff38b70f9 d61595bb6 66a28a80f
+- 2026-09-24 — ONE served-id rule for both engines (d8f60daba, ea8ee809f) — supersedes the served-id TRAP above
+- 2026-09-24 — macOS LOCAL NETWORK PRIVACY was why the app's preflight ping failed (90de1b9e2, cd7907158)
+- Full-model reference without 98 GB resident — layer streaming (2026-09-24)
+- Flash OpenAI server — `pipeline_qwen4 serve` (fork 272cb064, 2026-09-24)
+- 2026-09-24 — goose runs the qwen4_exp PIPELINE through the fork's server (goose-sidecar distributed/)
+- Flash from goose's UI + KV slots (2026-09-24)
+- goose's distributed engine over LeanZero Link — BUILT 2026-09-24 (3f0f64f1e..8670bfdb2)
+- Hermetic e2e recipe (proven 2026-09-24, both personal Tailscale identities byte-identical before/after)
+- Traps (each cost time)
+- LIVE test (waits on the owner: app build ≥ 8670bfdb2 on BOTH Macs, Link signed in + Connect on both)
+- LIVE result 2026-09-24 (installed Goose Swarm 3.0.22 on both, Link mesh 100.64.0.2 ↔ 100.64.0.3)
+- IMAGE INPUT on the Flash split (2026-09-24, fork d40e9e363 dabcc67b2 2f7cdf27c a5cb98757; goose pin 8a23b10dd)
+- MEMORY COMPACTION ("Make room") + the GPU-ceiling budget — goose f6fcc664b, fork 2ce699589 (in pin 2f7cdf27c),
+- 2026-09-25 — the split capped EVERY answer at 512 tokens (Q-65) — fixed 39db807f0 (+ 330dc836c)
+- 2026-09-25 — Q-66 idle spin on the TENSOR split + Q-71 window 141,568 (branch q66-doorbell, 158981ad7)
+- 2026-09-25 — Q-75 PIPELINE prefix cache (fork b7bd1afc2, tag lz-pipeline-qwen4.1; goose cc790b8cd, worktree br
+- 2026-09-26 — Q-114 ROOT CAUSE: the tensor split hangs at ~10.5k generated tokens (goose branch q114-gdn-paddin
+- 2026-10-26 MiMo-V2.6-Flash (mimo_v2, 48 layers, 256 experts) across workhorse + workmule
+- 2026-10-26 (evening) MiMo split in goose: three findings on branch mimo-distributed
+- 2026-10-27 MiMo split live through goose (branch mimo-distributed ae9d068c98)
+- 2026-10-27 (session 10) MiMo split: prefill cause, memory model, long context (branch mimo-distributed)
+- 2026-10-28 (session 13) MiMo-V2.6-Flash MOPD omni (EigenLabs 4bit-mtp) live on the split (mimo-distributed 116
+
+
 Verbatim record of goose's DISTRIBUTED engine work, 2026-09-23..26, previously kept in
 `~/.claude/skills/mlx-jaccl-cluster/SKILL.md`. That skill now holds only the raw two-Mac MLX/JACCL layer
 (topology, procedure, measured all_sum, mlx_lm sharding, the Step 1b soak). Read SKILL.md's "The
