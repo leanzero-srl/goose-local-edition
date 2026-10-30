@@ -66,3 +66,18 @@
   lint re-running. Pin bump to lz.19 staged (not committed until the tag exists); found the lz.18 bump never appended
   lz.17 to SUPERSEDED_ENGINE_LAUNCHERS (lz.17 installs never migrate) -> both lz.17 + lz.18 appended, new test
   every_older_pinned_tag_is_a_superseded_launcher.
+- 16:15 lint:check GREEN on the laptop after d5f0f46a00. Gate (fmt/clippy workspace/tests/lint/vitest) running on the laptop
+  (node-run workhorse-20261030-160856-c529, ~/gate-omni.log; first try caught a double comma in my pin edit -> fixed by
+  autosquash). Gemma weights copying to /Volumes/AI-workhorse/models/goose/mlx-community/ over Tailscale (Thunderbolt link
+  192.168.0.2 times out; ~20 min). Release notes drafted: docs/releases/3.0.135-audio-and-video-input.md (covers the 50
+  main commits since v3.0.134 too). Plan: packaged dev app built on the laptop, live media test + notarized build on the
+  workhorse after ep3 (~23:00): Developer ID + notary.env are on the workhorse; codesign over ssh is unproven, so the
+  notarized build runs as a local nohup here.
+- 16:25 GATE (laptop, rebased 2db0211c2a): fmt OK, clippy --workspace --all-targets -D warnings OK, lint:check OK, vitest OK.
+  cargo test goose/providers/provider-types/sidecar: 3 failures, none in touched code: key_connection
+  only_a_refused_loopback... ("a full queue answered: Connection reset by peer" - the laptop kernel RSTs a full backlog;
+  file untouched by omni-media; rerunning isolated), providers.rs test_codex_provider (ChatGPT account refuses
+  gpt-5.2-codex) and test_claude_code_provider ("Stream yielded no message") = live external CLIs. sqlx LINKEDIT trap
+  hit once (strip=false flag fixes it). Gemma on the SSD, sha match, laptop copy deleted. Laptop disk was 15 GB free
+  (target/) -> 24 GB. Packaging (debug goose-cli + pnpm package) on the laptop: node-run workhorse-20261030-162344-da9d.
+  Fork suite head arm at shard 40/86 (memory-guard shards take 9 min each).
