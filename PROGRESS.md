@@ -91,3 +91,14 @@
 - 16:44 packaged dev app (7bbd8cfb6e tree, debug goose-cli) built on the laptop (vitest 560 files/5,259 pass incl. benchReleaseManifest), copied to the workhorse ~/goose-builds/omni-pkg/. Waiting: fork suite base arm (laptop), then tag lz.19; ep3 4K render on the workhorse (live media test + notarized build wait for it).
 - 17:04 FORK TAGGED v0.14.3-lz.19 = 813e97e0b (pushed). Fork suite head vs lz.18: the only new failures were 8 test_api_models streaming tests - a REAL regression: stream_chat read self._is_mllm on engines the tests build without __init__ (AttributeError) -> getattr default False (b25e42091); ruff I001/format fixed on the new lines; focused rerun head = base (923 passed, 0 new; media 9 passed). uvx --from ...@v0.14.3-lz.19 rapid-mlx serve --help OK.
 - 18:24 PACKAGED-APP PROBE on Gabee (isolated): 3 blockers - CSP refused playback (FIXED 3b7d320480), app mounts Gemma --text-only by default (media withheld), MLLM lane refuses every goose media request (21k-token prompt > 8,192 media cap; raising it blows memory for video). NOT RELEASED. Plan + numbers: HANDOFF-omni-release.md. Gabee restored (installed Goose relaunched, single-guard OK).
+- 18:35 SESSION 3 (release). Rebased on origin/main 6e34d1e378. Built (690bafef26): MEDIA PRE-PASS in goose-providers
+  openai.rs (each attached audio/video clip, and images on an engine that declares audio = the MLLM lane, goes to the
+  engine ALONE: one-line system, instruction + the person's words, max_tokens 1024, no tools; the agent turn carries a
+  labelled "[Attached audio X - transcript made from the attachment by <model>, not the file itself:]" part; cache by
+  host|model|kind|mime|sha256, 64 entries; failure = named reason; the cap 400 "exceeds the per-batch cap" now also
+  triggers the images-as-placeholders retry). SIDECAR: ModelDirFacts.hears_audio (config audio_config /
+  thinker_config.audio_config, the engine's model_hears_audio) -> auto text_only OFF for audio-bearing checkpoints;
+  ACP MlxLocalModel.hearsAudio; the Text-only lane switch reads auto per model. Gate + ACP regen on the laptop
+  (node-run workhorse-20261030-183217-35d2, ~/gate2-omni.log). Memory probe of the exact side requests (default cap,
+  2-min audio + 60 s video) on Gabee (node-run workhorse-20261030-183333-ddf1, ~/omni-test/prepass_probe.out).
+  Test media: /Volumes/AI-workhorse/media/goose/2026-10-30-omni-media/release-media/.
