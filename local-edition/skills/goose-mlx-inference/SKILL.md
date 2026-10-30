@@ -128,6 +128,7 @@ Rule home: ~/.claude/CLAUDE.md "ANYTHING OVER 30 MINUTES NEEDS CAUSE, A CHEAPER-
 | references/qwen4-flash-offload.md | Qwen3.8-Flash-Next PLE offload facts (tag check, laptop blocker, sqlx strip trap) |
 | references/hard-rules-detail.md | full text and WHY of rules 8-12 (weights mount, restore at launch, swarm-surgeon) |
 | references/long-runs.md | copy of the LONG RUNS section above |
+| references/omni-media.md | audio/video input: which omni model works on which mlx-vlm, the wire path, traps |
 | references/operations.md | clean-up leftovers list |
 | references/CHANGELOG.md | dated diary 2026-10-17 onward: per-model results (RC13, Nemotron, Gemma 4, Granite, Mellum...) |
 Grep across all: `grep -rn "<term>" ~/.claude/skills/goose-mlx-inference/references/`.
