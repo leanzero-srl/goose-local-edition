@@ -1243,7 +1243,7 @@ impl Attachment<'_> {
                             let part = convert_media(&MediaContent {
                                 data: p.data,
                                 mime_type: "audio/wav".to_string(),
-                                ..m.clone()
+                                ..(*m).clone()
                             });
                             (Some((p.start_secs, p.end_secs)), part)
                         })
