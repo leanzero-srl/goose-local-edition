@@ -29,10 +29,10 @@ use pillars::{KeptSources, LedgerRead, NoteVerdict, Pillars};
 
 pub const DEFAULT_COMPACTION_THRESHOLD: f64 = 0.8;
 
-// ratio: one tool result, as a share of the window — the largest single-call growth of the
-// Flash-Next Gauntlet sb-7.2 run (ple.6, 2026-10-30) was 22,944 prompt tokens on a 360,000 window
-// (6.4%).
-const TOOL_RESULT_WINDOW_SHARE: f64 = 1.0 / 16.0;
+// ratio: one tool result plus the summary instruction, as a share of the window — the largest
+// single-call growth of the Flash-Next Gauntlet sb-7.2 run (ple.6, 2026-10-30) was 22,944 prompt
+// tokens on a 360,000 window (6.4%); the instruction and a second ask add ~2k more (8.3% in all).
+const TOOL_RESULT_WINDOW_SHARE: f64 = 1.0 / 12.0;
 
 /// The ratio the person set (`GOOSE_AUTO_COMPACT_THRESHOLD`), when they set one.
 fn configured_compaction_threshold() -> Option<f64> {
@@ -53,7 +53,7 @@ pub fn configured_or_default_threshold() -> f64 {
 /// answer at the model's output cap plus one tool result — and never earlier than 0.8. Why
 /// (Flash-Next, Gauntlet sb-7.2, 2026-10-30): the window was the MEASURED 360,000 the engine holds,
 /// 0.8 compacted at 289,943 and left 70k of it unused, while the room the next call can take is
-/// its output (cap 32,768) and one tool result (largest 22,944). `GOOSE_COMPACTION_RESERVE_TOKENS`
+/// its output (cap 32,768) and one tool result (largest 22,944) with the summary instruction. `GOOSE_COMPACTION_RESERVE_TOKENS`
 /// replaces the derived reserve.
 pub fn compaction_threshold(context_limit: usize, model_config: &ModelConfig) -> f64 {
     let reserve = Config::global()
@@ -83,7 +83,8 @@ pub fn compaction_threshold_from(
     let reserve = reserve_tokens.unwrap_or_else(|| {
         max_output_tokens + (context_limit as f64 * TOOL_RESULT_WINDOW_SHARE) as usize
     });
-    let point = context_limit.saturating_sub(reserve) as f64 / context_limit as f64;
+    // At least one token of reserve: a point at the whole window reads as auto-compaction off.
+    let point = context_limit.saturating_sub(reserve.max(1)) as f64 / context_limit as f64;
     point.max(DEFAULT_COMPACTION_THRESHOLD)
 }
 
@@ -364,14 +365,16 @@ fn keep_tail_from_config() -> Option<usize> {
 
 /// A chat's kept tail: the newest messages that fit `budget_chars` as the summarizing model reads
 /// them, counted back from the end and stopping at the first message that is not an ordinary turn
-/// (an earlier summary, or a row an earlier compaction hid). Why: before 2026-10-30 a chat kept no
+/// or goose's own turn-context block (an earlier summary, or a row an earlier compaction hid). Why: before 2026-10-30 a chat kept no
 /// tail (`GOOSE_COMPACT_KEEP_TAIL` 0), so the model woke from a compaction with no exact bytes of
 /// what it had just done — the Flash-Next stopped run spent 13 of its next 17 calls re-reading.
 pub fn tail_that_fits(messages: &[Message], budget_chars: usize) -> usize {
     let mut used = 0usize;
     let mut kept = 0usize;
     for message in messages.iter().rev() {
-        if !(message.is_agent_visible() && message.is_user_visible()) {
+        let ordinary = message.is_agent_visible()
+            && (message.is_user_visible() || crate::conversation::is_turn_context_message(message));
+        if !ordinary {
             break;
         }
         used += format_message_for_compacting(message).chars().count();
@@ -648,6 +651,16 @@ async fn compact_core(
 
     let (merged_continuation, _issues) = merge_consecutive_messages(continuation_messages);
     final_messages.extend(merged_continuation);
+
+    // A chat's person's request goes BEFORE its kept tail: the tail is the work that request
+    // asked for, and re-sent after it the request reads as new work. The swarm workers keep the
+    // golden order (tail, then the request).
+    let mut preserved_text = preserved_text;
+    if chat.is_some() && cut < messages.len() {
+        if let Some(text) = preserved_text.take() {
+            final_messages.push(Message::user().with_text(&text));
+        }
+    }
 
     // K4: the kept tail returns VERBATIM after the summary, so the agent reads "summary of the
     // early conversation, then the last turns exactly as they happened" — same shape as the
@@ -2381,11 +2394,37 @@ mod tests {
         .await
         .unwrap();
 
+        // The engine answers every request with "reading project configuration" — no summary
+        // sections — so the chat's summary is asked once more on the same prefix, then as a
+        // transcript.
         let bodies = engine.bodies().await;
-        assert_eq!(bodies.len(), 3, "chat, summary, transcript: {bodies:?}");
-        let (chat, summary, transcript) = (&bodies[0], &bodies[1], &bodies[2]);
+        assert_eq!(
+            bodies.len(),
+            5,
+            "chat, summary, its second ask, the chat's transcript, the worker's transcript: \
+             {bodies:?}"
+        );
+        let (chat, summary, second_ask, transcript) =
+            (&bodies[0], &bodies[1], &bodies[2], &bodies[4]);
         let cached = stable_messages(chat, &block);
         let sent = summary["messages"].as_array().unwrap();
+        let resent = second_ask["messages"].as_array().unwrap();
+        assert_eq!(
+            &resent[..sent.len()],
+            sent.as_slice(),
+            "the second ask extends the summary request"
+        );
+        assert_eq!(
+            resent[sent.len()],
+            serde_json::json!({"role": "assistant", "content": "reading project configuration"})
+        );
+        assert!(resent[sent.len() + 1]["content"]
+            .as_str()
+            .is_some_and(|c| c.contains("it is not the summary")));
+        assert_eq!(second_ask["tools"], chat["tools"]);
+        assert!(bodies[3]
+            .get("tools")
+            .is_none_or(|t| t.as_array().is_some_and(|t| t.is_empty())));
         assert_eq!(
             &sent[..cached.len()],
             cached.as_slice(),
@@ -3730,11 +3769,9 @@ mod tests {
             "<analysis>scratch</analysis>\nNOTE OK\n{EVERY_PART}"
         )));
         let correction = missing_parts_correction("## Where we are\nx");
-        assert!(
-            correction.contains("`## What each file does`"),
-            "{correction}"
-        );
-        assert!(!correction.contains("`## Where we are`"), "{correction}");
+        let (missing, _) = correction.split_once(':').unwrap();
+        assert!(missing.contains("`## What each file does`"), "{correction}");
+        assert!(!missing.contains("`## Where we are`"), "{correction}");
     }
 
     /// The Flash-Next shape: the model answers the summary instruction by going on with the work.
@@ -3890,14 +3927,14 @@ mod tests {
 
     /// The compaction point: the person's ratio wins; otherwise the window minus the output cap
     /// and one tool result, never earlier than 0.8. The Flash-Next numbers: 360,000 with a 32,768
-    /// cap compacts at 304,732 instead of 288,000.
+    /// cap compacts at 297,232 instead of 288,000.
     #[test]
     fn the_compaction_point_reserves_one_answer_and_one_tool_result() {
         let at = |configured, reserve, limit: usize, output| {
             (compaction_threshold_from(configured, reserve, limit, output) * limit as f64).round()
                 as usize
         };
-        assert_eq!(at(None, None, 360_000, 32_768), 304_732);
+        assert_eq!(at(None, None, 360_000, 32_768), 297_232);
         assert_eq!(at(Some(0.8), None, 360_000, 32_768), 288_000);
         assert_eq!(at(None, Some(20_000), 360_000, 32_768), 340_000);
         assert_eq!(
@@ -3905,7 +3942,8 @@ mod tests {
             102_400,
             "never earlier than 0.8"
         );
-        assert_eq!(at(None, None, 1_048_576, 32_768), 950_272);
+        assert_eq!(at(None, None, 1_048_576, 32_768), 928_427);
+        assert!(compaction_threshold_from(None, Some(0), 360_000, 32_768) < 1.0);
         assert_eq!(compaction_threshold_from(None, None, 0, 4_096), 0.8);
     }
 }

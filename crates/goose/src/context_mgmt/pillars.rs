@@ -65,7 +65,7 @@ pub struct Document {
     pub path: String,
     pub text: String,
     pub chars: usize,
-    /// Left out to fit the block: only the path and the size are kept.
+    /// Not kept whole (no room, or the window is unknown): only the path and the size are kept.
     pub left_out: bool,
 }
 
@@ -163,16 +163,11 @@ impl Pillars {
 
     /// Fits the block into `budget_chars`: the oldest failed calls go first, then the oldest ledger
     /// entries (`ledger_read` still has them), then the person's older messages are cut to
-    /// excerpts, oldest first — with the named files' texts going, largest first, before the
-    /// person's words are cut. The newest message, the note and the pins are never cut. Each cut
-    /// is said in the block itself. `None`: the window is unknown; only the named files' texts go.
+    /// excerpts, oldest first. The newest message, the note and the pins are never cut. Each cut is
+    /// said in the block itself. Then the named files' texts fill what room is left. `None`: the
+    /// window is unknown; nothing is cut and no file's text is kept (only its path and size).
     pub fn fit(mut self, budget_chars: Option<usize>) -> Self {
         let Some(budget) = budget_chars else {
-            // With the window unknown no document is known to fit: each keeps its path and size.
-            for document in &mut self.documents {
-                document.text.clear();
-                document.left_out = true;
-            }
             return self;
         };
         while self.render().chars().count() > budget {
@@ -188,16 +183,6 @@ impl Pillars {
                     continue;
                 }
             }
-            if let Some(largest) = self
-                .documents
-                .iter_mut()
-                .filter(|d| !d.left_out)
-                .max_by_key(|d| d.chars)
-            {
-                largest.text.clear();
-                largest.left_out = true;
-                continue;
-            }
             let newest = self.asked.len().saturating_sub(1);
             let Some(oldest_whole) = self.asked[..newest]
                 .iter()
@@ -209,7 +194,32 @@ impl Pillars {
             entry.text = excerpt(&entry.text);
             entry.cut = true;
         }
+        self.load_documents(budget);
         self
+    }
+
+    /// The named files' texts take only the room the rest of the block leaves, in the order the
+    /// person named them: a file that can be read again never pushes out a failed call, a ledger
+    /// entry or the person's words.
+    fn load_documents(&mut self, budget: usize) {
+        for i in 0..self.documents.len() {
+            let room = budget.saturating_sub(self.render().chars().count());
+            if self.documents[i].chars > room {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&self.documents[i].path) else {
+                continue;
+            };
+            let document = &mut self.documents[i];
+            document.chars = text.chars().count();
+            document.text = text;
+            document.left_out = false;
+            if self.render().chars().count() > budget {
+                let document = &mut self.documents[i];
+                document.text.clear();
+                document.left_out = true;
+            }
+        }
     }
 
     /// The `<kept-by-goose>` block stored after the model's summary.
@@ -276,7 +286,7 @@ impl Pillars {
                     for document in &self.documents {
                         if document.left_out {
                             out.push_str(&format!(
-                                "### {} ({} chars, left out to fit; read it again only for the \
+                                "### {} (~{} characters, left out to fit; read it again only for the \
                                  lines you need)\n",
                                 document.path, document.chars
                             ));
@@ -466,7 +476,7 @@ impl Pillars {
 fn document_line(document: &Document) -> String {
     if document.left_out {
         format!(
-            "{} ({} chars, left out to fit)",
+            "{} (~{} characters, left out to fit)",
             document.path, document.chars
         )
     } else {
@@ -474,14 +484,18 @@ fn document_line(document: &Document) -> String {
     }
 }
 
-/// The existing text files the person's messages name by a path relative to the chat's folder or
-/// an absolute one, in the order first named, each read from disk now. A word that names no
-/// readable UTF-8 file is not a file the person named.
+/// The files under the chat's folder that the person's messages name — by a path relative to it
+/// or an absolute one inside it — in the order first named, with their size on disk; `fit` reads
+/// the ones that fit. A hidden component (`.env`, `.git/…`) or a path outside the folder is never
+/// read: the block is sent to the provider.
 fn named_documents(
     asked: &[Asked],
     preserved: Option<&str>,
     working_dir: Option<&Path>,
 ) -> Vec<Document> {
+    let Some(folder) = working_dir.and_then(|dir| dir.canonicalize().ok()) else {
+        return Vec::new();
+    };
     let mut seen = std::collections::HashSet::new();
     let mut documents = Vec::new();
     let words = asked
@@ -490,35 +504,37 @@ fn named_documents(
         .chain(preserved)
         .flat_map(str::split_whitespace);
     for word in words {
-        let word = word.trim_matches(|c: char| {
-            matches!(
-                c,
-                '`' | '"' | '\'' | '(' | ')' | '[' | ']' | ',' | ';' | ':' | '<' | '>'
-            )
-        });
-        let word = word.trim_end_matches('.');
+        let word = word
+            .trim_matches(|c: char| {
+                matches!(
+                    c,
+                    '`' | '"' | '\'' | '(' | ')' | '[' | ']' | ',' | ';' | ':' | '<' | '>'
+                )
+            })
+            .trim_end_matches('.');
         if !word.contains('.') || word.contains("://") || word.starts_with('-') {
             continue;
         }
-        let path = if is_absolute(word) {
-            PathBuf::from(word)
-        } else {
-            match working_dir {
-                Some(dir) => dir.join(word),
-                None => continue,
-            }
+        let Ok(path) = folder.join(word).canonicalize() else {
+            continue;
         };
-        if !path.is_file() || !seen.insert(path.clone()) {
+        let Ok(inside) = path.strip_prefix(&folder) else {
+            continue;
+        };
+        let hidden = inside
+            .components()
+            .any(|c| c.as_os_str().to_string_lossy().starts_with('.'));
+        let Ok(meta) = path.metadata() else {
+            continue;
+        };
+        if hidden || !meta.is_file() || !seen.insert(path.clone()) {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
         documents.push(Document {
             path: path.display().to_string(),
-            chars: text.chars().count(),
-            text,
-            left_out: false,
+            text: String::new(),
+            chars: meta.len() as usize,
+            left_out: true,
         });
     }
     documents
@@ -1479,5 +1495,44 @@ mod tests {
         assert!(block.contains("The chat's own folder is /Users/mihaiperdum, but"));
         assert!(block.contains(&format!("- {work}/scripts/build_report.js — ")));
         assert!(kept.kept_lines()[0].contains(work));
+    }
+
+    /// The files the task names are kept whole from disk when they fit the room left; a hidden
+    /// file or one outside the chat's folder is never read; an unknown window keeps paths only.
+    #[test]
+    fn the_files_the_person_named_are_kept_whole_when_they_fit() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("SB7-CONTRACT.md"),
+            "# Contract\nsync 12,288",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(".env"), "SECRET=1").unwrap();
+        let asked = Message::user().with_text(
+            "`SB7-CONTRACT.md` is the contract; never print .env or /etc/hosts, see https://x.io/a.md",
+        );
+        let build = |budget| {
+            Pillars::build(
+                std::slice::from_ref(&asked),
+                &KeptSources {
+                    working_dir: Some(dir.path()),
+                    ..Default::default()
+                },
+                LedgerRead::Entries(Vec::new()),
+            )
+            .fit(budget)
+        };
+        let kept = build(Some(100_000));
+        assert_eq!(kept.documents.len(), 1, "{:?}", kept.documents);
+        let rendered = kept.render();
+        assert!(rendered.contains("# Contract\nsync 12,288"), "{rendered}");
+        assert!(!rendered.contains("SECRET") && !rendered.contains("localhost"));
+        assert!(kept
+            .kept_lines()
+            .iter()
+            .any(|l| l.contains("SB7-CONTRACT.md")));
+        let tight = build(Some(kept.render().chars().count() - 5));
+        assert!(tight.documents[0].left_out && !tight.render().contains("sync 12,288"));
+        assert!(build(None).documents[0].left_out);
     }
 }
