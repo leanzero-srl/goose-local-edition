@@ -596,7 +596,7 @@ let currentUpdateMethod: UpdateMethod | null = null;
 let reportedMilestones: Set<25 | 50 | 75 | 100> = new Set();
 
 export function trackUpdateCheckStarted(
-  trigger: 'startup' | 'manual',
+  trigger: 'startup' | 'scheduled' | 'manual',
   currentVersion: string
 ): void {
   trackEvent({

@@ -27,6 +27,9 @@ import {
   trackUpdateInstallInitiated,
 } from './analytics';
 
+/** How often a running app looks for a new release after its startup check. */
+export const UPDATE_RECHECK_INTERVAL_MS = 4 * 60 * 60 * 1000;
+
 let updateAvailable = false;
 let trayRef: Tray | null = null;
 let isUsingGitHubFallback = false;
@@ -430,19 +433,21 @@ export function setupAutoUpdater(tray?: Tray) {
 
   log.info('Auto-updater setup completed');
 
-  // Check for updates on startup
-  setTimeout(() => {
+  // Check on startup, then again every few hours: an app left open for days (the owner's laptop
+  // ran 3.0.134 from 29 Oct while 3.0.135 and 3.0.136 shipped on 30 Oct) otherwise never sees a
+  // release. A found update downloads in the background and installs on quit, as on startup.
+  const checkForUpdatesNow = (trigger: 'startup' | 'scheduled') => {
     const currentVersion = autoUpdater.currentVersion?.version || app.getVersion();
     const checkStartTime = Date.now();
-    log.info('=== STARTUP UPDATE CHECK INITIATED ===');
-    log.info(`Checking for updates on startup at ${new Date().toISOString()}`);
+    log.info(`=== ${trigger.toUpperCase()} UPDATE CHECK INITIATED ===`);
+    log.info(`Checking for updates (${trigger}) at ${new Date().toISOString()}`);
     log.info(`autoUpdater.currentVersion: ${JSON.stringify(autoUpdater.currentVersion)}`);
     log.info(`autoUpdater.getFeedURL(): ${autoUpdater.getFeedURL()}`);
     log.info(
       `Network online status: ${typeof navigator !== 'undefined' ? navigator.onLine : 'unknown'}`
     );
 
-    trackUpdateCheckStarted('startup', currentVersion);
+    trackUpdateCheckStarted(trigger, currentVersion);
 
     // Set up a timeout warning for long-running checks
     const timeoutWarning = setTimeout(() => {
@@ -463,15 +468,15 @@ export function setupAutoUpdater(tray?: Tray) {
         clearTimeout(timeoutWarning);
         clearTimeout(timeoutError);
         const duration = Date.now() - checkStartTime;
-        log.info(`=== STARTUP UPDATE CHECK COMPLETED in ${duration}ms ===`);
+        log.info(`=== ${trigger.toUpperCase()} UPDATE CHECK COMPLETED in ${duration}ms ===`);
         log.info('Update check result:', result);
       })
       .catch((err) => {
         clearTimeout(timeoutWarning);
         clearTimeout(timeoutError);
         const duration = Date.now() - checkStartTime;
-        log.error(`=== STARTUP UPDATE CHECK FAILED after ${duration}ms ===`);
-        log.error('Error checking for updates on startup:', err);
+        log.error(`=== ${trigger.toUpperCase()} UPDATE CHECK FAILED after ${duration}ms ===`);
+        log.error(`Error checking for updates (${trigger}):`, err);
         log.error('Error details:', {
           message: err.message,
           stack: err.stack,
@@ -519,7 +524,7 @@ export function setupAutoUpdater(tray?: Tray) {
 
                 if (!autoDownloadDisabled) {
                   log.info('Auto-downloading update via GitHub fallback on startup...');
-                  await githubAutoDownload(result.downloadUrl!, result.latestVersion!, 'on startup');
+                  await githubAutoDownload(result.downloadUrl!, result.latestVersion!, `on ${trigger}`);
                 } else {
                   log.info('Auto-download disabled — skipping GitHub fallback download on startup');
                 }
@@ -551,7 +556,12 @@ export function setupAutoUpdater(tray?: Tray) {
           });
         }
       });
-  }, 5000); // Wait 5 seconds after app starts
+  };
+  setTimeout(() => checkForUpdatesNow('startup'), 5000);
+  setInterval(() => {
+    if (updateAvailable) return;
+    checkForUpdatesNow('scheduled');
+  }, UPDATE_RECHECK_INTERVAL_MS);
 
   // Handle update events
   autoUpdater.on('checking-for-update', () => {
