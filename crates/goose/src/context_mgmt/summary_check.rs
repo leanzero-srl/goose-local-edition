@@ -454,7 +454,7 @@ mod tests {
     #[test]
     fn none_and_short_german_or_chinese_sections_are_not_flagged() {
         let german = "## Wo wir stehen\nDas Backend läuft, alle Tests sind grün.\n\
-                      ## Was jede Datei tut\n`app/sync.py` holt die Zahlungen vom Anbieter.\n\
+                      ## Was jede Datei tut\nKeine.\n\
                       ## Entscheidungen und Gründe\nKeine.\n\
                       ## Noch zu tun\nNone.\n\
                       ## Nächster Schritt\nDie Kamera für die Übersicht einstellen.\n";
@@ -463,7 +463,7 @@ mod tests {
         assert_eq!(thin_summary(german, 0), None, "{german}");
 
         let chinese = "## 当前进度\n后端已完成，同步了全部付款记录。\n\
-                       ## 各文件作用\n`app/sync.py` 负责从供应商拉取付款。\n\
+                       ## 各文件作用\n无。\n\
                        ## 决定与理由\n无。\n\
                        ## 待办\n暂无。\n\
                        ## 下一步\n调整默认相机以满足取景要求。\n";
