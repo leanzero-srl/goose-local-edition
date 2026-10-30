@@ -7638,6 +7638,64 @@ mod text_only_engine_tests {
         ]
     }
 
+    fn media_history() -> Vec<Message> {
+        use crate::conversation::message::{MediaContent, MediaKind};
+        vec![Message::user()
+            .with_text("what is said and what happens?")
+            .with_media(MediaContent {
+                kind: MediaKind::Audio,
+                data: "UklGRg==".to_string(),
+                mime_type: "audio/wav".to_string(),
+                name: Some("call.wav".to_string()),
+            })
+            .with_media(MediaContent {
+                kind: MediaKind::Video,
+                data: "AAAA".to_string(),
+                mime_type: "video/mp4".to_string(),
+                name: Some("clip.mp4".to_string()),
+            })]
+    }
+
+    fn formatted_media(options: OpenAiFormatOptions) -> (Value, ImageReport) {
+        let mut report = ImageReport::default();
+        let spec =
+            format_messages_reporting_images(&media_history(), &ImageFormat::OpenAi, options, &mut report);
+        (spec[0]["content"].clone(), report)
+    }
+
+    #[test]
+    fn attached_audio_goes_as_input_audio_and_video_as_a_video_url() {
+        let (content, report) = formatted_media(OpenAiFormatOptions::default());
+        assert_eq!(
+            content[1],
+            json!({"type": "input_audio", "input_audio": {"data": "UklGRg==", "format": "wav"}})
+        );
+        assert_eq!(
+            content[2],
+            json!({"type": "video_url", "video_url": {"url": "data:video/mp4;base64,AAAA"}})
+        );
+        assert_eq!((report.audio_sent, report.video_sent, report.media_withheld), (1, 1, 0));
+    }
+
+    #[test]
+    fn media_an_engine_cannot_take_goes_as_its_named_placeholder() {
+        let (content, report) = formatted_media(OpenAiFormatOptions {
+            withhold_video: true,
+            ..Default::default()
+        });
+        assert_eq!(content[1]["type"], "input_audio");
+        assert_eq!(content[2]["type"], "text");
+        assert!(content[2]["text"].as_str().unwrap().contains("clip.mp4"));
+        assert_eq!((report.audio_sent, report.video_sent, report.media_withheld), (1, 0, 1));
+
+        let (content, report) = formatted_media(OpenAiFormatOptions {
+            text_only_engine: true,
+            ..Default::default()
+        });
+        assert!(!serde_json::to_string(&content).unwrap().contains("base64"));
+        assert_eq!(report.media_withheld, 2);
+    }
+
     fn formatted(text_only_engine: bool) -> (Vec<Value>, ImageReport) {
         let mut images = ImageReport::default();
         let spec = format_messages_reporting_images(

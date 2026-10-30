@@ -699,3 +699,23 @@ pub fn convert_media(media: &crate::conversation::message::MediaContent) -> Valu
         }),
     }
 }
+
+#[cfg(test)]
+mod media_format_tests {
+    use super::input_audio_format;
+
+    #[test]
+    fn input_audio_format_folds_the_common_mime_aliases() {
+        for (mime, want) in [
+            ("audio/wav", "wav"),
+            ("audio/x-wav", "wav"),
+            ("audio/mpeg", "mp3"),
+            ("audio/mp4", "m4a"),
+            ("audio/x-m4a", "m4a"),
+            ("audio/flac", "flac"),
+            ("audio/ogg; codecs=opus", "ogg"),
+        ] {
+            assert_eq!(input_audio_format(mime), want, "{mime}");
+        }
+    }
+}

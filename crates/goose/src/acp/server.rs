@@ -5556,3 +5556,55 @@ print(\"hello, world\")
         );
     }
 }
+
+#[cfg(test)]
+mod attached_media_tests {
+    use super::*;
+
+    #[test]
+    fn an_audio_or_video_blob_becomes_a_named_media_part_and_anything_else_is_dropped() {
+        let blob = |mime: Option<&str>| {
+            let b = BlobResourceContents::new("AAAA", "attachment:///clip.mp4");
+            match mime {
+                Some(m) => b.mime_type(m.to_string()),
+                None => b,
+            }
+        };
+        let video = attached_media_from_blob(&blob(Some("Video/MP4"))).unwrap();
+        assert_eq!(video.kind, MediaKind::Video);
+        assert_eq!(video.mime_type, "video/mp4");
+        assert_eq!(video.name.as_deref(), Some("clip.mp4"));
+        assert_eq!(
+            attached_media_from_blob(&blob(Some("audio/wav"))).unwrap().kind,
+            MediaKind::Audio
+        );
+        assert!(attached_media_from_blob(&blob(Some("application/pdf"))).is_none());
+        assert!(attached_media_from_blob(&blob(None)).is_none());
+    }
+
+    #[test]
+    fn a_prompt_with_audio_and_a_video_blob_carries_both_as_media_and_replays_them() {
+        let prompt = vec![
+            ContentBlock::Text(agent_client_protocol::schema::v1::TextContent::new("listen")),
+            ContentBlock::Audio(AudioContent::new("UklGRg==", "audio/wav")),
+            ContentBlock::Resource(EmbeddedResource::new(
+                EmbeddedResourceResource::BlobResourceContents(
+                    BlobResourceContents::new("AAAA", "attachment:///clip.mp4")
+                        .mime_type("video/mp4".to_string()),
+                ),
+            )),
+        ];
+        let message = GooseAcpAgent::convert_acp_prompt_to_message(&prompt);
+        let media: Vec<&MediaContent> = message
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                MessageContent::Media(m) => Some(m),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(media.len(), 2);
+        assert!(matches!(media_content_block(media[0]), ContentBlock::Audio(_)));
+        assert!(matches!(media_content_block(media[1]), ContentBlock::Resource(_)));
+    }
+}

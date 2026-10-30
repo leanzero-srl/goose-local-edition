@@ -2883,3 +2883,21 @@ mod tests {
         assert_eq!(r, "api/voice/v1/chat/completions");
     }
 }
+
+#[cfg(test)]
+mod media_input_tests {
+    use super::withheld_media;
+    use serde_json::json;
+
+    #[test]
+    fn media_is_withheld_only_when_the_engine_lists_capabilities_without_it() {
+        let listing = |caps: serde_json::Value| json!({"data": [{"id": "m", "capabilities": caps}]});
+        assert_eq!(
+            withheld_media(&listing(json!(["text", "vision", "video", "audio"])), "m"),
+            (false, false)
+        );
+        assert_eq!(withheld_media(&listing(json!(["text", "vision", "video"])), "m"), (true, false));
+        assert_eq!(withheld_media(&listing(json!(["text"])), "m"), (true, true));
+        assert_eq!(withheld_media(&json!({"data": [{"id": "m"}]}), "m"), (false, false));
+    }
+}
