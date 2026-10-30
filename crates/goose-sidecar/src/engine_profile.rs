@@ -26,10 +26,10 @@ pub const GUARD_FLOOR_CHUNK_TOKENS: u64 = 256; // measured: rapid_mlx/scheduler.
 // max_model_len under: the measured weights plus max(8% of them, 512 MiB) of headroom, as a share
 // of Metal's recommended working set, clamped to [0.90, 0.97]. `/v1/status`
 // `memory_guard.ceiling_bytes` replaces it once the engine runs.
-const ENGINE_CAP_HEADROOM_SHARE: f64 = 0.08; // ratio: memory_budget.py _AUTO_HEADROOM_FRACTION, of the weights
+pub const ENGINE_CAP_HEADROOM_SHARE: f64 = 0.08; // ratio: memory_budget.py _AUTO_HEADROOM_FRACTION, of the weights
 const ENGINE_CAP_HEADROOM_MIN_BYTES: u64 = 512 * 1024 * 1024; // ratio: memory_budget.py _AUTO_HEADROOM_MIN_BYTES
-const ENGINE_CAP_MIN_SHARE: f64 = 0.90; // ratio: memory_budget.py AUTO_UTILIZATION_FLOOR, of the working set
-const ENGINE_CAP_MAX_SHARE: f64 = 0.97; // ratio: memory_budget.py AUTO_UTILIZATION_CEILING, of the working set
+pub const ENGINE_CAP_MIN_SHARE: f64 = 0.90; // ratio: memory_budget.py AUTO_UTILIZATION_FLOOR, of the working set
+pub const ENGINE_CAP_MAX_SHARE: f64 = 0.97; // ratio: memory_budget.py AUTO_UTILIZATION_CEILING, of the working set
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineMemoryProfile {
@@ -161,21 +161,78 @@ const PINNED_PROFILES: &[(&str, EngineMemoryProfile)] = &[
             floor_chunk_tokens: GUARD_FLOOR_CHUNK_TOKENS,
         },
     ),
+    (
+        "v0.14.3-lz.20",
+        EngineMemoryProfile::Guarded {
+            floor_chunk_tokens: GUARD_FLOOR_CHUNK_TOKENS,
+        },
+    ),
+    (
+        MEMORY_TUNABLES_BRANCH,
+        EngineMemoryProfile::Guarded {
+            floor_chunk_tokens: GUARD_FLOOR_CHUNK_TOKENS,
+        },
+    ),
 ];
+
+/// The fork branch the memory tunables were built on; a launcher pinned to it reads every lz.20 flag.
+pub const MEMORY_TUNABLES_BRANCH: &str = "lz/metal-tunables";
+/// The first lz tag of the v0.14.3 line that reads the memory-tunable flags
+/// (`--metal-limit-gb`, `--memory-floor-gb`, `--max-model-len`, ... fork INTERFACE.md).
+const MEMORY_TUNABLES_FIRST_LZ: u32 = 20; // measured: fork tag v0.14.3-lz.20 introduces the flags
+
+fn launcher_tag(spawn_command: &[String]) -> Option<&str> {
+    spawn_command
+        .iter()
+        .find_map(|arg| arg.rsplit_once("Rapid-MLX@").map(|(_, tag)| tag.trim()))
+}
+
+/// Whether the engine `spawn_command` launches reads the memory-tunable flags: a `v0.14.3-lz.N`
+/// tag with N >= 20 (any suffix), a later base version, or the tunables branch itself. An owner's
+/// own launcher without a tag is not known to, so goose sends none of them to it.
+pub fn supports_memory_tunables(spawn_command: &[String]) -> bool {
+    let Some(tag) = launcher_tag(spawn_command) else {
+        return false;
+    };
+    if tag == MEMORY_TUNABLES_BRANCH {
+        return true;
+    }
+    let Some(rest) = tag.strip_prefix('v') else {
+        return false;
+    };
+    let (base, lz) = match rest.split_once("-lz.") {
+        Some((base, lz)) => (base, Some(lz)),
+        None => (rest, None),
+    };
+    let parts: Vec<u32> = base.split('.').filter_map(|p| p.parse().ok()).collect();
+    if parts.len() != 3 {
+        return false;
+    }
+    let base = (parts[0], parts[1], parts[2]);
+    if base > (0, 14, 3) {
+        return true;
+    }
+    if base < (0, 14, 3) {
+        return false;
+    }
+    lz.and_then(|lz| {
+        lz.split(|c: char| !c.is_ascii_digit())
+            .next()
+            .and_then(|n| n.parse::<u32>().ok())
+    })
+    .is_some_and(|n| n >= MEMORY_TUNABLES_FIRST_LZ)
+}
 
 /// The profile of the engine `spawn_command` launches; `Err` names why it is not known (an
 /// owner's own launcher, a tag without a row), and the caller charges [`UNDECLARED`] and says so.
 pub fn profile_of_launcher(spawn_command: &[String]) -> Result<EngineMemoryProfile, String> {
-    let tag = spawn_command
-        .iter()
-        .find_map(|arg| arg.rsplit_once("Rapid-MLX@").map(|(_, tag)| tag.trim()))
-        .ok_or_else(|| {
-            format!(
-                "the engine launcher `{}` names no Rapid-MLX tag, so goose does not know how it \
+    let tag = launcher_tag(spawn_command).ok_or_else(|| {
+        format!(
+            "the engine launcher `{}` names no Rapid-MLX tag, so goose does not know how it \
                  prefills",
-                spawn_command.join(" ")
-            )
-        })?;
+            spawn_command.join(" ")
+        )
+    })?;
     PINNED_PROFILES
         .iter()
         .find(|(pinned, _)| *pinned == tag)
@@ -278,6 +335,26 @@ mod tests {
             profile_of_launcher(&launcher("v0.14.3-lz.11")),
             Ok(UNDECLARED)
         );
+    }
+
+    #[test]
+    fn only_lz20_and_the_tunables_branch_read_the_memory_flags() {
+        for (tag, want) in [
+            ("v0.14.3-lz.18", false),
+            ("v0.14.3-lz.19", false),
+            ("v0.14.3-lz.20", true),
+            ("v0.14.3-lz.21-ple.1", true),
+            ("v0.14.4", true),
+            ("v0.13.1", false),
+            ("lz/metal-tunables", true),
+            ("lz/other-branch", false),
+        ] {
+            assert_eq!(supports_memory_tunables(&launcher(tag)), want, "{tag}");
+        }
+        assert!(!supports_memory_tunables(&[
+            "python3".into(),
+            "serve.py".into()
+        ]));
     }
 
     #[test]

@@ -22,6 +22,7 @@ use crate::kv_cache::{self, KvCacheMode};
 use crate::machine::{
     self, LoadClaim, LoadHolder, LoadLock, LoadLockAttempt, LoadLockHeld, OtherEngine,
 };
+use crate::memory_tunables::MemoryTunables;
 use crate::model_identity::{NodeModel, ServedNames};
 use crate::ple_offload;
 use crate::port_holder;
@@ -176,7 +177,21 @@ pub const PREFIX_ENTRIES_PER_REQUEST: u32 = 3; // measured: 12 radix inserts / 4
 /// the count never evicts before a full admission window has been stored — the byte share
 /// governs everything beyond it.
 pub fn hybrid_cache_entries() -> u32 {
-    MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
+    hybrid_cache_entries_for(MAX_CONCURRENT_REQUESTS)
+}
+
+fn hybrid_cache_entries_for(max_concurrent: u32) -> u32 {
+    max_concurrent * PREFIX_ENTRIES_PER_REQUEST
+}
+
+/// The admission cap the engine under `settings` runs with: this Mac's
+/// `memory.max_concurrent_requests`, else [`MAX_CONCURRENT_REQUESTS`]. Routers size the local
+/// sidecar node's slots from it, so the swarm never sends more than the engine admits.
+pub fn max_concurrent_requests(settings: &EngineSettings) -> u32 {
+    settings
+        .memory
+        .max_concurrent_requests
+        .unwrap_or(MAX_CONCURRENT_REQUESTS)
 }
 
 /// v0.14.3-lz.19 (fork lz/omni-media 813e97e0b) = lz.18 + audio and video input on the MLLM lane (fork
@@ -527,9 +542,9 @@ pub const ADAPTER_REQUIRED_FILES: [&str; 2] = ["adapter_config.json", "adapters.
 
 /// Per-model sampling and context settings. Sampling is per MODEL, not per engine:
 /// each mounted model pulls its own profile from `EngineSettings::model_profiles`.
-/// `context_limit` is profile state for goose's own context bookkeeping — Rapid-MLX
-/// 0.13.1 has no context-length serve flag (`--max-tokens` caps generation, a
-/// different knob), so it emits no argv.
+/// `context_limit` is the model's configured context: goose's own context bookkeeping, and on an
+/// engine that reads the memory tunables (lz.20+) the admitted window `--max-model-len`, unless this
+/// Mac's `memory.max_context_tokens` names one.
 ///
 /// The three serving-lane fields are OVERRIDES over what the model directory itself says
 /// (`inspect_model_dir`): `None` means "auto" everywhere, so a persisted profile that
@@ -640,6 +655,8 @@ pub struct EngineSettings {
     pub spawn_command: Vec<String>,
     /// Per-model sampling/context profiles, keyed by the HF model id.
     pub model_profiles: BTreeMap<String, ModelProfile>,
+    /// This Mac's engine memory tunables (`mlx_engine.memory`), the same for every model.
+    pub memory: MemoryTunables,
 }
 
 impl Default for EngineSettings {
@@ -659,6 +676,7 @@ impl Default for EngineSettings {
             served_model_name: None,
             spawn_command: ENGINE_LAUNCHER.iter().map(|s| s.to_string()).collect(),
             model_profiles: BTreeMap::new(),
+            memory: MemoryTunables::default(),
         }
     }
 }
@@ -1018,9 +1036,18 @@ fn validated_adapter_dir(raw: &str) -> Result<Option<PathBuf>> {
 /// value the guard derives from the device. The guard sizes BYTES; the hybrid count is a count
 /// (without the flag the engine falls to 8, tighter than goose's 24, so dropping it would cost
 /// hits), and the admission cap is a concurrency bound the guard's memory admission sits under.
-fn prefix_cache_flags(engine: &Result<EngineMemoryProfile, String>) -> Vec<String> {
+fn prefix_cache_flags(
+    engine: &Result<EngineMemoryProfile, String>,
+    memory: &MemoryTunables,
+) -> Vec<String> {
+    let max_concurrent = memory
+        .max_concurrent_requests
+        .unwrap_or(MAX_CONCURRENT_REQUESTS);
     let mut flags = vec!["--enable-prefix-cache".to_string()];
-    if !matches!(engine, Ok(EngineMemoryProfile::Guarded { .. })) {
+    // A person's prefix budget (`--cache-memory-mb`, memory_tunables) replaces the share.
+    if !matches!(engine, Ok(EngineMemoryProfile::Guarded { .. }))
+        && memory.prefix_cache_gb.is_none()
+    {
         flags.extend([
             "--cache-memory-percent".to_string(),
             PREFIX_CACHE_SHARE_OF_FREE.to_string(),
@@ -1028,9 +1055,9 @@ fn prefix_cache_flags(engine: &Result<EngineMemoryProfile, String>) -> Vec<Strin
     }
     flags.extend([
         "--hybrid-cache-entries".to_string(),
-        hybrid_cache_entries().to_string(),
+        hybrid_cache_entries_for(max_concurrent).to_string(),
         "--max-concurrent-requests".to_string(),
-        MAX_CONCURRENT_REQUESTS.to_string(),
+        max_concurrent.to_string(),
     ]);
     flags
 }
@@ -1096,9 +1123,10 @@ pub fn build_serve_command(
     for alias in names.also {
         argv.extend(["--served-model-alias".to_string(), alias]);
     }
-    argv.extend(prefix_cache_flags(&engine_profile::profile_of_launcher(
-        &settings.spawn_command,
-    )));
+    argv.extend(prefix_cache_flags(
+        &engine_profile::profile_of_launcher(&settings.spawn_command),
+        &settings.memory,
+    ));
     let default_profile = ModelProfile::default();
     let profile = settings
         .model_profiles
@@ -1154,7 +1182,36 @@ pub fn build_serve_command(
     if let Some(spec) = profile.rope_scaling.as_deref() {
         argv.extend(rope_scaling_flags(&model_path, spec)?);
     }
+    argv.extend(memory_tunable_flags(
+        settings,
+        profile,
+        crate::memory::measure().ok().map(|r| r.total_bytes),
+    )?);
     Ok(argv)
+}
+
+/// The memory-tunable flags for `settings` on a Mac with `physical_bytes` of RAM: refused when a
+/// value is impossible on this Mac, or when a tunable only lz.20+ reads is set while the launcher
+/// pins an older engine (which would exit on the unknown flag, or worse, ignore it).
+pub fn memory_tunable_flags(
+    settings: &EngineSettings,
+    profile: &ModelProfile,
+    physical_bytes: Option<u64>,
+) -> Result<Vec<String>> {
+    let memory = &settings.memory;
+    memory
+        .validate(physical_bytes, None)
+        .map_err(|e| anyhow::anyhow!("engine memory settings: {e}"))?;
+    let supports = engine_profile::supports_memory_tunables(&settings.spawn_command);
+    let needs = memory.needs_new_engine();
+    ensure!(
+        supports || needs.is_empty(),
+        "engine memory settings {} need Rapid-MLX v0.14.3-lz.20 or newer; the launcher runs `{}`",
+        needs.join(", "),
+        settings.spawn_command.join(" ")
+    );
+    let context = memory.max_context_tokens.or(profile.context_limit);
+    Ok(memory.engine_flags(context, physical_bytes, supports))
 }
 
 /// The engine flag that serves rope scaling `spec` for the checkpoint at `model_path`
@@ -3589,9 +3646,13 @@ mod tests {
     /// budget. An unguarded engine and one goose cannot place keep the share.
     #[test]
     fn a_guarded_engine_gets_no_prefix_cache_budget() {
-        let guarded = prefix_cache_flags(&Ok(EngineMemoryProfile::Guarded {
-            floor_chunk_tokens: engine_profile::GUARD_FLOOR_CHUNK_TOKENS,
-        }));
+        let none = MemoryTunables::default();
+        let guarded = prefix_cache_flags(
+            &Ok(EngineMemoryProfile::Guarded {
+                floor_chunk_tokens: engine_profile::GUARD_FLOOR_CHUNK_TOKENS,
+            }),
+            &none,
+        );
         assert_eq!(
             guarded,
             vec![
@@ -3612,18 +3673,224 @@ mod tests {
             "8",
         ];
         assert_eq!(
-            prefix_cache_flags(&Ok(engine_profile::UNDECLARED)),
+            prefix_cache_flags(&Ok(engine_profile::UNDECLARED), &none),
             with_share
         );
         assert_eq!(
-            prefix_cache_flags(&Err("an owner's own launcher".to_string())),
+            prefix_cache_flags(&Err("an owner's own launcher".to_string()), &none),
             with_share
         );
         let own = vec!["python3".to_string(), "serve.py".to_string()];
         assert_eq!(
-            prefix_cache_flags(&engine_profile::profile_of_launcher(&own)),
+            prefix_cache_flags(&engine_profile::profile_of_launcher(&own), &none),
             with_share
         );
+    }
+
+    fn tunables_settings(memory: MemoryTunables) -> EngineSettings {
+        EngineSettings {
+            spawn_command: vec![
+                "uvx".into(),
+                "--from".into(),
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.20"
+                    .into(),
+                "rapid-mlx".into(),
+            ],
+            memory,
+            ..Default::default()
+        }
+    }
+
+    fn serve_argv(memory: MemoryTunables) -> Vec<String> {
+        build_serve_command(&tunables_settings(memory), "pub/model", &[]).unwrap()
+    }
+
+    #[test]
+    fn the_metal_cap_reaches_the_engine_argv() {
+        let argv = serve_argv(MemoryTunables {
+            metal_limit_gb: Some(40.0),
+            ..Default::default()
+        });
+        assert_eq!(flag_value(&argv, "--metal-limit-gb").as_deref(), Some("40"));
+    }
+
+    #[test]
+    fn the_memory_floor_reaches_the_engine_argv_and_defaults_per_machine() {
+        let argv = serve_argv(MemoryTunables {
+            memory_floor_gb: Some(4.0),
+            ..Default::default()
+        });
+        assert_eq!(flag_value(&argv, "--memory-floor-gb").as_deref(), Some("4"));
+        let physical = crate::memory::measure().unwrap().total_bytes;
+        let argv = serve_argv(MemoryTunables::default());
+        assert_eq!(
+            flag_value(&argv, "--memory-floor-gb"),
+            Some(crate::memory_tunables::default_memory_floor_gb(physical).to_string())
+        );
+    }
+
+    #[test]
+    fn the_prefix_budget_reaches_the_engine_argv_and_replaces_the_share() {
+        let mut s = tunables_settings(MemoryTunables {
+            prefix_cache_gb: Some(2.097152),
+            ..Default::default()
+        });
+        s.spawn_command = vec!["python3".into(), "serve.py".into()];
+        let argv = build_serve_command(&s, "pub/model", &[]).unwrap();
+        assert_eq!(
+            flag_value(&argv, "--cache-memory-mb").as_deref(),
+            Some("2000")
+        );
+        assert!(
+            !argv.iter().any(|a| a == "--cache-memory-percent"),
+            "{argv:?}"
+        );
+    }
+
+    #[test]
+    fn the_prefill_chunk_reaches_the_engine_argv() {
+        let argv = serve_argv(MemoryTunables {
+            prefill_step_size: Some(512),
+            ..Default::default()
+        });
+        assert_eq!(
+            flag_value(&argv, "--prefill-step-size").as_deref(),
+            Some("512")
+        );
+    }
+
+    #[test]
+    fn the_max_context_reaches_the_engine_argv_and_wins_over_the_profile() {
+        let mut s = tunables_settings(MemoryTunables::default());
+        s.model_profiles.insert(
+            "pub/model".into(),
+            ModelProfile {
+                context_limit: Some(65536),
+                ..Default::default()
+            },
+        );
+        let argv = build_serve_command(&s, "pub/model", &[]).unwrap();
+        assert_eq!(
+            flag_value(&argv, "--max-model-len").as_deref(),
+            Some("65536")
+        );
+        s.memory.max_context_tokens = Some(131072);
+        let argv = build_serve_command(&s, "pub/model", &[]).unwrap();
+        assert_eq!(
+            flag_value(&argv, "--max-model-len").as_deref(),
+            Some("131072")
+        );
+        assert_eq!(argv.iter().filter(|a| *a == "--max-model-len").count(), 1);
+    }
+
+    #[test]
+    fn the_guard_margin_reaches_the_engine_argv() {
+        let argv = serve_argv(MemoryTunables {
+            guard_margin_gb: Some(1.5),
+            ..Default::default()
+        });
+        assert_eq!(
+            flag_value(&argv, "--memory-guard-margin-gb").as_deref(),
+            Some("1.5")
+        );
+    }
+
+    #[test]
+    fn max_concurrent_requests_reaches_the_engine_argv_and_the_hybrid_count() {
+        let s = tunables_settings(MemoryTunables {
+            max_concurrent_requests: Some(4),
+            ..Default::default()
+        });
+        let argv = build_serve_command(&s, "pub/model", &[]).unwrap();
+        assert_eq!(
+            flag_value(&argv, "--max-concurrent-requests").as_deref(),
+            Some("4")
+        );
+        assert_eq!(
+            argv.iter()
+                .filter(|a| *a == "--max-concurrent-requests")
+                .count(),
+            1
+        );
+        assert_eq!(
+            flag_value(&argv, "--hybrid-cache-entries").as_deref(),
+            Some("12")
+        );
+        assert_eq!(max_concurrent_requests(&s), 4);
+        assert_eq!(
+            max_concurrent_requests(&EngineSettings::default()),
+            MAX_CONCURRENT_REQUESTS
+        );
+    }
+
+    #[test]
+    fn the_auto_fractions_and_soft_reserve_reach_the_engine_argv() {
+        let argv = serve_argv(MemoryTunables {
+            auto_utilization_floor: Some(0.8),
+            auto_utilization_ceiling: Some(0.95),
+            auto_headroom_fraction: Some(0.12),
+            system_reserve_fraction: Some(0.05),
+            ..Default::default()
+        });
+        for (flag, want) in [
+            ("--auto-utilization-floor", "0.8"),
+            ("--auto-utilization-ceiling", "0.95"),
+            ("--auto-headroom-fraction", "0.12"),
+            ("--system-reserve-fraction", "0.05"),
+        ] {
+            assert_eq!(flag_value(&argv, flag).as_deref(), Some(want), "{flag}");
+        }
+    }
+
+    #[test]
+    fn new_engine_tunables_on_an_old_launcher_fail_the_mount_by_name() {
+        let mut s = tunables_settings(MemoryTunables {
+            metal_limit_gb: Some(40.0),
+            ..Default::default()
+        });
+        s.spawn_command = EngineSettings::default().spawn_command;
+        let e = build_serve_command(&s, "pub/model", &[]).unwrap_err();
+        let e = format!("{e:#}");
+        assert!(
+            e.contains("metal_limit_gb need Rapid-MLX v0.14.3-lz.20"),
+            "{e}"
+        );
+        let plain = build_serve_command(&EngineSettings::default(), "pub/model", &[]).unwrap();
+        assert!(!plain.iter().any(|a| a == "--memory-floor-gb"), "{plain:?}");
+    }
+
+    #[test]
+    fn an_impossible_memory_setting_fails_the_mount() {
+        let e = build_serve_command(
+            &tunables_settings(MemoryTunables {
+                auto_utilization_floor: Some(0.99),
+                auto_utilization_ceiling: Some(0.9),
+                ..Default::default()
+            }),
+            "pub/model",
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            format!("{e:#}").contains("auto_utilization_floor 0.99 is above"),
+            "{e:#}"
+        );
+    }
+
+    #[test]
+    fn memory_tunables_round_trip_the_persisted_config() {
+        let s = tunables_settings(MemoryTunables {
+            metal_limit_gb: Some(112.0),
+            memory_floor_gb: Some(4.0),
+            ..Default::default()
+        });
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json["memory"]["metal_limit_gb"], 112.0);
+        let back: EngineSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(back, s);
+        let legacy: EngineSettings =
+            serde_json::from_value(serde_json::json!({"port": 8090})).unwrap();
+        assert!(legacy.memory.is_empty());
     }
 
     #[test]

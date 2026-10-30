@@ -42,6 +42,7 @@ pub mod memfree;
 pub mod memfree_protect;
 pub mod memfree_servers;
 mod memory;
+pub mod memory_tunables;
 pub mod model_identity;
 mod model_parsers;
 #[cfg(unix)]
