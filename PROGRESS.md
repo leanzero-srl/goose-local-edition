@@ -56,3 +56,7 @@
   UserMessage). Compile: workmule went BUSY (another session's gverify engine hold since 15:30, 5 GB headroom),
   so cargo check runs on the laptop (job workhorse-20261030-155003-af47, own target ~/wt/goose-omni/target).
   BLOCKED for GPU probes until workmule frees (or the workhorse after ~23:00).
+- 16:00 PROVEN over HTTP (laptop, fork 636c6f04c, gemma-4-e4b-it-8bit on the fork's mlx-vlm 0.7.1): audio,
+  video and both answered from content (see HANDOFF-omni.md). Desktop vitest green; clippy green on touched crates.
+  Owner now wants a notarized RELEASE: the chain (fork tag, pin bump, packaged-app proof, merge, release-notarized,
+  install) is written step by step in HANDOFF-omni.md; heavy steps wait for the workhorse (~23:00) or a free Mac.
