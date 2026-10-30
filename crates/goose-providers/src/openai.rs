@@ -784,7 +784,14 @@ impl OpenAiProvider {
         &self,
         payload: &serde_json::Value,
     ) -> Result<(String, Option<u64>), ProviderError> {
-        let response = self.post_chat(payload).await?;
+        // One attempt: a clip the engine cannot decode fails the same way every time, and the
+        // agent turn still goes with the reason named.
+        let response = handle_status(
+            self.api_client
+                .response_post(&self.base_path, payload)
+                .await?,
+        )
+        .await?;
         let json: serde_json::Value = response
             .json()
             .await
