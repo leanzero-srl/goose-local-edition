@@ -1,4 +1,3 @@
-/* global HTMLVideoElement */
 import { useRef, useState } from 'react';
 import { Button, TYPE, cx } from '../lz';
 
