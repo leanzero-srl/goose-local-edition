@@ -3824,6 +3824,12 @@ export type MlxModelProfileDto = {
      */
     pleOffload?: boolean | null;
     /**
+     * RoPE scaling past the checkpoint's native positions (`--qwen4-rope-scaling`): `"yarn"`,
+     * `"yarn:<factor>"`, a JSON object or `"off"`. Absent = the checkpoint's own config.
+     * `qwen4_exp` only; any other family fails the mount.
+     */
+    ropeScaling?: string | null;
+    /**
      * Sent as `chat_template_kwargs.enable_thinking` on every turn a session routes to this
      * model: `"on"` | `"off"`. Absent = auto — nothing is sent and the engine decides (Rapid-MLX
      * turns thinking off whenever the request carries tools). Captured once per session.
@@ -3940,6 +3946,11 @@ export type MlxLocalModelDto = {
      * prompt-lookup lever rides inside it.
      */
     hasMtpHead?: boolean;
+    /**
+     * config.json declares an audio encoder, so auto (`textOnly` unset) mounts the checkpoint on
+     * the engine's media lane: it hears audio and watches video, and the text-only lane is off.
+     */
+    hearsAudio?: boolean;
     /**
      * config.json declares recurrent-state layers (GatedDeltaNet, Mamba, ...): without MTP the
      * prompt-lookup lever is unavailable. Absent exactly when `hybrid_error` says why.

@@ -9421,6 +9421,13 @@
           ],
           "description": "Keep the n-gram (PLE) table on disk (`--qwen4-ple-offload`). Absent = auto: on for a\nQwen3.8-Flash-Next checkpoint that would not otherwise fit this Mac. Ignored for a\ncheckpoint without the table (`MlxLocalModelDto::has_ngram_table`)."
         },
+        "ropeScaling": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "RoPE scaling past the checkpoint's native positions (`--qwen4-rope-scaling`): `\"yarn\"`,\n`\"yarn:<factor>\"`, a JSON object or `\"off\"`. Absent = the checkpoint's own config.\n`qwen4_exp` only; any other family fails the mount."
+        },
         "thinking": {
           "anyOf": [
             {
@@ -9660,6 +9667,11 @@
         "hasMtpHead": {
           "type": "boolean",
           "description": "The model has an MTP head the engine serves (`mtp.safetensors`, or `mtp.*` tensors in the\nshards of a Qwen3.8-Flash-Next checkpoint), so auto/`\"mtp\"` serves it and the\nprompt-lookup lever rides inside it.",
+          "default": false
+        },
+        "hearsAudio": {
+          "type": "boolean",
+          "description": "config.json declares an audio encoder, so auto (`textOnly` unset) mounts the checkpoint on\nthe engine's media lane: it hears audio and watches video, and the text-only lane is off.",
           "default": false
         },
         "hybrid": {

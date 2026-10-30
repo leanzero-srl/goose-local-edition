@@ -3850,6 +3850,10 @@ export const zMlxModelProfileDto = z.object({
         z.boolean(),
         z.null()
     ]).optional(),
+    ropeScaling: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
     thinking: z.union([
         zMlxThinkingModeDto,
         z.null()
@@ -4051,6 +4055,7 @@ export const zMlxLocalModelDto = z.object({
         z.null()
     ]).optional(),
     hasMtpHead: z.boolean().optional().default(false),
+    hearsAudio: z.boolean().optional().default(false),
     hybrid: z.union([
         z.boolean(),
         z.null()
