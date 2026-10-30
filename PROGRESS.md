@@ -60,3 +60,9 @@
   video and both answered from content (see HANDOFF-omni.md). Desktop vitest green; clippy green on touched crates.
   Owner now wants a notarized RELEASE: the chain (fork tag, pin bump, packaged-app proof, merge, release-notarized,
   install) is written step by step in HANDOFF-omni.md; heavy steps wait for the workhorse (~23:00) or a free Mac.
+- 16:05 RELEASE CHAIN started (session 2). Fork: vendored qwen3_omni dropped (17df97b85, pushed); fork suite head vs lz.18
+  running on the laptop (node-run workhorse-20261030-160224-dc06, ~/forksuite-omni.log). Lint re-run FOUND a real error:
+  BenchmarkVideo.tsx `/* global HTMLVideoElement */` now redeclares the eslint.config.js global -> removed (d5f0f46a00),
+  lint re-running. Pin bump to lz.19 staged (not committed until the tag exists); found the lz.18 bump never appended
+  lz.17 to SUPERSEDED_ENGINE_LAUNCHERS (lz.17 installs never migrate) -> both lz.17 + lz.18 appended, new test
+  every_older_pinned_tag_is_a_superseded_launcher.

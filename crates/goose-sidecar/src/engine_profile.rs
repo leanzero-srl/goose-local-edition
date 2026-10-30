@@ -155,6 +155,12 @@ const PINNED_PROFILES: &[(&str, EngineMemoryProfile)] = &[
             floor_chunk_tokens: GUARD_FLOOR_CHUNK_TOKENS,
         },
     ),
+    (
+        "v0.14.3-lz.19",
+        EngineMemoryProfile::Guarded {
+            floor_chunk_tokens: GUARD_FLOOR_CHUNK_TOKENS,
+        },
+    ),
 ];
 
 /// The profile of the engine `spawn_command` launches; `Err` names why it is not known (an
@@ -207,6 +213,29 @@ mod tests {
         ]
     }
 
+    /// Every shipped pin before the current one must be in SUPERSEDED_ENGINE_LAUNCHERS, or an install
+    /// that persisted it as its default stays on it forever (`migrate_launcher` only moves listed
+    /// launchers). The lz.17 -> lz.18 bump forgot lz.17; this keeps the next bump honest.
+    #[test]
+    fn every_older_pinned_tag_is_a_superseded_launcher() {
+        let current: Vec<String> = ENGINE_LAUNCHER.iter().map(|s| s.to_string()).collect();
+        for (tag, _) in PINNED_PROFILES {
+            if tag.starts_with("v9.9.9") {
+                continue;
+            }
+            let l = launcher(tag);
+            if l == current {
+                continue;
+            }
+            assert!(
+                crate::engine::SUPERSEDED_ENGINE_LAUNCHERS
+                    .iter()
+                    .any(|old| old.iter().copied().eq(l.iter().map(String::as_str))),
+                "{tag} has a profile row but is not in SUPERSEDED_ENGINE_LAUNCHERS"
+            );
+        }
+    }
+
     /// A pin bump without its row would size every context with the undeclared profile: refuse it.
     #[test]
     fn the_pinned_engine_declares_its_memory_profile() {
@@ -218,7 +247,7 @@ mod tests {
         );
     }
 
-    /// lz.12, lz.13, lz.14, lz.14-ple.1, lz.16-ple.1, lz.16-ple.2, lz.16-ple.3, lz.16-ple.4, lz.16-ple.5, lz.16-ple.6, lz.17 and lz.18 are the memory-guard line: the pinned launcher must be read as guarded, or goose would
+    /// lz.12, lz.13, lz.14, lz.14-ple.1, lz.16-ple.1, lz.16-ple.2, lz.16-ple.3, lz.16-ple.4, lz.16-ple.5, lz.16-ple.6, lz.17, lz.18 and lz.19 are the memory-guard line: the pinned launcher must be read as guarded, or goose would
     /// pass it the prefix-cache share the guard takes as an operator cap.
     #[test]
     fn the_shipped_pin_is_the_guarded_engine() {
@@ -235,6 +264,7 @@ mod tests {
             "v0.14.3-lz.16-ple.6",
             "v0.14.3-lz.17",
             "v0.14.3-lz.18",
+            "v0.14.3-lz.19",
         ] {
             assert_eq!(
                 profile_of_launcher(&launcher(tag)),
