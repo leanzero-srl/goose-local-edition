@@ -39,6 +39,13 @@ Do NOT load the skills goose-mlx-inference / goose-feature-dev / node-dispatch w
   (else sqlx_macros "mis-aligned LINKEDIT").
 
 ## OPEN
+- MERGED 2026-10-30 (merge agent): fork tag v0.14.3-lz.17 (lz/release-lz17 5ab6da823) = ONE line again: lz.16
+  stream fix + PLE offload + vision + YaRN + reclaim (= lz.16-ple.6 + the offload perf doc). Fork suite (CPU, 10 shards,
+  vs lz.16): 157 vs 152 failures, the only new ids are the known 9 ple-line ones (test_qsa_block_sparse x5,
+  test_qsa_indexed_splitk x3, test_mtp_cli_wiring x1; fused_gdn_decode x3 fail on both). lz.18 (pld-sampled) sits on it.
+  goose main bc42efd43a = flash-pld-bench merged + pin v0.14.3-lz.18 + compaction label fix + FIFO test fix. Merge
+  ngram-decoding / compaction work on top of that main. Pre-existing on main (identical on 430d85f003): key_connection
+  loopback, process_groups teardown, 4 tests in tests/compaction.rs, test_claude_code_provider, vm_stat probe.
 - 2026-10-30 PLD UNDER SAMPLING SHIPPED: fork tag v0.14.3-lz.18 = v0.14.3-lz.17 + 201b0bf62 (branch lz/qwen4-pld-sampled).
   qwen4_exp copy drafts now run at temp > 0 (were greedy-only: 0 proposals in the Gauntlet). Lossless (exact
   speculative sampling, statistical test in tests/test_qwen4_pld_sampled.py). Flash-Next temp 1.0 code_edit 8k on
