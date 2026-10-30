@@ -566,6 +566,14 @@ fn memory_budget_to_dto(b: EngineMemoryBudget) -> MlxEngineMemoryBudgetDto {
         used_bytes: b.used_bytes,
         cache_bytes: b.cache_bytes,
         plan_sequence_need_bytes: b.plan_sequence_need_bytes,
+        file_cache_excluded_bytes: b
+            .machine
+            .as_ref()
+            .and_then(|m| m.file_backed_excluded_bytes),
+        others_engine_bytes: b
+            .machine
+            .as_ref()
+            .and_then(|m| m.others_engine_non_metal_bytes),
         tunables: b.tunables,
     }
 }

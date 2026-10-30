@@ -348,6 +348,8 @@ export interface MlxEngineMemoryBudget {
   usedBytes?: number;
   cacheBytes?: number;
   planSequenceNeedBytes?: number;
+  fileCacheExcludedBytes?: number;
+  othersEngineBytes?: number;
   tunables?: Record<string, unknown>;
 }
 

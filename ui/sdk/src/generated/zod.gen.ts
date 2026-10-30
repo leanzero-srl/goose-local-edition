@@ -3037,6 +3037,34 @@ export const zMlxEngineMemoryBudgetDto = z.object({
         z.number().int().gte(0),
         z.null()
     ]).optional(),
+    planLimitBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    stepBinding: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    usedBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    cacheBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    planSequenceNeedBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    fileCacheExcludedBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    othersEngineBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
     tunables: z.record(z.unknown()).optional().default({})
 });
 
@@ -3971,7 +3999,7 @@ export const zMlxModelProfileDto = z.object({
 /**
  * The engine memory tunables (goose-sidecar `memory_tunables::MemoryTunables`), each its own
  * engine flag (fork lz/metal-tunables INTERFACE.md). Absent = the engine's default, except
- * `memoryFloorGb`, whose absence means goose's per-machine default (round(8% x physical GB)).
+ * `memoryFloorGb`, whose absence means goose's per-machine default (round(5% x physical GB)).
  */
 export const zMlxEngineMemoryTunablesDto = z.object({
     metalLimitGb: z.union([

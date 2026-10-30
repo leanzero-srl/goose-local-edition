@@ -202,14 +202,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('LeanZero MLX inner tabs, routed', () => {
-  it('four tabs, My Macs second: Engine · My Macs · Models · Sampling', async () => {
+  it('five tabs, My Macs second: Engine · My Macs · Models · Sampling · Memory', async () => {
     renderAt('/leanzero-swarm?tab=mlx');
     await act(async () => {});
     expect(
       within(engineTabs())
         .getAllByRole('radio')
         .map((r) => r.textContent)
-    ).toEqual(['Engine', 'My Macs', 'Models1', 'Sampling']);
+    ).toEqual(['Engine', 'My Macs', 'Models1', 'Sampling', 'Memory']);
     expect(innerTab(/^Engine$/)).toHaveAttribute('aria-checked', 'true');
   });
 
@@ -221,7 +221,7 @@ describe('LeanZero MLX inner tabs, routed', () => {
       within(engineTabs())
         .getAllByRole('radio')
         .map((r) => r.textContent)
-    ).toEqual(['Engine', 'Models1', 'Sampling']);
+    ).toEqual(['Engine', 'Models1', 'Sampling', 'Memory']);
     expect(innerTab(/^Engine$/)).toHaveAttribute('aria-checked', 'true');
     expect(screen.queryByTestId('my-macs-panel')).not.toBeInTheDocument();
   });

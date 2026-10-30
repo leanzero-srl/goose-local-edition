@@ -6002,6 +6002,9 @@
   "mlxMemory.liveEngineStopped": {
     "defaultMessage": "engine not running"
   },
+  "mlxMemory.liveFileCache": {
+    "defaultMessage": "File cache (macOS frees it on demand; not counted)"
+  },
   "mlxMemory.liveFree": {
     "defaultMessage": "Free"
   },
@@ -6015,7 +6018,10 @@
     "defaultMessage": "Max context at the ceiling"
   },
   "mlxMemory.liveOthers": {
-    "defaultMessage": "Other apps + macOS (incl. memory the GPU driver wires)"
+    "defaultMessage": "Other apps + macOS + the engine outside the GPU"
+  },
+  "mlxMemory.liveOthersValue": {
+    "defaultMessage": "{gb} (engine outside the GPU: {engine})"
   },
   "mlxMemory.livePanel": {
     "defaultMessage": "Memory now"
@@ -6048,7 +6054,7 @@
     "defaultMessage": "Fill in starting values"
   },
   "mlxMemory.presetsNote": {
-    "defaultMessage": "Workstation: automatic cap, floor 8% of RAM. Inference box: cap = RAM in GiB minus 16 (112 GB on 128 GiB), floor 4 GB. A preset only fills the fields; nothing changes until you save."
+    "defaultMessage": "Workstation: automatic cap, floor 8% of RAM. Inference box: cap = RAM in GB minus 16 (112 GB on 128 GB), floor 4 GB. A preset only fills the fields; nothing changes until you save."
   },
   "mlxMemory.problemCapPlusFloor": {
     "defaultMessage": "Cap {cap} GB + floor {floor} GB is more than this Mac’s {physical} GB of RAM."

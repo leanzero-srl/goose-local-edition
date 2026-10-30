@@ -6002,6 +6002,9 @@
   "mlxMemory.liveEngineStopped": {
     "defaultMessage": "引擎未執行"
   },
+  "mlxMemory.liveFileCache": {
+    "defaultMessage": "檔案快取(macOS 依需要釋放;不計入)"
+  },
   "mlxMemory.liveFree": {
     "defaultMessage": "可用"
   },
@@ -6015,7 +6018,10 @@
     "defaultMessage": "上限下的最大脈絡"
   },
   "mlxMemory.liveOthers": {
-    "defaultMessage": "其他 App + macOS（含 GPU 驅動程式固定的記憶體）"
+    "defaultMessage": "其他應用程式 + macOS + GPU 之外的引擎"
+  },
+  "mlxMemory.liveOthersValue": {
+    "defaultMessage": "{gb}(GPU 之外的引擎:{engine})"
   },
   "mlxMemory.livePanel": {
     "defaultMessage": "目前記憶體"
@@ -6048,7 +6054,7 @@
     "defaultMessage": "填入起始值"
   },
   "mlxMemory.presetsNote": {
-    "defaultMessage": "工作站：自動上限，下限為 RAM 的 8%。推論主機：上限 = 以 GiB 計的 RAM 減 16（128 GiB 時為 112 GB），下限 4 GB。預設組合只會填寫欄位，儲存前不會有任何變更。"
+    "defaultMessage": "工作站：自動上限，下限為 RAM 的 8%。推論主機：上限 = 以 GB 計的 RAM 減 16（128 GB 時為 112 GB），下限 4 GB。預設組合只會填寫欄位，儲存前不會有任何變更。"
   },
   "mlxMemory.problemCapPlusFloor": {
     "defaultMessage": "上限 {cap} GB 加下限 {floor} GB 超過這台 Mac 的 {physical} GB RAM。"

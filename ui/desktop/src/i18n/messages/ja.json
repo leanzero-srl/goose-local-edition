@@ -6002,6 +6002,9 @@
   "mlxMemory.liveEngineStopped": {
     "defaultMessage": "エンジンは停止中"
   },
+  "mlxMemory.liveFileCache": {
+    "defaultMessage": "ファイルキャッシュ(macOS が必要に応じて解放、計上しない)"
+  },
   "mlxMemory.liveFree": {
     "defaultMessage": "空き"
   },
@@ -6015,7 +6018,10 @@
     "defaultMessage": "上限時の最大コンテキスト"
   },
   "mlxMemory.liveOthers": {
-    "defaultMessage": "他のアプリ + macOS（GPU ドライバーが固定するメモリを含む）"
+    "defaultMessage": "他のアプリ + macOS + GPU 外のエンジン"
+  },
+  "mlxMemory.liveOthersValue": {
+    "defaultMessage": "{gb}(GPU 外のエンジン: {engine})"
   },
   "mlxMemory.livePanel": {
     "defaultMessage": "現在のメモリ"
@@ -6048,7 +6054,7 @@
     "defaultMessage": "初期値を入力"
   },
   "mlxMemory.presetsNote": {
-    "defaultMessage": "ワークステーション: 自動上限、下限は RAM の 8%。推論ボックス: 上限 = GiB 単位の RAM から 16 を引いた値 (128 GiB なら 112 GB)、下限 4 GB。プリセットは項目を埋めるだけで、保存するまで何も変わりません。"
+    "defaultMessage": "ワークステーション: 自動上限、下限は RAM の 8%。推論ボックス: 上限 = GB 単位の RAM から 16 を引いた値 (128 GB なら 112 GB)、下限 4 GB。プリセットは項目を埋めるだけで、保存するまで何も変わりません。"
   },
   "mlxMemory.problemCapPlusFloor": {
     "defaultMessage": "上限 {cap} GB と下限 {floor} GB の合計が、この Mac の RAM {physical} GB を超えています。"

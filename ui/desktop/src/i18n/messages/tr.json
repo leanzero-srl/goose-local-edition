@@ -6002,6 +6002,9 @@
   "mlxMemory.liveEngineStopped": {
     "defaultMessage": "motor çalışmıyor"
   },
+  "mlxMemory.liveFileCache": {
+    "defaultMessage": "Dosya önbelleği (macOS gerektiğinde boşaltır; sayılmaz)"
+  },
   "mlxMemory.liveFree": {
     "defaultMessage": "Boş"
   },
@@ -6015,7 +6018,10 @@
     "defaultMessage": "Tavanda maks. bağlam"
   },
   "mlxMemory.liveOthers": {
-    "defaultMessage": "Diğer uygulamalar + macOS (GPU sürücüsünün sabitlediği bellek dahil)"
+    "defaultMessage": "Diğer uygulamalar + macOS + GPU dışındaki motor"
+  },
+  "mlxMemory.liveOthersValue": {
+    "defaultMessage": "{gb} (GPU dışındaki motor: {engine})"
   },
   "mlxMemory.livePanel": {
     "defaultMessage": "Şu anki bellek"
@@ -6048,7 +6054,7 @@
     "defaultMessage": "Başlangıç değerlerini doldur"
   },
   "mlxMemory.presetsNote": {
-    "defaultMessage": "İş istasyonu: otomatik sınır, taban RAM'in %8'i. Çıkarım kutusu: sınır = GiB cinsinden RAM eksi 16 (128 GiB'de 112 GB), taban 4 GB. Ön ayar yalnızca alanları doldurur; kaydedene kadar hiçbir şey değişmez."
+    "defaultMessage": "İş istasyonu: otomatik sınır, taban RAM'in %8'i. Çıkarım kutusu: sınır = GB cinsinden RAM eksi 16 (128 GB'de 112 GB), taban 4 GB. Ön ayar yalnızca alanları doldurur; kaydedene kadar hiçbir şey değişmez."
   },
   "mlxMemory.problemCapPlusFloor": {
     "defaultMessage": "{cap} GB sınır + {floor} GB taban, bu Mac'in {physical} GB RAM'inden fazla."

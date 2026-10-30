@@ -6002,6 +6002,9 @@
   "mlxMemory.liveEngineStopped": {
     "defaultMessage": "इंजन नहीं चल रहा"
   },
+  "mlxMemory.liveFileCache": {
+    "defaultMessage": "फ़ाइल कैश (macOS ज़रूरत पर खाली करता है; गिना नहीं जाता)"
+  },
   "mlxMemory.liveFree": {
     "defaultMessage": "खाली"
   },
@@ -6015,7 +6018,10 @@
     "defaultMessage": "ऊपरी सीमा पर अधिकतम कॉन्टेक्स्ट"
   },
   "mlxMemory.liveOthers": {
-    "defaultMessage": "अन्य ऐप्स + macOS (GPU ड्राइवर द्वारा wire की गई मेमोरी सहित)"
+    "defaultMessage": "अन्य ऐप्स + macOS + GPU के बाहर इंजन"
+  },
+  "mlxMemory.liveOthersValue": {
+    "defaultMessage": "{gb} (GPU के बाहर इंजन: {engine})"
   },
   "mlxMemory.livePanel": {
     "defaultMessage": "अभी की मेमोरी"
@@ -6048,7 +6054,7 @@
     "defaultMessage": "शुरुआती मान भरें"
   },
   "mlxMemory.presetsNote": {
-    "defaultMessage": "वर्कस्टेशन: स्वचालित सीमा, न्यूनतम सीमा RAM का 8%। इन्फ़रेंस बॉक्स: सीमा = GiB में RAM घटा 16 (128 GiB पर 112 GB), न्यूनतम सीमा 4 GB। प्रीसेट केवल फ़ील्ड भरता है; सहेजने तक कुछ नहीं बदलता।"
+    "defaultMessage": "वर्कस्टेशन: स्वचालित सीमा, न्यूनतम सीमा RAM का 8%। इन्फ़रेंस बॉक्स: सीमा = GB में RAM घटा 16 (128 GB पर 112 GB), न्यूनतम सीमा 4 GB। प्रीसेट केवल फ़ील्ड भरता है; सहेजने तक कुछ नहीं बदलता।"
   },
   "mlxMemory.problemCapPlusFloor": {
     "defaultMessage": "सीमा {cap} GB + न्यूनतम सीमा {floor} GB इस Mac की {physical} GB RAM से अधिक है।"

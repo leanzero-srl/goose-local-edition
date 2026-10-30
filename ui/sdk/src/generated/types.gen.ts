@@ -3025,6 +3025,25 @@ export type MlxEngineMemoryBudgetDto = {
     peakBytes?: number | null;
     maxContextAtCeiling?: number | null;
     /**
+     * The auto plan's cap before the live bounds.
+     */
+    planLimitBytes?: number | null;
+    /**
+     * Which bound held the last prefill step.
+     */
+    stepBinding?: string | null;
+    usedBytes?: number | null;
+    cacheBytes?: number | null;
+    planSequenceNeedBytes?: number | null;
+    /**
+     * File-backed pages the floor leaves out (the file cache macOS frees on demand).
+     */
+    fileCacheExcludedBytes?: number | null;
+    /**
+     * Of `others_bytes`: the engine's own memory outside Metal (counted: it really holds it).
+     */
+    othersEngineBytes?: number | null;
+    /**
      * The tunables the engine resolved, by its own names.
      */
     tunables?: {
@@ -3936,7 +3955,7 @@ export type MlxPromptLookupModeDto = 'on' | 'off';
 /**
  * The engine memory tunables (goose-sidecar `memory_tunables::MemoryTunables`), each its own
  * engine flag (fork lz/metal-tunables INTERFACE.md). Absent = the engine's default, except
- * `memoryFloorGb`, whose absence means goose's per-machine default (round(8% x physical GB)).
+ * `memoryFloorGb`, whose absence means goose's per-machine default (round(5% x physical GB)).
  */
 export type MlxEngineMemoryTunablesDto = {
     /**
@@ -4019,7 +4038,7 @@ export type MlxEngineMemoryMachineResponse_unstable = {
     daemonWiredLimitMb?: number | null;
     daemonError?: string | null;
     /**
-     * goose's default free-memory floor on this Mac: round(8% x physical GB).
+     * goose's default free-memory floor on this Mac: round(5% x physical GB).
      */
     defaultFloorGb: number;
     /**

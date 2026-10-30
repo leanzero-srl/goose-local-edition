@@ -6002,6 +6002,9 @@
   "mlxMemory.liveEngineStopped": {
     "defaultMessage": "moteur à l’arrêt"
   },
+  "mlxMemory.liveFileCache": {
+    "defaultMessage": "Cache de fichiers (macOS le libère à la demande ; non compté)"
+  },
   "mlxMemory.liveFree": {
     "defaultMessage": "Libre"
   },
@@ -6015,7 +6018,10 @@
     "defaultMessage": "Contexte max au plafond"
   },
   "mlxMemory.liveOthers": {
-    "defaultMessage": "Autres apps + macOS (y compris la mémoire que le pilote GPU verrouille)"
+    "defaultMessage": "Autres apps + macOS + le moteur hors GPU"
+  },
+  "mlxMemory.liveOthersValue": {
+    "defaultMessage": "{gb} (moteur hors GPU : {engine})"
   },
   "mlxMemory.livePanel": {
     "defaultMessage": "Mémoire actuelle"
@@ -6048,7 +6054,7 @@
     "defaultMessage": "Préremplir les valeurs de départ"
   },
   "mlxMemory.presetsNote": {
-    "defaultMessage": "Station de travail : plafond automatique, seuil 8 % de la RAM. Boîtier d’inférence : plafond = RAM en GiB moins 16 (112 GB sur 128 GiB), seuil 4 GB. Un préréglage ne fait que remplir les champs ; rien ne change tant que vous n’enregistrez pas."
+    "defaultMessage": "Station de travail : plafond automatique, seuil 8 % de la RAM. Boîtier d’inférence : plafond = RAM en GB moins 16 (112 GB sur 128 GB), seuil 4 GB. Un préréglage ne fait que remplir les champs ; rien ne change tant que vous n’enregistrez pas."
   },
   "mlxMemory.problemCapPlusFloor": {
     "defaultMessage": "Plafond {cap} GB + seuil {floor} GB dépasse les {physical} GB de RAM de ce Mac."

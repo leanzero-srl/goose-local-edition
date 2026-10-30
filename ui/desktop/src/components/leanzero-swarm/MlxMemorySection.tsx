@@ -71,7 +71,7 @@ const i18n = defineMessages({
   presetsNote: {
     id: 'mlxMemory.presetsNote',
     defaultMessage:
-      'Workstation: automatic cap, floor 8% of RAM. Inference box: cap = RAM in GiB minus 16 (112 GB on 128 GiB), floor 4 GB. A preset only fills the fields; nothing changes until you save.',
+      'Workstation: automatic cap, floor 8% of RAM. Inference box: cap = RAM in GB minus 16 (112 GB on 128 GB), floor 4 GB. A preset only fills the fields; nothing changes until you save.',
   },
   livePanel: { id: 'mlxMemory.livePanel', defaultMessage: 'Memory now' },
   livePhysical: { id: 'mlxMemory.livePhysical', defaultMessage: 'Physical RAM' },
@@ -85,7 +85,15 @@ const i18n = defineMessages({
   liveActive: { id: 'mlxMemory.liveActive', defaultMessage: 'Engine active / peak' },
   liveOthers: {
     id: 'mlxMemory.liveOthers',
-    defaultMessage: 'Other apps + macOS (incl. memory the GPU driver wires)',
+    defaultMessage: 'Other apps + macOS + the engine outside the GPU',
+  },
+  liveOthersValue: {
+    id: 'mlxMemory.liveOthersValue',
+    defaultMessage: '{gb} (engine outside the GPU: {engine})',
+  },
+  liveFileCache: {
+    id: 'mlxMemory.liveFileCache',
+    defaultMessage: 'File cache (macOS frees it on demand; not counted)',
   },
   liveFree: { id: 'mlxMemory.liveFree', defaultMessage: 'Free' },
   liveKv: { id: 'mlxMemory.liveKv', defaultMessage: 'KV cache per token' },
@@ -596,7 +604,26 @@ function LivePanel({
         ? stopped
         : `${gbText(intl, budget?.activeBytes)} / ${gbText(intl, budget?.peakBytes)}`,
     },
-    { key: 'others', label: intl.formatMessage(i18n.liveOthers), value: gbText(intl, others) },
+    {
+      key: 'others',
+      label: intl.formatMessage(i18n.liveOthers),
+      value:
+        budget?.othersEngineBytes == null
+          ? gbText(intl, others)
+          : intl.formatMessage(i18n.liveOthersValue, {
+              gb: gbText(intl, others),
+              engine: gbText(intl, budget.othersEngineBytes),
+            }),
+    },
+    ...(budget?.fileCacheExcludedBytes == null
+      ? []
+      : [
+          {
+            key: 'filecache',
+            label: intl.formatMessage(i18n.liveFileCache),
+            value: gbText(intl, budget.fileCacheExcludedBytes),
+          },
+        ]),
     {
       key: 'free',
       label: intl.formatMessage(i18n.liveFree),

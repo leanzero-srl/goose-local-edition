@@ -2651,6 +2651,12 @@ pub struct MlxEngineMemoryBudgetDto {
     pub cache_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_sequence_need_bytes: Option<u64>,
+    /// File-backed pages the floor leaves out (the file cache macOS frees on demand).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_cache_excluded_bytes: Option<u64>,
+    /// Of `others_bytes`: the engine's own memory outside Metal (counted: it really holds it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub others_engine_bytes: Option<u64>,
     /// The tunables the engine resolved, by its own names.
     #[serde(default)]
     pub tunables: BTreeMap<String, serde_json::Value>,

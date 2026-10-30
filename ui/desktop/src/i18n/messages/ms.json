@@ -6002,6 +6002,9 @@
   "mlxMemory.liveEngineStopped": {
     "defaultMessage": "enjin tidak berjalan"
   },
+  "mlxMemory.liveFileCache": {
+    "defaultMessage": "Cache fail (macOS membebaskannya apabila perlu; tidak dikira)"
+  },
   "mlxMemory.liveFree": {
     "defaultMessage": "Bebas"
   },
@@ -6015,7 +6018,10 @@
     "defaultMessage": "Konteks maks pada siling"
   },
   "mlxMemory.liveOthers": {
-    "defaultMessage": "Apl lain + macOS (termasuk memori yang dikunci pemacu GPU)"
+    "defaultMessage": "Apl lain + macOS + enjin di luar GPU"
+  },
+  "mlxMemory.liveOthersValue": {
+    "defaultMessage": "{gb} (enjin di luar GPU: {engine})"
   },
   "mlxMemory.livePanel": {
     "defaultMessage": "Memori sekarang"
@@ -6048,7 +6054,7 @@
     "defaultMessage": "Isi nilai permulaan"
   },
   "mlxMemory.presetsNote": {
-    "defaultMessage": "Stesen kerja: had automatik, had bawah 8% daripada RAM. Kotak inferens: had = RAM dalam GiB tolak 16 (112 GB pada 128 GiB), had bawah 4 GB. Pratetap hanya mengisi medan; tiada yang berubah sehingga anda menyimpan."
+    "defaultMessage": "Stesen kerja: had automatik, had bawah 8% daripada RAM. Kotak inferens: had = RAM dalam GB tolak 16 (112 GB pada 128 GB), had bawah 4 GB. Pratetap hanya mengisi medan; tiada yang berubah sehingga anda menyimpan."
   },
   "mlxMemory.problemCapPlusFloor": {
     "defaultMessage": "Had {cap} GB + had bawah {floor} GB melebihi {physical} GB RAM Mac ini."

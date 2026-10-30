@@ -357,7 +357,28 @@ pub struct EngineMemoryBudget {
     pub used_bytes: Option<u64>,
     pub cache_bytes: Option<u64>,
     pub plan_sequence_need_bytes: Option<u64>,
+    /// What the floor counted (lz.20 `memory_budget.machine`): `None` on an engine without it.
+    pub machine: Option<EngineMachineMemory>,
     pub tunables: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+/// `memory_budget.machine`: the free-memory floor's input. Used = wired + anonymous - purgeable +
+/// compressor; file-backed pages (the file cache, incl. the engine's own memory-mapped files) are
+/// left out because macOS frees them on demand. Of the others, `others_engine_non_metal_bytes` is
+/// the engine's own memory outside Metal (it really holds it, so it stays counted).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EngineMachineMemory {
+    pub wired_bytes: Option<u64>,
+    pub anonymous_bytes: Option<u64>,
+    pub compressor_bytes: Option<u64>,
+    pub purgeable_excluded_bytes: Option<u64>,
+    pub file_backed_excluded_bytes: Option<u64>,
+    pub free_bytes: Option<u64>,
+    pub engine_metal_bytes: Option<u64>,
+    pub engine_resident_bytes: Option<u64>,
+    pub others_engine_non_metal_bytes: Option<u64>,
+    pub others_rest_bytes: Option<u64>,
 }
 
 /// The `memory_budget` block of a `/v1/status` body: `Ok(None)` when the engine has none (an
@@ -405,6 +426,8 @@ mod tests {
                 "limit_bytes": 70000000000u64,
                 "kv_bytes_per_token": 65536,
                 "active_bytes": null,
+                "machine": {"file_backed_excluded_bytes": 19500000000u64,
+                            "others_engine_non_metal_bytes": 12000000000u64},
                 "tunables": {"metal_limit_gb": null, "memory_floor_gb": 8}
             }
         })
@@ -414,6 +437,10 @@ mod tests {
         assert_eq!(b.binding.as_deref(), Some("engine"));
         assert_eq!(b.active_bytes, None);
         assert_eq!(b.tunables["memory_floor_gb"], 8);
+        let m = b.machine.as_ref().unwrap();
+        assert_eq!(m.file_backed_excluded_bytes, Some(19_500_000_000));
+        assert_eq!(m.others_engine_non_metal_bytes, Some(12_000_000_000));
+        assert_eq!(m.wired_bytes, None);
         assert_eq!(parse_memory_budget(r#"{"num_running":0}"#).unwrap(), None);
         assert!(parse_memory_budget(r#"{"memory_budget":{"limit_bytes":"x"}}"#).is_err());
     }

@@ -6002,6 +6002,9 @@
   "mlxMemory.liveEngineStopped": {
     "defaultMessage": "движок не запущен"
   },
+  "mlxMemory.liveFileCache": {
+    "defaultMessage": "Файловый кэш (macOS освобождает его по требованию; не учитывается)"
+  },
   "mlxMemory.liveFree": {
     "defaultMessage": "Свободно"
   },
@@ -6015,7 +6018,10 @@
     "defaultMessage": "Макс. контекст на потолке"
   },
   "mlxMemory.liveOthers": {
-    "defaultMessage": "Другие приложения + macOS (вкл. память, закреплённую драйвером GPU)"
+    "defaultMessage": "Другие приложения + macOS + движок вне GPU"
+  },
+  "mlxMemory.liveOthersValue": {
+    "defaultMessage": "{gb} (движок вне GPU: {engine})"
   },
   "mlxMemory.livePanel": {
     "defaultMessage": "Память сейчас"
@@ -6048,7 +6054,7 @@
     "defaultMessage": "Заполнить начальные значения"
   },
   "mlxMemory.presetsNote": {
-    "defaultMessage": "Рабочая станция: автоматический лимит, порог 8% RAM. Сервер инференса: лимит = RAM в GiB минус 16 (112 GB при 128 GiB), порог 4 GB. Пресет только заполняет поля; ничего не меняется, пока вы не сохраните."
+    "defaultMessage": "Рабочая станция: автоматический лимит, порог 8% RAM. Сервер инференса: лимит = RAM в GB минус 16 (112 GB при 128 GB), порог 4 GB. Пресет только заполняет поля; ничего не меняется, пока вы не сохраните."
   },
   "mlxMemory.problemCapPlusFloor": {
     "defaultMessage": "Лимит {cap} GB + порог {floor} GB больше, чем {physical} GB RAM этого Mac."

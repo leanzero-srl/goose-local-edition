@@ -6002,6 +6002,9 @@
   "mlxMemory.liveEngineStopped": {
     "defaultMessage": "motore non in esecuzione"
   },
+  "mlxMemory.liveFileCache": {
+    "defaultMessage": "Cache dei file (macOS la libera quando serve; non conteggiata)"
+  },
   "mlxMemory.liveFree": {
     "defaultMessage": "Libera"
   },
@@ -6015,7 +6018,10 @@
     "defaultMessage": "Contesto max al tetto"
   },
   "mlxMemory.liveOthers": {
-    "defaultMessage": "Altre app + macOS (inclusa la memoria che il driver GPU vincola)"
+    "defaultMessage": "Altre app + macOS + il motore fuori dalla GPU"
+  },
+  "mlxMemory.liveOthersValue": {
+    "defaultMessage": "{gb} (motore fuori dalla GPU: {engine})"
   },
   "mlxMemory.livePanel": {
     "defaultMessage": "Memoria adesso"
@@ -6048,7 +6054,7 @@
     "defaultMessage": "Inserisci valori iniziali"
   },
   "mlxMemory.presetsNote": {
-    "defaultMessage": "Workstation: limite automatico, soglia 8% della RAM. Inference box: limite = RAM in GiB meno 16 (112 GB su 128 GiB), soglia 4 GB. Un preset compila solo i campi; nulla cambia finché non salvi."
+    "defaultMessage": "Workstation: limite automatico, soglia 8% della RAM. Inference box: limite = RAM in GB meno 16 (112 GB su 128 GB), soglia 4 GB. Un preset compila solo i campi; nulla cambia finché non salvi."
   },
   "mlxMemory.problemCapPlusFloor": {
     "defaultMessage": "Limite {cap} GB + soglia {floor} GB supera i {physical} GB di RAM di questo Mac."

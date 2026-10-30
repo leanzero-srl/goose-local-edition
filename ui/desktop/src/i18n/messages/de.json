@@ -6002,6 +6002,9 @@
   "mlxMemory.liveEngineStopped": {
     "defaultMessage": "Engine läuft nicht"
   },
+  "mlxMemory.liveFileCache": {
+    "defaultMessage": "Dateicache (macOS gibt ihn bei Bedarf frei; nicht gezählt)"
+  },
   "mlxMemory.liveFree": {
     "defaultMessage": "Frei"
   },
@@ -6015,7 +6018,10 @@
     "defaultMessage": "Max. Kontext an der Obergrenze"
   },
   "mlxMemory.liveOthers": {
-    "defaultMessage": "Andere Apps + macOS (inkl. vom GPU-Treiber gebundener Speicher)"
+    "defaultMessage": "Andere Apps + macOS + die Engine außerhalb der GPU"
+  },
+  "mlxMemory.liveOthersValue": {
+    "defaultMessage": "{gb} (Engine außerhalb der GPU: {engine})"
   },
   "mlxMemory.livePanel": {
     "defaultMessage": "Speicher jetzt"
@@ -6048,7 +6054,7 @@
     "defaultMessage": "Startwerte eintragen"
   },
   "mlxMemory.presetsNote": {
-    "defaultMessage": "Workstation: automatische Obergrenze, Untergrenze 8 % des RAM. Inferenz-Box: Obergrenze = RAM in GiB minus 16 (112 GB bei 128 GiB), Untergrenze 4 GB. Ein Preset füllt nur die Felder; nichts ändert sich, bis du speicherst."
+    "defaultMessage": "Workstation: automatische Obergrenze, Untergrenze 8 % des RAM. Inferenz-Box: Obergrenze = RAM in GB minus 16 (112 GB bei 128 GB), Untergrenze 4 GB. Ein Preset füllt nur die Felder; nichts ändert sich, bis du speicherst."
   },
   "mlxMemory.problemCapPlusFloor": {
     "defaultMessage": "Obergrenze {cap} GB + Untergrenze {floor} GB ist mehr als die {physical} GB RAM dieses Mac."

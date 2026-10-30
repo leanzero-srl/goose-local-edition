@@ -146,6 +146,27 @@ describe('MlxMemorySection', () => {
     expect(screen.getByTestId('mlx-memory-problem-kvOverCap')).toBeTruthy();
   });
 
+  it('names the engine share of the others and the file cache the floor leaves out', async () => {
+    mount({
+      status: running({
+        memoryBudget: {
+          ...running().memoryBudget,
+          othersBytes: 22e9,
+          othersEngineBytes: 12e9,
+          fileCacheExcludedBytes: 19.5e9,
+        },
+      }),
+    });
+    expect(await screen.findByText('File cache (macOS frees it on demand; not counted)')).toBeTruthy();
+    expect(screen.getByText(/engine outside the GPU: 12/)).toBeTruthy();
+  });
+
+  it('an engine without the breakdown shows no file-cache row', async () => {
+    mount({ status: running() });
+    await screen.findByText('goose default 7 GB (5% of RAM)');
+    expect(screen.queryByText('File cache (macOS frees it on demand; not counted)')).toBeNull();
+  });
+
   it('a running engine restarts only on Apply, and never while it serves requests', async () => {
     const { onApply } = mount({ status: running({ restartRequired: true }) });
     await screen.findByTestId('mlx-memory-restart-needed');

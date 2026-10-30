@@ -6002,6 +6002,9 @@
   "mlxMemory.liveEngineStopped": {
     "defaultMessage": "engine tidak berjalan"
   },
+  "mlxMemory.liveFileCache": {
+    "defaultMessage": "Cache file (macOS membebaskannya saat perlu; tidak dihitung)"
+  },
   "mlxMemory.liveFree": {
     "defaultMessage": "Bebas"
   },
@@ -6015,7 +6018,10 @@
     "defaultMessage": "Konteks maks di batas atas"
   },
   "mlxMemory.liveOthers": {
-    "defaultMessage": "Aplikasi lain + macOS (termasuk memori yang dikunci driver GPU)"
+    "defaultMessage": "Aplikasi lain + macOS + mesin di luar GPU"
+  },
+  "mlxMemory.liveOthersValue": {
+    "defaultMessage": "{gb} (mesin di luar GPU: {engine})"
   },
   "mlxMemory.livePanel": {
     "defaultMessage": "Memori saat ini"
@@ -6048,7 +6054,7 @@
     "defaultMessage": "Isi nilai awal"
   },
   "mlxMemory.presetsNote": {
-    "defaultMessage": "Workstation: batas otomatis, batas bawah 8% dari RAM. Kotak inferensi: batas = RAM dalam GiB dikurangi 16 (112 GB pada 128 GiB), batas bawah 4 GB. Preset hanya mengisi kolom; tidak ada yang berubah sampai Anda menyimpan."
+    "defaultMessage": "Workstation: batas otomatis, batas bawah 8% dari RAM. Kotak inferensi: batas = RAM dalam GB dikurangi 16 (112 GB pada 128 GB), batas bawah 4 GB. Preset hanya mengisi kolom; tidak ada yang berubah sampai Anda menyimpan."
   },
   "mlxMemory.problemCapPlusFloor": {
     "defaultMessage": "Batas {cap} GB + batas bawah {floor} GB melebihi {physical} GB RAM Mac ini."

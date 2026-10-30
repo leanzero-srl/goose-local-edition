@@ -6002,6 +6002,9 @@
   "mlxMemory.liveEngineStopped": {
     "defaultMessage": "engine không chạy"
   },
+  "mlxMemory.liveFileCache": {
+    "defaultMessage": "Bộ nhớ đệm tệp (macOS giải phóng khi cần; không tính)"
+  },
   "mlxMemory.liveFree": {
     "defaultMessage": "Trống"
   },
@@ -6015,7 +6018,10 @@
     "defaultMessage": "Ngữ cảnh tối đa ở mức trần"
   },
   "mlxMemory.liveOthers": {
-    "defaultMessage": "Ứng dụng khác + macOS (gồm bộ nhớ trình điều khiển GPU ghim)"
+    "defaultMessage": "Ứng dụng khác + macOS + engine ngoài GPU"
+  },
+  "mlxMemory.liveOthersValue": {
+    "defaultMessage": "{gb} (engine ngoài GPU: {engine})"
   },
   "mlxMemory.livePanel": {
     "defaultMessage": "Bộ nhớ hiện tại"
@@ -6048,7 +6054,7 @@
     "defaultMessage": "Điền giá trị khởi đầu"
   },
   "mlxMemory.presetsNote": {
-    "defaultMessage": "Máy trạm: giới hạn tự động, ngưỡng sàn 8% RAM. Hộp suy luận: giới hạn = RAM tính bằng GiB trừ 16 (112 GB trên 128 GiB), ngưỡng sàn 4 GB. Cài đặt sẵn chỉ điền vào các trường; không có gì thay đổi cho đến khi bạn lưu."
+    "defaultMessage": "Máy trạm: giới hạn tự động, ngưỡng sàn 8% RAM. Hộp suy luận: giới hạn = RAM tính bằng GB trừ 16 (112 GB trên 128 GB), ngưỡng sàn 4 GB. Cài đặt sẵn chỉ điền vào các trường; không có gì thay đổi cho đến khi bạn lưu."
   },
   "mlxMemory.problemCapPlusFloor": {
     "defaultMessage": "Giới hạn {cap} GB + ngưỡng sàn {floor} GB vượt quá {physical} GB RAM của máy Mac này."

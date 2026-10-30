@@ -7664,6 +7664,58 @@
           ],
           "minimum": 0
         },
+        "planLimitBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The auto plan's cap before the live bounds.",
+          "minimum": 0
+        },
+        "stepBinding": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Which bound held the last prefill step."
+        },
+        "usedBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "planSequenceNeedBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "fileCacheExcludedBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "File-backed pages the floor leaves out (the file cache macOS frees on demand).",
+          "minimum": 0
+        },
+        "othersEngineBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Of `others_bytes`: the engine's own memory outside Metal (counted: it really holds it).",
+          "minimum": 0
+        },
         "tunables": {
           "type": "object",
           "additionalProperties": {},
@@ -9798,7 +9850,7 @@
           "description": "`--system-reserve-fraction`."
         }
       },
-      "description": "The engine memory tunables (goose-sidecar `memory_tunables::MemoryTunables`), each its own\nengine flag (fork lz/metal-tunables INTERFACE.md). Absent = the engine's default, except\n`memoryFloorGb`, whose absence means goose's per-machine default (round(8% x physical GB))."
+      "description": "The engine memory tunables (goose-sidecar `memory_tunables::MemoryTunables`), each its own\nengine flag (fork lz/metal-tunables INTERFACE.md). Absent = the engine's default, except\n`memoryFloorGb`, whose absence means goose's per-machine default (round(5% x physical GB))."
     },
     "MlxEngineMemoryMachineRequest_unstable": {
       "type": "object",
@@ -9864,7 +9916,7 @@
         "defaultFloorGb": {
           "type": "number",
           "format": "double",
-          "description": "goose's default free-memory floor on this Mac: round(8% x physical GB)."
+          "description": "goose's default free-memory floor on this Mac: round(5% x physical GB)."
         },
         "tunablesSupported": {
           "type": "boolean",
