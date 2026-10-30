@@ -112,3 +112,13 @@
   Gabee ~/omni-test/{prepass_probe,var_probe,probe3}.out (copied to the SSD release-media/ at the end).
   Also fixed: waitClock vitest scanned the gitignored src/swarm-bench mirror (failed on any Mac that had packaged).
   Gate + package on the laptop: node-run workhorse-20261030-184609-0bdd (~/gate2-omni.log then ~/pkg-omni.log).
+- 19:36 PACKAGED-APP PROOF (Gabee, candidate c41cdbde41, isolated profile, fresh onboarding): default mount has NO
+  --text-only, /v1/models ['text','vision','video','audio','tools'], Sampling switch "off - hears audio and watches
+  video"; composer audio + video PLAY (CSP fix live: currentTime advancing, durations 119.29 / 60); 2-min speech ->
+  "lighthouse, volcano, saxophone ... 7:15 from platform nine ... kitchen sink" (pre-pass 4 pieces, 0 failures,
+  11.7 s); 60 s video -> ALPHA red/yellow, BRAVO green/black, CHARLIE blue/white in order (11.1 s); image -> BRAVO on
+  green (1.7 s); 10 main requests, 0 media parts, 0 cap refusals; metal peak 15.08 GB. Evidence:
+  /Volumes/AI-workhorse/media/goose/2026-10-30-omni-media/packaged-app-gabee-3.0.135/candidate-c41cdbde41/.
+  Gabee restored (installed Goose, single-guard OK). main fast-forwarded to 59f33e5223 (release: 3.0.135);
+  `just release-notarized 3.0.135` running as a local nohup on the workhorse (~/goose-builds/release-3.0.135.log,
+  VIGIL-3.0.135.md, vigil-3.0.135.out).
