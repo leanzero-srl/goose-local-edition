@@ -52,7 +52,7 @@ MAX_TURNS_MESSAGE = ("I've reached the maximum number of actions I can do withou
 # (crates/goose/src/agents/wrap_up.rs). It counts the same turns --max-turns stops at. Every budgeted run
 # switches it on explicitly, runs it at goose's defaults (the operator's GOOSE_WRAP_UP_* settings are
 # removed from the entrant's config snapshot) and records the version, so the board can label the run.
-WRAP_UP_NUDGE_VERSION = 1  # pinned to wrap_up.rs WRAP_UP_NUDGE_VERSION by test_bench_budget
+WRAP_UP_NUDGE_VERSION = 2  # pinned to wrap_up.rs WRAP_UP_NUDGE_VERSION by test_bench_budget
 WRAP_UP_SWITCH = 'GOOSE_WRAP_UP_NUDGE'
 WRAP_UP_PREFIX = 'GOOSE_WRAP_UP_'
 WALLET_ENV = 'BENCH_MAX_USD'

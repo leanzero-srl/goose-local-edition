@@ -31,7 +31,7 @@ use std::path::Path;
 
 /// Bumped whenever a default threshold or text changes, so a benchmark run records which nudge it ran
 /// with (bench_budget.py WRAP_UP_NUDGE_VERSION is pinned to this by test_bench_budget).
-pub const WRAP_UP_NUDGE_VERSION: u32 = 1;
+pub const WRAP_UP_NUDGE_VERSION: u32 = 2;
 
 /// Master switch (default on): chats and single-model benchmark entrants.
 pub const WRAP_UP_NUDGE_KEY: &str = "GOOSE_WRAP_UP_NUDGE";
@@ -221,13 +221,26 @@ impl WrapUp {
         let outputs = if missing.is_empty() {
             String::new()
         } else {
+            // v2 (A/B 2026-10-30, glm-5.3, budget 30): v1's finish lead ("Not written yet...") read as
+            // information; a run told at call 24 that five named files were missing kept debugging
+            // for three calls, then wrote one file per call and ran out before DECISIONS.md. A
+            // required output is not a new feature, so every stage now puts the missing files first.
             let lead = match stage {
-                Stage::Finish => "Not written yet, and the request names them",
+                Stage::Finish => {
+                    "Write these first, before more fixing: the request names them and they do not exist yet"
+                }
                 Stage::Deliver | Stage::Final => {
                     "Write these now, before anything else: the request names them and they do not exist yet"
                 }
             };
-            format!(" {lead}: {}.", missing.join(", "))
+            // The same run said "writing the three test files plus README and DECISIONS in one go"
+            // and still sent one write per reply: say that one reply can carry several writes.
+            let together = if missing.len() > 1 {
+                " One reply can write several of them: send one write call per file in the same reply."
+            } else {
+                ""
+            };
+            format!(" {lead}: {}.{together}", missing.join(", "))
         };
         let text = template
             .replace("{left}", &max_turns.saturating_sub(turns_taken).to_string())
@@ -420,6 +433,19 @@ mod tests {
              you built runs, write the outputs the request requires, and leave the workspace in a \
              finished state. Write these now, before anything else: the request names them and they do \
              not exist yet: DECISIONS.md.</wrap-up>"
+        );
+        let finish = wrap.line(
+            Stage::Finish,
+            120,
+            150,
+            &["README.md".to_string(), "DECISIONS.md".to_string()],
+        );
+        assert!(
+            finish.contains(
+                "Write these first, before more fixing: the request names them and they do not \
+                 exist yet: README.md, DECISIONS.md. One reply can write several of them"
+            ),
+            "{finish}"
         );
         let last = wrap.line(Stage::Final, 150, 150, &[]);
         assert!(last.contains("this one and 0 more"), "{last}");
