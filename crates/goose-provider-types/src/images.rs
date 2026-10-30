@@ -787,11 +787,20 @@ pub fn split_pcm_wav(data_b64: &str, max_secs: u32) -> Option<Vec<WavPiece>> {
 }
 
 /// Where to end a piece of 16-bit PCM so a word is not cut in two: the middle of the quietest
-/// 20 ms window in the piece's last 5 seconds (the whole piece when it is shorter than that).
+/// 100 ms stretch (five 20 ms windows) in the piece's last 5 seconds (the whole piece when it is
+/// shorter than that).
+///
+/// One 20 ms window was not enough (measured 2026-10-30, Gemma 4 E4B, a 130 s `say` clip): it
+/// finds the silent closure INSIDE a word as readily as the gap between two ("she ex|plained"
+/// came back "claimed"; a cut 0 ms before "The owner" came back "Leona"), and under steady noise
+/// or music 3 of 4 cuts fell inside speech. A 100 ms stretch is longer than a stop closure and
+/// leaves ~50 ms of quiet either side of the cut.
 fn quietest_cut(piece: &[u8], byte_rate: usize, block_align: usize) -> usize {
+    const QUIET_SPAN_WINDOWS: usize = 5; // measured: 100 ms, see above
     let window = (byte_rate / 50 / block_align).max(1) * block_align;
     let search = (byte_rate * 5 / block_align) * block_align;
-    if piece.len() < search + window {
+    let span = window * QUIET_SPAN_WINDOWS;
+    if piece.len() < search + span {
         return piece.len();
     }
     let loudness = |w: &[u8]| -> u64 {
@@ -799,14 +808,18 @@ fn quietest_cut(piece: &[u8], byte_rate: usize, block_align: usize) -> usize {
             .map(|s| u64::from(i16::from_le_bytes([s[0], s[1]]).unsigned_abs()))
             .sum()
     };
+    let start = piece.len() - search;
+    let windows: Vec<u64> = (0..)
+        .map(|i| start + i * window)
+        .take_while(|at| at + window <= piece.len())
+        .map(|at| loudness(&piece[at..at + window]))
+        .collect();
     let mut best = (u64::MAX, piece.len());
-    let mut at = piece.len() - search;
-    while at + window <= piece.len() {
-        let l = loudness(&piece[at..at + window]);
+    for (i, run) in windows.windows(QUIET_SPAN_WINDOWS).enumerate() {
+        let l: u64 = run.iter().sum();
         if l < best.0 {
-            best = (l, at + window / 2 / block_align * block_align);
+            best = (l, start + i * window + span / 2 / block_align * block_align);
         }
-        at += window;
     }
     best.1.max(block_align)
 }
@@ -890,6 +903,40 @@ mod wav_split_tests {
         assert_eq!(pieces[1].start_secs, first_end);
         assert!((pieces.last().unwrap().end_secs - 70.0).abs() < 1e-9);
         assert!(pieces.iter().all(|p| p.end_secs - p.start_secs <= 30.0));
+    }
+
+    #[test]
+    fn a_cut_skips_a_stop_closure_for_the_real_gap_between_words() {
+        // 70 s of loud 16 kHz mono: a 40 ms closure inside a word at 26.0 s (found first) and a
+        // 150 ms gap between words at 28.0 s. The cut belongs in the gap.
+        let rate = 16_000usize;
+        let mut samples = vec![12_000i16; rate * 70];
+        for s in &mut samples[rate * 26..rate * 26 + rate / 25] {
+            *s = 0;
+        }
+        for s in &mut samples[rate * 28..rate * 28 + rate * 3 / 20] {
+            *s = 0;
+        }
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&((36 + samples.len() * 2) as u32).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&(rate as u32).to_le_bytes());
+        b.extend_from_slice(&((rate * 2) as u32).to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&((samples.len() * 2) as u32).to_le_bytes());
+        for s in &samples {
+            b.extend_from_slice(&s.to_le_bytes());
+        }
+        let pieces =
+            split_pcm_wav(&base64::engine::general_purpose::STANDARD.encode(b), 30).unwrap();
+        let first_end = pieces[0].end_secs;
+        assert!((28.04..28.11).contains(&first_end), "cut at {first_end}");
     }
 
     #[test]
