@@ -33,8 +33,8 @@ fork cli.py `_MEMORY_TUNABLE_FLAGS` (74a7aa5): all match.
 - cargo clippy -p goose-sidecar -p goose-sdk-types -p goose --all-targets -D warnings: green (before the 5% commit;
   re-run). cargo test goose-sidecar + goose-sdk-types: green. cargo test -p goose -p goose-swarm --no-fail-fast:
   63 ok, 1 FAILED = providers::key_connection::tests::only_a_refused_loopback_connect_reads_as_a_server_that_is_not_started
-  ("Connection reset by peer"), fails deterministically; not touched by this diff. A probe on the clean main
-  checkout ~/Projects/goose was started to prove it pre-exists: rerun
+  ("Connection reset by peer"), fails deterministically; PROVEN PRE-EXISTING: it fails the same way on the
+  clean main checkout ~/Projects/goose (6e34d1e378). Reproduce with:
   `cd ~/Projects/goose && cargo test -p goose --lib only_a_refused_loopback` to confirm.
 - UI: `pnpm run lint:check` exit 0 (tsc + eslint + i18n). vitest: memoryTunables.test.ts 10/10,
   MlxMemorySection.test.tsx 9/9 BEFORE the 5% edit (test strings updated to 7 GB / 5%); FULL `pnpm run test:run`
