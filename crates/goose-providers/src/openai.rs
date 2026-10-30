@@ -3461,9 +3461,7 @@ mod media_input_tests {
         b.extend_from_slice(b"RIFF");
         b.extend_from_slice(&(36 + data_len).to_le_bytes());
         b.extend_from_slice(b"WAVEfmt ");
-        for v in [16u32] {
-            b.extend_from_slice(&v.to_le_bytes());
-        }
+        b.extend_from_slice(&16u32.to_le_bytes());
         for v in [1u16, 1u16] {
             b.extend_from_slice(&v.to_le_bytes());
         }
