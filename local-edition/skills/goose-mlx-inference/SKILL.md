@@ -123,7 +123,7 @@ Rule home: ~/.claude/CLAUDE.md "ANYTHING OVER 30 MINUTES NEEDS CAUSE, A CHEAPER-
 | references/distributed-engine-history.md | dated 09-23..26 record of the distributed engine |
 | references/remote-single-and-engine-fixes.md | remote single over Link, hidden generation caps, Q-85/142/508 |
 | references/evolution-loop.md | experiments.jsonl / LEDGER / QUEUED-FIXES / TRUMP-CARDS / NOW.md loop, fan protocol, one-home rule |
-| references/compaction.md | goose compacting a local-model session: when, what the summary lost, the compaction-fix design and review fixes |
+| references/compaction.md | goose compacting a local-model session: when, what the summary lost, the compaction-fix design, review fixes, and round 4 (provider-anchored guard, facts beside every summary, structural gate) |
 | references/prompt-lookup-ngram.md | the prompt-lookup (n-gram) lever record |
 | references/qwen4-flash-offload.md | Qwen3.8-Flash-Next PLE offload facts (tag check, laptop blocker, sqlx strip trap) |
 | references/hard-rules-detail.md | full text and WHY of rules 8-12 (weights mount, restore at launch, swarm-surgeon) |

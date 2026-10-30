@@ -22,6 +22,7 @@ use tracing::log::warn;
 
 pub mod acp;
 pub mod context_line;
+pub mod facts;
 pub mod pillars;
 pub mod state;
 
@@ -208,11 +209,6 @@ pub const WRITTEN_PARTS: [(&str, &str); 5] = [
     ),
 ];
 
-/// The letters and digits a section must hold beyond its heading and the instruction's own ask, a
-/// first check before [`section_has_content`] asks for real content: an empty section, "-", "N/A",
-/// "TBD", "none" or the ask parroted back (compaction.md prints each heading, then its ask) fail.
-const MIN_SECTION_CHARS: usize = 5;
-
 /// `text` as its letters and digits, lowercased: what a section's own words are compared by.
 fn bare_words(text: &str) -> String {
     text.chars()
@@ -221,251 +217,175 @@ fn bare_words(text: &str) -> String {
         .collect()
 }
 
-/// Words that carry nothing a reader of the summary can use once the conversation is gone: they
-/// point back at it ("see above", "same as before", "as discussed", "as previously mentioned") or
-/// say only that the work goes on ("ongoing", "keep going", "continue"). Measured 2026-10-30
-/// through the goose CLI: an answer whose five sections were each one of those was stored as the
-/// summary on its first ask, because a section needed only five letters of its own.
-const VACANT_WORDS: [&str; 18] = [
-    "above",
-    "below",
-    "before",
-    "earlier",
-    "previous",
-    "previously",
-    "discussed",
-    "mentioned",
-    "said",
-    "same",
-    "usual",
-    "see",
-    "ongoing",
-    "continue",
-    "continuing",
-    "continued",
-    "keep",
-    "going",
-];
+/// The sections a summary needs, and how many of them must hold something.
+const MIN_FILLED_SECTIONS: usize = WRITTEN_PARTS.len().div_ceil(2);
 
-/// The words of its own a section needs when it names nothing concrete from the conversation:
-/// three words of three letters or more that are not [`VACANT_WORDS`]. "planning the users", "no
-/// files written yet", "nothing, the task is complete" pass; "ongoing", "see above.", "same as
-/// before", "as discussed", "keep going", "continue work", "run it" do not.
-const MIN_OWN_WORDS: usize = 3;
-
-/// The longest token goose treats as an anchor: a token longer than this is data (a hash, a
-/// base64 blob), not a name a summary would repeat.
-const MAX_ANCHOR_CHARS: usize = 200;
-
-/// The concrete names a conversation used — paths, file names, identifiers, numbers — lowercased:
-/// what a summary of it repeats when it says what the work did. A token is concrete when it holds
-/// a digit, a path or identifier separator (`/ \ _ . : -` inside it) or a capital after its
-/// first letter (`camelCase`, `UTC`). Its concrete parts are anchors too ([`anchor_forms`]): a
-/// summary says `viz.js` of `web/viz.js`.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct Anchors(std::collections::HashSet<String>);
-
-fn anchor_tokens(text: &str) -> impl Iterator<Item = &str> {
-    text.split(|c: char| {
-        c.is_whitespace()
-            || matches!(
-                c,
-                '"' | '\''
-                    | '`'
-                    | '('
-                    | ')'
-                    | '['
-                    | ']'
-                    | '{'
-                    | '}'
-                    | '<'
-                    | '>'
-                    | ','
-                    | ';'
-                    | '='
-                    | '|'
-            )
-    })
-    .map(|token| {
-        token.trim_matches(|c: char| !(c.is_alphanumeric() || matches!(c, '/' | '_' | '~')))
-    })
-    .filter(|token| {
-        let chars = token.chars().count();
-        (2..=MAX_ANCHOR_CHARS).contains(&chars)
-            && (token.chars().any(|c| c.is_ascii_digit())
-                || token.contains(['/', '\\', '_', '.', ':', '-'])
-                || token.chars().skip(1).any(char::is_uppercase))
-    })
-}
-
-/// A token as the forms a summary may repeat it in, lowercased: whole, and each of its parts that
-/// is concrete on its own — `web/viz.js` is also `viz.js`, `24-month` is also `24`,
-/// `crate::agents::run` is also `agents`… only where a part holds a digit, a dot or a capital.
-fn anchor_forms(token: &str) -> impl Iterator<Item = String> + '_ {
-    std::iter::once(token.to_lowercase()).chain(
-        token
-            .split(['/', '\\', '-', ':'])
-            .filter(|part| part.len() < token.len())
-            .flat_map(anchor_tokens)
-            .map(str::to_lowercase),
-    )
-}
-
-impl Anchors {
-    /// The anchors of what `messages` show the model: its agent-visible messages as a transcript
-    /// renders them, without goose's turn-context blocks and harness nudges (dates and folders the
-    /// summary has no reason to repeat).
-    pub(crate) fn of(messages: &[Message]) -> Self {
-        let mut anchors = std::collections::HashSet::new();
-        for message in messages.iter().filter(|m| {
-            m.is_agent_visible()
-                && !crate::conversation::is_turn_context_message(m)
-                && !is_harness_nudge(m)
-        }) {
-            let text = format_message_for_compacting(message);
-            for token in anchor_tokens(&text) {
-                anchors.extend(anchor_forms(token));
-            }
+/// Whether a section's body holds anything of its own: a letter or digit once the instruction's
+/// heading and ask for it (echoed back) are taken out. "None.", "Keine.", "- none", "n/a" hold
+/// something — saying a list is empty is an answer.
+fn section_filled(body: &str, part: Option<usize>) -> bool {
+    let mut own = bare_words(body);
+    if let Some(part) = part {
+        let (heading, ask) = WRITTEN_PARTS[part];
+        for template in [bare_words(ask), bare_words(heading)] {
+            own = own.replace(&template, "");
         }
-        Self(anchors)
     }
-
-    fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// Whether `text` names one of these anchors.
-    fn named_in(&self, text: &str) -> bool {
-        anchor_tokens(text).any(|token| anchor_forms(token).any(|form| self.0.contains(&form)))
-    }
+    !own.is_empty()
 }
 
-/// `text`'s words, lowercased, with every run of `template`'s words taken out (the instruction's
-/// heading and ask echoed back are not the model's words).
-fn words_without(text: &str, templates: &[&str]) -> Vec<String> {
-    let words = |text: &str| -> Vec<String> {
-        text.split(|c: char| !c.is_alphanumeric())
-            .filter(|w| !w.is_empty())
-            .map(str::to_lowercase)
-            .collect()
+/// A line that heads a section in any language: a markdown heading (its level), or a line that
+/// opens in bold (`**Wo wir stehen**`, `1. **User Intent** – …`), or a short line ending in a
+/// colon (`Prochaine étape :`). Returns the kind (the markdown level, else 0) and the words after
+/// the heading on its line.
+fn generic_heading(line: &str) -> Option<(usize, &str)> {
+    let line = line.trim();
+    let hashes = line.chars().take_while(|c| *c == '#').count();
+    if (1..=6).contains(&hashes) && line.get(hashes..).is_some_and(|rest| rest.starts_with(' ')) {
+        return Some((hashes, ""));
+    }
+    let unnumbered = match line.split_once(['.', ')']) {
+        Some((number, after))
+            if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            after.trim_start()
+        }
+        _ => line,
     };
-    let mut own = words(text);
-    for template in templates {
-        let run = words(template);
-        if run.is_empty() {
+    if let Some(rest) = unnumbered.strip_prefix("**") {
+        let (title, after) = rest.split_once("**")?;
+        if title.trim().is_empty() || title.split_whitespace().count() > 8 {
+            return None;
+        }
+        return Some((
+            0,
+            after.trim_start_matches([':', ' ', '–', '—', '-']).trim(),
+        ));
+    }
+    let short = line.split_whitespace().count() <= 6;
+    if short && line.ends_with(':') && !line.starts_with(['-', '*', '+', '>', '`', '|']) {
+        return Some((0, ""));
+    }
+    None
+}
+
+/// The answer's sections by [`generic_heading`], outside code fences: the markdown headings of
+/// the highest level used, else the bold or colon-ended lines. Each is its body (the words on the
+/// heading's line, then the lines up to the next such heading).
+fn generic_sections(text: &str) -> Vec<String> {
+    let mut lines: Vec<(Option<(usize, String)>, &str)> = Vec::new();
+    let mut fence: Option<&str> = None;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if let Some(marker) = fence {
+            if trimmed.starts_with(marker) {
+                fence = None;
+            }
+            lines.push((None, line));
             continue;
         }
-        let mut at = 0;
-        while at + run.len() <= own.len() {
-            if own[at..at + run.len()] == run[..] {
-                own.drain(at..at + run.len());
-            } else {
-                at += 1;
+        if let Some(marker) = ["```", "~~~"].into_iter().find(|m| trimmed.starts_with(m)) {
+            fence = Some(marker);
+            lines.push((None, line));
+            continue;
+        }
+        lines.push((
+            generic_heading(line).map(|(kind, inline)| (kind, inline.to_string())),
+            line,
+        ));
+    }
+    let top = lines
+        .iter()
+        .filter_map(|(heading, _)| heading.as_ref().map(|(kind, _)| *kind))
+        .filter(|kind| *kind > 0)
+        .min();
+    let kind = match top {
+        Some(level)
+            if lines
+                .iter()
+                .filter(|(h, _)| h.as_ref().is_some_and(|(k, _)| *k == level))
+                .count()
+                > 1 =>
+        {
+            level
+        }
+        _ => 0,
+    };
+    let mut sections: Vec<String> = Vec::new();
+    for (heading, line) in lines {
+        match heading {
+            Some((k, inline)) if k == kind => sections.push(inline),
+            _ => {
+                if let Some(body) = sections.last_mut() {
+                    body.push('\n');
+                    body.push_str(line);
+                }
             }
         }
     }
-    own
+    sections
 }
 
-/// The words that count toward [`MIN_OWN_WORDS`]: three letters or more, not [`VACANT_WORDS`].
-fn content_words(words: &[String]) -> usize {
-    words
-        .iter()
-        .filter(|w| w.chars().count() >= 3 && !VACANT_WORDS.contains(&w.as_str()))
-        .count()
-}
-
-/// Whether a section of WRITTEN_PARTS[`part`] holds words of its own: at least
-/// [`MIN_SECTION_CHARS`] letters and digits once its heading and its ask are taken out, and then
-/// real content — a concrete name the conversation used ([`Anchors`]), or [`MIN_OWN_WORDS`] words
-/// of its own. Two sections are treated apart:
-/// - "Where we are" must name something the conversation used whenever it used anything concrete:
-///   the state of the work is its files, commands and results, and a sentence that names none of
-///   them ("the work is still ongoing here") is not where the work is.
-/// - "What each file does", "Decisions and reasons" and "Still to do" may say their list is empty
-///   ("Nothing.", "None — no decision beyond the request", "nothing left"): a finished task has
-///   nothing still to do, a short chat made no decision.
-fn section_has_content(part: usize, body: &str, anchors: &Anchors) -> bool {
-    let (heading, ask) = WRITTEN_PARTS[part];
-    let mut own = bare_words(body);
-    for template in [bare_words(ask), bare_words(heading)] {
-        own = own.replace(&template, "");
+/// Why `answer` is not the summary — `None` when it is one. STRUCTURAL ONLY (round 4): the
+/// sections are there and most of them hold something. The five headings are read in their
+/// usual markdown forms (`pillars::written_sections`), and an answer in another language or with
+/// its own headings counts its own sections ([`generic_sections`]). A section that says its list
+/// is empty ("None.", "Keine.", "- none") holds something.
+///
+/// Why: the round-2/3 gate judged the WORDS — a list of vacant words, a "concrete name the
+/// conversation used" anchor — and an independent review of round 3 found it fragile both ways.
+/// What a thin summary leaves out the kept block's facts carry (`facts`), so the gate refuses
+/// only an answer that is not a summary at all: the Flash-Next stopped run's one line ("I will
+/// now proceed to document the design decisions…"), a template echoed back, five empty headings.
+pub(crate) fn summary_shortfall(answer: &str) -> Option<String> {
+    let text = pillars::strip_scratch(answer);
+    if !text.chars().any(char::is_alphanumeric) {
+        return Some("is empty".to_string());
     }
-    if own.chars().count() < MIN_SECTION_CHARS {
-        return false;
+    let named = pillars::written_sections(&text);
+    let mut filled = [false; WRITTEN_PARTS.len()];
+    let mut seen = [false; WRITTEN_PARTS.len()];
+    for (part, body) in &named {
+        seen[*part] = true;
+        filled[*part] |= section_filled(body, Some(*part));
     }
-    if anchors.named_in(body) {
-        return true;
-    }
-    if part == 0 && !anchors.is_empty() {
-        return false;
-    }
-    let words = words_without(body, &[ask, heading]);
-    let says_empty = words.first().is_some_and(|w| w == "nothing" || w == "none");
-    (matches!(part, 1..=3) && says_empty) || content_words(&words) >= MIN_OWN_WORDS
-}
-
-/// The sections of WRITTEN_PARTS that `answer` does not carry with words of its own, in order.
-fn parts_without_content(answer: &str, anchors: &Anchors) -> Vec<&'static str> {
-    let sections = pillars::written_sections(answer);
-    WRITTEN_PARTS
-        .iter()
-        .enumerate()
-        .filter(|(part, _)| {
-            !sections
+    let (count, filled) = if seen.iter().all(|s| *s) {
+        (seen.len(), filled.iter().filter(|f| **f).count())
+    } else {
+        let sections = generic_sections(&text);
+        if sections.len() < WRITTEN_PARTS.len() {
+            let missing: Vec<String> = WRITTEN_PARTS
                 .iter()
-                .any(|(written, body)| written == part && section_has_content(*part, body, anchors))
-        })
-        .map(|(_, (heading, _))| *heading)
-        .collect()
+                .zip(seen)
+                .filter(|(_, seen)| !seen)
+                .map(|((heading, _), _)| format!("`## {heading}`"))
+                .collect();
+            return Some(if named.is_empty() && sections.is_empty() {
+                "has none of the sections".to_string()
+            } else {
+                format!(
+                    "has {} of the {} sections (no {})",
+                    sections.len().max(seen.iter().filter(|s| **s).count()),
+                    WRITTEN_PARTS.len(),
+                    missing.join(", ")
+                )
+            });
+        }
+        let filled = sections.iter().filter(|b| section_filled(b, None)).count();
+        (sections.len(), filled)
+    };
+    (filled < MIN_FILLED_SECTIONS)
+        .then(|| format!("leaves {} of its {count} sections empty", count - filled))
 }
 
 /// What an answer that is not the summary lacks, said to the model that wrote it.
-fn missing_parts_correction(answer: &str, anchors: &Anchors) -> String {
-    let missing: Vec<String> = parts_without_content(answer, anchors)
-        .iter()
-        .map(|heading| format!("`## {heading}`"))
-        .collect();
+fn summary_correction(shortfall: &str) -> String {
     format!(
-        "Your answer has no {} section{} written in your own words: it is not the summary. Write \
-         the summary now: only the sections the instruction above lists, in its order, from `## {}` \
-         on, each with what this conversation did — the files, commands and values by their names \
-         as they appear above, never \"see above\" or \"ongoing\". Call no tool.",
-        missing.join(", "),
-        if missing.len() == 1 { "" } else { "s" },
+        "Your answer {shortfall}: it is not the summary. Write the summary now: only the sections \
+         the instruction above lists, in its order, from `## {}` on, each with what this \
+         conversation did. A section with nothing to say says so (\"None.\"). Call no tool.",
         WRITTEN_PARTS[0].0
     )
-}
-
-/// Whether a written answer carries every section the summary asks for, each with words of its
-/// own (outside code fences; its heading in any reasonable markdown form) that say something of
-/// the conversation it summarizes (`anchors`; see [`section_has_content`]). An answer without them
-/// is not a summary: the Flash-Next stopped run (2026-10-29) stored "I will now proceed to document
-/// the design decisions and run the final verification sequence." — one line, none of the
-/// sections — as the summary of 241k tokens of work. Before 2026-10-30 a heading alone passed, so
-/// the instruction's own template echoed back, or headings inside a code fence, passed too; until
-/// the next fix five sections of "ongoing" / "see above." / "same as before" passed.
-fn has_every_written_part(answer: &str, anchors: &Anchors) -> bool {
-    parts_without_content(answer, anchors).is_empty()
-}
-
-/// The words of its own a transcript summary needs: the transcript instruction asks for nine
-/// sections of the whole session, so even a short chat's honest answer is well over this, and a
-/// one-line answer ("I will continue with the task.") is far under it.
-const MIN_TRANSCRIPT_SUMMARY_WORDS: usize = 40;
-
-/// The gate on a chat's transcript summary (its own instruction asks for nine numbered sections,
-/// not [`WRITTEN_PARTS`]): the five written parts, or [`MIN_TRANSCRIPT_SUMMARY_WORDS`] words of its
-/// own outside its `<analysis>` that name something the conversation used (when it used anything
-/// concrete). Before 2026-10-30 its answer was stored whatever it said: after two non-summaries
-/// on the chat-shaped request, a one-liner from the transcript request became the summary.
-fn is_a_transcript_summary(answer: &str, anchors: &Anchors) -> bool {
-    if has_every_written_part(answer, anchors) {
-        return true;
-    }
-    let written = pillars::strip_scratch(answer);
-    content_words(&words_without(&written, &[])) >= MIN_TRANSCRIPT_SUMMARY_WORDS
-        && (anchors.is_empty() || anchors.named_in(&written))
 }
 
 #[derive(Serialize)]
@@ -718,8 +638,9 @@ pub fn tail_that_fits(
                 || crate::conversation::is_turn_context_message(message)
                 || is_harness_nudge(message))
     };
-    let cost =
-        |message: &Message| counter.count_chat_tokens("", std::slice::from_ref(message), &[]);
+    // Each row as part of the conversation (round 4): an answer's reasoning its split rows
+    // repeat is counted once, and added back only for the row a tail opens on.
+    let costs = counter.message_costs(messages);
     // The person's `/compact` row: stored for the person alone just before a manual compaction
     // reads the conversation, it is the newest row and is passed over, not stopped at. Before
     // 2026-10-30 a manual compaction kept no tail at all, where an automatic one kept the newest
@@ -742,8 +663,8 @@ pub fn tail_that_fits(
         if !ordinary(message) {
             break;
         }
-        let tokens = cost(message);
-        if used + tokens > budget_tokens {
+        let tokens = costs[start - 1].tokens;
+        if used + tokens + costs[start - 1].repeated_reasoning > budget_tokens {
             break;
         }
         used += tokens;
@@ -916,11 +837,15 @@ async fn compact_core(
     // prose-only recall; a 27B does not. Default 0 => byte-identical for every non-swarm session.
     // At least two of the rows the model saw are summarized; rows hidden from it at the end (the
     // person's `/compact`) are not counted against that.
-    let trailing_hidden = messages
-        .iter()
-        .rev()
-        .take_while(|m| !m.is_agent_visible())
-        .count();
+    // The swarm's workers keep the golden bound (the last two messages, seen or not).
+    let trailing_hidden = match chat {
+        Some(_) => messages
+            .iter()
+            .rev()
+            .take_while(|m| !m.is_agent_visible())
+            .count(),
+        None => 0,
+    };
     let keep_tail =
         keep_tail.min((messages.len() - trailing_hidden).saturating_sub(2) + trailing_hidden);
     let mut cut = messages.len() - keep_tail;
@@ -946,12 +871,12 @@ async fn compact_core(
     // preserved copy too would duplicate the instruction the model most attends to.
     // A harness nudge in the tail is goose's, not the person's request: counted as it, the
     // person's real request was never re-sent before the tail.
+    // The swarm's workers keep the golden test (any user text row in the tail).
     let preserved_in_tail = keep_tail > 0
         && messages[cut..].iter().any(|m| {
-            m.is_agent_visible()
-                && matches!(m.role, rmcp::model::Role::User)
+            matches!(m.role, rmcp::model::Role::User)
                 && has_text_only(m)
-                && !is_harness_nudge(m)
+                && (chat.is_none() || (m.is_agent_visible() && !is_harness_nudge(m)))
         });
     let preserved_text = preserved_user_message
         .as_ref()
@@ -995,7 +920,7 @@ async fn compact_core(
         SummaryRequest::ExtendsChat(_) if chat.is_some() => messages,
         _ => messages_to_compact,
     };
-    let (summary_message, summarization_usage, note) = match do_compact(
+    let (summary_message, summarization_usage, note, flag) = match do_compact(
         provider,
         model_config,
         session_id,
@@ -1009,12 +934,14 @@ async fn compact_core(
             message,
             usage,
             note,
-        } => (*message, usage, note),
+            flag,
+        } => (*message, usage, note, flag),
         Summary::Asked { question } => return Ok(ChatCompacted::Asked { question }),
     };
     let summary_message = match &kept {
         Some(kept) => {
-            let stored = pillars::stored_summary(&summary_message.as_concat_text(), kept);
+            let stored =
+                pillars::stored_summary(&summary_message.as_concat_text(), kept, flag.as_deref());
             let mut message = summary_message;
             message
                 .content
@@ -1084,8 +1011,16 @@ async fn compact_core(
     // Each copy is dated now: the session store reads a conversation back ordered by its rows'
     // `created` (then insertion), so a copy keeping its original's time was read back BEFORE the
     // summary — the model got the newest turns, then the summary of what came before them.
+    // The swarm's workers copy every tail row as their golden run did. Their copies are dated now
+    // too, and that is the one change to them: no request carries a row's date, so a worker's
+    // requests within the reply that compacted are unchanged byte for byte, and a reply that reads
+    // the conversation back from the store now gets the order the worker had in memory (summary,
+    // then tail) where it got the tail first.
     let now = chrono::Utc::now().timestamp();
-    for msg in messages[cut..].iter().filter(|m| m.is_agent_visible()) {
+    for msg in messages[cut..]
+        .iter()
+        .filter(|m| chat.is_none() || m.is_agent_visible())
+    {
         let mut copy = msg.clone().with_metadata(MessageMetadata::agent_only());
         copy.created = copy.created.max(now);
         final_messages.push(copy);
@@ -1330,11 +1265,164 @@ fn guarded_context_tokens(reported: Option<i32>, compressed_sent: Option<usize>)
     }
 }
 
+/// The last chat request goose sent and the prompt its provider reported for it: the base the
+/// compaction guard adds the rows written since to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SentPrompt {
+    prompt_tokens: usize,
+    /// The conversation's rows the request carried (before `fix_conversation`: the rows the
+    /// guard reads back), and the newest of them, by [`row_fingerprint`].
+    rows: usize,
+    last_row: Option<[u8; 32]>,
+}
+
+static SENT_PROMPTS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, SentPrompt>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// A row as the session store gives it back: its role, time and content. Not its id (the store
+/// gives a row without one an id of its own) and not its metadata (a compaction rewrites it).
+fn row_fingerprint(message: &Message) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(format!("{:?}|{}|", message.role, message.created).as_bytes());
+    hasher.update(&serde_json::to_vec(&message.content).unwrap_or_default());
+    *hasher.finalize().as_bytes()
+}
+
+/// Notes what a chat's call carried — `sent`, the conversation's rows — and the prompt tokens its
+/// provider reported (`Usage::input_tokens`, cache reads included). A call that reported none
+/// leaves no base: the guard then reads the session's stored usage, or counts.
+pub fn note_sent_prompt(session_id: &str, sent: &[Message], prompt_tokens: Option<i32>) {
+    let mut prompts = SENT_PROMPTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    match prompt_tokens.filter(|tokens| *tokens > 0) {
+        Some(tokens) => {
+            prompts.insert(
+                session_id.to_string(),
+                SentPrompt {
+                    prompt_tokens: tokens as usize,
+                    rows: sent.len(),
+                    last_row: sent.last().map(row_fingerprint),
+                },
+            );
+        }
+        None => {
+            prompts.remove(session_id);
+        }
+    }
+}
+
+/// The reported prompt of the chat's last call and where the rows written since begin in
+/// `messages` — `None` when no call is noted, or `messages` no longer open with what it sent (a
+/// compaction rewrote them, or the session was reloaded and its rows differ).
+fn prompt_and_rows_since(session_id: &str, messages: &[Message]) -> Option<(usize, usize)> {
+    let sent = SENT_PROMPTS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(session_id)
+        .cloned()?;
+    if sent.rows > messages.len() {
+        return None;
+    }
+    let last = sent
+        .rows
+        .checked_sub(1)
+        .map(|i| row_fingerprint(&messages[i]));
+    (last == sent.last_row).then_some((sent.prompt_tokens, sent.rows))
+}
+
+/// Whether the guard will COUNT this chat's whole request (no call it can start from): the
+/// caller then passes the request's frame, which the count includes.
+pub fn guard_counts_the_whole_request(
+    session: &crate::session::Session,
+    messages: &[Message],
+) -> bool {
+    prompt_and_rows_since(&session.id, messages).is_none() && session.usage.total_tokens.is_none()
+}
+
+/// How the compaction guard counts a conversation.
+#[derive(Debug, Clone, Copy)]
+pub enum GuardCount<'a> {
+    /// The swarm's workers, as their golden run measured: the session's stored total, else each
+    /// agent-visible message counted alone.
+    Worker,
+    /// A chat ([`chat_context_tokens`]): the provider's prompt for its last call plus the rows
+    /// written since. The frame (system prompt, tools) is counted when no call was reported.
+    Chat(Option<(&'a str, &'a [Tool])>),
+}
+
+/// Where a chat's count came from, for the log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CountSource {
+    /// The provider's prompt for the chat's last call, plus goose's count of the rows since.
+    LastCall,
+    /// The session's stored usage (the last call before a reload), plus the rows after its answer.
+    StoredUsage,
+    /// goose's tokenizer over the whole request: no call has reported a prompt.
+    Estimated,
+}
+
+/// The tokens a chat's next request carries, as the compaction guard decides on them. The
+/// provider's own count is trusted: the prompt its last call reported (`note_sent_prompt`) plus
+/// goose's count of only the rows written since (sequence-counted, [`TokenCounter::message_costs`]).
+/// After a reload the stored usage of the last call stands in, plus the rows after its answer.
+/// Only with neither is the whole request counted, its frame included.
+///
+/// Why (round 4, 2026-10-30): the guard counted each message alone, so the split rows' repeated
+/// reasoning was counted N times — the stopped Flash-Next run's 223 rows read 277-281k against the
+/// 243,299 its engine reported for them with the summary instruction — and it counted no system
+/// prompt or tools at all.
+pub fn chat_context_tokens(
+    session_id: &str,
+    messages: &[Message],
+    stored_total: Option<i32>,
+    frame: Option<(&str, &[Tool])>,
+    counter: &crate::token_counter::TokenCounter,
+) -> (usize, CountSource) {
+    let costs = counter.message_costs(messages);
+    let since =
+        |start: usize| goose_counted(costs[start..].iter().map(|c| c.tokens).sum::<usize>());
+    if let Some((prompt, start)) = prompt_and_rows_since(session_id, messages) {
+        return (prompt + since(start), CountSource::LastCall);
+    }
+    if let Some(total) = stored_total.filter(|t| *t > 0) {
+        // The stored total is the last call's prompt and its answer: what follows the answer is new.
+        let after_answer = messages
+            .iter()
+            .rposition(|m| m.is_agent_visible() && m.role == Role::Assistant)
+            .map_or(0, |i| i + 1);
+        return (
+            total as usize + since(after_answer),
+            CountSource::StoredUsage,
+        );
+    }
+    let (system_prompt, tools) = frame.unwrap_or(("", &[]));
+    (
+        goose_counted(counter.count_chat_tokens(system_prompt, messages, tools)),
+        CountSource::Estimated,
+    )
+}
+
+// measured (round 4, the Flash-Next stopped run's rows, frame and tools): goose's o200k count
+// ran under the engines' own — -3.4% at 223 rows on Flash-Next (234,979 vs 243,299), -6.1% to
+// -5.2% at 93-181 rows on Qwen3.5-9B (128,932 vs 137,879 ... 204,418 vs 215,606). 1.065 puts
+// every one of those within -0.6%..+2.9%: a count the guard decides on may run over the
+// engine's, not under it.
+const GOOSE_COUNT_MARGIN: f64 = 1.065;
+
+/// goose's own count of tokens the guard decides on, raised by [`GOOSE_COUNT_MARGIN`]: only the
+/// rows a provider has not counted yet, or the whole request when none has.
+fn goose_counted(tokens: usize) -> usize {
+    (tokens as f64 * GOOSE_COUNT_MARGIN).ceil() as usize
+}
+
 pub async fn check_if_compaction_needed(
     provider: &dyn Provider,
     conversation: &Conversation,
     threshold_override: Option<f64>,
     session: &crate::session::Session,
+    count: GuardCount<'_>,
 ) -> Result<bool> {
     if provider.manages_own_context() {
         return Ok(false);
@@ -1354,23 +1442,48 @@ pub async fn check_if_compaction_needed(
     let threshold =
         threshold_override.unwrap_or_else(|| compaction_threshold(context_limit, &model_config));
 
-    let (current_tokens, _token_source) =
-        match guarded_context_tokens(session.usage.total_tokens, compressed_prompt(&session.id)) {
-            Some(tokens) => (tokens, "session metadata"),
-            None => {
-                let token_counter = create_token_counter()
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to create token counter: {}", e))?;
+    let current_tokens = match count {
+        GuardCount::Worker => {
+            match guarded_context_tokens(session.usage.total_tokens, compressed_prompt(&session.id))
+            {
+                Some(tokens) => tokens,
+                None => {
+                    let token_counter = create_token_counter()
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed to create token counter: {}", e))?;
 
-                let token_counts: Vec<_> = messages
-                    .iter()
-                    .filter(|m| m.is_agent_visible())
-                    .map(|msg| token_counter.count_chat_tokens("", std::slice::from_ref(msg), &[]))
-                    .collect();
+                    let token_counts: Vec<_> = messages
+                        .iter()
+                        .filter(|m| m.is_agent_visible())
+                        .map(|msg| {
+                            token_counter.count_chat_tokens("", std::slice::from_ref(msg), &[])
+                        })
+                        .collect();
 
-                (token_counts.iter().sum(), "estimated")
+                    token_counts.iter().sum()
+                }
             }
-        };
+        }
+        GuardCount::Chat(frame) => {
+            let counter = create_token_counter()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to create token counter: {}", e))?;
+            let (tokens, source) = chat_context_tokens(
+                &session.id,
+                messages,
+                session.usage.total_tokens,
+                frame,
+                &counter,
+            );
+            tracing::debug!(tokens, ?source, "compaction guard: the chat's next request");
+            // A provider that compressed the last call reported less than it was sent: the guard
+            // reads what goose sent.
+            match compressed_prompt(&session.id) {
+                Some(sent) => tokens.max(sent),
+                None => tokens,
+            }
+        }
+    };
 
     let usage_ratio = current_tokens as f64 / context_limit as f64;
 
@@ -1433,11 +1546,15 @@ fn filter_tool_responses(messages: &[Message], remove_percent: u32) -> Vec<&Mess
 }
 
 /// What the summary call produced.
+#[allow(clippy::large_enum_variant)] // one per compaction, moved once: boxing buys nothing
 enum Summary {
     Written {
         message: Box<Message>,
         usage: ProviderUsage,
         note: NoteOutcome,
+        /// Why the model's answer could not be checked as the summary; it is stored flagged,
+        /// beside goose's facts (round 4).
+        flag: Option<String>,
     },
     /// The model asked about the person's note (`NOTE QUESTION: …`) and was stopped there.
     Asked { question: String },
@@ -1487,24 +1604,39 @@ async fn do_compact(
             );
         }
     }
+    let Some((chat, _)) = chat else {
+        let (message, usage) =
+            summarize_a_transcript_as_the_swarm(provider, model_config, session_id, messages)
+                .await?;
+        return Ok(Summary::Written {
+            message: Box::new(message),
+            usage,
+            note: NoteOutcome::NoNote,
+            flag: None,
+        });
+    };
     let (message, usage) = summarize_a_transcript(
         provider,
         model_config,
         session_id,
         messages,
-        chat.and_then(|(chat, _)| chat.context_limit)
+        chat.context_limit
             .or_else(|| refused_window(session_id, &model_config.model_name)),
-        chat.is_some(),
     )
     .await?;
-    let note = match chat {
-        Some((chat, _)) if chat.note.is_some() => NoteOutcome::NotSent,
-        _ => NoteOutcome::NoNote,
+    // The transcript answer is checked as the chat's is, and stored flagged when it fails: no
+    // second transcript request (another full prefill buys the same answer).
+    let flag = summary_shortfall(&message.as_concat_text())
+        .map(|why| format!("the model's answer to the transcript request {why}"));
+    let note = match chat.note {
+        Some(_) => NoteOutcome::NotSent,
+        None => NoteOutcome::NoNote,
     };
     Ok(Summary::Written {
         message: Box::new(message),
         usage,
         note,
+        flag,
     })
 }
 
@@ -1512,8 +1644,8 @@ enum ChatSummary {
     Written(Box<Summary>),
     /// The model asked about the person's note instead of summarizing.
     Asked(String),
-    /// The provider refused the request as too long, or the model answered it with a tool call:
-    /// which, for the log.
+    /// The provider refused the request as too long, or goose measured it would not fit: which,
+    /// for the log. The one case a chat's summary falls to the transcript request.
     NotWritten(String),
 }
 
@@ -1653,7 +1785,6 @@ async fn summarize_as_the_chat(
             )));
         }
     }
-    let anchors = Anchors::of(messages);
     let watch_note = kept.note.is_some() && chat.may_ask;
     let mut written_tokens = 0u64;
     let mut asked: Option<String> = None;
@@ -1707,14 +1838,42 @@ async fn summarize_as_the_chat(
             )
         })
     };
-    if !called_a_tool(&response) && !has_every_written_part(&response.as_concat_text(), &anchors) {
+    let shortfall = |response: &Message| {
+        if called_a_tool(response) {
+            Some("called a tool".to_string())
+        } else {
+            summary_shortfall(&response.as_concat_text())
+        }
+    };
+    // A thinking model may write the whole summary in its reasoning and leave the answer empty
+    // (or a stray `<tool_call></function></tool_call>`): the summary is taken from the
+    // reasoning, without a second ask.
+    if shortfall(&response).is_some() {
+        if let Some(summary) = summary_in_reasoning(&response) {
+            warn!(
+                "compaction: the summary was written in the model's reasoning ({} characters); \
+                 storing it from there",
+                summary.chars().count()
+            );
+            response = Message::assistant().with_text(summary);
+        }
+    }
+    let mut flag = None;
+    if let Some(first_shortfall) = shortfall(&response) {
         // The model went on with the work instead of summarizing it. Asked once more on the same
-        // cached prefix — its answer and a correction naming the missing sections are all that
-        // is prefilled — before the transcript request, which prefills the whole conversation.
-        let correction = missing_parts_correction(&response.as_concat_text(), &anchors);
+        // cached prefix — its answer and a correction are all that is prefilled. Never a third
+        // time, and never the transcript request: on a local model that is a full prefill of the
+        // conversation (6-8 minutes at 250-300k); the kept block's facts back what is stored.
+        let correction = summary_correction(&first_shortfall);
         warn!("compaction: the summary answer was not a summary ({correction}); asking once more");
         let mut answered = response.clone();
         strip_reasoning_content(&mut answered);
+        answered
+            .content
+            .retain(|c| matches!(c, MessageContent::Text(_)));
+        if answered.content.is_empty() {
+            answered = answered.with_text("(no text)");
+        }
         let mut retry = conversation.messages().clone();
         retry.push(answered);
         retry.push(Message::user().with_text(&correction));
@@ -1724,6 +1883,7 @@ async fn summarize_as_the_chat(
             model_config.toolshim,
         );
         let mut retry_prompt = None;
+        let mut second_ask = Ok(());
         if let (Some(window), Some(counter)) = (chat.context_limit, &counter) {
             let prompt = counter.count_chat_tokens(
                 &frame.system_prompt,
@@ -1732,54 +1892,66 @@ async fn summarize_as_the_chat(
             );
             retry_prompt = Some(prompt);
             if prompt + summary_answer_room(window) > window {
-                return Ok(ChatSummary::NotWritten(format!(
-                    "was not a summary, and a second ask would leave its answer {} tokens",
+                second_ask = Err(format!(
+                    "a second ask would leave its answer {} tokens",
                     window.saturating_sub(prompt)
-                )));
+                ));
             }
         }
-        let retry_config = summary_request_config(model_config, chat.context_limit, retry_prompt);
-        let retry_answer = crate::model_config::stream_as_the_chat(
-            crate::background_work::BackgroundWorkKind::Compaction,
-            provider,
-            &retry_config,
-            session_id,
-            &frame.system_prompt,
-            retry_sent.messages(),
-            &frame.tools,
-            |_, text| {
-                if let Some(observe) = &chat.progress {
-                    observe(WritingProgress {
-                        written_tokens: None,
-                        parts: pillars::written_parts(text),
-                    });
+        let second = match second_ask {
+            Err(why) => Err(why),
+            Ok(()) => {
+                let retry_config =
+                    summary_request_config(model_config, chat.context_limit, retry_prompt);
+                let retry_answer = crate::model_config::stream_as_the_chat(
+                    crate::background_work::BackgroundWorkKind::Compaction,
+                    provider,
+                    &retry_config,
+                    session_id,
+                    &frame.system_prompt,
+                    retry_sent.messages(),
+                    &frame.tools,
+                    |_, text| {
+                        if let Some(observe) = &chat.progress {
+                            observe(WritingProgress {
+                                written_tokens: None,
+                                parts: pillars::written_parts(text),
+                            });
+                        }
+                        true
+                    },
+                )
+                .await;
+                match retry_answer {
+                    Ok((answer, _)) => Ok(answer),
+                    Err(ProviderError::ContextLengthExceeded(detail)) => {
+                        Err(format!("the second ask was refused as too long ({detail})"))
+                    }
+                    Err(e) => return Err(e.into()),
                 }
-                true
-            },
-        )
-        .await;
-        let (second, second_usage) = match retry_answer {
-            Ok((answer, _)) => answer,
-            Err(ProviderError::ContextLengthExceeded(detail)) => {
-                return Ok(ChatSummary::NotWritten(format!(
-                    "was not a summary and the second ask was refused as too long ({detail})"
-                )))
             }
-            Err(e) => return Err(e.into()),
         };
-        provider_usage = provider_usage.combine_with(&second_usage);
-        if !called_a_tool(&second) && !has_every_written_part(&second.as_concat_text(), &anchors) {
-            return Ok(ChatSummary::NotWritten(format!(
-                "was not a summary twice ({})",
-                missing_parts_correction(&second.as_concat_text(), &anchors)
-            )));
+        match second {
+            Ok((second, second_usage)) => {
+                provider_usage = provider_usage.combine_with(&second_usage);
+                match shortfall(&second) {
+                    None => response = second,
+                    Some(second_shortfall) => {
+                        flag = Some(format!(
+                            "the model's answer {first_shortfall}; asked once more, it {second_shortfall}"
+                        ));
+                        response = best_answer(response, second);
+                    }
+                }
+            }
+            Err(why) => {
+                flag = Some(format!("the model's answer {first_shortfall}, and {why}"));
+                response = best_answer(response, Message::assistant());
+            }
         }
-        response = second;
-    }
-    if called_a_tool(&response) {
-        return Ok(ChatSummary::NotWritten(
-            "was answered with a tool call instead of the summary".to_string(),
-        ));
+        if let Some(flag) = &flag {
+            warn!("compaction: storing goose's facts with an unchecked summary: {flag}");
+        }
     }
     let note = match &kept.note {
         None => NoteOutcome::NoNote,
@@ -1808,7 +1980,64 @@ async fn summarize_as_the_chat(
         message: Box::new(response),
         usage: provider_usage,
         note,
+        flag,
     })))
+}
+
+/// The summary a model wrote in its reasoning: the last block of it, from a line that heads a
+/// section to the end, that passes [`summary_shortfall`]. Measured (verifier, Flash-Next with
+/// thinking on, 2026-10-30): 1 of 3 real compactions on c8d908a85f wrote all five sections in
+/// its reasoning and 0 visible characters; the code before it stored
+/// "<tool_call></function></tool_call>" as the summary.
+fn summary_in_reasoning(response: &Message) -> Option<String> {
+    let reasoning: String = response
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            MessageContent::Thinking(t) => Some(t.thinking.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let starts: Vec<usize> = reasoning
+        .match_indices('\n')
+        .map(|(at, _)| at + 1)
+        .chain(std::iter::once(0))
+        .filter(|&at| {
+            let line = reasoning
+                .get(at..)
+                .and_then(|rest| rest.lines().next())
+                .unwrap_or("");
+            !pillars::written_sections(line).is_empty() || generic_heading(line).is_some()
+        })
+        .collect();
+    let mut starts = starts;
+    starts.sort_unstable();
+    starts
+        .into_iter()
+        .rev()
+        .filter_map(|at| reasoning.get(at..).map(str::trim))
+        .find(|block| summary_shortfall(block).is_none())
+        .map(str::to_string)
+}
+
+/// Of two answers that were not the summary, the one with more written in it, as text only (a
+/// tool call is not part of a summary).
+fn best_answer(first: Message, second: Message) -> Message {
+    let written = |m: &Message| {
+        pillars::strip_scratch(&m.as_concat_text())
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .count()
+    };
+    let best = if written(&second) >= written(&first) {
+        second
+    } else {
+        first
+    };
+    let mut text_only = Message::user().with_text(best.as_concat_text());
+    text_only.role = Role::Assistant;
+    text_only
 }
 
 /// [`SummaryRequest::Transcript`], trying progressively more of the tool responses removed from
@@ -1829,9 +2058,7 @@ async fn summarize_a_transcript(
     session_id: &str,
     messages: &[Message],
     window: Option<usize>,
-    gated: bool,
 ) -> Result<(Message, ProviderUsage), anyhow::Error> {
-    let anchors = gated.then(|| Anchors::of(messages));
     let agent_visible_messages: Vec<Message> = messages
         .iter()
         .filter(|msg| msg.is_agent_visible())
@@ -1880,7 +2107,7 @@ async fn summarize_a_transcript(
         match summarize_transcript_text(provider, &answer_config, session_id, transcript.clone())
             .await?
         {
-            Ok(summary) => return Ok(gated_transcript_answer(summary, anchors.as_ref(), messages)),
+            Ok(summary) => return Ok(summary),
             Err(ProviderError::ContextLengthExceeded(why)) => {
                 if let Some(named) = goose_providers::errors::refused_context_window(&why) {
                     window = Some(window.map_or(named, |window| window.min(named)));
@@ -1929,7 +2156,7 @@ async fn summarize_a_transcript(
                 .map(|c| c.count_tokens(&cut) + TRANSCRIPT_PROMPT_TOKENS),
         );
         match summarize_transcript_text(provider, &answer_config, session_id, cut).await? {
-            Ok(summary) => return Ok(gated_transcript_answer(summary, anchors.as_ref(), messages)),
+            Ok(summary) => return Ok(summary),
             Err(ProviderError::ContextLengthExceeded(why)) => {
                 if let Some(named) = goose_providers::errors::refused_context_window(&why) {
                     window = window.min(named);
@@ -1944,247 +2171,73 @@ async fn summarize_a_transcript(
     ))
 }
 
-/// A chat's transcript answer through [`is_a_transcript_summary`]; one that fails it is replaced
-/// by [`goose_written_summary`] — no further request is sent: by then the model has had the
-/// chat-shaped request (asked twice) or the window left room for none, and another full prefill
-/// of the same transcript buys the same answer. A swarm worker's answer (`anchors` `None`) is
-/// stored as before: its golden-measured shape has no gate.
-fn gated_transcript_answer(
-    (answer, usage): (Message, ProviderUsage),
-    anchors: Option<&Anchors>,
+/// The swarm workers' transcript summary, as their golden run measured it (round 4 restored it):
+/// the five removal steps whatever the window, every refusal tried, no `max_tokens`, no gate.
+async fn summarize_a_transcript_as_the_swarm(
+    provider: &dyn Provider,
+    model_config: &ModelConfig,
+    session_id: &str,
     messages: &[Message],
-) -> (Message, ProviderUsage) {
-    let Some(anchors) = anchors else {
-        return (answer, usage);
-    };
-    let text = answer.as_concat_text();
-    if is_a_transcript_summary(&text, anchors) {
-        return (answer, usage);
-    }
-    warn!(
-        "compaction: the transcript answer was not a summary ({} characters); storing the \
-         summary goose writes from the conversation itself",
-        text.chars().count()
-    );
-    (
-        Message::user().with_text(goose_written_summary(messages)),
-        usage,
-    )
-}
-
-/// The most characters of one of the person's requests [`goose_written_summary`] repeats.
-const FALLBACK_REQUEST_CHARS: usize = 4_000;
-/// The most files [`goose_written_summary`] lists.
-const FALLBACK_FILES: usize = 60;
-/// The newest tool calls [`goose_written_summary`] lists, and the characters of each line.
-const FALLBACK_TOOL_CALLS: usize = 12;
-const FALLBACK_LINE_CHARS: usize = 300;
-/// The characters of one argument value a listed tool call keeps.
-const FALLBACK_VALUE_CHARS: usize = 48;
-
-fn clipped(text: &str, max: usize) -> String {
-    let text = text.trim();
-    if text.chars().count() <= max {
-        text.to_string()
-    } else {
-        format!("{}…", text.chars().take(max).collect::<String>())
-    }
-}
-
-/// The argument keys a tool call names a file by.
-const FILE_ARGUMENT_KEYS: [&str; 6] = [
-    "path",
-    "file_path",
-    "filepath",
-    "file",
-    "filename",
-    "target_file",
-];
-
-/// Whether a tool call writes the file it names: by its `command` argument when it has one (the
-/// developer editor's `write`, `str_replace`, `insert`, `undo_edit`), else by its name (`write`,
-/// `edit`, `create`, `replace`, `patch`, `insert`).
-fn call_writes(name: &str, arguments: Option<&serde_json::Map<String, serde_json::Value>>) -> bool {
-    let writing = [
-        "write", "edit", "create", "replace", "patch", "insert", "undo",
-    ];
-    // An editor tool says what it does in its `command` (`developer__text_editor` with `view`
-    // reads): its name ("text_editor") would read as a write.
-    match arguments
-        .and_then(|args| args.get("command"))
-        .and_then(|c| c.as_str())
-    {
-        Some(command) => {
-            let command = command.to_lowercase();
-            writing.iter().any(|w| command.contains(w))
-        }
-        None => {
-            let name = name.to_lowercase();
-            writing.iter().any(|w| name.contains(w))
-        }
-    }
-}
-
-/// The summary goose stores when no answer of the model's was one (Q-357's gate): built from the
-/// conversation alone, so it is deterministic and never empty of the work — the person's first
-/// and latest requests word for word, every file the tool calls read or wrote, and the newest
-/// tool calls with the start of their results. Before 2026-10-30 the transcript request's answer
-/// was stored whatever it said, and a one-line answer became the whole memory of the chat.
-fn goose_written_summary(messages: &[Message]) -> String {
-    let visible: Vec<&Message> = messages.iter().filter(|m| m.is_agent_visible()).collect();
-    let requests: Vec<String> = visible
+) -> Result<(Message, ProviderUsage), anyhow::Error> {
+    let agent_visible_messages: Vec<Message> = messages
         .iter()
-        .filter(|m| {
-            m.role == Role::User
-                && m.is_user_visible()
-                && !is_harness_nudge(m)
-                && !crate::conversation::is_turn_context_message(m)
-        })
-        .filter_map(|m| {
-            let text: Vec<&str> = m
-                .content
-                .iter()
-                .filter_map(|c| match c {
-                    MessageContent::Text(t)
-                        if !crate::conversation::is_turn_context_text(&t.text) =>
-                    {
-                        Some(t.text.as_str())
-                    }
-                    _ => None,
-                })
-                .collect();
-            let text = text.join("\n");
-            (!text.trim().is_empty()).then_some(text)
-        })
+        .filter(|msg| msg.is_agent_visible())
+        .map(|msg| msg.agent_visible_content())
         .collect();
 
-    let mut files: Vec<(String, bool)> = Vec::new();
-    let mut calls: Vec<(String, String)> = Vec::new();
-    for content in visible.iter().flat_map(|m| m.content.iter()) {
-        let MessageContent::ToolRequest(request) = content else {
-            continue;
-        };
-        let Ok(call) = &request.tool_call else {
-            continue;
-        };
-        let arguments = call.arguments.as_ref();
-        let writes = call_writes(&call.name, arguments);
-        let named = arguments.into_iter().flat_map(|args| {
-            FILE_ARGUMENT_KEYS
-                .iter()
-                .filter_map(|key| args.get(*key))
-                .chain(
-                    args.get("paths")
-                        .and_then(|p| p.as_array())
-                        .into_iter()
-                        .flatten(),
-                )
-                .filter_map(|v| v.as_str())
-        });
-        for path in named {
-            match files.iter_mut().find(|(known, _)| known == path) {
-                Some((_, written)) => *written |= writes,
-                None => files.push((path.to_string(), writes)),
-            }
-        }
-        // Each value cut to a name's length: a write's content is the file, read again from disk.
-        let args = arguments
-            .map(|args| {
-                let cut: serde_json::Map<String, serde_json::Value> = args
-                    .iter()
-                    .map(|(key, value)| {
-                        let value = match value {
-                            serde_json::Value::String(text) => {
-                                serde_json::Value::String(clipped(text, FALLBACK_VALUE_CHARS))
-                            }
-                            other => serde_json::Value::String(clipped(
-                                &other.to_string(),
-                                FALLBACK_VALUE_CHARS,
-                            )),
-                        };
-                        (key.clone(), value)
-                    })
-                    .collect();
-                serde_json::Value::Object(cut).to_string()
-            })
-            .unwrap_or_default();
-        calls.push((request.id.clone(), format!("{} {args}", call.name)));
-    }
-    let result_of = |id: &str| -> Option<String> {
-        visible
-            .iter()
-            .flat_map(|m| m.content.iter())
-            .find_map(|c| match c {
-                MessageContent::ToolResponse(response) if response.id == id => {
-                    Some(match &response.tool_result {
-                        Ok(result) => {
-                            let text: Vec<String> = result
-                                .content
-                                .iter()
-                                .filter_map(|c| c.as_text().map(|t| t.text.clone()))
-                                .collect();
-                            let text = text.join(" ");
-                            if result.is_error == Some(true) {
-                                format!("error: {text}")
-                            } else {
-                                text
-                            }
-                        }
-                        Err(e) => format!("error: {}", e.message),
-                    })
-                }
-                _ => None,
-            })
-    };
+    // Try progressively removing more tool response messages from the middle to reduce context length
+    let removal_percentages = [0, 10, 20, 50, 100];
+    let mut refusal = String::new();
+    let mut transcript = String::new();
 
-    let mut out = String::from(
-        "goose wrote this summary itself from the conversation: the model's answers to the \
-         summary request were not a summary. Read the files below again before relying on what \
-         they hold.\n",
-    );
-    out.push_str("\n## The person's request\n");
-    match (requests.first(), requests.last()) {
-        (Some(first), Some(last)) => {
-            out.push_str(&format!(
-                "First, word for word:\n{}\n",
-                clipped(first, FALLBACK_REQUEST_CHARS)
-            ));
-            if requests.len() > 1 {
-                out.push_str(&format!(
-                    "\nLatest, word for word:\n{}\n",
-                    clipped(last, FALLBACK_REQUEST_CHARS)
-                ));
+    for &remove_percent in removal_percentages.iter() {
+        let filtered_messages = filter_tool_responses(&agent_visible_messages, remove_percent);
+        transcript = filtered_messages
+            .iter()
+            .map(|&msg| format_message_for_compacting(msg))
+            .collect::<Vec<_>>()
+            .join("\n");
+        match summarize_transcript_text(provider, model_config, session_id, transcript.clone())
+            .await?
+        {
+            Ok(summary) => return Ok(summary),
+            Err(ProviderError::ContextLengthExceeded(why)) => refusal = why,
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    // Still too long with every tool response gone: the conversation's own text is over the
+    // window. Before I-9 the session ended here ("Unable to continue").
+    let named = goose_providers::errors::refused_context_window(&refusal)
+        .or_else(|| refused_window(session_id, &model_config.model_name));
+    let Some(mut window) = named.or(model_config.context_limit) else {
+        return Err(anyhow::anyhow!(
+            "Failed to compact: context limit exceeded even after removing all tool responses"
+        ));
+    };
+    for share in TRANSCRIPT_WINDOW_SHARES {
+        let budget = (window as f64 * share * TRANSCRIPT_CHARS_PER_TOKEN) as usize;
+        let cut = cut_transcript_middle(&transcript, budget);
+        warn!(
+            "compaction: the transcript is over the {window}-token window even without tool \
+             responses; summarizing it with its middle cut to {} of {} characters",
+            cut.len(),
+            transcript.len()
+        );
+        match summarize_transcript_text(provider, model_config, session_id, cut).await? {
+            Ok(summary) => return Ok(summary),
+            Err(ProviderError::ContextLengthExceeded(why)) => {
+                if let Some(named) = goose_providers::errors::refused_context_window(&why) {
+                    window = window.min(named);
+                }
             }
-        }
-        _ => out.push_str("No request of the person's is in the summarized part.\n"),
-    }
-    out.push_str("\n## Files read and written\n");
-    if files.is_empty() {
-        out.push_str("No tool call named a file.\n");
-    }
-    for (path, written) in files.iter().take(FALLBACK_FILES) {
-        let how = if *written { "written" } else { "read" };
-        out.push_str(&format!("- {path} ({how})\n"));
-    }
-    if files.len() > FALLBACK_FILES {
-        out.push_str(&format!("- and {} more\n", files.len() - FALLBACK_FILES));
-    }
-    out.push_str("\n## Last tool calls\n");
-    if calls.is_empty() {
-        out.push_str("No tool was called.\n");
-    }
-    let newest = calls.len().saturating_sub(FALLBACK_TOOL_CALLS);
-    for (id, call) in &calls[newest..] {
-        let call = clipped(call, FALLBACK_LINE_CHARS);
-        match result_of(id) {
-            Some(result) => out.push_str(&format!(
-                "- {call} -> {}\n",
-                clipped(&result, FALLBACK_LINE_CHARS)
-            )),
-            None => out.push_str(&format!("- {call} -> no result\n")),
+            Err(e) => return Err(e.into()),
         }
     }
-    out.trim_end().to_string()
+    Err(anyhow::anyhow!(
+        "Failed to compact: context limit exceeded even after removing all tool responses and \
+         cutting the transcript to fit a {window}-token window"
+    ))
 }
 
 /// The most transcript summary requests one compaction sends: three removal steps and two cuts
@@ -2738,10 +2791,6 @@ mod tests {
     use goose_providers::conversation::token_usage::Usage;
     use rmcp::model::{AnnotateAble, CallToolRequestParams, RawContent, Tool};
 
-    fn none() -> Anchors {
-        Anchors::default()
-    }
-
     /// A transcript request's answer as a model that summarizes writes it: its own sections, then
     /// the names the conversation it was given used (paths, numbers).
     fn transcript_answer(system: &str) -> String {
@@ -2750,11 +2799,10 @@ mod tests {
             .map(|(_, rest)| rest.split_once("Wrap reasoning").map_or(rest, |(h, _)| h))
             .unwrap_or_default();
         format!(
-            "<transcript summary>\n1. User Intent: the person asked for the work this \
-             conversation shows, and every request they made is listed below in their own words.\n\
-             2. Files + Code: each file the work touched, with what it holds now and what the last \
-             command printed for it.\n3. Pending Tasks: what remains of the request after the \
-             newest turn, and the check that shows it done.\n{}",
+            "<transcript summary>\n1. **User Intent** – the person asked for the work this \
+             conversation shows.\n2. **Files + Code** – each file the work touched.\n\
+             3. **Errors + Fixes** – None.\n4. **Pending Tasks** – what remains of the request.\n\
+             5. **Current Work** – the newest turn.\n{}",
             history
                 .split_whitespace()
                 .filter(|t| t.len() <= 40
@@ -3222,17 +3270,16 @@ mod tests {
         .unwrap();
 
         // The engine answers every request with "reading project configuration" — no summary
-        // sections — so the chat's summary is asked once more on the same prefix, then as a
-        // transcript.
+        // sections — so the chat's summary is asked once more on the same prefix and then stored
+        // flagged (round 4: no transcript prefill).
         let bodies = engine.bodies().await;
         assert_eq!(
             bodies.len(),
-            5,
-            "chat, summary, its second ask, the chat's transcript, the worker's transcript: \
-             {bodies:?}"
+            4,
+            "chat, summary, its second ask, the worker's transcript: {bodies:?}"
         );
         let (chat, summary, second_ask, transcript) =
-            (&bodies[0], &bodies[1], &bodies[2], &bodies[4]);
+            (&bodies[0], &bodies[1], &bodies[2], &bodies[3]);
         let cached = stable_messages(chat, &block);
         let sent = summary["messages"].as_array().unwrap();
         let resent = second_ask["messages"].as_array().unwrap();
@@ -3305,13 +3352,8 @@ mod tests {
         let summary_message = compacted
             .messages()
             .iter()
-            .find(|m| {
-                m.as_concat_text()
-                    .starts_with("goose wrote this summary itself")
-            })
-            .expect(
-                "the transcript answer was no summary either, so goose's own summary is stored",
-            );
+            .find(|m| m.as_concat_text().starts_with(pillars::FLAG_LEAD))
+            .expect("the answer was no summary twice, so it is stored flagged beside the facts");
         assert_eq!(summary_message.role, Role::User);
         assert!(summary_message.is_agent_visible() && !summary_message.is_user_visible());
         let stored = summary_message.as_concat_text();
@@ -3662,12 +3704,12 @@ mod tests {
         }
     }
 
-    /// The chat-extending request is a first rung, never the only one: refused as too long, or
-    /// answered with a tool call instead of a summary, the summary is asked for as a transcript
-    /// (tools gone, the conversation inside the system prompt) — and the tool call never becomes
-    /// the summary.
+    /// Refused as too long, the chat-extending request falls to the transcript (tools gone, the
+    /// conversation inside the system prompt): the window refused it. Answered with a tool call
+    /// twice, it is NOT asked as a transcript (round 4): the answer is stored flagged, and the
+    /// tool call never becomes part of the summary.
     #[tokio::test]
-    async fn a_chat_shaped_summary_that_cannot_be_used_is_asked_again_as_a_transcript() {
+    async fn a_refused_summary_request_is_asked_as_a_transcript_and_a_tool_call_is_flagged() {
         let conversation = Conversation::new_unvalidated(vec![
             Message::user().with_text("list the notes"),
             Message::assistant().with_text("one file: notes/kickoff.md"),
@@ -3704,24 +3746,32 @@ mod tests {
             else {
                 panic!("compacted");
             };
+            let refused = provider.chat_shaped_answer.is_none();
             let calls = provider.calls.lock().unwrap();
             assert_eq!(calls.len(), 2);
             assert_eq!(calls[0].0, "You are goose.");
             assert_eq!(calls[0].2, 1, "the first request extends the chat");
-            assert_eq!(calls[1].2, 0, "the second is the transcript request");
-            assert!(calls[1].0.contains("**Conversation History:**"));
             let visible: Vec<String> = compacted
                 .agent_visible_messages()
                 .iter()
                 .map(|m| m.as_concat_text())
                 .collect();
-            assert!(
-                visible[0].starts_with("<transcript summary>\n")
-                    && visible[0].contains("notes/kickoff.md")
-                    && visible[0].contains("\n\n<kept-by-goose>"),
-                "{}",
-                visible[0]
-            );
+            if refused {
+                assert_eq!(calls[1].2, 0, "the second is the transcript request");
+                assert!(calls[1].0.contains("**Conversation History:**"));
+                assert!(
+                    visible[0].starts_with("<transcript summary>\n")
+                        && visible[0].contains("notes/kickoff.md")
+                        && visible[0].contains("\n\n<kept-by-goose>"),
+                    "{}",
+                    visible[0]
+                );
+            } else {
+                assert_eq!(calls[1].2, 1, "asked once more on the chat's prefix");
+                assert!(visible[0].starts_with(pillars::FLAG_LEAD), "{}", visible[0]);
+                assert!(visible[0].contains("called a tool"), "{}", visible[0]);
+                assert!(visible[0].contains("<kept-by-goose>"), "{}", visible[0]);
+            }
             assert!(compacted.agent_visible_messages().iter().all(|m| !m
                 .content
                 .iter()
@@ -4592,21 +4642,22 @@ mod tests {
 
     #[test]
     fn an_answer_without_the_sections_is_not_a_summary() {
-        assert!(!has_every_written_part(FLASH_NEXT_NON_SUMMARY, &none()));
-        assert!(!has_every_written_part(
-            "## Where we are\nx\n## Next step\ny",
-            &none()
-        ));
-        assert!(has_every_written_part(EVERY_PART, &none()));
-        assert!(has_every_written_part(
-            &format!("<analysis>scratch</analysis>\nNOTE OK\n{EVERY_PART}"),
-            &none()
-        ));
-        let correction =
-            missing_parts_correction("## Where we are\nsync done, 41 tests pass", &none());
-        let (missing, _) = correction.split_once(':').unwrap();
-        assert!(missing.contains("`## What each file does`"), "{correction}");
-        assert!(!missing.contains("`## Where we are`"), "{correction}");
+        assert!(summary_shortfall(FLASH_NEXT_NON_SUMMARY).is_some());
+        assert!(summary_shortfall("## Where we are\nx\n## Next step\ny").is_some());
+        assert_eq!(summary_shortfall(EVERY_PART), None);
+        assert_eq!(
+            summary_shortfall(&format!(
+                "<analysis>scratch</analysis>\nNOTE OK\n{EVERY_PART}"
+            )),
+            None
+        );
+        let shortfall = summary_shortfall("## Where we are\nsync done, 41 tests pass").unwrap();
+        assert!(
+            shortfall.contains("`## What each file does`"),
+            "{shortfall}"
+        );
+        assert!(!shortfall.contains("`## Where we are`"), "{shortfall}");
+        assert!(summary_correction(&shortfall).contains("it is not the summary"));
     }
 
     /// The Flash-Next shape: the model answers the summary instruction by going on with the work.
@@ -4650,12 +4701,15 @@ mod tests {
         assert!(!stored.contains("I will now proceed"), "{stored}");
     }
 
-    /// Two non-answers: the chat-shaped request has had its chance; the summary is asked for as a
-    /// transcript.
+    /// Two non-answers: no third ask and no transcript request (a full prefill on a local model).
+    /// The better of the two answers is stored FLAGGED, beside goose's facts.
     #[tokio::test]
-    async fn two_non_summaries_fall_to_the_transcript_request() {
+    async fn two_non_summaries_are_stored_flagged_beside_the_facts_not_asked_as_a_transcript() {
         let provider = SequenceProvider {
-            answers: vec![FLASH_NEXT_NON_SUMMARY.to_string()],
+            answers: vec![
+                FLASH_NEXT_NON_SUMMARY.to_string(),
+                "Continuing with the verification now.".to_string(),
+            ],
             calls: std::sync::Mutex::new(Vec::new()),
         };
         let ChatCompacted::Compacted { conversation, .. } = compact_chat(
@@ -4673,10 +4727,20 @@ mod tests {
         };
         let calls = provider.calls.lock().unwrap();
         let tools: Vec<usize> = calls.iter().map(|(_, tools)| *tools).collect();
-        assert_eq!(tools.len(), 3);
-        assert!(tools[0] > 0 && tools[1] > 0 && tools[2] == 0, "{tools:?}");
+        assert_eq!(tools.len(), 2, "{tools:?}");
+        assert!(
+            tools.iter().all(|t| *t > 0),
+            "no transcript request: {tools:?}"
+        );
         let stored = conversation.agent_visible_messages()[0].as_concat_text();
-        assert!(stored.starts_with("<transcript summary>"), "{stored}");
+        assert!(stored.starts_with(pillars::FLAG_LEAD), "{stored}");
+        assert!(stored.contains("asked once more"), "{stored}");
+        assert!(
+            stored.contains(FLASH_NEXT_NON_SUMMARY),
+            "the longer answer: {stored}"
+        );
+        assert!(stored.contains(pillars::KEPT_OPEN), "{stored}");
+        assert!(stored.contains("The person's messages"), "{stored}");
     }
 
     fn tool_loop(turns: usize) -> Conversation {
@@ -4843,9 +4907,15 @@ mod tests {
         };
         for (used, compacts) in [(287_000, false), (295_000, false), (298_000, true)] {
             session.usage = Usage::new(Some(used - 1_000), Some(1_000), Some(used));
-            let needed = check_if_compaction_needed(&provider, &conversation, None, &session)
-                .await
-                .unwrap();
+            let needed = check_if_compaction_needed(
+                &provider,
+                &conversation,
+                None,
+                &session,
+                GuardCount::Chat(None),
+            )
+            .await
+            .unwrap();
             assert_eq!(needed, compacts, "{used} used of 360,000");
         }
     }
@@ -4866,33 +4936,35 @@ mod tests {
         "write web/viz.js",
     ];
 
-    /// Defect 2: a heading alone passed the gate. Empty sections, headings inside a code fence, and
-    /// the instruction's own template echoed back (compaction.md prints each heading, then its
-    /// ask) are not a summary.
+    /// The gate is STRUCTURAL (round 4): an answer is refused only when it is not a summary at all
+    /// — no sections, empty sections, the instruction's own template echoed back, the summary
+    /// inside a code fence. It never judges the words in a section.
     #[test]
-    fn a_section_needs_words_of_its_own_outside_a_code_fence() {
-        assert!(has_every_written_part(&sections(BODIES), &none()));
+    fn the_gate_refuses_only_a_missing_or_mostly_empty_summary() {
+        assert_eq!(summary_shortfall(&sections(BODIES)), None);
         let empty = sections(["", "", "", "", ""]);
-        assert!(!has_every_written_part(&empty, &none()), "{empty}");
+        assert!(summary_shortfall(&empty).is_some(), "{empty}");
         let parroted: String = WRITTEN_PARTS
             .iter()
             .map(|(heading, ask)| format!("## {heading}\n{ask}\n"))
             .collect();
-        assert!(!has_every_written_part(&parroted, &none()), "{parroted}");
+        assert!(summary_shortfall(&parroted).is_some(), "{parroted}");
         let fenced = format!(
             "Here is the format:\n```markdown\n{}```\n",
             sections(BODIES)
         );
-        assert!(!has_every_written_part(&fenced, &none()), "{fenced}");
-        let placeholder = sections(["N/A", BODIES[1], BODIES[2], "TBD", BODIES[4]]);
-        assert!(!has_every_written_part(&placeholder, &none()));
-        let correction = missing_parts_correction(&placeholder, &none());
-        let (missing, _) = correction.split_once(':').unwrap();
+        assert!(summary_shortfall(&fenced).is_some(), "{fenced}");
+        // Three of five sections empty is mostly empty; two is not.
+        let three_empty = sections(["", BODIES[1], "", "", BODIES[4]]);
         assert!(
-            missing.contains("`## Where we are`") && missing.contains("`## Still to do`"),
-            "{correction}"
+            summary_shortfall(&three_empty)
+                .is_some_and(|why| why.contains("3 of its 5 sections empty")),
+            "{three_empty}"
         );
-        assert!(!missing.contains("`## Next step`"), "{correction}");
+        assert_eq!(
+            summary_shortfall(&sections(["", BODIES[1], BODIES[2], "", BODIES[4]])),
+            None
+        );
         // A section may hold a code block of its own.
         let with_code = sections([
             "the build:\n```\ncargo test -p goose\n```",
@@ -4901,7 +4973,46 @@ mod tests {
             BODIES[3],
             BODIES[4],
         ]);
-        assert!(has_every_written_part(&with_code, &none()), "{with_code}");
+        assert_eq!(summary_shortfall(&with_code), None, "{with_code}");
+    }
+
+    /// Round 3's word heuristics are gone: a short answer that says a list is empty, a placeholder,
+    /// another language, bullets, and words the round-3 vacant list refused all pass. Every one of
+    /// these failed the round-3 gate, or would with its vacant list or its anchor.
+    #[test]
+    fn short_non_english_and_bulleted_answers_pass_the_gate() {
+        for bodies in [
+            [BODIES[0], "None.", "Keine.", "- none", BODIES[4]],
+            ["N/A", BODIES[1], BODIES[2], "TBD", BODIES[4]],
+            [
+                "ongoing",
+                "see above.",
+                "same as before",
+                "as discussed",
+                "keep going",
+            ],
+            [
+                "- sync done\n- 41 tests pass",
+                "- app/sync.py: walk\n- app/api.py: routes",
+                "- Berlin days",
+                "- none",
+                "- run the 3D check",
+            ],
+        ] {
+            let answer = sections(bodies);
+            assert_eq!(summary_shortfall(&answer), None, "{answer}");
+        }
+        let german = "## Wo wir stehen\nSync fertig, 41 Tests grün.\n## Was jede Datei tut\n\
+            Keine.\n## Entscheidungen und Gründe\nKeine.\n## Noch zu tun\n3D-Feld.\n\
+            ## Nächster Schritt\nweb/viz.js schreiben.";
+        assert_eq!(summary_shortfall(german), None, "{german}");
+        let bold =
+            "**Où nous en sommes :** synchro faite\n**Ce que fait chaque fichier :** aucun\n\
+            **Décisions :** aucune\n**Reste à faire :** le champ 3D\n**Prochaine étape :** viz.js";
+        assert_eq!(summary_shortfall(bold), None, "{bold}");
+        // Another language still needs its sections: one line is not a summary in any language.
+        assert!(summary_shortfall("Ich mache jetzt mit der Prüfung weiter.").is_some());
+        assert!(summary_shortfall("## Wo wir stehen\nfertig\n## Nächster Schritt\nx").is_some());
     }
 
     /// Defect 3: real summaries head their sections in other markdown forms; each is the section.
@@ -4921,10 +5032,7 @@ mod tests {
                 .zip(BODIES)
                 .map(|((heading, _), body)| form(heading, body))
                 .collect();
-            assert!(
-                has_every_written_part(&answer, &none()),
-                "form {i}:\n{answer}"
-            );
+            assert_eq!(summary_shortfall(&answer), None, "form {i}:\n{answer}");
             assert_eq!(
                 pillars::written_parts(&answer),
                 WRITTEN_PARTS.iter().map(|(h, _)| *h).collect::<Vec<_>>(),
@@ -4997,8 +5105,10 @@ mod tests {
         assert_eq!(kept.unwrap().tail_messages, 0);
         let after = conversation.agent_visible_messages();
         let tokens = counter.count_chat_tokens("", &after, &[]);
+        // The facts quote the write's first 160 characters among the last calls; no row after
+        // the summary carries it.
         assert!(
-            !after
+            !after[1..]
                 .iter()
                 .any(|m| m.as_concat_text().contains(big.get(..64).unwrap())
                     || format_message_for_compacting(m).contains(big.get(..64).unwrap())),
@@ -5251,28 +5361,46 @@ mod tests {
     }
 
     /// Plausible item: a provider that keeps refusing got up to eight full-prefill transcript
-    /// requests (five removal steps, three cuts); at most MAX_TRANSCRIPT_CALLS are sent.
+    /// requests (five removal steps, three cuts); a CHAT's recovery sends at most
+    /// MAX_TRANSCRIPT_CALLS. A swarm worker keeps its golden ladder (round 4, C): all eight.
     #[tokio::test]
     async fn the_refused_transcript_ladder_is_bounded() {
+        let model_config = ModelConfig::new("refusing").with_context_limit(Some(262_144));
         let provider = RefusingProvider {
             calls: std::sync::atomic::AtomicUsize::new(0),
         };
-        let model_config = ModelConfig::new("refusing").with_context_limit(Some(262_144));
-        let result = compact_messages(
+        let mut inputs = chat_inputs(None, false);
+        inputs.trigger = CompactionTrigger::Recovery;
+        let result = compact_chat(
             &provider,
             &model_config,
             "refusing-session",
             &tool_loop(10),
             false,
             &SummaryRequest::Transcript,
+            &inputs,
         )
         .await;
         assert!(result.is_err());
         let calls = provider.calls.load(std::sync::atomic::Ordering::SeqCst);
         assert!(
-            (3..=5).contains(&calls),
+            (3..=MAX_TRANSCRIPT_CALLS).contains(&calls),
             "every refusal was read and the ladder stopped at its bound: {calls}"
         );
+        let worker = RefusingProvider {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let result = compact_messages(
+            &worker,
+            &model_config,
+            "refusing-worker",
+            &tool_loop(10),
+            false,
+            &SummaryRequest::Transcript,
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(worker.calls.load(std::sync::atomic::Ordering::SeqCst), 8);
     }
 
     /// E2E (2026-10-30, compaction-fix-2): a real long transcript compacted by a real local model
@@ -5283,9 +5411,21 @@ mod tests {
     #[ignore = "needs a local engine and a session export"]
     async fn e2e_a_real_model_writes_a_summary_the_gate_reads() {
         let var = |name: &str| std::env::var(name).unwrap();
-        let mut messages: Vec<Message> =
+        // A session export (`[{id, role, created, content, metadata}]`) or a fixture object
+        // (`{system_prompt, tools, messages}`, as the real-transcript guard test reads).
+        let input: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(var("E2E_SESSION_JSON")).unwrap())
                 .unwrap();
+        let (mut messages, request): (Vec<Message>, SummaryRequest) = match input {
+            serde_json::Value::Array(_) => (serde_json::from_value(input).unwrap(), frame()),
+            fixture => (
+                serde_json::from_value(fixture["messages"].clone()).unwrap(),
+                SummaryRequest::ExtendsChat(ChatRequestFrame {
+                    system_prompt: fixture["system_prompt"].as_str().unwrap().to_string(),
+                    tools: serde_json::from_value(fixture["tools"].clone()).unwrap(),
+                }),
+            ),
+        };
         let window: usize = var("E2E_WINDOW").parse().unwrap();
         let prompt_tokens: usize = var("E2E_PROMPT_TOKENS").parse().unwrap();
         let counter = create_token_counter().await.unwrap();
@@ -5310,13 +5450,16 @@ mod tests {
             *seen.lock().unwrap() = Some(progress);
         }));
         let started = std::time::Instant::now();
+        if let Ok(dir) = std::env::var("E2E_WORKING_DIR") {
+            inputs.working_dir = std::path::PathBuf::from(dir);
+        }
         let compacted = compact_chat(
             provider.as_ref(),
             &model_config,
             "e2e-compaction",
             &Conversation::new_unvalidated(messages.clone()),
             false,
-            &frame(),
+            &request,
             &inputs,
         )
         .await
@@ -5333,6 +5476,22 @@ mod tests {
         let stored = conversation.agent_visible_messages()[0].as_concat_text();
         let model_text = pillars::model_part(&stored).to_string();
         let sections = pillars::written_sections(&model_text);
+        // What the model reads on its next call: every row it sees after the compaction.
+        if let Ok(out) = std::env::var("E2E_OUT") {
+            let seen: Vec<String> = conversation
+                .agent_visible_messages()
+                .iter()
+                .enumerate()
+                .map(|(i, m)| {
+                    format!(
+                        "===== row {i} [{:?}] =====\n{}",
+                        m.role,
+                        format_message_for_compacting(m)
+                    )
+                })
+                .collect();
+            std::fs::write(out, seen.join("\n")).unwrap();
+        }
         println!(
             "E2E messages={} counted_prompt={} window={window} point={:.4} ({}) elapsed={:.0}s",
             messages.len(),
@@ -5342,7 +5501,7 @@ mod tests {
             started.elapsed().as_secs_f64()
         );
         println!(
-            "E2E usage input={:?} output={:?} streamed_tokens={:?} tail={} gate={} missing={:?}",
+            "E2E usage input={:?} output={:?} streamed_tokens={:?} tail={} shortfall={:?}",
             usage.usage.input_tokens,
             usage.usage.output_tokens,
             written
@@ -5351,8 +5510,7 @@ mod tests {
                 .as_ref()
                 .and_then(|p| p.written_tokens),
             kept.map_or(0, |k| k.tail_messages),
-            has_every_written_part(&model_text, &Anchors::of(&messages)),
-            parts_without_content(&model_text, &Anchors::of(&messages))
+            summary_shortfall(&model_text)
         );
         for (part, body) in &sections {
             println!(
@@ -5377,107 +5535,8 @@ mod tests {
                 .map_or(String::new(), |(first, _)| first.to_string()),
         ];
         for (i, junk) in junk.iter().enumerate() {
-            println!(
-                "E2E junk {i} gate={}",
-                has_every_written_part(junk, &Anchors::of(&messages))
-            );
+            println!("E2E junk {i} shortfall={:?}", summary_shortfall(junk));
         }
-    }
-
-    /// The answers the verifier stored on the first ask (2026-10-30, goose CLI against a scripted
-    /// endpoint): five sections, each words that say nothing of the conversation.
-    const VACANT_BODIES: [&str; 6] = [
-        "ongoing",
-        "see above.",
-        "same as before",
-        "as discussed",
-        "keep going",
-        "continue work",
-    ];
-
-    /// Fix 1: a section needs a concrete name from the conversation or words of its own; "Where we
-    /// are" needs the name when the conversation has one; the lists may say they are empty.
-    #[test]
-    fn a_section_of_vacant_words_is_not_content() {
-        let anchors = Anchors::of(two_turn_chat().messages());
-        assert!(!anchors.is_empty());
-        for body in VACANT_BODIES {
-            let answer = sections([body; 5]);
-            assert!(!has_every_written_part(&answer, &anchors), "{answer}");
-            assert!(!has_every_written_part(&answer, &none()), "{answer}");
-        }
-        let mixed = sections([
-            VACANT_BODIES[0],
-            VACANT_BODIES[1],
-            VACANT_BODIES[2],
-            VACANT_BODIES[3],
-            VACANT_BODIES[4],
-        ]);
-        assert_eq!(parts_without_content(&mixed, &anchors).len(), 5, "{mixed}");
-        let unanchored = sections([
-            "the work is still in progress here",
-            "no files written yet",
-            "nothing",
-            "nothing, the task is complete",
-            "plan the inactive users",
-        ]);
-        assert_eq!(
-            parts_without_content(&unanchored, &anchors),
-            vec!["Where we are"],
-            "{unanchored}"
-        );
-        let short = sections([
-            "the rule is 24 months, the users are not planned yet",
-            "No files written yet",
-            "Nothing.",
-            "nothing, the task is complete",
-            "plan the inactive users",
-        ]);
-        assert!(has_every_written_part(&short, &anchors), "{short}");
-        let viz = Anchors::of(&[Message::assistant().with_text("wrote web/viz.js (41 lines)")]);
-        assert!(viz.named_in("`viz.js` draws the field"));
-        assert!(viz.named_in("41 lines"));
-        assert!(!viz.named_in("the field is drawn"));
-    }
-
-    /// Fix 1 through the chat's request: the vacant answer is asked again, never stored.
-    #[tokio::test]
-    async fn a_vacant_answer_is_asked_again_not_stored() {
-        let good = sections([
-            "24 months is the rule; the users are not planned yet",
-            "no files written yet",
-            "inactive means no login in 24 months",
-            "plan the users",
-            "plan the users by the 24-month rule",
-        ]);
-        let provider = SequenceProvider {
-            answers: vec![sections(["see above."; 5]), good.clone()],
-            calls: std::sync::Mutex::new(Vec::new()),
-        };
-        let ChatCompacted::Compacted { conversation, .. } = compact_chat(
-            &provider,
-            &ModelConfig::new("sequence"),
-            "s",
-            &two_turn_chat(),
-            false,
-            &frame(),
-            &chat_inputs(None, false),
-        )
-        .await
-        .unwrap() else {
-            panic!("compacted");
-        };
-        let tools: Vec<usize> = provider
-            .calls
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(_, t)| *t)
-            .collect();
-        assert_eq!(tools.len(), 2, "{tools:?}");
-        let stored = conversation.agent_visible_messages()[0].as_concat_text();
-        assert!(stored.starts_with(good.trim_end()), "{stored}");
-        assert!(!stored.contains("see above"), "{stored}");
     }
 
     /// Answers chat-shaped requests with the Flash-Next non-summary and transcript requests with a
@@ -5512,70 +5571,616 @@ mod tests {
         }
     }
 
-    /// Fix 2: the transcript answer passes the gate too; when it does not, goose stores the summary
-    /// it writes from the conversation — the request word for word, the files, the last calls —
-    /// and sends no further request.
+    /// One answer with three tool calls as the agent stores it: three assistant rows, each
+    /// carrying the answer's reasoning, each followed by its result.
+    fn split_answer(turn: usize, reasoning_chars: usize) -> Vec<Message> {
+        let reasoning: String = format!("Turn {turn}: check app/store.py against the contract. ")
+            .repeat(reasoning_chars / 50 + 1);
+        let mut rows = Vec::new();
+        for call in 0..3 {
+            let id = format!("t{turn}c{call}");
+            let mut params = CallToolRequestParams::new("shell");
+            params.arguments =
+                serde_json::json!({"command": format!("sed -n {call},40p app/store.py")})
+                    .as_object()
+                    .cloned();
+            rows.push(
+                Message::assistant()
+                    .with_thinking(reasoning.clone(), "")
+                    .with_tool_request(id.clone(), Ok(params)),
+            );
+            rows.push(Message::user().with_tool_response(
+                id,
+                Ok(shell_result(
+                    &format!("{call}: def now_iso()\n").repeat(20),
+                    "",
+                    0,
+                )),
+            ));
+        }
+        rows
+    }
+
+    /// Round 4, A: the guard trusts the provider. With a call noted, the count is the prompt its
+    /// provider reported plus goose's count of ONLY the rows written since; once the rows no longer
+    /// open with what that call carried (a compaction rewrote them), the session's stored usage
+    /// stands in, plus the rows after its answer; with neither, the whole request is counted, its
+    /// frame included.
     #[tokio::test]
-    async fn a_transcript_one_liner_is_replaced_by_goose_s_own_summary() {
-        let mut write = CallToolRequestParams::new("developer__text_editor");
-        write.arguments = serde_json::json!({"command": "write", "path": "/w/app/sync.py"})
-            .as_object()
-            .cloned();
-        let mut read = CallToolRequestParams::new("developer__text_editor");
-        read.arguments = serde_json::json!({"command": "view", "path": "/w/SPEC.md"})
-            .as_object()
-            .cloned();
-        let ok = |text: &str| {
-            Ok(rmcp::model::CallToolResult::success(vec![
-                RawContent::text(text).no_annotation(),
-            ]))
+    async fn the_guard_reads_the_reported_prompt_plus_only_the_rows_written_since() {
+        let counter = create_token_counter().await.unwrap();
+        let session = "guard-reported-prompt";
+        let mut messages = vec![Message::user().with_text("build the console")];
+        for turn in 0..4 {
+            messages.extend(split_answer(turn, 4_000));
+        }
+        let sent = messages.len() - 6;
+        note_sent_prompt(session, &messages[..sent], Some(200_000));
+        let costs = counter.message_costs(&messages);
+        let since: usize = costs[sent..].iter().map(|c| c.tokens).sum();
+        assert!(since > 0);
+        assert_eq!(
+            chat_context_tokens(session, &messages, Some(150_000), None, &counter),
+            (200_000 + goose_counted(since), CountSource::LastCall)
+        );
+        // The rows the call carried were rewritten: the base no longer holds.
+        let mut rewritten = messages.clone();
+        rewritten[sent - 1] = Message::user().with_text("a summary");
+        let after_answer = rewritten
+            .iter()
+            .rposition(|m| m.role == Role::Assistant)
+            .unwrap()
+            + 1;
+        let tail: usize = counter.message_costs(&rewritten)[after_answer..]
+            .iter()
+            .map(|c| c.tokens)
+            .sum();
+        assert_eq!(
+            chat_context_tokens(session, &rewritten, Some(150_000), None, &counter),
+            (150_000 + goose_counted(tail), CountSource::StoredUsage)
+        );
+        let tools = chat_tools();
+        let frame = Some(("You are goose.", tools.as_slice()));
+        assert_eq!(
+            chat_context_tokens(session, &rewritten, None, frame, &counter),
+            (
+                goose_counted(counter.count_chat_tokens("You are goose.", &rewritten, &tools)),
+                CountSource::Estimated
+            )
+        );
+        note_sent_prompt(session, &messages, None);
+        assert_eq!(
+            chat_context_tokens(session, &messages, None, None, &counter).1,
+            CountSource::Estimated,
+            "a call that reported no prompt leaves no base"
+        );
+    }
+
+    /// Round 4, A: the guard's own count follows the request, so an answer's reasoning that its
+    /// split tool-call rows repeat is counted ONCE on the guard's path too. Before round 4 the
+    /// guard counted each row alone: these 25 split answers read ~2x their size and compacted at
+    /// half the point.
+    #[tokio::test]
+    async fn the_guard_counts_an_answer_s_reasoning_once() {
+        let counter = create_token_counter().await.unwrap();
+        let mut messages = vec![Message::user().with_text("build the console")];
+        for turn in 0..25 {
+            messages.extend(split_answer(turn, 8_000));
+        }
+        let whole = counter.count_chat_tokens("", &messages, &[]);
+        let alone: usize = messages
+            .iter()
+            .map(|m| counter.count_chat_tokens("", std::slice::from_ref(m), &[]))
+            .sum();
+        assert!(alone as f64 > whole as f64 * 1.5, "{alone} vs {whole}");
+        let (guarded, _) =
+            chat_context_tokens("guard-split-reasoning", &messages, None, None, &counter);
+        assert_eq!(guarded, goose_counted(whole));
+        // Through the guard itself: a window whose point sits between the two counts.
+        let provider = MockProvider::new(
+            Message::assistant().with_text("x"),
+            (whole + alone) / 2 * 10 / 8,
+        );
+        let session = crate::session::Session {
+            id: "guard-split-reasoning-2".to_string(),
+            model_config: Some(ModelConfig::new("split")),
+            ..Default::default()
         };
-        let request = "write app/sync.py from SPEC.md: inactive means no login in 24 months";
-        let chat = Conversation::new_unvalidated(vec![
-            Message::user().with_text(request),
-            Message::assistant().with_tool_request("r1", Ok(read)),
-            Message::user().with_tool_response("r1", ok("# SPEC\n24 months")),
-            Message::assistant().with_tool_request("w1", Ok(write)),
-            Message::user().with_tool_response("w1", ok("Created /w/app/sync.py")),
-            Message::assistant().with_text("app/sync.py written"),
-        ]);
-        for request_shape in [frame(), SummaryRequest::Transcript] {
-            let provider = OneLinerProvider {
-                calls: std::sync::Mutex::new(Vec::new()),
+        let conversation = Conversation::new_unvalidated(messages.clone());
+        let needed = check_if_compaction_needed(
+            &provider,
+            &conversation,
+            Some(0.8),
+            &session,
+            GuardCount::Chat(None),
+        )
+        .await
+        .unwrap();
+        assert!(
+            !needed,
+            "{whole} tokens on a {}-token window",
+            (whole + alone) / 2 * 10 / 8
+        );
+        // A kept tail that opens between the split rows is sent with the reasoning: it adds it.
+        let costs = counter.message_costs(&messages);
+        let opens_on_a_repeat = messages.len() - 4;
+        assert!(costs[opens_on_a_repeat].repeated_reasoning > 0);
+        assert_eq!(
+            crate::token_counter::run_tokens(&costs, opens_on_a_repeat),
+            counter.count_chat_tokens("", &messages[opens_on_a_repeat..], &[]) - 3
+        );
+    }
+
+    /// Round 4, A: the kept tail counts rows as the request sends them — an answer's reasoning
+    /// once, and added back only for the row the tail opens on.
+    #[tokio::test]
+    async fn the_kept_tail_counts_an_answer_s_reasoning_once() {
+        let counter = create_token_counter().await.unwrap();
+        let mut messages = vec![Message::user().with_text("build the console")];
+        for turn in 0..3 {
+            messages.extend(split_answer(turn, 8_000));
+        }
+        let answer = messages.len() - 6;
+        let budget = counter.count_chat_tokens("", &messages[answer..], &[]) + 16;
+        assert_eq!(tail_that_fits(&messages, budget, &counter), 6);
+        let alone: usize = messages[answer..]
+            .iter()
+            .map(|m| counter.count_chat_tokens("", std::slice::from_ref(m), &[]))
+            .sum();
+        assert!(alone > budget * 2, "{alone} vs {budget}");
+    }
+
+    /// Round 4, A, on the real transcript: the verifier's 223-row Flash-Next stopped run and the
+    /// 243,299 prompt tokens its engine reported for them with the summary instruction. Ignored:
+    /// the transcript is a benchmark's work and stays out of this public repo — run with
+    /// GOOSE_COMPACTION_FIXTURE=<flash-223.json> (`{system_prompt, tools, messages, instruction,
+    /// recorded: [{rows, with_instruction, prompt_tokens}]}`).
+    #[tokio::test]
+    #[ignore]
+    async fn real_transcript_the_guard_is_within_the_engine_s_count() {
+        let path = std::env::var("GOOSE_COMPACTION_FIXTURE").expect("GOOSE_COMPACTION_FIXTURE");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let system = fixture["system_prompt"].as_str().unwrap().to_string();
+        let tools: Vec<Tool> = serde_json::from_value(fixture["tools"].clone()).unwrap();
+        let messages: Vec<Message> = serde_json::from_value(fixture["messages"].clone()).unwrap();
+        let instruction = Message::user().with_text(fixture["instruction"].as_str().unwrap());
+        let counter = create_token_counter().await.unwrap();
+        let engine_of = |r: &serde_json::Value| {
+            r.get("engine")
+                .or(fixture.get("engine"))
+                .and_then(|e| e.as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        let alone: usize = messages
+            .iter()
+            .map(|m| counter.count_chat_tokens("", std::slice::from_ref(m), &[]))
+            .sum();
+        println!("REAL per-row-alone (round 3 guard) = {alone}");
+        let recorded = fixture["recorded"].as_array().unwrap();
+        let mut checked = 0;
+        let mut failures: Vec<String> = Vec::new();
+        for later in recorded {
+            let rows = later["rows"].as_u64().unwrap() as usize;
+            let engine = later["prompt_tokens"].as_u64().unwrap() as f64;
+            let mut sent = messages[..rows].to_vec();
+            if later["with_instruction"].as_bool().unwrap_or(false) {
+                sent.push(instruction.clone());
+            }
+            let (estimated, source) = chat_context_tokens(
+                &format!("real-{rows}"),
+                &sent,
+                None,
+                Some((&system, &tools)),
+                &counter,
+            );
+            assert_eq!(source, CountSource::Estimated);
+            let off = estimated as f64 / engine - 1.0;
+            println!(
+                "REAL estimate {} rows={rows} engine={engine} goose={estimated} off={:+.2}%",
+                engine_of(later),
+                off * 100.0
+            );
+            // A prompt far under any compaction point decides nothing: the estimate is held to
+            // the bound where a decision can be near (100k tokens and up).
+            if engine >= 100_000.0
+                && !later["image_not_counted"].as_bool().unwrap_or(false)
+                && !(-0.01..=0.03).contains(&off)
+            {
+                failures.push(format!("estimate rows {rows}: {off:+.4}"));
+            }
+            // The provider path: an earlier call's reported prompt plus the rows since.
+            for earlier in recorded {
+                let earlier_rows = earlier["rows"].as_u64().unwrap() as usize;
+                if earlier_rows >= rows
+                    || earlier["with_instruction"].as_bool().unwrap_or(false)
+                    || engine_of(earlier) != engine_of(later)
+                {
+                    continue;
+                }
+                let session = format!("real-{earlier_rows}-{rows}");
+                note_sent_prompt(
+                    &session,
+                    &messages[..earlier_rows],
+                    Some(earlier["prompt_tokens"].as_i64().unwrap() as i32),
+                );
+                let (decided, source) = chat_context_tokens(&session, &sent, None, None, &counter);
+                assert_eq!(source, CountSource::LastCall);
+                let off = decided as f64 / engine - 1.0;
+                println!(
+                    "REAL reported {} rows {earlier_rows}->{rows}: engine={engine} decided={decided} off={:+.2}%",
+                    engine_of(later),
+                    off * 100.0
+                );
+                // An engine that did not count an image goose counts is over-counted, never under.
+                let bound = if later["image_not_counted"].as_bool().unwrap_or(false) {
+                    -0.01..=0.06
+                } else {
+                    -0.01..=0.03
+                };
+                if !bound.contains(&off) {
+                    failures.push(format!("reported {earlier_rows}->{rows}: {off:+.4}"));
+                }
+                checked += 1;
+            }
+        }
+        println!("REAL provider-path pairs checked: {checked}");
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    /// Records what a real engine reports as the prompt of goose's own request at several points
+    /// of the real transcript (max_tokens 1), into the fixture the guard test reads. Ignored: needs
+    /// an engine (OPENAI_HOST, GOOSE_MODEL) and GOOSE_COMPACTION_FIXTURE; writes E2E_RECORD_OUT.
+    #[tokio::test]
+    #[ignore]
+    async fn real_transcript_record_engine_prompts() {
+        use futures::StreamExt;
+        let path = std::env::var("GOOSE_COMPACTION_FIXTURE").unwrap();
+        let mut fixture: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let system = fixture["system_prompt"].as_str().unwrap().to_string();
+        let tools: Vec<Tool> = serde_json::from_value(fixture["tools"].clone()).unwrap();
+        let messages: Vec<Message> = serde_json::from_value(fixture["messages"].clone()).unwrap();
+        // Points a request may end on: right after a tool result whose next row is the model's.
+        let ends: Vec<usize> = (1..messages.len())
+            .filter(|&k| {
+                opens_on_a_tool_result(&messages[k - 1])
+                    && messages[k].role == Role::Assistant
+                    && !opens_on_a_tool_result(&messages[k])
+            })
+            .collect();
+        let picks: Vec<usize> = match std::env::var("E2E_RECORD_ROWS") {
+            Ok(rows) => rows.split(',').map(|r| r.parse().unwrap()).collect(),
+            Err(_) => (1..=6).map(|i| ends[ends.len() * i / 6 - 1]).collect(),
+        };
+        let provider = crate::providers::create("openai", Vec::new())
+            .await
+            .unwrap();
+        let mut model_config = ModelConfig::new(std::env::var("GOOSE_MODEL").unwrap());
+        model_config.max_tokens = Some(1);
+        let mut recorded = Vec::new();
+        for rows in picks {
+            let sent = crate::agents::reply_parts::messages_for_provider(
+                fix_conversation(Conversation::new_unvalidated(messages[..rows].to_vec()))
+                    .0
+                    .messages(),
+                false,
+            );
+            let mut stream = provider
+                .stream(&model_config, &system, sent.messages(), &tools)
+                .await
+                .unwrap();
+            let mut prompt = None;
+            while let Some(item) = stream.next().await {
+                if let Ok((_, Some(usage))) = item {
+                    prompt = usage.usage.input_tokens.or(prompt);
+                }
+            }
+            println!("RECORD rows={rows} prompt_tokens={prompt:?}");
+            if let Some(prompt) = prompt {
+                recorded.push(serde_json::json!({
+                    "rows": rows, "with_instruction": false, "prompt_tokens": prompt,
+                    "engine": model_config.model_name,
+                }));
+            }
+        }
+        let mut all = fixture["recorded"].as_array().cloned().unwrap_or_default();
+        all.extend(recorded);
+        fixture["recorded"] = serde_json::Value::Array(all);
+        std::fs::write(
+            std::env::var("E2E_RECORD_OUT").unwrap(),
+            serde_json::to_string(&fixture).unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// Answers every chat-shaped request with one fixed message; counts them.
+    struct FixedProvider {
+        answer: Message,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for FixedProvider {
+        fn get_name(&self) -> &str {
+            "fixed"
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(stream_from_single_message(
+                self.answer.clone(),
+                ProviderUsage::new("fixed".to_string(), Usage::default()),
+            ))
+        }
+    }
+
+    /// The verifier's real-model shape (Flash-Next, thinking on, 2026-10-30): the five sections
+    /// written in the REASONING, the visible answer empty or a stray
+    /// `<tool_call></function></tool_call>` (what the code before round 3 stored, graded 0/52).
+    /// The summary is taken from the reasoning — its last complete block — with no second ask.
+    #[tokio::test]
+    async fn a_summary_written_in_the_reasoning_is_taken_from_there() {
+        let reasoning = format!(
+            "The person wants a summary. Draft:\n## Where we are\nan early draft\n\nLet me \
+             redo it properly.\n\n{EVERY_PART}\n"
+        );
+        for visible in ["", "<tool_call></function></tool_call>"] {
+            let mut answer = Message::assistant().with_thinking(reasoning.clone(), "");
+            if !visible.is_empty() {
+                answer = answer.with_text(visible);
+            }
+            let provider = FixedProvider {
+                answer,
+                calls: std::sync::atomic::AtomicUsize::new(0),
             };
             let ChatCompacted::Compacted { conversation, .. } = compact_chat(
                 &provider,
-                &ModelConfig::new("one-liner"),
+                &ModelConfig::new("fixed"),
                 "s",
-                &chat,
+                &two_turn_chat(),
                 false,
-                &request_shape,
+                &frame(),
                 &chat_inputs(None, false),
             )
             .await
             .unwrap() else {
                 panic!("compacted");
             };
-            let calls = provider.calls.lock().unwrap().clone();
             assert_eq!(
-                calls.iter().filter(|t| **t == 0).count(),
+                provider.calls.load(std::sync::atomic::Ordering::SeqCst),
                 1,
-                "one transcript request, no loop: {calls:?}"
+                "no second ask"
             );
             let stored = conversation.agent_visible_messages()[0].as_concat_text();
-            assert!(!stored.contains("I will continue"), "{stored}");
+            assert!(stored.starts_with("## Where we are\nsync done"), "{stored}");
             assert!(
-                stored.starts_with("goose wrote this summary itself"),
-                "{stored}"
+                !stored.contains("an early draft"),
+                "the last complete block: {stored}"
             );
-            assert!(stored.contains(request), "{stored}");
-            assert!(stored.contains("- /w/app/sync.py (written)"), "{stored}");
-            assert!(stored.contains("- /w/SPEC.md (read)"), "{stored}");
+            assert!(!stored.contains("tool_call"), "{stored}");
+            assert!(!stored.starts_with(pillars::FLAG_LEAD), "{stored}");
+        }
+    }
+
+    /// A `write` call and its result as the developer tool leaves them: the diff in `_meta`.
+    fn written(id: &str, path: &str, content: &str) -> [Message; 2] {
+        use crate::agents::platform_extensions::developer::file_diff::{
+            diff_texts, with_file_diff, Before,
+        };
+        let mut params = CallToolRequestParams::new("write");
+        params.arguments = serde_json::json!({"path": path, "content": content})
+            .as_object()
+            .cloned();
+        let result = with_file_diff(
+            rmcp::model::CallToolResult::success(vec![
+                RawContent::text(format!("Created {path}")).no_annotation()
+            ]),
+            path,
+            Before::None,
+            &diff_texts(path, None, content),
+        );
+        [
+            Message::assistant().with_tool_request(id, Ok(params)),
+            Message::user().with_tool_response(id, Ok(result)),
+        ]
+    }
+
+    /// A shell call and its result with its exit code.
+    fn shelled(id: &str, command: &str, stdout: &str, exit_code: i64) -> [Message; 2] {
+        let mut params = CallToolRequestParams::new("shell");
+        params.arguments = serde_json::json!({"command": command}).as_object().cloned();
+        [
+            Message::assistant().with_tool_request(id, Ok(params)),
+            Message::user().with_tool_response(id, Ok(shell_result(stdout, "", exit_code))),
+        ]
+    }
+
+    const SYNC_PY: &str =
+        "import json\n\nclass Store:\n    def get(self, key):\n        return key\n\n\
+        def sync_all(store):\n    return []\n\nROUTES = {\"GET\": \"/api/payments\"}\n\
+        def handle(path):\n    if path == \"/api/sync\":\n        return sync_all(None)\n";
+
+    /// A chat whose summary is the facts' to carry: the request, a file written, a test that
+    /// failed and was then fixed, a run that still fails, and a check that worked.
+    fn worked_chat(request: &str) -> Conversation {
+        let mut messages = vec![Message::user().with_text(request)];
+        messages.extend(written("w1", "/w/app/sync.py", SYNC_PY));
+        // An edit that left out its path fails; the next edit, naming it, settles it.
+        for (id, args, ok) in [
+            (
+                "e1",
+                serde_json::json!({"before": "[]", "after": "[1]"}),
+                false,
+            ),
+            (
+                "e2",
+                serde_json::json!({"path": "/w/app/sync.py", "before": "[]", "after": "[1]"}),
+                true,
+            ),
+        ] {
+            let mut params = CallToolRequestParams::new("edit");
+            params.arguments = args.as_object().cloned();
+            let text = vec![
+                RawContent::text(if ok { "Edited" } else { "Error: no path" }).no_annotation(),
+            ];
+            let result = if ok {
+                rmcp::model::CallToolResult::success(text)
+            } else {
+                rmcp::model::CallToolResult::error(text)
+            };
+            messages.push(Message::assistant().with_tool_request(id, Ok(params)));
+            messages.push(Message::user().with_tool_response(id, Ok(result)));
+        }
+        messages.extend(shelled(
+            "s1",
+            "cd /w && python3 -m pytest -q",
+            "1 failed",
+            1,
+        ));
+        messages.extend(shelled(
+            "s2",
+            "cd /w && python3 -m pytest -q",
+            "41 passed",
+            0,
+        ));
+        messages.extend(shelled(
+            "s3",
+            "cd /w && python3 app/boot.py",
+            "ImportError: boot",
+            1,
+        ));
+        messages.extend(shelled("s4", "cat /w/SPEC.md", "# SPEC", 0));
+        messages.push(Message::assistant().with_text("app/sync.py written"));
+        Conversation::new_unvalidated(messages)
+    }
+
+    /// The facts goose builds itself back every stored summary — the request word for word, each
+    /// written file with its size and what it defines, the errors still open (a failure a later
+    /// identical call settled is not one), the commands that worked, the newest calls with their
+    /// outcome — whatever the model wrote.
+    #[tokio::test]
+    async fn every_stored_summary_carries_goose_s_facts() {
+        let request = "write app/sync.py from SPEC.md: inactive means no login in 24 months";
+        let provider = SequenceProvider {
+            answers: vec![EVERY_PART.to_string()],
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let ChatCompacted::Compacted { conversation, .. } = compact_chat(
+            &provider,
+            &ModelConfig::new("sequence"),
+            "s",
+            &worked_chat(request),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap() else {
+            panic!("compacted");
+        };
+        let stored = conversation.agent_visible_messages()[0].as_concat_text();
+        assert!(stored.starts_with("## Where we are\nsync done"), "{stored}");
+        let facts = stored.split_once(pillars::KEPT_OPEN).unwrap().1;
+        // The request is kept once: re-sent word for word right after the summary, and the
+        // facts say so.
+        assert!(
+            facts.contains("re-sent word for word right after"),
+            "{facts}"
+        );
+        let rows = conversation.agent_visible_messages();
+        assert_eq!(rows.last().unwrap().as_concat_text(), request);
+        assert!(facts.contains("/w/app/sync.py — created"), "{facts}");
+        assert!(
+            facts.contains("13 lines")
+                && facts.contains("as last written in the conversation")
+                && facts.contains("class Store")
+                && facts.contains("  def get")
+                && facts.contains("def sync_all")
+                && facts.contains("def handle")
+                && facts.contains("routes /api/payments /api/sync"),
+            "{facts}"
+        );
+        let open = facts.split_once("## Errors still open (1)").unwrap().1;
+        assert!(open.contains("python3 app/boot.py"), "{facts}");
+        assert!(
+            open.contains("2 earlier failed calls were settled"),
+            "{facts}"
+        );
+        let worked = facts.split_once("## Commands that worked").unwrap().1;
+        let worked = worked.split_once("##").unwrap().0;
+        assert!(worked.contains("cd /w && python3 -m pytest -q"), "{facts}");
+        assert!(
+            !worked.contains("cat /w/SPEC.md"),
+            "a look is not a command that worked"
+        );
+        assert!(!worked.contains("boot.py"), "{facts}");
+        let calls = facts.split_once("tool calls (oldest first)").unwrap().1;
+        assert!(
+            calls.contains("shell")
+                && calls.contains("succeeded (exit 0)")
+                && calls.contains("41 passed"),
+            "{facts}"
+        );
+        assert!(calls.contains("failed (exit 1)"), "{facts}");
+    }
+
+    /// A one-liner from either request is stored FLAGGED with the facts, after at most one more
+    /// ask on the chat's prefix and never a second transcript prefill: the chat-shaped request
+    /// sends 2 requests and no transcript, the recovery transcript request sends 1.
+    #[tokio::test]
+    async fn a_one_liner_is_stored_flagged_with_the_facts_without_another_prefill() {
+        let request = "write app/sync.py from SPEC.md: inactive means no login in 24 months";
+        for (request_shape, expected) in
+            [(frame(), vec![1, 1]), (SummaryRequest::Transcript, vec![0])]
+        {
+            let provider = OneLinerProvider {
+                calls: std::sync::Mutex::new(Vec::new()),
+            };
+            let mut inputs = chat_inputs(None, false);
+            if matches!(request_shape, SummaryRequest::Transcript) {
+                inputs.trigger = CompactionTrigger::Recovery;
+            }
+            let ChatCompacted::Compacted { conversation, .. } = compact_chat(
+                &provider,
+                &ModelConfig::new("one-liner"),
+                "s",
+                &worked_chat(request),
+                false,
+                &request_shape,
+                &inputs,
+            )
+            .await
+            .unwrap() else {
+                panic!("compacted");
+            };
+            let calls: Vec<usize> = provider
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|t| (*t > 0) as usize)
+                .collect();
+            assert_eq!(
+                calls, expected,
+                "requests (1 = chat-shaped, 0 = transcript)"
+            );
+            let rows = conversation.agent_visible_messages();
+            let stored = rows[0].as_concat_text();
+            assert!(stored.starts_with(pillars::FLAG_LEAD), "{stored}");
             assert!(
-                stored.contains("developer__text_editor")
-                    && stored.contains("Created /w/app/sync.py"),
-                "{stored}"
+                rows.iter().any(|m| m.as_concat_text() == request),
+                "the request, word for word"
             );
+            assert!(stored.contains("def sync_all"), "{stored}");
+            assert!(stored.contains("python3 app/boot.py"), "{stored}");
         }
     }
 
@@ -5727,5 +6332,180 @@ mod tests {
             "what the 20,000-token window leaves after the prompt: {seen:?}"
         );
         assert_eq!(seen[3], Some(32_768), "{seen:?}");
+    }
+
+    /// Round 4, C: the swarm's workers send their transcript request as the golden run did — no
+    /// `max_tokens` (round 3 gave it the chat's reserve). Its removal ladder is the golden one
+    /// again too (`summarize_a_transcript_as_the_swarm`; `test_progressive_removal_on_context_exceeded`).
+    #[tokio::test]
+    async fn a_worker_s_transcript_request_is_the_golden_one() {
+        let provider = MaxTokensProvider {
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        compact_messages_with_tail(
+            &provider,
+            &ModelConfig::new("max-tokens"),
+            "worker",
+            &two_turn_chat(),
+            false,
+            0,
+            &SummaryRequest::Transcript,
+        )
+        .await
+        .unwrap();
+        assert_eq!(provider.calls.lock().unwrap().clone(), vec![(0, None)]);
+    }
+
+    /// Round 4, C: a worker's kept tail is its golden one — every tail row copied (a row the model
+    /// did not see included), and the person's request not re-sent when a user text row is in the
+    /// tail. Round 3 had changed both for workers.
+    #[tokio::test]
+    async fn a_worker_s_kept_tail_is_the_golden_one() {
+        let provider = MockProvider::new(Message::assistant().with_text("the summary"), 10_000);
+        let messages = vec![
+            Message::user().with_text("build it"),
+            Message::assistant().with_text("planning"),
+            Message::user()
+                .with_text("a note the model did not see")
+                .with_visibility(true, false),
+            Message::assistant().with_text("built app/x.py"),
+        ];
+        let (compacted, _) = compact_messages_with_tail(
+            &provider,
+            &provider.config.clone(),
+            "worker-tail",
+            &Conversation::new_unvalidated(messages),
+            false,
+            2,
+            &SummaryRequest::Transcript,
+        )
+        .await
+        .unwrap();
+        let visible: Vec<String> = compacted
+            .agent_visible_messages()
+            .iter()
+            .map(|m| m.as_concat_text())
+            .collect();
+        assert_eq!(visible.len(), 4, "{visible:?}");
+        assert_eq!(visible[2], "a note the model did not see", "{visible:?}");
+        assert_eq!(visible[3], "built app/x.py", "{visible:?}");
+        assert!(!visible.iter().any(|v| v == "build it"), "{visible:?}");
+    }
+
+    /// The kept tail's copies are dated now, chat and worker alike: the session store reads a
+    /// conversation back by its rows' dates (then insertion), and a copy keeping its original's
+    /// date was read back BEFORE the summary. No request carries a date.
+    #[tokio::test]
+    async fn the_kept_tail_reads_back_after_the_summary() {
+        let dated = |m: Message| {
+            let mut m = m;
+            m.created = 1_000;
+            m
+        };
+        let messages: Vec<Message> = vec![
+            dated(Message::user().with_text("build it")),
+            dated(Message::assistant().with_text("planning")),
+            dated(Message::user().with_text("now the tests")),
+            dated(Message::assistant().with_text("41 tests pass")),
+        ];
+        let provider = MockProvider::new(Message::assistant().with_text("the summary"), 10_000);
+        let (compacted, _) = compact_messages_with_tail(
+            &provider,
+            &provider.config.clone(),
+            "dated-tail",
+            &Conversation::new_unvalidated(messages),
+            false,
+            2,
+            &SummaryRequest::Transcript,
+        )
+        .await
+        .unwrap();
+        let in_memory: Vec<String> = compacted
+            .agent_visible_messages()
+            .iter()
+            .map(|m| m.as_concat_text())
+            .collect();
+        // `ORDER BY created_timestamp, id`: a stable sort by date over the insertion order.
+        let mut stored: Vec<&Message> = compacted.messages().iter().collect();
+        stored.sort_by_key(|m| m.created);
+        let read_back: Vec<String> = stored
+            .into_iter()
+            .filter(|m| m.is_agent_visible())
+            .map(|m| m.as_concat_text())
+            .collect();
+        assert_eq!(read_back, in_memory);
+        assert_eq!(in_memory[0], "the summary", "{in_memory:?}");
+    }
+
+    /// Round 4, B: a second compaction carries the first one's summary word for word, whether the
+    /// new answer passes the gate or is stored flagged (the round-3 fallback dropped it).
+    #[tokio::test]
+    async fn a_second_compaction_carries_the_first_summary_and_the_facts() {
+        let first_summary = sections([
+            "the walk is done: 12,288 payments loaded",
+            "app/sync.py: the documented walk",
+            "Berlin days",
+            "the webhooks",
+            "write app/hooks.py",
+        ]);
+        let provider = SequenceProvider {
+            answers: vec![first_summary.clone()],
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let ChatCompacted::Compacted {
+            conversation: once, ..
+        } = compact_chat(
+            &provider,
+            &ModelConfig::new("sequence"),
+            "s",
+            &worked_chat("build the payments console"),
+            false,
+            &frame(),
+            &chat_inputs(None, false),
+        )
+        .await
+        .unwrap()
+        else {
+            panic!("compacted");
+        };
+        let mut later = once.messages().clone();
+        later.push(Message::user().with_text("now the webhooks"));
+        later.push(Message::assistant().with_text("app/hooks.py started"));
+        for second in [EVERY_PART.to_string(), FLASH_NEXT_NON_SUMMARY.to_string()] {
+            let provider = SequenceProvider {
+                answers: vec![second.clone()],
+                calls: std::sync::Mutex::new(Vec::new()),
+            };
+            let ChatCompacted::Compacted { conversation, .. } = compact_chat(
+                &provider,
+                &ModelConfig::new("sequence"),
+                "s",
+                &Conversation::new_unvalidated(later.clone()),
+                false,
+                &frame(),
+                &chat_inputs(None, false),
+            )
+            .await
+            .unwrap() else {
+                panic!("compacted");
+            };
+            let stored = conversation.agent_visible_messages()[0].as_concat_text();
+            let facts = stored.split_once(pillars::KEPT_OPEN).unwrap().1;
+            assert!(
+                facts.contains("## The summaries earlier compactions stored (1")
+                    && facts.contains("12,288 payments loaded")
+                    && facts.contains("write app/hooks.py"),
+                "{stored}"
+            );
+            assert!(facts.contains("build the payments console"), "{facts}");
+            let rows = conversation.agent_visible_messages();
+            assert_eq!(rows.last().unwrap().as_concat_text(), "now the webhooks");
+            assert!(facts.contains("def sync_all"), "{facts}");
+            assert_eq!(
+                facts.matches("12,288 payments loaded").count(),
+                1,
+                "carried once, not nested: {facts}"
+            );
+        }
     }
 }

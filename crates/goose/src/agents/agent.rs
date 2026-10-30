@@ -2065,11 +2065,33 @@ impl Agent {
             .ok_or_else(|| anyhow::anyhow!("Session {} has no conversation", session_config.id))?;
         let stored_at_ms = reply_started.elapsed().as_millis() as u64;
 
+        // A chat the guard must count whole (no call reported a prompt yet) is counted with the
+        // system prompt and tools its next request carries.
+        let guard_frame = if !self.is_swarm_worker()
+            && crate::context_mgmt::guard_counts_the_whole_request(
+                &session,
+                conversation.messages(),
+            ) {
+            let (tools, _, system_prompt, _) = self.prepare_tools_and_prompt(&session).await?;
+            Some(self.disclose_tools(&tools, &system_prompt).await)
+        } else {
+            None
+        };
+        let guard_count = if self.is_swarm_worker() {
+            crate::context_mgmt::GuardCount::Worker
+        } else {
+            crate::context_mgmt::GuardCount::Chat(
+                guard_frame
+                    .as_ref()
+                    .map(|(tools, prompt)| (prompt.as_str(), tools.as_slice())),
+            )
+        };
         let needs_auto_compact = check_if_compaction_needed(
             self.provider().await?.as_ref(),
             &conversation,
             self.worker_compaction_threshold(),
             &session,
+            guard_count,
         )
         .await?;
         let clock = ReplyClock {
@@ -2515,6 +2537,13 @@ impl Agent {
                             if let Some(ref usage) = usage {
                                 self.update_session_metrics(&session_config.id, session_config.schedule_id.clone(), usage, false).await?;
                                 if !self.is_swarm_worker() {
+                                    // The compaction guard's base: what this call carried and the
+                                    // prompt its provider reported for it.
+                                    crate::context_mgmt::note_sent_prompt(
+                                        &session_config.id,
+                                        conversation.messages(),
+                                        usage.usage.input_tokens,
+                                    );
                                     if let Some(read) = crate::context_mgmt::prompt_cache_read(&usage.usage) {
                                         cached_prompt = Some(read);
                                     }
@@ -3546,6 +3575,14 @@ impl Agent {
                             &conversation,
                             self.worker_compaction_threshold(),
                             &check_session,
+                            if self.is_swarm_worker() {
+                                crate::context_mgmt::GuardCount::Worker
+                            } else {
+                                crate::context_mgmt::GuardCount::Chat(Some((
+                                    system_prompt.as_str(),
+                                    tools.as_slice(),
+                                )))
+                            },
                         )
                         .await
                         .unwrap_or(false);

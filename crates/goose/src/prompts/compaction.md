@@ -11,7 +11,7 @@ goose keeps these — do not repeat them:
 {% endfor %}
 {% endif %}
 {% if chat.earlier_summary %}
-The conversation above opens with an earlier summary. Update it: keep what still holds, drop what later turns undid.
+The conversation above opens with an earlier summary; goose keeps it word for word after yours. Write where the work stands now: keep what still holds, drop what later turns undid.
 {% endif %}
 {% if chat.goal %}
 The goal the person set with /goal: {{ chat.goal }}

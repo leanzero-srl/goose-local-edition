@@ -22,6 +22,10 @@ pub const KEPT_CLOSE: &str = "</kept-by-goose>";
 /// The first line of a summary written under a note: how the model read the note.
 pub const NOTE_MARKER: &str = "NOTE";
 
+/// How a stored summary opens when goose could not check the model's part of it (round 4): the
+/// facts goose kept below it are its own and stand without it.
+pub const FLAG_LEAD: &str = "[goose could not check this summary";
+
 /// The five parts goose keeps, in the block's order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pillar {
@@ -65,8 +69,13 @@ pub struct Document {
     pub path: String,
     pub text: String,
     pub chars: usize,
-    /// Not kept whole (no room, or the window is unknown): only the path and the size are kept.
+    /// Not kept whole (no room, or the window is unknown): only the path and the size are kept,
+    /// and its binding lines while they fit (`key_lines`).
     pub left_out: bool,
+    /// A left-out file's binding lines — its headings and the lines that say must, never, always,
+    /// only, required, shall — as many as the block's room holds (round 4: every real-model
+    /// summary of the Flash-Next run missed a rule its contract files carried).
+    pub key_lines: Vec<String>,
 }
 
 /// A folder the conversation's tool calls worked in.
@@ -94,6 +103,9 @@ pub enum LedgerRead {
 pub struct Pillars {
     /// P1 — every message the person wrote, oldest first.
     pub asked: Vec<Asked>,
+    /// The person's newest message is not in `asked`: the compaction re-sends it word for word
+    /// right after the summary (kept once, not twice).
+    pub resent_after: bool,
     /// P2 — the folders the work happened in, newest first (Q-394: after #3r's compaction the
     /// model knew `scripts/build_report.js` but not the folder its commands had cd'ed into, and
     /// searched the home folder for it).
@@ -102,6 +114,10 @@ pub struct Pillars {
     pub chat_folder: Option<String>,
     /// P2 — every file the chat's `write`/`edit` calls changed, by its absolute path.
     pub files: Vec<WrittenFile>,
+    /// What each of `files` holds now — its size and what it defines (round 4): after the
+    /// Flash-Next compaction the model re-grepped its own modules to learn what it had built.
+    /// `None` when neither the disk nor a whole write in the conversation has it.
+    pub files_now: Vec<Option<super::facts::FileNow>>,
     /// P2 — the files the person's messages name, as they read now. Why (Flash-Next Gauntlet
     /// sb-7.2 stopped run, 2026-10-29): after the compaction 7 of the next 13 calls re-read
     /// `SB7-CONTRACT.md` (three chunks), `VISUAL-CONTRACT.md`, `STARTER.md` and
@@ -109,9 +125,19 @@ pub struct Pillars {
     pub documents: Vec<Document>,
     /// The newest messages the compaction keeps word for word after the summary.
     pub tail_messages: usize,
-    /// P3 — the failed tool calls kept, oldest first; `failed_left_out` older ones did not fit.
+    /// P3 — the errors still open: failed calls no later success of the same call settled, oldest
+    /// first; `failed_left_out` older ones did not fit; `failed_settled` were settled.
     pub failed: Vec<Failed>,
     pub failed_left_out: usize,
+    pub failed_settled: usize,
+    /// The shell commands that ran, exited 0 and did more than look, newest last.
+    pub worked: Vec<String>,
+    /// The newest tool calls with their outcome, oldest first.
+    pub calls: Vec<String>,
+    /// The model-written part of each summary an earlier compaction stored, oldest first;
+    /// `earlier_left_out` older ones did not fit. They are carried, never re-written.
+    pub earlier: Vec<String>,
+    pub earlier_left_out: usize,
     /// P4 — the person's note for this compaction and their pins, verbatim.
     pub note: Option<String>,
     pub pins: Vec<String>,
@@ -119,6 +145,12 @@ pub struct Pillars {
     pub ledger: LedgerRead,
     pub ledger_left_out: usize,
 }
+
+/// The newest tool calls and the commands that worked a fitted block keeps before it cuts the
+/// person's words.
+const FIT_FLOOR_LINES: usize = 3;
+/// The characters the newest earlier summary is cut to when the block cannot hold it whole.
+const EARLIER_EXCERPT_CHARS: usize = 2_000;
 
 /// What the kept block is built from besides the conversation.
 #[derive(Debug, Clone, Default)]
@@ -134,21 +166,41 @@ pub struct KeptSources<'a> {
 impl Pillars {
     pub fn build(messages: &[Message], sources: &KeptSources<'_>, ledger: LedgerRead) -> Self {
         let mut asked = asked_of(messages);
+        let mut resent_after = false;
         if let (Some(preserved), Some(last)) = (sources.preserved, asked.last()) {
             if last.text == preserved.trim() {
                 asked.pop();
+                resent_after = true;
             }
         }
         let files = absolute_files(written_files(messages), sources.working_dir);
         let documents = named_documents(&asked, sources.preserved, sources.working_dir);
+        let settled = super::facts::settled_failures(messages);
+        let failed = failed_of(messages);
+        let failed_settled = failed.len();
+        let failed: Vec<Failed> = failed
+            .into_iter()
+            .filter(|(id, _)| !settled.contains(id))
+            .map(|(_, failed)| failed)
+            .collect();
         Self {
+            resent_after,
+            files_now: files
+                .iter()
+                .map(|file| super::facts::file_now(&file.path, messages))
+                .collect(),
+            failed_settled: failed_settled - failed.len(),
+            worked: super::facts::worked_commands(messages),
+            calls: super::facts::last_calls(messages),
+            earlier: super::facts::earlier_summaries(messages),
+            earlier_left_out: 0,
             documents,
             tail_messages: 0,
             asked,
             work: work_folders(messages, sources.working_dir, &files),
             chat_folder: sources.working_dir.map(|dir| dir.display().to_string()),
             files,
-            failed: failed_of(messages),
+            failed,
             failed_left_out: 0,
             note: sources
                 .note
@@ -171,6 +223,11 @@ impl Pillars {
             return self;
         };
         while self.render().chars().count() > budget {
+            if self.earlier.len() > 1 {
+                self.earlier.remove(0);
+                self.earlier_left_out += 1;
+                continue;
+            }
             if !self.failed.is_empty() {
                 self.failed.remove(0);
                 self.failed_left_out += 1;
@@ -183,7 +240,56 @@ impl Pillars {
                     continue;
                 }
             }
+            if self.calls.len() > FIT_FLOOR_LINES {
+                self.calls.remove(0);
+                continue;
+            }
+            if self.worked.len() > FIT_FLOOR_LINES {
+                self.worked.remove(0);
+                continue;
+            }
+            if let Some(now) = self.files_now.iter_mut().find(|n| n.is_some()) {
+                *now = None;
+                continue;
+            }
+            // The person's middle messages are cut first: the first is the task and the newest
+            // the request at hand.
             let newest = self.asked.len().saturating_sub(1);
+            if let Some(middle) =
+                self.asked.iter().enumerate().position(|(i, a)| {
+                    i > 0 && i < newest && !a.cut && a.chars > RECORD_EXCERPT_CHARS
+                })
+            {
+                let entry = &mut self.asked[middle];
+                entry.text = excerpt(&entry.text);
+                entry.cut = true;
+                continue;
+            }
+            if let Some(earlier) = self.earlier.last_mut() {
+                if earlier.chars().count() > EARLIER_EXCERPT_CHARS {
+                    *earlier = format!(
+                        "{}… (cut to fit)",
+                        earlier
+                            .chars()
+                            .take(EARLIER_EXCERPT_CHARS)
+                            .collect::<String>()
+                    );
+                    continue;
+                }
+            }
+            if !self.calls.is_empty() {
+                self.calls.remove(0);
+                continue;
+            }
+            if !self.worked.is_empty() {
+                self.worked.remove(0);
+                continue;
+            }
+            if !self.earlier.is_empty() {
+                self.earlier.remove(0);
+                self.earlier_left_out += 1;
+                continue;
+            }
             let Some(oldest_whole) = self.asked[..newest]
                 .iter()
                 .position(|a| !a.cut && a.chars > RECORD_EXCERPT_CHARS)
@@ -220,6 +326,22 @@ impl Pillars {
                 document.left_out = true;
             }
         }
+        // The files left out keep their binding lines, while they fit.
+        for i in 0..self.documents.len() {
+            if !self.documents[i].left_out || self.documents[i].chars > MAX_KEY_LINE_SOURCE_BYTES {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&self.documents[i].path) else {
+                continue;
+            };
+            for line in key_lines(&text) {
+                self.documents[i].key_lines.push(line);
+                if self.render().chars().count() > budget {
+                    self.documents[i].key_lines.pop();
+                    break;
+                }
+            }
+        }
     }
 
     /// The `<kept-by-goose>` block stored after the model's summary.
@@ -228,6 +350,25 @@ impl Pillars {
             "{KEPT_OPEN}\ngoose kept these word for word from the whole conversation — facts, not \
              a paraphrase.\n"
         );
+        if !self.earlier.is_empty() || self.earlier_left_out > 0 {
+            out.push_str(&format!(
+                "\n## The summaries earlier compactions stored ({}, oldest first; the work went on after each)\n",
+                self.earlier.len() + self.earlier_left_out
+            ));
+            if self.earlier_left_out > 0 {
+                out.push_str(&format!(
+                    "({} older summaries are not listed here)\n",
+                    self.earlier_left_out
+                ));
+            }
+            for (i, earlier) in self.earlier.iter().enumerate() {
+                out.push_str(&format!(
+                    "### Earlier summary {}\n{}\n",
+                    i + 1,
+                    earlier.trim()
+                ));
+            }
+        }
         for pillar in Pillar::ALL {
             out.push_str(&self.section(pillar));
         }
@@ -239,11 +380,14 @@ impl Pillars {
     pub fn section(&self, pillar: Pillar) -> String {
         let mut out = String::new();
         match pillar {
-            Pillar::Asked if !self.asked.is_empty() => {
+            Pillar::Asked if !self.asked.is_empty() || self.resent_after => {
                 out.push_str(&format!(
                     "\n## The person's messages ({}, oldest first)\n",
-                    self.asked.len()
+                    self.asked.len() + usize::from(self.resent_after)
                 ));
+                if self.resent_after {
+                    out.push_str("(the newest is re-sent word for word right after this block)\n");
+                }
                 for (i, asked) in self.asked.iter().enumerate() {
                     let mut lines = asked.text.lines();
                     out.push_str(&format!("[{}] {}\n", i + 1, lines.next().unwrap_or("")));
@@ -274,8 +418,11 @@ impl Pillars {
                 }
                 if !self.files.is_empty() {
                     out.push_str(&format!("\n## Files written ({})\n", self.files.len()));
-                    for file in &self.files {
+                    for (i, file) in self.files.iter().enumerate() {
                         out.push_str(&format!("- {}\n", file_line(&file.path, file)));
+                        if let Some(Some(now)) = self.files_now.get(i) {
+                            out.push_str(&format!("    {}\n", now.line()));
+                        }
                     }
                 }
                 if !self.documents.is_empty() {
@@ -290,6 +437,12 @@ impl Pillars {
                                  lines you need)\n",
                                 document.path, document.chars
                             ));
+                            if !document.key_lines.is_empty() {
+                                out.push_str("Its headings and binding lines, word for word:\n");
+                                for line in &document.key_lines {
+                                    out.push_str(&format!("  {line}\n"));
+                                }
+                            }
                         } else {
                             out.push_str(&format!(
                                 "### {}\n{}\n",
@@ -300,19 +453,48 @@ impl Pillars {
                     }
                 }
             }
-            Pillar::Failed if !self.failed.is_empty() || self.failed_left_out > 0 => {
-                out.push_str(&format!(
-                    "\n## Tool calls that failed ({})\n",
-                    self.failed.len() + self.failed_left_out
-                ));
-                if self.failed_left_out > 0 {
+            Pillar::Failed
+                if !self.failed.is_empty()
+                    || self.failed_left_out > 0
+                    || self.failed_settled > 0
+                    || !self.worked.is_empty()
+                    || !self.calls.is_empty() =>
+            {
+                if !self.failed.is_empty() || self.failed_left_out > 0 || self.failed_settled > 0 {
                     out.push_str(&format!(
-                        "({} earlier failed calls are not listed here)\n",
-                        self.failed_left_out
+                        "\n## Errors still open ({})\n",
+                        self.failed.len() + self.failed_left_out
                     ));
+                    if self.failed_settled > 0 {
+                        out.push_str(&format!(
+                            "({} earlier failed calls were settled: the same call succeeded later)\n",
+                            self.failed_settled
+                        ));
+                    }
+                    if self.failed_left_out > 0 {
+                        out.push_str(&format!(
+                            "({} earlier open errors are not listed here)\n",
+                            self.failed_left_out
+                        ));
+                    }
+                    for failed in &self.failed {
+                        out.push_str(&format!("- {}\n", failed_line(failed)));
+                    }
                 }
-                for failed in &self.failed {
-                    out.push_str(&format!("- {}\n", failed_line(failed)));
+                if !self.worked.is_empty() {
+                    out.push_str("\n## Commands that worked (exit 0, newest last)\n");
+                    for command in &self.worked {
+                        out.push_str(&format!("- {command}\n"));
+                    }
+                }
+                if !self.calls.is_empty() {
+                    out.push_str(&format!(
+                        "\n## The last {} tool calls (oldest first)\n",
+                        self.calls.len()
+                    ));
+                    for call in &self.calls {
+                        out.push_str(&format!("- {call}\n"));
+                    }
                 }
             }
             Pillar::Notes if self.note.is_some() || !self.pins.is_empty() => {
@@ -427,11 +609,32 @@ impl Pillars {
                 counted(self.tail_messages, "message", "messages")
             ));
         }
+        if self.files_now.iter().any(Option::is_some) {
+            lines.push("what each written file defines now, and its size".to_string());
+        }
         let failed = self.failed.len() + self.failed_left_out;
         if failed > 0 {
             lines.push(format!(
-                "the {} that failed, with the errors",
+                "the {} still failing, with the errors",
                 counted(failed, "tool call", "tool calls")
+            ));
+        }
+        if !self.worked.is_empty() {
+            lines.push(format!(
+                "the {} that worked",
+                counted(self.worked.len(), "command", "commands")
+            ));
+        }
+        if !self.calls.is_empty() {
+            lines.push(format!(
+                "the newest {} with their outcome",
+                counted(self.calls.len(), "tool call", "tool calls")
+            ));
+        }
+        if !self.earlier.is_empty() {
+            lines.push(format!(
+                "the {} earlier compactions stored, word for word",
+                counted(self.earlier.len(), "summary", "summaries")
             ));
         }
         match (self.note.is_some(), self.pins.len()) {
@@ -484,6 +687,33 @@ fn document_line(document: &Document) -> String {
     }
 }
 
+/// bytes: the largest named file whose binding lines are read when it is not kept whole.
+const MAX_KEY_LINE_SOURCE_BYTES: usize = 1024 * 1024;
+
+/// Words that make a line of a brief binding.
+const BINDING_WORDS: [&str; 7] = [
+    "must", "never", "always", "only", "required", "shall", "exactly",
+];
+
+/// A document's headings and binding lines, in order, each once and cut to a line's length.
+fn key_lines(text: &str) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let heading = line.starts_with('#');
+        let binding = line
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|word| BINDING_WORDS.contains(&word.to_lowercase().as_str()));
+        if !(heading || binding) {
+            continue;
+        }
+        let line = super::facts::clip(line, super::facts::LINE_CHARS);
+        if !lines.contains(&line) {
+            lines.push(line);
+        }
+    }
+    lines
+}
+
 /// bytes: the largest named file whose text the kept block carries; a bigger one is named by its
 /// path and size only. A task's documents run to a few thousand words (the Flash-Next run's
 /// `SB7-CONTRACT.md`, `BROWSER-TESTING.md`); a file past 64 KiB is data, not a brief.
@@ -531,6 +761,12 @@ const SECRET_NAME_PARTS: [&str; 34] = [
 ];
 
 /// Whether a path under the chat's folder names a secret-holding file (see [`SECRET_NAME_PARTS`]).
+/// Whether a written file's path looks like a secret's ([`is_secret_like`] on its whole path):
+/// its text is then never read for the facts.
+pub(crate) fn is_secret_like_path(path: &Path) -> bool {
+    is_secret_like(path)
+}
+
 fn is_secret_like(inside: &Path) -> bool {
     inside.components().any(|component| {
         component
@@ -633,6 +869,7 @@ fn named_documents(
                 text: String::new(),
                 chars: meta.len() as usize,
                 left_out: true,
+                key_lines: Vec::new(),
             });
         }
     }
@@ -925,7 +1162,7 @@ fn asked_of(messages: &[Message]) -> Vec<Asked> {
 
 /// P3: every call whose result is an error or says it failed, with its tool, its arguments cut
 /// as `record_tool_call` cuts them, and excerpts of its own output.
-fn failed_of(messages: &[Message]) -> Vec<Failed> {
+fn failed_of(messages: &[Message]) -> Vec<(String, Failed)> {
     let requests: Vec<&crate::conversation::message::ToolRequest> = messages
         .iter()
         .flat_map(|m| m.content.iter())
@@ -944,7 +1181,17 @@ fn failed_of(messages: &[Message]) -> Vec<Failed> {
         })
     {
         let (outcome, output) = match &response.tool_result {
-            Ok(result) if result.is_error == Some(true) => outcome_and_output(result),
+            Ok(result)
+                if result.is_error == Some(true)
+                    || result
+                        .structured_content
+                        .as_ref()
+                        .and_then(|s| s.get("exit_code"))
+                        .and_then(serde_json::Value::as_i64)
+                        .is_some_and(|code| code != 0) =>
+            {
+                outcome_and_output(result)
+            }
             Ok(_) => continue,
             Err(e) => (
                 format!("failed: {}", super::quoted(&excerpt(&e.message))),
@@ -965,11 +1212,14 @@ fn failed_of(messages: &[Message]) -> Vec<Failed> {
             },
             None => "A tool call whose request is no longer in the conversation".to_string(),
         };
-        failed.push(Failed {
-            call,
-            outcome,
-            output,
-        });
+        failed.push((
+            response.id.clone(),
+            Failed {
+                call,
+                outcome,
+                output,
+            },
+        ));
     }
     failed
 }
@@ -1177,8 +1427,17 @@ pub fn written_sections(text: &str) -> Vec<(usize, String)> {
 }
 
 /// The stored summary: the model's text, its scratch gone, then the kept block.
-pub fn stored_summary(model_text: &str, kept: &Pillars) -> String {
+pub fn stored_summary(model_text: &str, kept: &Pillars, flag: Option<&str>) -> String {
     let written = strip_scratch(model_text);
+    let written = match flag {
+        Some(why) => format!(
+            "{FLAG_LEAD}: {why}. What follows is the model's answer as written; the facts in the \
+             kept block below are goose's own — trust them over it, and read a file again before \
+             relying on what it holds.]\n\n{written}"
+        ),
+        None => written,
+    };
+    let written = written.trim();
     if written.is_empty() {
         kept.render()
     } else {
@@ -1277,7 +1536,7 @@ mod tests {
             block.contains("## Files written (1)\n- /w/plan.js — created, +1 −0 lines, 1 write\n")
         );
         assert!(block.contains(
-            "## Tool calls that failed (1)\n- shell {\"command\":\"node plan.js\"} failed (exit 1). \
+            "## Errors still open (1)\n- shell {\"command\":\"node plan.js\"} failed (exit 1). \
              Output: \"SyntaxError: Unexpected token\"\n"
         ));
         assert!(block
@@ -1372,7 +1631,7 @@ mod tests {
         assert!(
             block.contains(&format!(
                 "## Files written (2)\n- {WORK}/scripts/build_report.js — created, +1 −0 lines, 1 \
-                 write\n- {WORK}/lib/identityRules.js — created"
+                 write\n"
             )),
             "{block}"
         );
@@ -1468,7 +1727,10 @@ mod tests {
     #[test]
     fn the_block_fits_its_budget_in_order_and_says_what_it_cut() {
         let long = "x".repeat(4 * RECORD_EXCERPT_CHARS);
-        let mut messages = vec![Message::user().with_text(&long)];
+        let mut messages = vec![
+            Message::user().with_text("the task"),
+            Message::user().with_text(&long),
+        ];
         messages.extend(chat());
         let kept = Pillars::build(
             &messages,
@@ -1485,11 +1747,12 @@ mod tests {
         assert_eq!(without_errors.ledger_left_out, 0);
         assert!(without_errors
             .render()
-            .contains("(1 earlier failed calls are not listed here)"));
+            .contains("(1 earlier open errors are not listed here)"));
 
         let tight = kept.clone().fit(Some(whole - 2 * RECORD_EXCERPT_CHARS));
         assert_eq!(tight.ledger_left_out, 2);
-        assert!(tight.asked[0].cut && tight.asked[0].chars == long.chars().count());
+        assert!(!tight.asked[0].cut, "the task stays whole");
+        assert!(tight.asked[1].cut && tight.asked[1].chars == long.chars().count());
         assert!(
             !tight.asked.last().unwrap().cut,
             "the newest message stays whole"
@@ -1586,7 +1849,11 @@ mod tests {
     #[test]
     fn the_stored_summary_is_the_model_part_then_the_kept_block() {
         let kept = Pillars::build(&chat(), &KeptSources::default(), entries(&[]));
-        let stored = stored_summary("<analysis>a</analysis>NOTE OK\n## Where we are\nx", &kept);
+        let stored = stored_summary(
+            "<analysis>a</analysis>NOTE OK\n## Where we are\nx",
+            &kept,
+            None,
+        );
         assert_eq!(model_part(&stored), "## Where we are\nx");
         assert!(stored.ends_with(&kept.render()));
     }
@@ -1729,6 +1996,41 @@ mod tests {
         let tight = build(Some(kept.render().chars().count() - 5));
         assert!(tight.documents[0].left_out && !tight.render().contains("sync 12,288"));
         assert!(build(None).documents[0].left_out);
+    }
+
+    /// Round 4: a named contract too big to keep whole keeps its headings and binding lines while
+    /// they fit — every real-model summary of the Flash-Next run missed that framing "must go
+    /// through the camera", a rule its contract carried.
+    #[test]
+    fn a_named_file_left_out_keeps_its_binding_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let filler: String = (0..400)
+            .map(|i| format!("Line {i} describes the field in some detail.\n"))
+            .collect();
+        std::fs::write(
+            dir.path().join("VISUAL-CONTRACT.md"),
+            format!("# Visual contract\n{filler}Framing MUST go through the camera, never the layout.\n{filler}"),
+        )
+        .unwrap();
+        let asked = Message::user().with_text("VISUAL-CONTRACT.md amends the 3D field");
+        let kept = Pillars::build(
+            std::slice::from_ref(&asked),
+            &KeptSources {
+                working_dir: Some(dir.path()),
+                ..Default::default()
+            },
+            LedgerRead::Entries(Vec::new()),
+        )
+        .fit(Some(2_000));
+        assert!(kept.documents[0].left_out);
+        let rendered = kept.render();
+        assert!(
+            rendered.contains("  # Visual contract\n")
+                && rendered.contains("  Framing MUST go through the camera, never the layout.\n"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("Line 7 describes"), "{rendered}");
+        assert!(rendered.chars().count() <= 2_000);
     }
 
     /// Defect 7 (review 2026-10-30): only dot-paths were skipped, so a named `prod.env`,

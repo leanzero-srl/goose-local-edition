@@ -18,6 +18,25 @@ const PROP_KEY: usize = 3;
 const ENUM_INIT: isize = -3;
 const ENUM_ITEM: usize = 3;
 const FUNC_END: usize = 12;
+const TOKENS_PER_MESSAGE: usize = 4;
+const REPLY_PRIMER_TOKENS: usize = 3;
+
+/// One message's tokens as part of a conversation ([`TokenCounter::message_costs`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MessageCost {
+    /// What the message adds to the request after the messages before it.
+    pub tokens: usize,
+    /// Reasoning it repeats from the row before it, which the request sends once: counted only
+    /// when a run of rows opens on this message.
+    pub repeated_reasoning: usize,
+}
+
+/// The tokens of the rows `costs[start..]` sent as their own run of messages: their costs, and
+/// the reasoning the first of them repeats from a row the run leaves out.
+pub fn run_tokens(costs: &[MessageCost], start: usize) -> usize {
+    costs[start..].iter().map(|c| c.tokens).sum::<usize>()
+        + costs.get(start).map_or(0, |c| c.repeated_reasoning)
+}
 
 // ratio: pixels per image token — Anthropic's published cost of an image is width x height / 750;
 // Qwen-VL's 28x28-pixel merged patches cost width x height / 784, within 5% of it. Before
@@ -160,22 +179,49 @@ impl TokenCounter {
         messages: &[Message],
         tools: &[Tool],
     ) -> usize {
-        let tokens_per_message = 4;
         let mut num_tokens = 0;
 
         if !system_prompt.is_empty() {
-            num_tokens += self.count_tokens(system_prompt) + tokens_per_message;
+            num_tokens += self.count_tokens(system_prompt) + TOKENS_PER_MESSAGE;
         }
 
-        // The reasoning of the newest assistant tool-call row while only its tool results follow:
-        // the agent stores one answer with N tool calls as N rows, each carrying the answer's
-        // reasoning, and the request formatter sends it once (`merge_split_tool_call_messages`).
-        // Counted per row, the stopped Flash-Next run's 223 rows were 278,867 tokens here and
-        // 239,237 at the engine (its own template and tokenizer): 16 rows repeated 177,693 chars
-        // of reasoning.
+        num_tokens += self
+            .message_costs(messages)
+            .iter()
+            .map(|cost| cost.tokens)
+            .sum::<usize>();
+
+        if !tools.is_empty() {
+            num_tokens += self.count_tokens_for_tools(tools);
+        }
+
+        num_tokens += REPLY_PRIMER_TOKENS;
+
+        num_tokens
+    }
+
+    /// Each message's tokens as part of `messages` — the ONE per-row count every caller uses, so a
+    /// sum over any of its rows agrees with [`Self::count_chat_tokens`] of the whole. A message
+    /// the agent cannot see costs 0.
+    ///
+    /// The reasoning of the newest assistant tool-call row while only its tool results follow:
+    /// the agent stores one answer with N tool calls as N rows, each carrying the answer's
+    /// reasoning, and the request formatter sends it once (`merge_split_tool_call_messages`).
+    /// Counted per row, the stopped Flash-Next run's 223 rows were 278,867 tokens here and
+    /// 239,237 at the engine (its own template and tokenizer): 16 rows repeated 177,693 chars
+    /// of reasoning. Before 2026-10-30 (round 4) the compaction guard and the kept tail counted
+    /// each message ALONE, so this never fired there: the guard read the 223 rows as 277-281k
+    /// and compacted ~14% early.
+    ///
+    /// A row whose reasoning repeats the row before it costs that reasoning in
+    /// [`MessageCost::repeated_reasoning`], not in `tokens`: a run of rows that OPENS on it (a
+    /// kept tail cut between the split rows) is sent with it, and adds it back.
+    pub fn message_costs(&self, messages: &[Message]) -> Vec<MessageCost> {
         let mut split_reasoning: Option<String> = None;
+        let mut costs = Vec::with_capacity(messages.len());
         for message in messages {
             if !message.metadata.agent_visible {
+                costs.push(MessageCost::default());
                 continue;
             }
             let reasoning: String = message
@@ -211,7 +257,8 @@ impl TokenCounter {
             } else if !only_tool_results {
                 split_reasoning = None;
             }
-            num_tokens += tokens_per_message;
+            let mut num_tokens = TOKENS_PER_MESSAGE;
+            let mut repeated_reasoning = 0;
             for content in &message.content {
                 if let Some(content_text) = content.as_text() {
                     num_tokens += self.count_tokens(content_text);
@@ -246,20 +293,19 @@ impl TokenCounter {
                     // `reasoning_content` (Qwen's templates keep it): the Flash-Next stopped run's
                     // 224 messages were 239,628 prompt tokens at the engine and 112,754 here
                     // while reasoning counted nothing (692k chars of it).
-                    if !repeats_reasoning {
+                    if repeats_reasoning {
+                        repeated_reasoning += self.count_tokens(&thinking.thinking);
+                    } else {
                         num_tokens += self.count_tokens(&thinking.thinking);
                     }
                 }
             }
+            costs.push(MessageCost {
+                tokens: num_tokens,
+                repeated_reasoning,
+            });
         }
-
-        if !tools.is_empty() {
-            num_tokens += self.count_tokens_for_tools(tools);
-        }
-
-        num_tokens += 3; // Reply primer
-
-        num_tokens
+        costs
     }
 
     pub fn count_everything(
