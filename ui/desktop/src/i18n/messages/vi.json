@@ -176,6 +176,12 @@
   "alertBox.autoCompactAt": {
     "defaultMessage": "Tự động nén tại"
   },
+  "alertBox.autoCompactReserve": {
+    "defaultMessage": "Tự động nén khi gần đầy (không trước {floor}%)"
+  },
+  "alertBox.autoCompactReserveHint": {
+    "defaultMessage": "Chưa đặt tỷ lệ phần trăm nên goose nén khi ngữ cảnh chỉ còn đủ chỗ cho câu trả lời tiếp theo và một kết quả công cụ, và không bao giờ trước {floor}%. Đặt tỷ lệ phần trăm để nén tại một điểm cố định."
+  },
   "alertBox.compactNow": {
     "defaultMessage": "Nén ngay"
   },

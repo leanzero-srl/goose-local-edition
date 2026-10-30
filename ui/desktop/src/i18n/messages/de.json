@@ -176,6 +176,12 @@
   "alertBox.autoCompactAt": {
     "defaultMessage": "Automatisch verdichten bei"
   },
+  "alertBox.autoCompactReserve": {
+    "defaultMessage": "Automatisch verdichten kurz vor voll (nicht vor {floor} %)"
+  },
+  "alertBox.autoCompactReserveHint": {
+    "defaultMessage": "Es ist kein Prozentsatz festgelegt. goose verdichtet daher, wenn im Kontext nur noch Platz für die nächste Antwort und ein Tool-Ergebnis bleibt, und nie vor {floor} %. Lege einen Prozentsatz fest, um an einem festen Punkt zu verdichten."
+  },
   "alertBox.compactNow": {
     "defaultMessage": "Jetzt verdichten"
   },

@@ -176,6 +176,12 @@
   "alertBox.autoCompactAt": {
     "defaultMessage": "Otomatik sıkıştırma eşiği"
   },
+  "alertBox.autoCompactReserve": {
+    "defaultMessage": "Neredeyse dolunca otomatik sıkıştır (%{floor} öncesinde değil)"
+  },
+  "alertBox.autoCompactReserveHint": {
+    "defaultMessage": "Yüzde ayarlanmadığı için goose, bağlamda yalnızca bir sonraki yanıt ve bir araç sonucu için yer kaldığında sıkıştırır; %{floor} öncesinde asla sıkıştırmaz. Sabit bir noktada sıkıştırmak için bir yüzde ayarlayın."
+  },
   "alertBox.compactNow": {
     "defaultMessage": "Şimdi sıkıştır"
   },

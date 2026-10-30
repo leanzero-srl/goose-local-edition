@@ -176,6 +176,12 @@
   "alertBox.autoCompactAt": {
     "defaultMessage": "Автосжимать при"
   },
+  "alertBox.autoCompactReserve": {
+    "defaultMessage": "Автосжатие почти при заполнении (не раньше {floor}%)"
+  },
+  "alertBox.autoCompactReserveHint": {
+    "defaultMessage": "Процент не задан, поэтому goose сжимает контекст, когда в нём остаётся место только для следующего ответа и одного результата инструмента, и никогда раньше {floor}%. Задайте процент, чтобы сжимать в фиксированной точке."
+  },
   "alertBox.compactNow": {
     "defaultMessage": "Сжать сейчас"
   },

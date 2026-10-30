@@ -176,6 +176,12 @@
   "alertBox.autoCompactAt": {
     "defaultMessage": "Padatkan automatik pada"
   },
+  "alertBox.autoCompactReserve": {
+    "defaultMessage": "Mampat automatik apabila hampir penuh (bukan sebelum {floor}%)"
+  },
+  "alertBox.autoCompactReserveHint": {
+    "defaultMessage": "Tiada peratusan ditetapkan, jadi goose memampatkan apabila konteks hanya meninggalkan ruang untuk jawapan seterusnya dan satu hasil alat, dan tidak sekali-kali sebelum {floor}%. Tetapkan peratusan untuk memampatkan pada titik tetap."
+  },
   "alertBox.compactNow": {
     "defaultMessage": "Padatkan sekarang"
   },

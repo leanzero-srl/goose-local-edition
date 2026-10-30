@@ -176,6 +176,12 @@
   "alertBox.autoCompactAt": {
     "defaultMessage": "Auto compact at"
   },
+  "alertBox.autoCompactReserve": {
+    "defaultMessage": "Auto compact near full (not before {floor}%)"
+  },
+  "alertBox.autoCompactReserveHint": {
+    "defaultMessage": "No percentage is set, so goose compacts when the context leaves only enough room for the next answer and one tool result, and never before {floor}%. Set a percentage to compact at a fixed point instead."
+  },
   "alertBox.compactNow": {
     "defaultMessage": "Compact now"
   },

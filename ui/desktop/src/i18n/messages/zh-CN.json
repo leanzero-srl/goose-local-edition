@@ -176,6 +176,12 @@
   "alertBox.autoCompactAt": {
     "defaultMessage": "自动压缩阈值"
   },
+  "alertBox.autoCompactReserve": {
+    "defaultMessage": "接近满时自动压缩（不早于 {floor}%）"
+  },
+  "alertBox.autoCompactReserveHint": {
+    "defaultMessage": "未设置百分比，因此当上下文只剩下容纳下一次回答和一个工具结果的空间时，goose 会进行压缩，且绝不早于 {floor}%。设置百分比可在固定位置压缩。"
+  },
   "alertBox.compactNow": {
     "defaultMessage": "立即压缩"
   },

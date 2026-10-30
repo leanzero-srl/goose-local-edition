@@ -176,6 +176,12 @@
   "alertBox.autoCompactAt": {
     "defaultMessage": "ऑटो कॉम्पैक्ट पर"
   },
+  "alertBox.autoCompactReserve": {
+    "defaultMessage": "लगभग भरने पर स्वतः संक्षिप्त करें ({floor}% से पहले नहीं)"
+  },
+  "alertBox.autoCompactReserveHint": {
+    "defaultMessage": "कोई प्रतिशत सेट नहीं है, इसलिए goose तब संक्षिप्त करता है जब संदर्भ में केवल अगले उत्तर और एक टूल परिणाम के लिए जगह बचती है, और {floor}% से पहले कभी नहीं। किसी निश्चित बिंदु पर संक्षिप्त करने के लिए प्रतिशत सेट करें।"
+  },
   "alertBox.compactNow": {
     "defaultMessage": "अब संक्षिप्त करें"
   },

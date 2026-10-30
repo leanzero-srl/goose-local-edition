@@ -176,6 +176,12 @@
   "alertBox.autoCompactAt": {
     "defaultMessage": "Padatkan otomatis pada"
   },
+  "alertBox.autoCompactReserve": {
+    "defaultMessage": "Ringkas otomatis saat hampir penuh (tidak sebelum {floor}%)"
+  },
+  "alertBox.autoCompactReserveHint": {
+    "defaultMessage": "Tidak ada persentase yang diatur, jadi goose meringkas saat konteks hanya menyisakan ruang untuk jawaban berikutnya dan satu hasil alat, dan tidak pernah sebelum {floor}%. Atur persentase untuk meringkas pada titik tetap."
+  },
   "alertBox.compactNow": {
     "defaultMessage": "Padatkan sekarang"
   },

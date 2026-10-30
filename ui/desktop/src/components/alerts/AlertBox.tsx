@@ -25,6 +25,18 @@ const i18n = defineMessages({
     id: 'alertBox.autoCompactAt',
     defaultMessage: 'Auto compact at',
   },
+  // With no percentage set the point is the window minus a reserve (the next answer at the
+  // model's output cap plus one tool result), never before 80% — context_mgmt
+  // compaction_threshold_from. 80% is only the floor, so the label must not say "at 80%".
+  autoCompactReserve: {
+    id: 'alertBox.autoCompactReserve',
+    defaultMessage: 'Auto compact near full (not before {floor}%)',
+  },
+  autoCompactReserveHint: {
+    id: 'alertBox.autoCompactReserveHint',
+    defaultMessage:
+      'No percentage is set, so goose compacts when the context leaves only enough room for the next answer and one tool result, and never before {floor}%. Set a percentage to compact at a fixed point instead.',
+  },
   compactNow: {
     id: 'alertBox.compactNow',
     defaultMessage: 'Compact now',
@@ -62,6 +74,9 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
   const { read, upsert } = useConfig();
   const [isEditingThreshold, setIsEditingThreshold] = useState(false);
   const [loadedThreshold, setLoadedThreshold] = useState<number>(0.8);
+  // False until a percentage is read from config or saved: without one the engine uses the
+  // reserve-based point and 0.8 is only its floor.
+  const [thresholdIsSet, setThresholdIsSet] = useState(false);
   const [thresholdValue, setThresholdValue] = useState(80);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -72,6 +87,7 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
         const threshold = await read('GOOSE_AUTO_COMPACT_THRESHOLD', false);
         if (threshold !== undefined && threshold !== null && typeof threshold === 'number') {
           setLoadedThreshold(threshold);
+          setThresholdIsSet(true);
           setThresholdValue(Math.max(1, Math.round(threshold * 100)));
         }
       } catch (err) {
@@ -100,6 +116,7 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
 
       setIsEditingThreshold(false);
       setLoadedThreshold(newThreshold);
+      setThresholdIsSet(true);
       setSaveError(null);
 
       // Notify parent component of the threshold change
@@ -210,9 +227,23 @@ export const AlertBox = ({ alert, className }: AlertBoxProps) => {
               </>
             ) : (
               <>
-                <span className="text-[10px]">
-                  {intl.formatMessage(i18n.autoCompactAt)} {Math.round(currentThreshold * 100)}%
-                </span>
+                {thresholdIsSet ? (
+                  <span className="text-[10px]">
+                    {intl.formatMessage(i18n.autoCompactAt)} {Math.round(currentThreshold * 100)}%
+                  </span>
+                ) : (
+                  <span
+                    className="text-[10px]"
+                    data-testid="alert-threshold-reserve"
+                    title={intl.formatMessage(i18n.autoCompactReserveHint, {
+                      floor: Math.round(currentThreshold * 100),
+                    })}
+                  >
+                    {intl.formatMessage(i18n.autoCompactReserve, {
+                      floor: Math.round(currentThreshold * 100),
+                    })}
+                  </span>
+                )}
                 <button
                   type="button"
                   aria-label={intl.formatMessage(i18n.editThreshold)}

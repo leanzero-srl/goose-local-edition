@@ -176,6 +176,12 @@
   "alertBox.autoCompactAt": {
     "defaultMessage": "Compactação automática em"
   },
+  "alertBox.autoCompactReserve": {
+    "defaultMessage": "Compactar automaticamente quase cheio (não antes de {floor}%)"
+  },
+  "alertBox.autoCompactReserveHint": {
+    "defaultMessage": "Nenhuma porcentagem definida, então o goose compacta quando o contexto deixa espaço apenas para a próxima resposta e um resultado de ferramenta, e nunca antes de {floor}%. Defina uma porcentagem para compactar em um ponto fixo."
+  },
   "alertBox.compactNow": {
     "defaultMessage": "Compactar agora"
   },

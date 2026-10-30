@@ -176,6 +176,12 @@
   "alertBox.autoCompactAt": {
     "defaultMessage": "自動圧縮の実行タイミング"
   },
+  "alertBox.autoCompactReserve": {
+    "defaultMessage": "ほぼ満杯で自動圧縮（{floor}% より前には行わない）"
+  },
+  "alertBox.autoCompactReserveHint": {
+    "defaultMessage": "割合が設定されていないため、goose は次の回答と 1 件のツール結果の分だけ余地が残った時点で圧縮します。{floor}% より前には圧縮しません。固定の位置で圧縮するには割合を設定してください。"
+  },
   "alertBox.compactNow": {
     "defaultMessage": "今すぐ圧縮"
   },
