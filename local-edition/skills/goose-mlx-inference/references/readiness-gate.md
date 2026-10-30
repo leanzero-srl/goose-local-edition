@@ -114,6 +114,11 @@ Write the answers into the run's NOTES.md / parity file. A step that cannot pass
       macOS frees it. The engine's own memory outside Metal (Python, token buffers) IS counted
       (`others_engine_non_metal_bytes`), because it is really held. Mule mid-Gauntlet 2026-10-30: used 119.5 GB =
       wired 102.0 + anonymous 16.5 + compressor 1.4, file cache 19.5 GB left out, others 22 GB.
+   c2. What raising `iogpu.wired_limit_mb` buys is min(0.97 x new working set, floor room) - today's cap: on the mule
+      (2026-10-30, lz.20 boot with Flash-Next) floor room = 137.4 - others 19.6 idle (22 under a Gauntlet) - floor 7
+      = 110.9 GB < the 112.0 GB cap, so at the default floor it buys 0 GB. With floor 4 GB it is 113.9 GB idle:
+      `sudo sysctl iogpu.wired_limit_mb=112000` (working set 117.4 GB, cap 113.9) buys +1.9 GB (~77k tokens at
+      24,576 B/token) only while others stay ~19.6 GB; any value above 112000 buys nothing more. Measure others first.
    d. The tunables (Settings > LeanZero MLX > Memory; config key `mlx_engine.memory.<key>` -> engine flag):
       | key | flag | default |
       |---|---|---|
