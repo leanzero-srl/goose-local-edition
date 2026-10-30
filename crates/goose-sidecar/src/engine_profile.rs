@@ -257,7 +257,7 @@ mod tests {
     fn every_older_pinned_tag_is_a_superseded_launcher() {
         let current: Vec<String> = ENGINE_LAUNCHER.iter().map(|s| s.to_string()).collect();
         for (tag, _) in PINNED_PROFILES {
-            if tag.starts_with("v9.9.9") {
+            if tag.starts_with("v9.9.9") || *tag == MEMORY_TUNABLES_BRANCH {
                 continue;
             }
             let l = launcher(tag);

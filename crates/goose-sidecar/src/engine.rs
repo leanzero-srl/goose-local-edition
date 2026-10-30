@@ -3183,6 +3183,40 @@ fn memory_tunables_fit_facts(
 
 #[cfg(test)]
 mod tests {
+    /// The argv without the per-machine default floor (`--memory-floor-gb round(5% x RAM)`), which
+    /// every lz.20 launch appends; golden argv tests compare the rest byte for byte, and
+    /// `the_default_floor_follows_this_macs_ram` pins the flag itself.
+    fn no_default_floor(argv: Vec<String>) -> Vec<String> {
+        let physical = crate::memory::measure().ok().map(|r| r.total_bytes);
+        let Some(gb) = physical.map(crate::memory_tunables::default_memory_floor_gb) else {
+            return argv;
+        };
+        let Some(i) = argv.iter().position(|a| a == "--memory-floor-gb") else {
+            return argv;
+        };
+        assert_eq!(argv[i + 1].parse::<f64>().ok(), Some(gb), "{argv:?}");
+        let mut out = argv[..i].to_vec();
+        out.extend_from_slice(&argv[i + 2..]);
+        out
+    }
+
+    #[test]
+    fn the_default_floor_follows_this_macs_ram() {
+        let settings = EngineSettings::default();
+        let dir = tempfile::tempdir().unwrap();
+        let mut settings = settings;
+        settings.models_dir = dir.path().to_string_lossy().into_owned();
+        std::fs::create_dir_all(dir.path().join("pub/model")).unwrap();
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        let physical = crate::memory::measure().unwrap().total_bytes;
+        let want = crate::memory_tunables::default_memory_floor_gb(physical);
+        let i = argv
+            .iter()
+            .position(|a| a == "--memory-floor-gb")
+            .expect("floor flag sent");
+        assert_eq!(argv[i + 1].parse::<f64>().unwrap(), want);
+    }
+
     #[test]
     fn the_mount_gate_reads_the_cap_and_a_floor_above_its_margin() {
         use crate::memory_tunables::MemoryTunables;
@@ -3710,8 +3744,9 @@ mod tests {
             )]),
             ..Default::default()
         };
-        let argv =
-            build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit", &[]).unwrap();
+        let argv = no_default_floor(
+            build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit", &[]).unwrap(),
+        );
         assert_eq!(
             argv,
             vec![
@@ -3744,6 +3779,8 @@ mod tests {
                 "0.25",
                 "--default-top-k",
                 "40",
+                "--max-model-len",
+                "32768",
             ]
         );
     }
@@ -3954,14 +3991,23 @@ mod tests {
             metal_limit_gb: Some(40.0),
             ..Default::default()
         });
-        s.spawn_command = EngineSettings::default().spawn_command;
+        s.spawn_command = SUPERSEDED_ENGINE_LAUNCHERS
+            .last()
+            .unwrap()
+            .iter()
+            .map(|a| a.to_string())
+            .collect();
         let e = build_serve_command(&s, "pub/model", &[]).unwrap_err();
         let e = format!("{e:#}");
         assert!(
             e.contains("metal_limit_gb need Rapid-MLX v0.14.3-lz.20"),
             "{e}"
         );
-        let plain = build_serve_command(&EngineSettings::default(), "pub/model", &[]).unwrap();
+        let old = EngineSettings {
+            spawn_command: s.spawn_command.clone(),
+            ..EngineSettings::default()
+        };
+        let plain = build_serve_command(&old, "pub/model", &[]).unwrap();
         assert!(!plain.iter().any(|a| a == "--memory-floor-gb"), "{plain:?}");
     }
 
@@ -4118,7 +4164,7 @@ mod tests {
     #[test]
     fn mtp_head_plus_vision_config_yields_speculative_config_with_the_dir_and_text_only() {
         let (root, settings) = model_dir_with(QWEN3_5_VISION_CONFIG, &[MTP_SIDECAR_FILE]);
-        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        let argv = no_default_floor(build_serve_command(&settings, "pub/model", &[]).unwrap());
         let dir = root.path().join("pub").join("model");
         let expected_json = format!(
             r#"{{"method":"mtp","model":"{}","num_speculative_tokens":3}}"#,
@@ -4137,15 +4183,17 @@ mod tests {
         assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
         assert!(!argv.iter().any(|a| a == "--adapter-path"), "{argv:?}");
         // The lane flags come AFTER the base argv, which is unchanged.
-        let base = build_serve_command(
-            &EngineSettings {
-                models_dir: settings.models_dir.clone(),
-                ..Default::default()
-            },
-            "pub/model",
-            &[],
-        )
-        .unwrap();
+        let base = no_default_floor(
+            build_serve_command(
+                &EngineSettings {
+                    models_dir: settings.models_dir.clone(),
+                    ..Default::default()
+                },
+                "pub/model",
+                &[],
+            )
+            .unwrap(),
+        );
         assert_eq!(&argv[..base.len() - 1], &base[..base.len() - 1]);
         assert_eq!(
             &argv[argv.len() - 3..],
@@ -4515,7 +4563,7 @@ mod tests {
     #[test]
     fn a_plain_model_dir_keeps_the_pre_lane_argv_byte_identical() {
         let (root, settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[]);
-        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        let argv = no_default_floor(build_serve_command(&settings, "pub/model", &[]).unwrap());
         let model_path = root.path().join("pub").join("model");
         assert_eq!(
             argv,
@@ -4587,7 +4635,7 @@ mod tests {
     #[test]
     fn a_kv_cache_choice_reaches_the_argv_as_the_engine_dtype_and_off_sends_nothing() {
         let (_root, mut settings) = model_dir_with(QWEN3_5_KV_CONFIG, &[]);
-        let off = build_serve_command(&settings, "pub/model", &[]).unwrap();
+        let off = no_default_floor(build_serve_command(&settings, "pub/model", &[]).unwrap());
         assert!(!off.iter().any(|a| a == "--kv-cache-dtype"), "{off:?}");
         for (mode, dtype) in [(KvCacheMode::Int8, "int8"), (KvCacheMode::Int4, "int4")] {
             settings.model_profiles.insert(
@@ -4597,7 +4645,7 @@ mod tests {
                     ..Default::default()
                 },
             );
-            let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
+            let argv = no_default_floor(build_serve_command(&settings, "pub/model", &[]).unwrap());
             assert_eq!(
                 flag_value(&argv, "--kv-cache-dtype").as_deref(),
                 Some(dtype)
