@@ -42,6 +42,7 @@ pub mod link_control;
 pub mod link_host;
 pub mod local_network;
 pub mod node_op;
+pub mod peer_tray;
 pub mod plan;
 pub mod preflight;
 pub mod probe;

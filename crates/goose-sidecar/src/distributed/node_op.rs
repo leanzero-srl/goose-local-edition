@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use super::config::{Backend, DistributedConfig, NodeConfig, Runner};
 use super::launch::RANK_MARKER;
+use super::peer_tray::{self, PeerTrayRecord};
 use super::provision::{EnvSpec, ENVS_DIR};
 use super::{compaction, preflight, probe, supervisor};
 
@@ -69,6 +70,10 @@ pub enum NodeOp {
     /// with Apple's `memory_pressure`, release it at once, report before/peak/after. A Link peer
     /// refuses it while any MLX engine runs there.
     Compact,
+    /// The controller's menu-bar status for the rank this node runs (`peer_tray`): written to
+    /// `$HOME/.goose/distributed/tray/rank-status.json`, where the node's own goose app reads it.
+    #[serde(rename_all = "camelCase")]
+    TrayStatus { record: PeerTrayRecord },
 }
 
 impl NodeOp {
@@ -81,6 +86,7 @@ impl NodeOp {
             NodeOp::PidRow { .. } => "pidRow",
             NodeOp::Signal { .. } => "signal",
             NodeOp::ProcessList => "processList",
+            NodeOp::TrayStatus { .. } => "trayStatus",
             NodeOp::Compact => "compact",
         }
     }
@@ -108,6 +114,7 @@ impl NodeOp {
             NodeOp::Signal { pid, signal } => format!("/bin/kill -{} {pid}", signal.name()),
             NodeOp::ProcessList => PROCESS_LIST_SCRIPT.to_string(),
             NodeOp::Compact => compaction::compaction_script(),
+            NodeOp::TrayStatus { record } => peer_tray::write_script(record)?,
         })
     }
 
@@ -152,6 +159,8 @@ impl NodeOp {
             },
             // A compaction's own guard (no engine on the node) is the peer's, checked against its
             // live process list right before it runs (`link_host`).
+            // A bounded file at a fixed path under the peer's own goose dir: nothing it names runs.
+            NodeOp::TrayStatus { record } => record.check(),
             NodeOp::Link { .. }
             | NodeOp::Sample { .. }
             | NodeOp::PidRow { .. }

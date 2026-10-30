@@ -79,6 +79,18 @@ import {
   benchTelemetryCandidates,
   readBenchCallBudget,
 } from './benchTrayTelemetry';
+import {
+  CONTROLLER_TRAY_FILE,
+  CONTROLLER_TRAY_HEARTBEAT_MS,
+  PEER_TRAY_DIR,
+  PEER_TRAY_POLL_MS,
+  RANK_STATUS_FILE,
+  controllerTrayPayload,
+  parsePeerTrayRecord,
+  peerTrayView,
+  type ControllerTrayPayload,
+  type PeerTrayView,
+} from './peerTray';
 import { hasScoredVerdict } from './benchSessions';
 import { cloudRunStarted } from './benchCloudEvidence';
 import { benchmarkPythonLaunch } from './benchPython';
@@ -1911,6 +1923,7 @@ const createTray = () => {
   try {
     tray = new Tray(iconPath);
     setTrayRef(tray);
+    startPeerTray();
     updateTrayMenu(getUpdateAvailable());
     lastMlxTrayMenu = '';
     renderMlxTray(mlxMonitor.current());
@@ -2878,6 +2891,100 @@ const benchTrayMenuItems = (): MenuItemConstructorOptions[] => {
   return items;
 };
 
+// A distributed run's status on every Mac taking part (peerTray.ts). As CONTROLLER this main writes
+// the title it sets, which goosed's supervisor relays to each peer; as PEER it reads the record the
+// relay wrote and shows the same title with its rank. A peer without a running app has no tray and
+// nothing here runs there — the record just waits on disk until it expires.
+const peerTrayDir = () => path.join(os.homedir(), ...PEER_TRAY_DIR);
+let controllerTray: ControllerTrayPayload | null = null;
+let controllerTrayWritten = false;
+let controllerTrayHeartbeat: ReturnType<typeof setInterval> | null = null;
+const writeControllerTray = async () => {
+  const file = path.join(peerTrayDir(), CONTROLLER_TRAY_FILE);
+  try {
+    if (!controllerTray) {
+      if (!controllerTrayWritten) return;
+      controllerTrayWritten = false;
+      await fs.rm(file, { force: true });
+      return;
+    }
+    await fs.mkdir(peerTrayDir(), { recursive: true });
+    const tmp = `${file}.${process.pid}`;
+    await fs.writeFile(tmp, JSON.stringify({ ...controllerTray, updatedMs: Date.now() }));
+    await fs.rename(tmp, file);
+    controllerTrayWritten = true;
+  } catch (error) {
+    console.warn('[Main] The distributed tray status for peers could not be written:', error);
+  }
+};
+const publishControllerTray = (title: string, lines: string[], active: boolean) => {
+  const next = controllerTrayPayload(title, lines, active, Date.now());
+  const changed =
+    (next == null) !== (controllerTray == null) ||
+    (next != null &&
+      controllerTray != null &&
+      (next.title !== controllerTray.title || next.lines.join('\n') !== controllerTray.lines.join('\n')));
+  controllerTray = next;
+  if (next && !controllerTrayHeartbeat) {
+    controllerTrayHeartbeat = setInterval(() => void writeControllerTray(), CONTROLLER_TRAY_HEARTBEAT_MS);
+  } else if (!next && controllerTrayHeartbeat) {
+    clearInterval(controllerTrayHeartbeat);
+    controllerTrayHeartbeat = null;
+  }
+  if (changed) void writeControllerTray();
+};
+
+let peerTray: PeerTrayView | null = null;
+let peerTrayKey = '';
+let peerRankGoneSinceMs: number | null = null;
+let peerTrayPoller: ReturnType<typeof setInterval> | null = null;
+const rankPidAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+};
+const pollPeerTray = async () => {
+  const file = path.join(peerTrayDir(), RANK_STATUS_FILE);
+  let text: string | null = null;
+  try {
+    text = await fs.readFile(file, 'utf8');
+  } catch {
+    text = null;
+  }
+  const record = text == null ? null : parsePeerTrayRecord(text);
+  let view: PeerTrayView | null = null;
+  if (record) {
+    const now = Date.now();
+    const gone = record.rankPid != null && !rankPidAlive(record.rankPid);
+    peerRankGoneSinceMs = gone ? (peerRankGoneSinceMs ?? now) : null;
+    const read = peerTrayView(record, now, peerRankGoneSinceMs);
+    view = read.view;
+    if (read.expired) {
+      peerRankGoneSinceMs = null;
+      await fs.rm(file, { force: true }).catch(() => undefined);
+    }
+  } else {
+    peerRankGoneSinceMs = null;
+  }
+  const key = JSON.stringify(view);
+  if (key === peerTrayKey) return;
+  peerTrayKey = key;
+  peerTray = view;
+  renderMlxTray(mlxMonitor.current());
+};
+const startPeerTray = () => {
+  if (peerTrayPoller) return;
+  peerTrayPoller = setInterval(() => void pollPeerTray(), PEER_TRAY_POLL_MS);
+  void pollPeerTray();
+};
+const peerTrayMenuItems = (): MenuItemConstructorOptions[] =>
+  peerTray
+    ? peerTray.lines.map((line) => ({ label: clipTrayText(line), click: showWindow }))
+    : [];
+
 let lastMlxTrayMenu = '';
 const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
   // The glance reads what the tray reads, redrawn on every fact that redraws the tray — with or
@@ -2924,15 +3031,24 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
     : lastBenchTray && benchTrayEndHold
       ? benchTrayEndTitle(lastBenchTray)
       : null;
+  const ownTitle = benchTitle ?? (silent ? '' : trayTitleText(model));
+  const benchItems = benchTrayMenuItems();
+  publishControllerTray(
+    ownTitle,
+    benchRun ? benchTrayLines(benchRun, Date.now()) : [],
+    benchRun != null || distributed?.report.mode === 'distributed'
+  );
   if (process.platform === 'darwin') {
-    tray.setTitle(benchTitle ?? (silent ? '' : trayTitleText(model)), {
+    // This Mac serving a rank of another Mac's run shows that run's status; its own benchmark leads.
+    tray.setTitle(benchTitle ?? peerTray?.title ?? ownTitle, {
       fontType: 'monospacedDigit',
     });
   }
   const items = silent ? [] : model.items;
   const glanceBack = trayOffersGlanceBack(engineGlanceDesktop.isDismissed(), currentGlancePrefs());
-  const benchItems = benchTrayMenuItems();
+  const peerItems = peerTrayMenuItems();
   const key = JSON.stringify({
+    peer: peerItems.map((item) => item.label),
     bench: benchItems.map((item) => item.label),
     items,
     linkTray,
@@ -2945,7 +3061,7 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
   const glanceItems: MenuItemConstructorOptions[] = glanceBack
     ? [{ label: SHOW_GLANCE_TRAY_LABEL, click: showDesktopGlanceAgain }]
     : [];
-  const section = [benchItems, linkTrayMenuItems(), items.map(mlxTrayMenuItem), glanceItems]
+  const section = [peerItems, benchItems, linkTrayMenuItems(), items.map(mlxTrayMenuItem), glanceItems]
     .filter((group) => group.length > 0)
     .flatMap((group, i) => (i === 0 ? group : [{ type: 'separator' as const }, ...group]));
   setTrayEngineSection(section, () => {
