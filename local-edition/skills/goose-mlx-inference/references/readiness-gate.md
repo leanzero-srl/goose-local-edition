@@ -102,6 +102,38 @@ Write the answers into the run's NOTES.md / parity file. A step that cannot pass
      before 2026-10-29).
 5. **Machinery:** pick the Mac or split from the measured peak in step 3 (node-probe headroom; Studios first). One Goose
    app per Mac. The model copy sits on that Mac's internal disk or on the HARD NFS mount.
+   **Memory tunables (engine >= v0.14.3-lz.20; set on purpose, record in parity, verify via /v1/status):**
+   a. Device spec check FIRST: `sysctl hw.memsize iogpu.wired_limit_mb`; the MLX working set
+      (`/v1/status memory_budget.device_working_set_bytes`); `memory_pressure`. Fleet (2026-10-30): mule/laptop
+      137.44 GB physical, working set 115.45 GB; workhorse 103.08 / 83.49; Gabee 68.72 / 55.66; wired limit 0 everywhere.
+   b. Cap layers, outermost first: physical RAM -> iogpu working set (wired limit) -> engine cap (auto 0.90..0.97 of the
+      working set from weights + context plan, or --metal-limit-gb) -> floor room = physical - others - floor -> guard
+      margin. `memory_budget.step_binding` names the layer that binds. Flag RAM the plan leaves unused.
+   c. What the floor counts as "others" (`memory_budget.machine`): wired + anonymous - purgeable + compressor, less the
+      engine's Metal memory. NOT the file cache (file-backed pages, incl. the qwen4 PLE shards the offload memmaps):
+      macOS frees it. The engine's own memory outside Metal (Python, token buffers) IS counted
+      (`others_engine_non_metal_bytes`), because it is really held. Mule mid-Gauntlet 2026-10-30: used 119.5 GB =
+      wired 102.0 + anonymous 16.5 + compressor 1.4, file cache 19.5 GB left out, others 22 GB.
+   d. The tunables (Settings > LeanZero MLX > Memory; config key `mlx_engine.memory.<key>` -> engine flag):
+      | key | flag | default |
+      |---|---|---|
+      | metal_limit_gb | --metal-limit-gb | blank = auto (context-aware) |
+      | memory_floor_gb | --memory-floor-gb | round(5% x physical GB): mule 7, workhorse 5, Gabee 3 |
+      | prefix_cache_gb | --cache-memory-mb (GB x 1e9 / 2^20) | engine auto |
+      | prefill_step_size | --prefill-step-size | engine 2048 |
+      | max_context_tokens | --max-model-len | profile context_limit, else none |
+      | guard_margin_gb | --memory-guard-margin-gb | auto 2% of ceiling |
+      | max_concurrent_requests | --max-concurrent-requests | goose 8 |
+      | auto_utilization_floor / _ceiling | --auto-utilization-floor / -ceiling | 0.90 / 0.97 |
+      | auto_headroom_fraction | --auto-headroom-fraction | 0.08 |
+      | system_reserve_fraction | --system-reserve-fraction | 0.08 |
+      | (macOS) | `sudo sysctl iogpu.wired_limit_mb=N` via the tab's button (admin password; optional LaunchDaemon) | 0 |
+      lz.20-only flags are sent only when ENGINE_LAUNCHER pins >= v0.14.3-lz.20; a set one on an older pin fails the
+      mount by name.
+   e. Procedure: read the spec (a); set EVERY tunable on purpose (blank = the default, chosen knowingly); record the
+      values in the parity file (`python3 ~/goose-builds/loop-state/memory_tunables_gate.py emit --engine-port <p>`,
+      15 rows; bench launchers exit 6 without them); after mount verify `/v1/status memory_budget.tunables`,
+      `limit_bytes`, `effective_ceiling_bytes`, `max_context_at_ceiling` match what was set.
 6. **Benchmark only:** print the parity table vs the cloud entrant (context, vision, thinking actually sent, sampling,
    tool parser, output cap ≥ the cloud's longest reply, timeouts) and get every row PASS before pressing Run. See
    goose-benchmark-iteration "LOCAL-MODEL RUNS". After publishing, re-open the run page and check that the caveats are

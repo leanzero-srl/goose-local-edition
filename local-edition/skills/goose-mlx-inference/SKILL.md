@@ -65,7 +65,18 @@ Write each answer into the run's NOTES.md / parity file.
 4. **Speed levers on and proven lossless** (MTP, n-gram, PLE, prefix cache): greedy A/B at 8k and at the operating
    context, code_edit byte-identical, streamed == non-streamed bytes. A lever that changes output or gains nothing
    stays OFF with a ledger line.
-5. **Machinery:** Mac or split from the measured peak (node-probe; Studios first). One Goose app per Mac.
+5. **Machinery + memory tunables (lz.20+):** Mac or split from the measured peak (node-probe; Studios first). One
+   Goose app per Mac. Then, on THAT Mac: (a) device spec first: `sysctl hw.memsize iogpu.wired_limit_mb`, MLX working
+   set, `memory_pressure`, and after mount `/v1/status memory_budget` (limit_bytes, machine breakdown); (b) set every
+   tunable ON PURPOSE in Settings > LeanZero MLX > Memory (config `mlx_engine.memory.<key>` -> engine flag):
+   metal_limit_gb -> --metal-limit-gb (blank = auto), memory_floor_gb -> --memory-floor-gb (default 5% of RAM),
+   prefix_cache_gb -> --cache-memory-mb, prefill_step_size -> --prefill-step-size, max_context_tokens ->
+   --max-model-len, guard_margin_gb -> --memory-guard-margin-gb, max_concurrent_requests -> --max-concurrent-requests,
+   auto_utilization_floor/ceiling -> --auto-utilization-floor/-ceiling, auto_headroom_fraction ->
+   --auto-headroom-fraction, system_reserve_fraction -> --system-reserve-fraction; macOS wired limit via the same
+   tab's button (admin password); (c) record in parity: `memory_tunables_gate.py emit --engine-port <p>` (15 rows);
+   (d) verify via `/v1/status` memory_budget (tunables + limit_bytes + effective_ceiling_bytes). Full text:
+   references/readiness-gate.md step 5.
 6. **Benchmark only:** parity table vs the cloud entrant (context, vision, thinking sent, sampling, tool parser,
    output cap, timeouts), every row PASS before Run:
    `python3 ~/goose-builds/loop-state/local-parity/parity_check.py --port <p> --config <root>/config/config.yaml --cloud-input-modalities text,image --min-context <cloud peak; sb-7.2 = 322851>`.
