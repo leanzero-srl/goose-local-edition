@@ -5738,6 +5738,9 @@
   "mlxEngine.tabMacs": {
     "defaultMessage": "My Macs"
   },
+  "mlxEngine.tabMemory": {
+    "defaultMessage": "Memory"
+  },
   "mlxEngine.tabModels": {
     "defaultMessage": "Models"
   },
@@ -5878,6 +5881,297 @@
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV cache compression unavailable: {reason}"
+  },
+  "mlxMemory.advanced": {
+    "defaultMessage": "Advanced: the automatic cap and the soft reserve"
+  },
+  "mlxMemory.apply": {
+    "defaultMessage": "Apply: restart the engine"
+  },
+  "mlxMemory.bindingEngine": {
+    "defaultMessage": "the engine cap"
+  },
+  "mlxMemory.bindingFloor": {
+    "defaultMessage": "the free-memory floor"
+  },
+  "mlxMemory.bindingMacos": {
+    "defaultMessage": "the macOS working set"
+  },
+  "mlxMemory.busy": {
+    "defaultMessage": "{count,plural,one{The engine is serving # request: Apply waits until it is idle.} other{The engine is serving # requests: Apply waits until it is idle.}}"
+  },
+  "mlxMemory.capAboveWorkingSet": {
+    "defaultMessage": "The cap {cap} is above the macOS GPU working set ({ws}): macOS binds first unless the wired limit is raised (suggested {mb} MB, below)."
+  },
+  "mlxMemory.clear": {
+    "defaultMessage": "Clear"
+  },
+  "mlxMemory.consequences": {
+    "defaultMessage": "At this cap: max context ~{tokens} tokens, {free} free for macOS and other apps."
+  },
+  "mlxMemory.consequencesAuto": {
+    "defaultMessage": "Automatic cap: the engine computes it at start from the model and the context."
+  },
+  "mlxMemory.consequencesNoKv": {
+    "defaultMessage": "At this cap: {free} free for macOS and other apps. The max context shows once the engine runs and reports its KV per token."
+  },
+  "mlxMemory.decrease": {
+    "defaultMessage": "Decrease {label}"
+  },
+  "mlxMemory.defaultAuto": {
+    "defaultMessage": "auto: the engine computes it at start"
+  },
+  "mlxMemory.defaultAutoLive": {
+    "defaultMessage": "auto: {gb} now"
+  },
+  "mlxMemory.defaultContext": {
+    "defaultMessage": "the model's configured context, else its maximum"
+  },
+  "mlxMemory.defaultContextLive": {
+    "defaultMessage": "engine plans {tokens} tokens now"
+  },
+  "mlxMemory.defaultEngineAuto": {
+    "defaultMessage": "engine auto"
+  },
+  "mlxMemory.defaultEngineAutoLive": {
+    "defaultMessage": "engine auto: {gb} now"
+  },
+  "mlxMemory.defaultFloor": {
+    "defaultMessage": "goose default {gb} GB (5% of RAM)"
+  },
+  "mlxMemory.defaultGoose": {
+    "defaultMessage": "goose default {value}"
+  },
+  "mlxMemory.defaultMargin": {
+    "defaultMessage": "auto: 2% of the ceiling"
+  },
+  "mlxMemory.defaultValue": {
+    "defaultMessage": "engine default {value}"
+  },
+  "mlxMemory.increase": {
+    "defaultMessage": "Increase {label}"
+  },
+  "mlxMemory.intro": {
+    "defaultMessage": "Every memory number the engine plans under on this Mac. A blank field keeps the default shown beside it. These settings live on the Mac they belong to."
+  },
+  "mlxMemory.invalid": {
+    "defaultMessage": "Not possible"
+  },
+  "mlxMemory.label.autoHeadroomFraction": {
+    "defaultMessage": "Auto headroom"
+  },
+  "mlxMemory.label.autoUtilizationCeiling": {
+    "defaultMessage": "Auto cap ceiling"
+  },
+  "mlxMemory.label.autoUtilizationFloor": {
+    "defaultMessage": "Auto cap floor"
+  },
+  "mlxMemory.label.guardMarginGb": {
+    "defaultMessage": "Guard safety margin"
+  },
+  "mlxMemory.label.maxConcurrentRequests": {
+    "defaultMessage": "Max concurrent requests"
+  },
+  "mlxMemory.label.maxContextTokens": {
+    "defaultMessage": "Max context (admitted window)"
+  },
+  "mlxMemory.label.memoryFloorGb": {
+    "defaultMessage": "Free-memory floor"
+  },
+  "mlxMemory.label.metalLimitGb": {
+    "defaultMessage": "Engine Metal cap"
+  },
+  "mlxMemory.label.prefillStepSize": {
+    "defaultMessage": "Max prefill chunk"
+  },
+  "mlxMemory.label.prefixCacheGb": {
+    "defaultMessage": "Prefix-cache budget"
+  },
+  "mlxMemory.label.systemReserveFraction": {
+    "defaultMessage": "Soft reserve"
+  },
+  "mlxMemory.liveActive": {
+    "defaultMessage": "Engine active / peak"
+  },
+  "mlxMemory.liveCap": {
+    "defaultMessage": "Engine cap"
+  },
+  "mlxMemory.liveCapValue": {
+    "defaultMessage": "{gb} · {source} · bound by {binding}"
+  },
+  "mlxMemory.liveEngineStopped": {
+    "defaultMessage": "engine not running"
+  },
+  "mlxMemory.liveFree": {
+    "defaultMessage": "Free"
+  },
+  "mlxMemory.liveKv": {
+    "defaultMessage": "KV cache per token"
+  },
+  "mlxMemory.liveKvValue": {
+    "defaultMessage": "{bytes} bytes · {gbPer100k} GB per 100k tokens"
+  },
+  "mlxMemory.liveMaxContext": {
+    "defaultMessage": "Max context at the ceiling"
+  },
+  "mlxMemory.liveOthers": {
+    "defaultMessage": "Other apps + macOS (incl. memory the GPU driver wires)"
+  },
+  "mlxMemory.livePanel": {
+    "defaultMessage": "Memory now"
+  },
+  "mlxMemory.livePhysical": {
+    "defaultMessage": "Physical RAM"
+  },
+  "mlxMemory.liveUnknown": {
+    "defaultMessage": "not reported"
+  },
+  "mlxMemory.liveWired": {
+    "defaultMessage": "macOS GPU wired limit"
+  },
+  "mlxMemory.liveWorkingSet": {
+    "defaultMessage": "macOS GPU working set"
+  },
+  "mlxMemory.needsEngine": {
+    "defaultMessage": "This Mac launches {launcher}. The fields marked lz.20 need Rapid-MLX v0.14.3-lz.20 or newer: a start with any of them set is refused by name."
+  },
+  "mlxMemory.needsEngineChip": {
+    "defaultMessage": "lz.20"
+  },
+  "mlxMemory.presetInferenceBox": {
+    "defaultMessage": "Inference box"
+  },
+  "mlxMemory.presetWorkstation": {
+    "defaultMessage": "Workstation"
+  },
+  "mlxMemory.presetsLabel": {
+    "defaultMessage": "Fill in starting values"
+  },
+  "mlxMemory.presetsNote": {
+    "defaultMessage": "Workstation: automatic cap, floor 8% of RAM. Inference box: cap = RAM in GiB minus 16 (112 GB on 128 GiB), floor 4 GB. A preset only fills the fields; nothing changes until you save."
+  },
+  "mlxMemory.problemCapPlusFloor": {
+    "defaultMessage": "Cap {cap} GB + floor {floor} GB is more than this Mac’s {physical} GB of RAM."
+  },
+  "mlxMemory.problemFloorAboveCeiling": {
+    "defaultMessage": "Auto cap floor {floor} is above the auto cap ceiling {ceiling}."
+  },
+  "mlxMemory.problemKvOverCap": {
+    "defaultMessage": "A {tokens}-token window’s KV cache alone is {kv} GB, more than the {cap} GB cap."
+  },
+  "mlxMemory.problemNotInteger": {
+    "defaultMessage": "{label}: must be a whole number"
+  },
+  "mlxMemory.problemNotNumber": {
+    "defaultMessage": "{label}: not a number"
+  },
+  "mlxMemory.problemRange": {
+    "defaultMessage": "{label}: {range}"
+  },
+  "mlxMemory.rangeAboveBelow": {
+    "defaultMessage": "valid: above {min}, up to {max}"
+  },
+  "mlxMemory.rangeBelow": {
+    "defaultMessage": "valid: {min} to under {max}"
+  },
+  "mlxMemory.rangeBetween": {
+    "defaultMessage": "valid: {min} to {max}"
+  },
+  "mlxMemory.rangeOpen": {
+    "defaultMessage": "valid: {min} or more"
+  },
+  "mlxMemory.readFailed": {
+    "defaultMessage": "Could not read this Mac’s memory"
+  },
+  "mlxMemory.restartNeeded": {
+    "defaultMessage": "Restart needed"
+  },
+  "mlxMemory.restartNeededText": {
+    "defaultMessage": "The running engine still uses its old memory settings. Apply restarts it with these; nothing restarts on its own."
+  },
+  "mlxMemory.save": {
+    "defaultMessage": "Save"
+  },
+  "mlxMemory.saveFailed": {
+    "defaultMessage": "Save failed"
+  },
+  "mlxMemory.savedStopped": {
+    "defaultMessage": "Every change here needs an engine restart; the engine is not running, so they apply at its next start."
+  },
+  "mlxMemory.tunablesPanel": {
+    "defaultMessage": "Engine memory"
+  },
+  "mlxMemory.unitFraction": {
+    "defaultMessage": "share"
+  },
+  "mlxMemory.unitGb": {
+    "defaultMessage": "GB"
+  },
+  "mlxMemory.unitRequests": {
+    "defaultMessage": "requests"
+  },
+  "mlxMemory.unitTokens": {
+    "defaultMessage": "tokens"
+  },
+  "mlxMemory.unsaved": {
+    "defaultMessage": "unsaved"
+  },
+  "mlxMemory.wiredBoot": {
+    "defaultMessage": "Boot setting (LaunchDaemon)"
+  },
+  "mlxMemory.wiredBootNone": {
+    "defaultMessage": "not installed"
+  },
+  "mlxMemory.wiredCommand": {
+    "defaultMessage": "Runs as administrator"
+  },
+  "mlxMemory.wiredCurrent": {
+    "defaultMessage": "Now (sysctl iogpu.wired_limit_mb)"
+  },
+  "mlxMemory.wiredDefault": {
+    "defaultMessage": "0 (macOS default)"
+  },
+  "mlxMemory.wiredDone": {
+    "defaultMessage": "Done"
+  },
+  "mlxMemory.wiredDoneText": {
+    "defaultMessage": "The wired limit reads {mb} MB now."
+  },
+  "mlxMemory.wiredFailed": {
+    "defaultMessage": "Not changed"
+  },
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "How much RAM macOS lets the GPU wire, which bounds every engine. Setting it runs one command as administrator: macOS asks for your password. It resets at reboot unless you also install the boot setting. Metal reads it when a process starts, so the engine sees a new value at its next start."
+  },
+  "mlxMemory.wiredInvalid": {
+    "defaultMessage": "Use 0 or a whole number from 8192 to {max}."
+  },
+  "mlxMemory.wiredPanel": {
+    "defaultMessage": "macOS GPU wired limit"
+  },
+  "mlxMemory.wiredPersist": {
+    "defaultMessage": "Set and keep after reboot"
+  },
+  "mlxMemory.wiredRange": {
+    "defaultMessage": "MB · 0 (macOS default) or 8192 to {max}"
+  },
+  "mlxMemory.wiredRemoteNote": {
+    "defaultMessage": "The wired limit is set at the Mac itself: open goose on {mac} to change it."
+  },
+  "mlxMemory.wiredRemove": {
+    "defaultMessage": "Remove boot setting"
+  },
+  "mlxMemory.wiredRemoveNote": {
+    "defaultMessage": "Removing the boot setting leaves the current value until the next reboot."
+  },
+  "mlxMemory.wiredSet": {
+    "defaultMessage": "Set until reboot"
+  },
+  "mlxMemory.wiredSuggest": {
+    "defaultMessage": "suggested for an inference box: {mb} MB"
+  },
+  "mlxMemory.wiredValue": {
+    "defaultMessage": "New limit"
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count,plural,one{Split across # Mac · {backend}} other{Split across # Macs · {backend}}}"

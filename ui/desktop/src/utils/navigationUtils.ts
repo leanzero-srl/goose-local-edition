@@ -32,7 +32,7 @@ export const NODES_ROUTE = '/nodes';
 
 export const PROVIDERS_TABS = ['mlx', 'cloud'] as const;
 export type ProvidersTab = (typeof PROVIDERS_TABS)[number];
-export const MLX_TABS = ['engine', 'macs', 'models', 'sampling'] as const;
+export const MLX_TABS = ['engine', 'macs', 'models', 'sampling', 'memory'] as const;
 export type MlxTab = (typeof MLX_TABS)[number];
 export const NODES_TABS = ['nodes', 'strategies'] as const;
 export type NodesTab = (typeof NODES_TABS)[number];

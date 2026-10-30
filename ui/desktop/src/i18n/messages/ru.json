@@ -5738,6 +5738,9 @@
   "mlxEngine.tabMacs": {
     "defaultMessage": "Мои Mac"
   },
+  "mlxEngine.tabMemory": {
+    "defaultMessage": "Память"
+  },
   "mlxEngine.tabModels": {
     "defaultMessage": "Модели"
   },
@@ -5878,6 +5881,297 @@
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "Сжатие KV-кэша недоступно: {reason}"
+  },
+  "mlxMemory.advanced": {
+    "defaultMessage": "Дополнительно: автоматический лимит и мягкий резерв"
+  },
+  "mlxMemory.apply": {
+    "defaultMessage": "Применить: перезапустить движок"
+  },
+  "mlxMemory.bindingEngine": {
+    "defaultMessage": "лимит движка"
+  },
+  "mlxMemory.bindingFloor": {
+    "defaultMessage": "порог свободной памяти"
+  },
+  "mlxMemory.bindingMacos": {
+    "defaultMessage": "рабочий набор macOS"
+  },
+  "mlxMemory.busy": {
+    "defaultMessage": "{count,plural,one{Движок обрабатывает # запрос: «Применить» дождётся, пока он освободится.} other{Движок обрабатывает # запросов: «Применить» дождётся, пока он освободится.}}"
+  },
+  "mlxMemory.capAboveWorkingSet": {
+    "defaultMessage": "Лимит {cap} выше рабочего набора GPU в macOS ({ws}): сначала ограничит macOS, если не поднять wired-лимит (рекомендуется {mb} MB, ниже)."
+  },
+  "mlxMemory.clear": {
+    "defaultMessage": "Очистить"
+  },
+  "mlxMemory.consequences": {
+    "defaultMessage": "При этом лимите: макс. контекст ~{tokens} токенов, {free} свободно для macOS и других приложений."
+  },
+  "mlxMemory.consequencesAuto": {
+    "defaultMessage": "Автоматический лимит: движок вычисляет его при запуске по модели и контексту."
+  },
+  "mlxMemory.consequencesNoKv": {
+    "defaultMessage": "При этом лимите: {free} свободно для macOS и других приложений. Макс. контекст появится, когда движок запущен и сообщит свой KV на токен."
+  },
+  "mlxMemory.decrease": {
+    "defaultMessage": "Уменьшить: {label}"
+  },
+  "mlxMemory.defaultAuto": {
+    "defaultMessage": "авто: движок вычисляет при запуске"
+  },
+  "mlxMemory.defaultAutoLive": {
+    "defaultMessage": "авто: сейчас {gb}"
+  },
+  "mlxMemory.defaultContext": {
+    "defaultMessage": "настроенный контекст модели, иначе её максимум"
+  },
+  "mlxMemory.defaultContextLive": {
+    "defaultMessage": "движок сейчас планирует {tokens} токенов"
+  },
+  "mlxMemory.defaultEngineAuto": {
+    "defaultMessage": "авто движка"
+  },
+  "mlxMemory.defaultEngineAutoLive": {
+    "defaultMessage": "авто движка: сейчас {gb}"
+  },
+  "mlxMemory.defaultFloor": {
+    "defaultMessage": "по умолчанию в goose: {gb} GB (5% RAM)"
+  },
+  "mlxMemory.defaultGoose": {
+    "defaultMessage": "по умолчанию в goose: {value}"
+  },
+  "mlxMemory.defaultMargin": {
+    "defaultMessage": "авто: 2% от потолка"
+  },
+  "mlxMemory.defaultValue": {
+    "defaultMessage": "по умолчанию в движке: {value}"
+  },
+  "mlxMemory.increase": {
+    "defaultMessage": "Увеличить: {label}"
+  },
+  "mlxMemory.intro": {
+    "defaultMessage": "Все значения памяти, по которым движок планирует работу на этом Mac. Пустое поле сохраняет значение по умолчанию, показанное рядом. Эти настройки относятся к тому Mac, на котором заданы."
+  },
+  "mlxMemory.invalid": {
+    "defaultMessage": "Невозможно"
+  },
+  "mlxMemory.label.autoHeadroomFraction": {
+    "defaultMessage": "Авто-запас"
+  },
+  "mlxMemory.label.autoUtilizationCeiling": {
+    "defaultMessage": "Потолок авто-лимита"
+  },
+  "mlxMemory.label.autoUtilizationFloor": {
+    "defaultMessage": "Нижняя граница авто-лимита"
+  },
+  "mlxMemory.label.guardMarginGb": {
+    "defaultMessage": "Запас безопасности защиты"
+  },
+  "mlxMemory.label.maxConcurrentRequests": {
+    "defaultMessage": "Макс. одновременных запросов"
+  },
+  "mlxMemory.label.maxContextTokens": {
+    "defaultMessage": "Макс. контекст (допустимое окно)"
+  },
+  "mlxMemory.label.memoryFloorGb": {
+    "defaultMessage": "Порог свободной памяти"
+  },
+  "mlxMemory.label.metalLimitGb": {
+    "defaultMessage": "Лимит Metal движка"
+  },
+  "mlxMemory.label.prefillStepSize": {
+    "defaultMessage": "Макс. блок prefill"
+  },
+  "mlxMemory.label.prefixCacheGb": {
+    "defaultMessage": "Бюджет кэша префиксов"
+  },
+  "mlxMemory.label.systemReserveFraction": {
+    "defaultMessage": "Мягкий резерв"
+  },
+  "mlxMemory.liveActive": {
+    "defaultMessage": "Движок: активно / пик"
+  },
+  "mlxMemory.liveCap": {
+    "defaultMessage": "Лимит движка"
+  },
+  "mlxMemory.liveCapValue": {
+    "defaultMessage": "{gb} · {source} · ограничено: {binding}"
+  },
+  "mlxMemory.liveEngineStopped": {
+    "defaultMessage": "движок не запущен"
+  },
+  "mlxMemory.liveFree": {
+    "defaultMessage": "Свободно"
+  },
+  "mlxMemory.liveKv": {
+    "defaultMessage": "KV-кэш на токен"
+  },
+  "mlxMemory.liveKvValue": {
+    "defaultMessage": "{bytes} байт · {gbPer100k} GB на 100k токенов"
+  },
+  "mlxMemory.liveMaxContext": {
+    "defaultMessage": "Макс. контекст на потолке"
+  },
+  "mlxMemory.liveOthers": {
+    "defaultMessage": "Другие приложения + macOS (вкл. память, закреплённую драйвером GPU)"
+  },
+  "mlxMemory.livePanel": {
+    "defaultMessage": "Память сейчас"
+  },
+  "mlxMemory.livePhysical": {
+    "defaultMessage": "Физическая RAM"
+  },
+  "mlxMemory.liveUnknown": {
+    "defaultMessage": "не сообщается"
+  },
+  "mlxMemory.liveWired": {
+    "defaultMessage": "Wired-лимит GPU в macOS"
+  },
+  "mlxMemory.liveWorkingSet": {
+    "defaultMessage": "Рабочий набор GPU в macOS"
+  },
+  "mlxMemory.needsEngine": {
+    "defaultMessage": "Этот Mac запускает {launcher}. Поля с пометкой lz.20 требуют Rapid-MLX v0.14.3-lz.20 или новее: запуск с любым из них отклоняется с указанием имени."
+  },
+  "mlxMemory.needsEngineChip": {
+    "defaultMessage": "lz.20"
+  },
+  "mlxMemory.presetInferenceBox": {
+    "defaultMessage": "Сервер инференса"
+  },
+  "mlxMemory.presetWorkstation": {
+    "defaultMessage": "Рабочая станция"
+  },
+  "mlxMemory.presetsLabel": {
+    "defaultMessage": "Заполнить начальные значения"
+  },
+  "mlxMemory.presetsNote": {
+    "defaultMessage": "Рабочая станция: автоматический лимит, порог 8% RAM. Сервер инференса: лимит = RAM в GiB минус 16 (112 GB при 128 GiB), порог 4 GB. Пресет только заполняет поля; ничего не меняется, пока вы не сохраните."
+  },
+  "mlxMemory.problemCapPlusFloor": {
+    "defaultMessage": "Лимит {cap} GB + порог {floor} GB больше, чем {physical} GB RAM этого Mac."
+  },
+  "mlxMemory.problemFloorAboveCeiling": {
+    "defaultMessage": "Нижняя граница авто-лимита {floor} выше его потолка {ceiling}."
+  },
+  "mlxMemory.problemKvOverCap": {
+    "defaultMessage": "Один только KV-кэш окна в {tokens} токенов занимает {kv} GB, что больше лимита {cap} GB."
+  },
+  "mlxMemory.problemNotInteger": {
+    "defaultMessage": "{label}: должно быть целым числом"
+  },
+  "mlxMemory.problemNotNumber": {
+    "defaultMessage": "{label}: не число"
+  },
+  "mlxMemory.problemRange": {
+    "defaultMessage": "{label}: {range}"
+  },
+  "mlxMemory.rangeAboveBelow": {
+    "defaultMessage": "допустимо: больше {min}, до {max}"
+  },
+  "mlxMemory.rangeBelow": {
+    "defaultMessage": "допустимо: от {min} до {max} (не включая)"
+  },
+  "mlxMemory.rangeBetween": {
+    "defaultMessage": "допустимо: от {min} до {max}"
+  },
+  "mlxMemory.rangeOpen": {
+    "defaultMessage": "допустимо: {min} или больше"
+  },
+  "mlxMemory.readFailed": {
+    "defaultMessage": "Не удалось прочитать память этого Mac"
+  },
+  "mlxMemory.restartNeeded": {
+    "defaultMessage": "Нужен перезапуск"
+  },
+  "mlxMemory.restartNeededText": {
+    "defaultMessage": "Работающий движок всё ещё использует старые настройки памяти. «Применить» перезапустит его с новыми; сам он не перезапускается."
+  },
+  "mlxMemory.save": {
+    "defaultMessage": "Сохранить"
+  },
+  "mlxMemory.saveFailed": {
+    "defaultMessage": "Не удалось сохранить"
+  },
+  "mlxMemory.savedStopped": {
+    "defaultMessage": "Любое изменение здесь требует перезапуска движка; он не запущен, поэтому изменения вступят в силу при следующем запуске."
+  },
+  "mlxMemory.tunablesPanel": {
+    "defaultMessage": "Память движка"
+  },
+  "mlxMemory.unitFraction": {
+    "defaultMessage": "доля"
+  },
+  "mlxMemory.unitGb": {
+    "defaultMessage": "GB"
+  },
+  "mlxMemory.unitRequests": {
+    "defaultMessage": "запросов"
+  },
+  "mlxMemory.unitTokens": {
+    "defaultMessage": "токенов"
+  },
+  "mlxMemory.unsaved": {
+    "defaultMessage": "не сохранено"
+  },
+  "mlxMemory.wiredBoot": {
+    "defaultMessage": "Настройка при загрузке (LaunchDaemon)"
+  },
+  "mlxMemory.wiredBootNone": {
+    "defaultMessage": "не установлена"
+  },
+  "mlxMemory.wiredCommand": {
+    "defaultMessage": "Выполняется от имени администратора"
+  },
+  "mlxMemory.wiredCurrent": {
+    "defaultMessage": "Сейчас (sysctl iogpu.wired_limit_mb)"
+  },
+  "mlxMemory.wiredDefault": {
+    "defaultMessage": "0 (по умолчанию в macOS)"
+  },
+  "mlxMemory.wiredDone": {
+    "defaultMessage": "Готово"
+  },
+  "mlxMemory.wiredDoneText": {
+    "defaultMessage": "Wired-лимит сейчас: {mb} MB."
+  },
+  "mlxMemory.wiredFailed": {
+    "defaultMessage": "Не изменено"
+  },
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "Сколько RAM macOS позволяет GPU закрепить (wired); это ограничивает любой движок. Для установки выполняется одна команда от имени администратора: macOS запросит пароль. После перезагрузки значение сбросится, если не установить и настройку при загрузке. Metal читает его при запуске процесса, поэтому движок увидит новое значение при следующем запуске."
+  },
+  "mlxMemory.wiredInvalid": {
+    "defaultMessage": "Укажите 0 или целое число от 8192 до {max}."
+  },
+  "mlxMemory.wiredPanel": {
+    "defaultMessage": "Wired-лимит GPU в macOS"
+  },
+  "mlxMemory.wiredPersist": {
+    "defaultMessage": "Задать и сохранить после перезагрузки"
+  },
+  "mlxMemory.wiredRange": {
+    "defaultMessage": "MB · 0 (по умолчанию в macOS) или от 8192 до {max}"
+  },
+  "mlxMemory.wiredRemoteNote": {
+    "defaultMessage": "Wired-лимит задаётся на самом Mac: откройте goose на {mac}, чтобы изменить его."
+  },
+  "mlxMemory.wiredRemove": {
+    "defaultMessage": "Удалить настройку при загрузке"
+  },
+  "mlxMemory.wiredRemoveNote": {
+    "defaultMessage": "Удаление настройки при загрузке оставляет текущее значение до следующей перезагрузки."
+  },
+  "mlxMemory.wiredSet": {
+    "defaultMessage": "Задать до перезагрузки"
+  },
+  "mlxMemory.wiredSuggest": {
+    "defaultMessage": "рекомендуется для сервера инференса: {mb} MB"
+  },
+  "mlxMemory.wiredValue": {
+    "defaultMessage": "Новый лимит"
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {Разделено между # Mac · {backend}} few {Разделено между # Mac · {backend}} many {Разделено между # Mac · {backend}} other {Разделено между # Mac · {backend}}}"
@@ -6200,14 +6494,14 @@
   "mlxSetup.step2": {
     "defaultMessage": "Модели"
   },
-  "mlxSetup.step2Reading": {
-    "defaultMessage": "Чтение ваших Mac…"
-  },
   "mlxSetup.step2Done": {
     "defaultMessage": "На ваших Mac: {count}"
   },
   "mlxSetup.step2Next": {
     "defaultMessage": "Получите модель"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Чтение ваших Mac…"
   },
   "mlxSetup.step3": {
     "defaultMessage": "Запуск"

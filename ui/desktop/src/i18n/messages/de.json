@@ -5738,6 +5738,9 @@
   "mlxEngine.tabMacs": {
     "defaultMessage": "Meine Macs"
   },
+  "mlxEngine.tabMemory": {
+    "defaultMessage": "Speicher"
+  },
   "mlxEngine.tabModels": {
     "defaultMessage": "Modelle"
   },
@@ -5878,6 +5881,297 @@
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV-Cache-Komprimierung nicht verfügbar: {reason}"
+  },
+  "mlxMemory.advanced": {
+    "defaultMessage": "Erweitert: die automatische Obergrenze und die weiche Reserve"
+  },
+  "mlxMemory.apply": {
+    "defaultMessage": "Anwenden: Engine neu starten"
+  },
+  "mlxMemory.bindingEngine": {
+    "defaultMessage": "die Engine-Obergrenze"
+  },
+  "mlxMemory.bindingFloor": {
+    "defaultMessage": "die Untergrenze für freien Speicher"
+  },
+  "mlxMemory.bindingMacos": {
+    "defaultMessage": "das macOS-Arbeitsset"
+  },
+  "mlxMemory.busy": {
+    "defaultMessage": "{count,plural,one{Die Engine bearbeitet # Anfrage: „Anwenden“ wartet, bis sie im Leerlauf ist.} other{Die Engine bearbeitet # Anfragen: „Anwenden“ wartet, bis sie im Leerlauf ist.}}"
+  },
+  "mlxMemory.capAboveWorkingSet": {
+    "defaultMessage": "Die Obergrenze {cap} liegt über dem macOS-GPU-Arbeitsset ({ws}): macOS greift zuerst, sofern das Wired-Limit nicht erhöht wird (empfohlen {mb} MB, unten)."
+  },
+  "mlxMemory.clear": {
+    "defaultMessage": "Leeren"
+  },
+  "mlxMemory.consequences": {
+    "defaultMessage": "Bei dieser Obergrenze: max. Kontext ca. {tokens} Tokens, {free} frei für macOS und andere Apps."
+  },
+  "mlxMemory.consequencesAuto": {
+    "defaultMessage": "Automatische Obergrenze: Die Engine berechnet sie beim Start aus Modell und Kontext."
+  },
+  "mlxMemory.consequencesNoKv": {
+    "defaultMessage": "Bei dieser Obergrenze: {free} frei für macOS und andere Apps. Der maximale Kontext erscheint, sobald die Engine läuft und ihren KV pro Token meldet."
+  },
+  "mlxMemory.decrease": {
+    "defaultMessage": "{label} verringern"
+  },
+  "mlxMemory.defaultAuto": {
+    "defaultMessage": "auto: die Engine berechnet es beim Start"
+  },
+  "mlxMemory.defaultAutoLive": {
+    "defaultMessage": "auto: jetzt {gb}"
+  },
+  "mlxMemory.defaultContext": {
+    "defaultMessage": "konfigurierter Kontext des Modells, sonst sein Maximum"
+  },
+  "mlxMemory.defaultContextLive": {
+    "defaultMessage": "Engine plant jetzt {tokens} Tokens"
+  },
+  "mlxMemory.defaultEngineAuto": {
+    "defaultMessage": "Engine-Auto"
+  },
+  "mlxMemory.defaultEngineAutoLive": {
+    "defaultMessage": "Engine-Auto: jetzt {gb}"
+  },
+  "mlxMemory.defaultFloor": {
+    "defaultMessage": "goose-Standard {gb} GB (5 % des RAM)"
+  },
+  "mlxMemory.defaultGoose": {
+    "defaultMessage": "goose-Standard {value}"
+  },
+  "mlxMemory.defaultMargin": {
+    "defaultMessage": "auto: 2 % der Obergrenze"
+  },
+  "mlxMemory.defaultValue": {
+    "defaultMessage": "Engine-Standard {value}"
+  },
+  "mlxMemory.increase": {
+    "defaultMessage": "{label} erhöhen"
+  },
+  "mlxMemory.intro": {
+    "defaultMessage": "Alle Speicherwerte, nach denen die Engine auf diesem Mac plant. Ein leeres Feld behält den daneben angezeigten Standard. Diese Einstellungen gelten für den Mac, zu dem sie gehören."
+  },
+  "mlxMemory.invalid": {
+    "defaultMessage": "Nicht möglich"
+  },
+  "mlxMemory.label.autoHeadroomFraction": {
+    "defaultMessage": "Auto-Spielraum"
+  },
+  "mlxMemory.label.autoUtilizationCeiling": {
+    "defaultMessage": "Auto-Obergrenze (Maximum)"
+  },
+  "mlxMemory.label.autoUtilizationFloor": {
+    "defaultMessage": "Auto-Obergrenze (Minimum)"
+  },
+  "mlxMemory.label.guardMarginGb": {
+    "defaultMessage": "Sicherheitsmarge des Guards"
+  },
+  "mlxMemory.label.maxConcurrentRequests": {
+    "defaultMessage": "Max. gleichzeitige Anfragen"
+  },
+  "mlxMemory.label.maxContextTokens": {
+    "defaultMessage": "Max. Kontext (zugelassenes Fenster)"
+  },
+  "mlxMemory.label.memoryFloorGb": {
+    "defaultMessage": "Untergrenze für freien Speicher"
+  },
+  "mlxMemory.label.metalLimitGb": {
+    "defaultMessage": "Metal-Obergrenze der Engine"
+  },
+  "mlxMemory.label.prefillStepSize": {
+    "defaultMessage": "Max. Prefill-Block"
+  },
+  "mlxMemory.label.prefixCacheGb": {
+    "defaultMessage": "Prefix-Cache-Budget"
+  },
+  "mlxMemory.label.systemReserveFraction": {
+    "defaultMessage": "Weiche Reserve"
+  },
+  "mlxMemory.liveActive": {
+    "defaultMessage": "Engine aktiv / Spitze"
+  },
+  "mlxMemory.liveCap": {
+    "defaultMessage": "Engine-Obergrenze"
+  },
+  "mlxMemory.liveCapValue": {
+    "defaultMessage": "{gb} · {source} · begrenzt durch {binding}"
+  },
+  "mlxMemory.liveEngineStopped": {
+    "defaultMessage": "Engine läuft nicht"
+  },
+  "mlxMemory.liveFree": {
+    "defaultMessage": "Frei"
+  },
+  "mlxMemory.liveKv": {
+    "defaultMessage": "KV-Cache pro Token"
+  },
+  "mlxMemory.liveKvValue": {
+    "defaultMessage": "{bytes} Bytes · {gbPer100k} GB pro 100k Tokens"
+  },
+  "mlxMemory.liveMaxContext": {
+    "defaultMessage": "Max. Kontext an der Obergrenze"
+  },
+  "mlxMemory.liveOthers": {
+    "defaultMessage": "Andere Apps + macOS (inkl. vom GPU-Treiber gebundener Speicher)"
+  },
+  "mlxMemory.livePanel": {
+    "defaultMessage": "Speicher jetzt"
+  },
+  "mlxMemory.livePhysical": {
+    "defaultMessage": "Physischer RAM"
+  },
+  "mlxMemory.liveUnknown": {
+    "defaultMessage": "nicht gemeldet"
+  },
+  "mlxMemory.liveWired": {
+    "defaultMessage": "macOS-GPU-Wired-Limit"
+  },
+  "mlxMemory.liveWorkingSet": {
+    "defaultMessage": "macOS-GPU-Arbeitsset"
+  },
+  "mlxMemory.needsEngine": {
+    "defaultMessage": "Dieser Mac startet {launcher}. Die mit lz.20 markierten Felder benötigen Rapid-MLX v0.14.3-lz.20 oder neuer: Ein Start mit einem davon wird namentlich abgelehnt."
+  },
+  "mlxMemory.needsEngineChip": {
+    "defaultMessage": "lz.20"
+  },
+  "mlxMemory.presetInferenceBox": {
+    "defaultMessage": "Inferenz-Box"
+  },
+  "mlxMemory.presetWorkstation": {
+    "defaultMessage": "Workstation"
+  },
+  "mlxMemory.presetsLabel": {
+    "defaultMessage": "Startwerte eintragen"
+  },
+  "mlxMemory.presetsNote": {
+    "defaultMessage": "Workstation: automatische Obergrenze, Untergrenze 8 % des RAM. Inferenz-Box: Obergrenze = RAM in GiB minus 16 (112 GB bei 128 GiB), Untergrenze 4 GB. Ein Preset füllt nur die Felder; nichts ändert sich, bis du speicherst."
+  },
+  "mlxMemory.problemCapPlusFloor": {
+    "defaultMessage": "Obergrenze {cap} GB + Untergrenze {floor} GB ist mehr als die {physical} GB RAM dieses Mac."
+  },
+  "mlxMemory.problemFloorAboveCeiling": {
+    "defaultMessage": "Die Auto-Untergrenze {floor} liegt über der Auto-Obergrenze {ceiling}."
+  },
+  "mlxMemory.problemKvOverCap": {
+    "defaultMessage": "Allein der KV-Cache eines Fensters mit {tokens} Tokens beträgt {kv} GB, mehr als die Obergrenze von {cap} GB."
+  },
+  "mlxMemory.problemNotInteger": {
+    "defaultMessage": "{label}: muss eine ganze Zahl sein"
+  },
+  "mlxMemory.problemNotNumber": {
+    "defaultMessage": "{label}: keine Zahl"
+  },
+  "mlxMemory.problemRange": {
+    "defaultMessage": "{label}: {range}"
+  },
+  "mlxMemory.rangeAboveBelow": {
+    "defaultMessage": "gültig: über {min}, bis {max}"
+  },
+  "mlxMemory.rangeBelow": {
+    "defaultMessage": "gültig: {min} bis unter {max}"
+  },
+  "mlxMemory.rangeBetween": {
+    "defaultMessage": "gültig: {min} bis {max}"
+  },
+  "mlxMemory.rangeOpen": {
+    "defaultMessage": "gültig: {min} oder mehr"
+  },
+  "mlxMemory.readFailed": {
+    "defaultMessage": "Der Speicher dieses Mac konnte nicht gelesen werden"
+  },
+  "mlxMemory.restartNeeded": {
+    "defaultMessage": "Neustart nötig"
+  },
+  "mlxMemory.restartNeededText": {
+    "defaultMessage": "Die laufende Engine nutzt noch ihre alten Speichereinstellungen. „Anwenden“ startet sie mit den neuen neu; von selbst startet nichts neu."
+  },
+  "mlxMemory.save": {
+    "defaultMessage": "Speichern"
+  },
+  "mlxMemory.saveFailed": {
+    "defaultMessage": "Speichern fehlgeschlagen"
+  },
+  "mlxMemory.savedStopped": {
+    "defaultMessage": "Jede Änderung hier erfordert einen Neustart der Engine; sie läuft nicht, daher gelten die Änderungen beim nächsten Start."
+  },
+  "mlxMemory.tunablesPanel": {
+    "defaultMessage": "Engine-Speicher"
+  },
+  "mlxMemory.unitFraction": {
+    "defaultMessage": "Anteil"
+  },
+  "mlxMemory.unitGb": {
+    "defaultMessage": "GB"
+  },
+  "mlxMemory.unitRequests": {
+    "defaultMessage": "Anfragen"
+  },
+  "mlxMemory.unitTokens": {
+    "defaultMessage": "Tokens"
+  },
+  "mlxMemory.unsaved": {
+    "defaultMessage": "nicht gespeichert"
+  },
+  "mlxMemory.wiredBoot": {
+    "defaultMessage": "Starteinstellung (LaunchDaemon)"
+  },
+  "mlxMemory.wiredBootNone": {
+    "defaultMessage": "nicht installiert"
+  },
+  "mlxMemory.wiredCommand": {
+    "defaultMessage": "Läuft als Administrator"
+  },
+  "mlxMemory.wiredCurrent": {
+    "defaultMessage": "Jetzt (sysctl iogpu.wired_limit_mb)"
+  },
+  "mlxMemory.wiredDefault": {
+    "defaultMessage": "0 (macOS-Standard)"
+  },
+  "mlxMemory.wiredDone": {
+    "defaultMessage": "Fertig"
+  },
+  "mlxMemory.wiredDoneText": {
+    "defaultMessage": "Das Wired-Limit steht jetzt auf {mb} MB."
+  },
+  "mlxMemory.wiredFailed": {
+    "defaultMessage": "Nicht geändert"
+  },
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "Wie viel RAM macOS der GPU zuweisen (wiren) darf; das begrenzt jede Engine. Beim Setzen wird ein Befehl als Administrator ausgeführt: macOS fragt nach deinem Passwort. Es wird beim Neustart zurückgesetzt, sofern du nicht auch die Starteinstellung installierst. Metal liest es beim Prozessstart, die Engine sieht einen neuen Wert also erst beim nächsten Start."
+  },
+  "mlxMemory.wiredInvalid": {
+    "defaultMessage": "Verwende 0 oder eine ganze Zahl von 8192 bis {max}."
+  },
+  "mlxMemory.wiredPanel": {
+    "defaultMessage": "macOS-GPU-Wired-Limit"
+  },
+  "mlxMemory.wiredPersist": {
+    "defaultMessage": "Setzen und nach Neustart beibehalten"
+  },
+  "mlxMemory.wiredRange": {
+    "defaultMessage": "MB · 0 (macOS-Standard) oder 8192 bis {max}"
+  },
+  "mlxMemory.wiredRemoteNote": {
+    "defaultMessage": "Das Wired-Limit wird am Mac selbst gesetzt: Öffne goose auf {mac}, um es zu ändern."
+  },
+  "mlxMemory.wiredRemove": {
+    "defaultMessage": "Starteinstellung entfernen"
+  },
+  "mlxMemory.wiredRemoveNote": {
+    "defaultMessage": "Beim Entfernen der Starteinstellung bleibt der aktuelle Wert bis zum nächsten Neustart bestehen."
+  },
+  "mlxMemory.wiredSet": {
+    "defaultMessage": "Bis zum Neustart setzen"
+  },
+  "mlxMemory.wiredSuggest": {
+    "defaultMessage": "empfohlen für eine Inferenz-Box: {mb} MB"
+  },
+  "mlxMemory.wiredValue": {
+    "defaultMessage": "Neues Limit"
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {Auf # Mac aufgeteilt · {backend}} other {Auf # Macs aufgeteilt · {backend}}}"
@@ -6200,14 +6494,14 @@
   "mlxSetup.step2": {
     "defaultMessage": "Modelle"
   },
-  "mlxSetup.step2Reading": {
-    "defaultMessage": "Deine Macs werden gelesen…"
-  },
   "mlxSetup.step2Done": {
     "defaultMessage": "{count} auf deinen Macs"
   },
   "mlxSetup.step2Next": {
     "defaultMessage": "Hol dir ein Modell"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Deine Macs werden gelesen…"
   },
   "mlxSetup.step3": {
     "defaultMessage": "Ausführen"

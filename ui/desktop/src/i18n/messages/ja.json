@@ -5738,6 +5738,9 @@
   "mlxEngine.tabMacs": {
     "defaultMessage": "マイ Mac"
   },
+  "mlxEngine.tabMemory": {
+    "defaultMessage": "メモリ"
+  },
   "mlxEngine.tabModels": {
     "defaultMessage": "モデル"
   },
@@ -5878,6 +5881,297 @@
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV キャッシュ圧縮は利用できません: {reason}"
+  },
+  "mlxMemory.advanced": {
+    "defaultMessage": "詳細設定: 自動上限とソフトリザーブ"
+  },
+  "mlxMemory.apply": {
+    "defaultMessage": "適用: エンジンを再起動"
+  },
+  "mlxMemory.bindingEngine": {
+    "defaultMessage": "エンジンの上限"
+  },
+  "mlxMemory.bindingFloor": {
+    "defaultMessage": "空きメモリの下限"
+  },
+  "mlxMemory.bindingMacos": {
+    "defaultMessage": "macOS のワーキングセット"
+  },
+  "mlxMemory.busy": {
+    "defaultMessage": "{count,plural,one{エンジンが # 件のリクエストを処理中です。アイドルになるまで「適用」は待機します。} other{エンジンが # 件のリクエストを処理中です。アイドルになるまで「適用」は待機します。}}"
+  },
+  "mlxMemory.capAboveWorkingSet": {
+    "defaultMessage": "上限 {cap} が macOS の GPU ワーキングセット ({ws}) を超えています。wired 制限を引き上げない限り、macOS が先に制限します (推奨 {mb} MB、下記)。"
+  },
+  "mlxMemory.clear": {
+    "defaultMessage": "クリア"
+  },
+  "mlxMemory.consequences": {
+    "defaultMessage": "この上限では: 最大コンテキストは約 {tokens} トークン、macOS と他のアプリ用に {free} が空きます。"
+  },
+  "mlxMemory.consequencesAuto": {
+    "defaultMessage": "自動上限: エンジンが起動時にモデルとコンテキストから計算します。"
+  },
+  "mlxMemory.consequencesNoKv": {
+    "defaultMessage": "この上限では: macOS と他のアプリ用に {free} が空きます。最大コンテキストは、エンジンが起動してトークンあたりの KV を報告すると表示されます。"
+  },
+  "mlxMemory.decrease": {
+    "defaultMessage": "{label} を減らす"
+  },
+  "mlxMemory.defaultAuto": {
+    "defaultMessage": "自動: エンジンが起動時に計算"
+  },
+  "mlxMemory.defaultAutoLive": {
+    "defaultMessage": "自動: 現在 {gb}"
+  },
+  "mlxMemory.defaultContext": {
+    "defaultMessage": "モデルに設定されたコンテキスト。なければ最大値"
+  },
+  "mlxMemory.defaultContextLive": {
+    "defaultMessage": "エンジンの現在の計画: {tokens} トークン"
+  },
+  "mlxMemory.defaultEngineAuto": {
+    "defaultMessage": "エンジン自動"
+  },
+  "mlxMemory.defaultEngineAutoLive": {
+    "defaultMessage": "エンジン自動: 現在 {gb}"
+  },
+  "mlxMemory.defaultFloor": {
+    "defaultMessage": "goose の既定値 {gb} GB (RAM の 5%)"
+  },
+  "mlxMemory.defaultGoose": {
+    "defaultMessage": "goose の既定値 {value}"
+  },
+  "mlxMemory.defaultMargin": {
+    "defaultMessage": "自動: 上限の 2%"
+  },
+  "mlxMemory.defaultValue": {
+    "defaultMessage": "エンジンの既定値 {value}"
+  },
+  "mlxMemory.increase": {
+    "defaultMessage": "{label} を増やす"
+  },
+  "mlxMemory.intro": {
+    "defaultMessage": "この Mac でエンジンが計画に使うすべてのメモリ値です。空欄にすると、横に表示された既定値が使われます。これらの設定は、設定した Mac 上に保存されます。"
+  },
+  "mlxMemory.invalid": {
+    "defaultMessage": "不可"
+  },
+  "mlxMemory.label.autoHeadroomFraction": {
+    "defaultMessage": "自動ヘッドルーム"
+  },
+  "mlxMemory.label.autoUtilizationCeiling": {
+    "defaultMessage": "自動上限の最大値"
+  },
+  "mlxMemory.label.autoUtilizationFloor": {
+    "defaultMessage": "自動上限の最小値"
+  },
+  "mlxMemory.label.guardMarginGb": {
+    "defaultMessage": "ガードの安全マージン"
+  },
+  "mlxMemory.label.maxConcurrentRequests": {
+    "defaultMessage": "同時リクエスト数の上限"
+  },
+  "mlxMemory.label.maxContextTokens": {
+    "defaultMessage": "最大コンテキスト (受け入れるウィンドウ)"
+  },
+  "mlxMemory.label.memoryFloorGb": {
+    "defaultMessage": "空きメモリの下限"
+  },
+  "mlxMemory.label.metalLimitGb": {
+    "defaultMessage": "エンジンの Metal 上限"
+  },
+  "mlxMemory.label.prefillStepSize": {
+    "defaultMessage": "プリフィルチャンクの上限"
+  },
+  "mlxMemory.label.prefixCacheGb": {
+    "defaultMessage": "プレフィックスキャッシュの予算"
+  },
+  "mlxMemory.label.systemReserveFraction": {
+    "defaultMessage": "ソフトリザーブ"
+  },
+  "mlxMemory.liveActive": {
+    "defaultMessage": "エンジン使用中 / ピーク"
+  },
+  "mlxMemory.liveCap": {
+    "defaultMessage": "エンジンの上限"
+  },
+  "mlxMemory.liveCapValue": {
+    "defaultMessage": "{gb} · {source} · 制約: {binding}"
+  },
+  "mlxMemory.liveEngineStopped": {
+    "defaultMessage": "エンジンは停止中"
+  },
+  "mlxMemory.liveFree": {
+    "defaultMessage": "空き"
+  },
+  "mlxMemory.liveKv": {
+    "defaultMessage": "トークンあたりの KV キャッシュ"
+  },
+  "mlxMemory.liveKvValue": {
+    "defaultMessage": "{bytes} バイト · 100k トークンあたり {gbPer100k} GB"
+  },
+  "mlxMemory.liveMaxContext": {
+    "defaultMessage": "上限時の最大コンテキスト"
+  },
+  "mlxMemory.liveOthers": {
+    "defaultMessage": "他のアプリ + macOS（GPU ドライバーが固定するメモリを含む）"
+  },
+  "mlxMemory.livePanel": {
+    "defaultMessage": "現在のメモリ"
+  },
+  "mlxMemory.livePhysical": {
+    "defaultMessage": "物理 RAM"
+  },
+  "mlxMemory.liveUnknown": {
+    "defaultMessage": "未報告"
+  },
+  "mlxMemory.liveWired": {
+    "defaultMessage": "macOS GPU の wired 制限"
+  },
+  "mlxMemory.liveWorkingSet": {
+    "defaultMessage": "macOS GPU のワーキングセット"
+  },
+  "mlxMemory.needsEngine": {
+    "defaultMessage": "この Mac は {launcher} を起動します。lz.20 と記された項目には Rapid-MLX v0.14.3-lz.20 以降が必要です。いずれかを設定したまま起動すると、項目名を示して拒否されます。"
+  },
+  "mlxMemory.needsEngineChip": {
+    "defaultMessage": "lz.20"
+  },
+  "mlxMemory.presetInferenceBox": {
+    "defaultMessage": "推論ボックス"
+  },
+  "mlxMemory.presetWorkstation": {
+    "defaultMessage": "ワークステーション"
+  },
+  "mlxMemory.presetsLabel": {
+    "defaultMessage": "初期値を入力"
+  },
+  "mlxMemory.presetsNote": {
+    "defaultMessage": "ワークステーション: 自動上限、下限は RAM の 8%。推論ボックス: 上限 = GiB 単位の RAM から 16 を引いた値 (128 GiB なら 112 GB)、下限 4 GB。プリセットは項目を埋めるだけで、保存するまで何も変わりません。"
+  },
+  "mlxMemory.problemCapPlusFloor": {
+    "defaultMessage": "上限 {cap} GB と下限 {floor} GB の合計が、この Mac の RAM {physical} GB を超えています。"
+  },
+  "mlxMemory.problemFloorAboveCeiling": {
+    "defaultMessage": "自動上限の最小値 {floor} が最大値 {ceiling} を超えています。"
+  },
+  "mlxMemory.problemKvOverCap": {
+    "defaultMessage": "{tokens} トークンのウィンドウの KV キャッシュだけで {kv} GB あり、上限 {cap} GB を超えています。"
+  },
+  "mlxMemory.problemNotInteger": {
+    "defaultMessage": "{label}: 整数で入力してください"
+  },
+  "mlxMemory.problemNotNumber": {
+    "defaultMessage": "{label}: 数値ではありません"
+  },
+  "mlxMemory.problemRange": {
+    "defaultMessage": "{label}: {range}"
+  },
+  "mlxMemory.rangeAboveBelow": {
+    "defaultMessage": "有効: {min} 超、{max} 以下"
+  },
+  "mlxMemory.rangeBelow": {
+    "defaultMessage": "有効: {min} 以上、{max} 未満"
+  },
+  "mlxMemory.rangeBetween": {
+    "defaultMessage": "有効: {min} ～ {max}"
+  },
+  "mlxMemory.rangeOpen": {
+    "defaultMessage": "有効: {min} 以上"
+  },
+  "mlxMemory.readFailed": {
+    "defaultMessage": "この Mac のメモリを読み取れませんでした"
+  },
+  "mlxMemory.restartNeeded": {
+    "defaultMessage": "再起動が必要"
+  },
+  "mlxMemory.restartNeededText": {
+    "defaultMessage": "実行中のエンジンは古いメモリ設定を使い続けています。「適用」でこの設定で再起動します。自動では再起動しません。"
+  },
+  "mlxMemory.save": {
+    "defaultMessage": "保存"
+  },
+  "mlxMemory.saveFailed": {
+    "defaultMessage": "保存に失敗しました"
+  },
+  "mlxMemory.savedStopped": {
+    "defaultMessage": "ここでの変更はすべてエンジンの再起動が必要です。エンジンは停止中のため、次回の起動時に反映されます。"
+  },
+  "mlxMemory.tunablesPanel": {
+    "defaultMessage": "エンジンのメモリ"
+  },
+  "mlxMemory.unitFraction": {
+    "defaultMessage": "割合"
+  },
+  "mlxMemory.unitGb": {
+    "defaultMessage": "GB"
+  },
+  "mlxMemory.unitRequests": {
+    "defaultMessage": "リクエスト"
+  },
+  "mlxMemory.unitTokens": {
+    "defaultMessage": "トークン"
+  },
+  "mlxMemory.unsaved": {
+    "defaultMessage": "未保存"
+  },
+  "mlxMemory.wiredBoot": {
+    "defaultMessage": "起動時の設定 (LaunchDaemon)"
+  },
+  "mlxMemory.wiredBootNone": {
+    "defaultMessage": "未インストール"
+  },
+  "mlxMemory.wiredCommand": {
+    "defaultMessage": "管理者として実行"
+  },
+  "mlxMemory.wiredCurrent": {
+    "defaultMessage": "現在 (sysctl iogpu.wired_limit_mb)"
+  },
+  "mlxMemory.wiredDefault": {
+    "defaultMessage": "0 (macOS の既定値)"
+  },
+  "mlxMemory.wiredDone": {
+    "defaultMessage": "完了"
+  },
+  "mlxMemory.wiredDoneText": {
+    "defaultMessage": "wired 制限は現在 {mb} MB です。"
+  },
+  "mlxMemory.wiredFailed": {
+    "defaultMessage": "変更されていません"
+  },
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "macOS が GPU に wire させる RAM の量で、すべてのエンジンの上限になります。設定すると管理者として 1 つのコマンドを実行します。macOS がパスワードを求めます。起動時の設定も導入しない限り、再起動でリセットされます。Metal はプロセスの開始時にこの値を読むため、エンジンは次回の起動で新しい値を使います。"
+  },
+  "mlxMemory.wiredInvalid": {
+    "defaultMessage": "0、または 8192 から {max} までの整数を指定してください。"
+  },
+  "mlxMemory.wiredPanel": {
+    "defaultMessage": "macOS GPU の wired 制限"
+  },
+  "mlxMemory.wiredPersist": {
+    "defaultMessage": "設定して再起動後も保持"
+  },
+  "mlxMemory.wiredRange": {
+    "defaultMessage": "MB · 0 (macOS の既定値) または 8192 ～ {max}"
+  },
+  "mlxMemory.wiredRemoteNote": {
+    "defaultMessage": "wired 制限は Mac 本体で設定します。変更するには {mac} で goose を開いてください。"
+  },
+  "mlxMemory.wiredRemove": {
+    "defaultMessage": "起動時の設定を削除"
+  },
+  "mlxMemory.wiredRemoveNote": {
+    "defaultMessage": "起動時の設定を削除しても、現在の値は次回の再起動まで残ります。"
+  },
+  "mlxMemory.wiredSet": {
+    "defaultMessage": "再起動まで設定"
+  },
+  "mlxMemory.wiredSuggest": {
+    "defaultMessage": "推論ボックスの推奨値: {mb} MB"
+  },
+  "mlxMemory.wiredValue": {
+    "defaultMessage": "新しい制限"
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, other {# 台の Mac に分割 · {backend}}}"
@@ -6200,14 +6494,14 @@
   "mlxSetup.step2": {
     "defaultMessage": "モデル"
   },
-  "mlxSetup.step2Reading": {
-    "defaultMessage": "Mac を読み込み中…"
-  },
   "mlxSetup.step2Done": {
     "defaultMessage": "Mac 上に {count} 個"
   },
   "mlxSetup.step2Next": {
     "defaultMessage": "モデルを入手"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Mac を読み込み中…"
   },
   "mlxSetup.step3": {
     "defaultMessage": "実行"

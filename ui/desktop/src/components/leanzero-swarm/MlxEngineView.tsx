@@ -60,6 +60,7 @@ import { MlxThinkingFields } from './MlxThinkingFields';
 import { MlxKvCacheFields } from './MlxKvCacheFields';
 import { MlxPromptLookupFields } from './MlxPromptLookupFields';
 import { MlxNgramTableFields } from './MlxNgramTableFields';
+import { MlxMemorySection } from './MlxMemorySection';
 import {
   mlxEngineBrowse,
   mlxEngineBrowseFilters,
@@ -429,6 +430,8 @@ export function sanitizeSettingsForWrite(settings: MlxEngineSettings): MlxEngine
   };
   if (settings.modelId != null) next.modelId = settings.modelId;
   if (settings.servedModelName != null) next.servedModelName = settings.servedModelName;
+  // The memory tunables ride every write: a sampling save must never reset them.
+  if (settings.memory != null) next.memory = { ...settings.memory };
   return next;
 }
 
@@ -2550,6 +2553,7 @@ const VIEW_I18N = defineMessages({
   tabMacs: { id: 'mlxEngine.tabMacs', defaultMessage: 'My Macs' },
   tabModels: { id: 'mlxEngine.tabModels', defaultMessage: 'Models' },
   tabSampling: { id: 'mlxEngine.tabSampling', defaultMessage: 'Sampling' },
+  tabMemory: { id: 'mlxEngine.tabMemory', defaultMessage: 'Memory' },
   poweredBy: { id: 'mlxEngine.poweredBy', defaultMessage: 'Powered by {engine}' },
   samplingOn: { id: 'mlxEngineView.samplingOn', defaultMessage: 'Profiles on' },
   settingsFailed: {
@@ -3210,6 +3214,7 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
               ),
             },
             { value: 'sampling', label: intl.formatMessage(VIEW_I18N.tabSampling) },
+            { value: 'memory', label: intl.formatMessage(VIEW_I18N.tabMemory) },
           ]}
           value={tab}
           onChange={setTab}
@@ -3302,6 +3307,18 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
           saveError={saveError}
           summary={samplingSummary}
           engineDefaults={samplingEngineDefaults}
+        />
+      )}
+      {tab === 'memory' && (
+        <MlxMemorySection
+          macPicker={samplingMacPicker}
+          isSelf={samplingIsSelf}
+          macName={samplingMacObj.name}
+          status={samplingStatus}
+          settings={samplingSettings}
+          engineBusy={engineBusy}
+          saveSettings={(next) => saveSettingsOn(samplingMac, sanitizeSettingsForWrite(next))}
+          onApply={() => remountOn(samplingMac)}
         />
       )}
     </div>

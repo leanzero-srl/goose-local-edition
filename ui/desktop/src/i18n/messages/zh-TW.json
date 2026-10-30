@@ -5738,6 +5738,9 @@
   "mlxEngine.tabMacs": {
     "defaultMessage": "我的 Mac"
   },
+  "mlxEngine.tabMemory": {
+    "defaultMessage": "記憶體"
+  },
   "mlxEngine.tabModels": {
     "defaultMessage": "模型"
   },
@@ -5878,6 +5881,297 @@
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV 快取壓縮無法使用：{reason}"
+  },
+  "mlxMemory.advanced": {
+    "defaultMessage": "進階：自動上限與軟保留"
+  },
+  "mlxMemory.apply": {
+    "defaultMessage": "套用：重新啟動引擎"
+  },
+  "mlxMemory.bindingEngine": {
+    "defaultMessage": "引擎上限"
+  },
+  "mlxMemory.bindingFloor": {
+    "defaultMessage": "可用記憶體下限"
+  },
+  "mlxMemory.bindingMacos": {
+    "defaultMessage": "macOS 工作集"
+  },
+  "mlxMemory.busy": {
+    "defaultMessage": "{count,plural,one{引擎正在處理 # 個要求：套用會等到引擎閒置。} other{引擎正在處理 # 個要求：套用會等到引擎閒置。}}"
+  },
+  "mlxMemory.capAboveWorkingSet": {
+    "defaultMessage": "上限 {cap} 高於 macOS GPU 工作集（{ws}）：除非調高 wired 限制（建議 {mb} MB，見下），否則 macOS 會先限制。"
+  },
+  "mlxMemory.clear": {
+    "defaultMessage": "清除"
+  },
+  "mlxMemory.consequences": {
+    "defaultMessage": "在此上限下：最大脈絡約 {tokens} 個 token，為 macOS 和其他 App 保留 {free}。"
+  },
+  "mlxMemory.consequencesAuto": {
+    "defaultMessage": "自動上限：引擎在啟動時根據模型與脈絡計算。"
+  },
+  "mlxMemory.consequencesNoKv": {
+    "defaultMessage": "在此上限下：為 macOS 和其他 App 保留 {free}。引擎執行並回報每個 token 的 KV 後，才會顯示最大脈絡。"
+  },
+  "mlxMemory.decrease": {
+    "defaultMessage": "減少{label}"
+  },
+  "mlxMemory.defaultAuto": {
+    "defaultMessage": "自動：引擎在啟動時計算"
+  },
+  "mlxMemory.defaultAutoLive": {
+    "defaultMessage": "自動：目前 {gb}"
+  },
+  "mlxMemory.defaultContext": {
+    "defaultMessage": "模型已設定的脈絡，否則取其最大值"
+  },
+  "mlxMemory.defaultContextLive": {
+    "defaultMessage": "引擎目前規劃 {tokens} 個 token"
+  },
+  "mlxMemory.defaultEngineAuto": {
+    "defaultMessage": "引擎自動"
+  },
+  "mlxMemory.defaultEngineAutoLive": {
+    "defaultMessage": "引擎自動：目前 {gb}"
+  },
+  "mlxMemory.defaultFloor": {
+    "defaultMessage": "goose 預設 {gb} GB（RAM 的 5%）"
+  },
+  "mlxMemory.defaultGoose": {
+    "defaultMessage": "goose 預設 {value}"
+  },
+  "mlxMemory.defaultMargin": {
+    "defaultMessage": "自動：上限的 2%"
+  },
+  "mlxMemory.defaultValue": {
+    "defaultMessage": "引擎預設 {value}"
+  },
+  "mlxMemory.increase": {
+    "defaultMessage": "增加{label}"
+  },
+  "mlxMemory.intro": {
+    "defaultMessage": "引擎在這台 Mac 上規劃所依據的所有記憶體數值。留空則使用旁邊顯示的預設值。這些設定儲存在所屬的 Mac 上。"
+  },
+  "mlxMemory.invalid": {
+    "defaultMessage": "無法使用"
+  },
+  "mlxMemory.label.autoHeadroomFraction": {
+    "defaultMessage": "自動餘量"
+  },
+  "mlxMemory.label.autoUtilizationCeiling": {
+    "defaultMessage": "自動上限的最大值"
+  },
+  "mlxMemory.label.autoUtilizationFloor": {
+    "defaultMessage": "自動上限的最小值"
+  },
+  "mlxMemory.label.guardMarginGb": {
+    "defaultMessage": "守衛安全餘量"
+  },
+  "mlxMemory.label.maxConcurrentRequests": {
+    "defaultMessage": "最大同時要求數"
+  },
+  "mlxMemory.label.maxContextTokens": {
+    "defaultMessage": "最大脈絡（接受的視窗）"
+  },
+  "mlxMemory.label.memoryFloorGb": {
+    "defaultMessage": "可用記憶體下限"
+  },
+  "mlxMemory.label.metalLimitGb": {
+    "defaultMessage": "引擎 Metal 上限"
+  },
+  "mlxMemory.label.prefillStepSize": {
+    "defaultMessage": "最大預填區塊"
+  },
+  "mlxMemory.label.prefixCacheGb": {
+    "defaultMessage": "前綴快取預算"
+  },
+  "mlxMemory.label.systemReserveFraction": {
+    "defaultMessage": "軟保留"
+  },
+  "mlxMemory.liveActive": {
+    "defaultMessage": "引擎使用中 / 峰值"
+  },
+  "mlxMemory.liveCap": {
+    "defaultMessage": "引擎上限"
+  },
+  "mlxMemory.liveCapValue": {
+    "defaultMessage": "{gb} · {source} · 受限於{binding}"
+  },
+  "mlxMemory.liveEngineStopped": {
+    "defaultMessage": "引擎未執行"
+  },
+  "mlxMemory.liveFree": {
+    "defaultMessage": "可用"
+  },
+  "mlxMemory.liveKv": {
+    "defaultMessage": "每個 token 的 KV 快取"
+  },
+  "mlxMemory.liveKvValue": {
+    "defaultMessage": "{bytes} 位元組 · 每 100k token {gbPer100k} GB"
+  },
+  "mlxMemory.liveMaxContext": {
+    "defaultMessage": "上限下的最大脈絡"
+  },
+  "mlxMemory.liveOthers": {
+    "defaultMessage": "其他 App + macOS（含 GPU 驅動程式固定的記憶體）"
+  },
+  "mlxMemory.livePanel": {
+    "defaultMessage": "目前記憶體"
+  },
+  "mlxMemory.livePhysical": {
+    "defaultMessage": "實體 RAM"
+  },
+  "mlxMemory.liveUnknown": {
+    "defaultMessage": "未回報"
+  },
+  "mlxMemory.liveWired": {
+    "defaultMessage": "macOS GPU wired 限制"
+  },
+  "mlxMemory.liveWorkingSet": {
+    "defaultMessage": "macOS GPU 工作集"
+  },
+  "mlxMemory.needsEngine": {
+    "defaultMessage": "這台 Mac 會啟動 {launcher}。標示 lz.20 的欄位需要 Rapid-MLX v0.14.3-lz.20 或更新版本：只要設定其中任一欄位就啟動，會被拒絕並指出欄位名稱。"
+  },
+  "mlxMemory.needsEngineChip": {
+    "defaultMessage": "lz.20"
+  },
+  "mlxMemory.presetInferenceBox": {
+    "defaultMessage": "推論主機"
+  },
+  "mlxMemory.presetWorkstation": {
+    "defaultMessage": "工作站"
+  },
+  "mlxMemory.presetsLabel": {
+    "defaultMessage": "填入起始值"
+  },
+  "mlxMemory.presetsNote": {
+    "defaultMessage": "工作站：自動上限，下限為 RAM 的 8%。推論主機：上限 = 以 GiB 計的 RAM 減 16（128 GiB 時為 112 GB），下限 4 GB。預設組合只會填寫欄位，儲存前不會有任何變更。"
+  },
+  "mlxMemory.problemCapPlusFloor": {
+    "defaultMessage": "上限 {cap} GB 加下限 {floor} GB 超過這台 Mac 的 {physical} GB RAM。"
+  },
+  "mlxMemory.problemFloorAboveCeiling": {
+    "defaultMessage": "自動上限的最小值 {floor} 高於最大值 {ceiling}。"
+  },
+  "mlxMemory.problemKvOverCap": {
+    "defaultMessage": "光是 {tokens} 個 token 視窗的 KV 快取就有 {kv} GB，超過 {cap} GB 的上限。"
+  },
+  "mlxMemory.problemNotInteger": {
+    "defaultMessage": "{label}：必須是整數"
+  },
+  "mlxMemory.problemNotNumber": {
+    "defaultMessage": "{label}：不是數字"
+  },
+  "mlxMemory.problemRange": {
+    "defaultMessage": "{label}：{range}"
+  },
+  "mlxMemory.rangeAboveBelow": {
+    "defaultMessage": "有效範圍：大於 {min}，至多 {max}"
+  },
+  "mlxMemory.rangeBelow": {
+    "defaultMessage": "有效範圍：{min} 至小於 {max}"
+  },
+  "mlxMemory.rangeBetween": {
+    "defaultMessage": "有效範圍：{min} 至 {max}"
+  },
+  "mlxMemory.rangeOpen": {
+    "defaultMessage": "有效範圍：{min} 或以上"
+  },
+  "mlxMemory.readFailed": {
+    "defaultMessage": "無法讀取這台 Mac 的記憶體"
+  },
+  "mlxMemory.restartNeeded": {
+    "defaultMessage": "需要重新啟動"
+  },
+  "mlxMemory.restartNeededText": {
+    "defaultMessage": "執行中的引擎仍在使用舊的記憶體設定。套用會以新設定重新啟動引擎；不會自動重新啟動。"
+  },
+  "mlxMemory.save": {
+    "defaultMessage": "儲存"
+  },
+  "mlxMemory.saveFailed": {
+    "defaultMessage": "儲存失敗"
+  },
+  "mlxMemory.savedStopped": {
+    "defaultMessage": "這裡的每項變更都需要重新啟動引擎；引擎目前未執行，因此會在下次啟動時生效。"
+  },
+  "mlxMemory.tunablesPanel": {
+    "defaultMessage": "引擎記憶體"
+  },
+  "mlxMemory.unitFraction": {
+    "defaultMessage": "比例"
+  },
+  "mlxMemory.unitGb": {
+    "defaultMessage": "GB"
+  },
+  "mlxMemory.unitRequests": {
+    "defaultMessage": "個要求"
+  },
+  "mlxMemory.unitTokens": {
+    "defaultMessage": "個 token"
+  },
+  "mlxMemory.unsaved": {
+    "defaultMessage": "未儲存"
+  },
+  "mlxMemory.wiredBoot": {
+    "defaultMessage": "開機設定（LaunchDaemon）"
+  },
+  "mlxMemory.wiredBootNone": {
+    "defaultMessage": "未安裝"
+  },
+  "mlxMemory.wiredCommand": {
+    "defaultMessage": "以管理員身分執行"
+  },
+  "mlxMemory.wiredCurrent": {
+    "defaultMessage": "目前（sysctl iogpu.wired_limit_mb）"
+  },
+  "mlxMemory.wiredDefault": {
+    "defaultMessage": "0（macOS 預設值）"
+  },
+  "mlxMemory.wiredDone": {
+    "defaultMessage": "完成"
+  },
+  "mlxMemory.wiredDoneText": {
+    "defaultMessage": "wired 限制目前為 {mb} MB。"
+  },
+  "mlxMemory.wiredFailed": {
+    "defaultMessage": "未變更"
+  },
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "macOS 允許 GPU 鎖定（wire）的 RAM 量，它會限制所有引擎。設定時會以管理員身分執行一個指令：macOS 會要求輸入密碼。除非同時安裝開機設定，否則重新啟動後會重設。Metal 在程序啟動時讀取該值，因此引擎要到下次啟動才會看到新值。"
+  },
+  "mlxMemory.wiredInvalid": {
+    "defaultMessage": "請使用 0 或 8192 到 {max} 之間的整數。"
+  },
+  "mlxMemory.wiredPanel": {
+    "defaultMessage": "macOS GPU wired 限制"
+  },
+  "mlxMemory.wiredPersist": {
+    "defaultMessage": "設定並在重新啟動後保留"
+  },
+  "mlxMemory.wiredRange": {
+    "defaultMessage": "MB · 0（macOS 預設值）或 8192 到 {max}"
+  },
+  "mlxMemory.wiredRemoteNote": {
+    "defaultMessage": "wired 限制需在 Mac 本機設定：請在 {mac} 上開啟 goose 進行變更。"
+  },
+  "mlxMemory.wiredRemove": {
+    "defaultMessage": "移除開機設定"
+  },
+  "mlxMemory.wiredRemoveNote": {
+    "defaultMessage": "移除開機設定後，目前的值會保留到下次重新啟動。"
+  },
+  "mlxMemory.wiredSet": {
+    "defaultMessage": "設定到重新啟動為止"
+  },
+  "mlxMemory.wiredSuggest": {
+    "defaultMessage": "推論主機建議值：{mb} MB"
+  },
+  "mlxMemory.wiredValue": {
+    "defaultMessage": "新限制"
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, other {分割到 # 台 Mac · {backend}}}"
@@ -6200,14 +6494,14 @@
   "mlxSetup.step2": {
     "defaultMessage": "模型"
   },
-  "mlxSetup.step2Reading": {
-    "defaultMessage": "正在讀取你的 Mac…"
-  },
   "mlxSetup.step2Done": {
     "defaultMessage": "你的 Mac 上有 {count} 個"
   },
   "mlxSetup.step2Next": {
     "defaultMessage": "取得模型"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "正在讀取你的 Mac…"
   },
   "mlxSetup.step3": {
     "defaultMessage": "執行"

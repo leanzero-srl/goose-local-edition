@@ -5738,6 +5738,9 @@
   "mlxEngine.tabMacs": {
     "defaultMessage": "I miei Mac"
   },
+  "mlxEngine.tabMemory": {
+    "defaultMessage": "Memoria"
+  },
   "mlxEngine.tabModels": {
     "defaultMessage": "Modelli"
   },
@@ -5878,6 +5881,297 @@
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "Compressione della cache KV non disponibile: {reason}"
+  },
+  "mlxMemory.advanced": {
+    "defaultMessage": "Avanzate: il limite automatico e la riserva flessibile"
+  },
+  "mlxMemory.apply": {
+    "defaultMessage": "Applica: riavvia il motore"
+  },
+  "mlxMemory.bindingEngine": {
+    "defaultMessage": "il limite del motore"
+  },
+  "mlxMemory.bindingFloor": {
+    "defaultMessage": "la soglia minima di memoria libera"
+  },
+  "mlxMemory.bindingMacos": {
+    "defaultMessage": "il working set di macOS"
+  },
+  "mlxMemory.busy": {
+    "defaultMessage": "{count,plural,one{Il motore sta servendo # richiesta: Applica attende finché non è inattivo.} other{Il motore sta servendo # richieste: Applica attende finché non è inattivo.}}"
+  },
+  "mlxMemory.capAboveWorkingSet": {
+    "defaultMessage": "Il limite {cap} è superiore al working set GPU di macOS ({ws}): macOS limita per primo, a meno che il limite wired non venga alzato (suggerito {mb} MB, sotto)."
+  },
+  "mlxMemory.clear": {
+    "defaultMessage": "Cancella"
+  },
+  "mlxMemory.consequences": {
+    "defaultMessage": "Con questo limite: contesto max ~{tokens} token, {free} liberi per macOS e altre app."
+  },
+  "mlxMemory.consequencesAuto": {
+    "defaultMessage": "Limite automatico: il motore lo calcola all’avvio in base al modello e al contesto."
+  },
+  "mlxMemory.consequencesNoKv": {
+    "defaultMessage": "Con questo limite: {free} liberi per macOS e altre app. Il contesto massimo compare quando il motore è in esecuzione e comunica il suo KV per token."
+  },
+  "mlxMemory.decrease": {
+    "defaultMessage": "Diminuisci {label}"
+  },
+  "mlxMemory.defaultAuto": {
+    "defaultMessage": "auto: il motore lo calcola all’avvio"
+  },
+  "mlxMemory.defaultAutoLive": {
+    "defaultMessage": "auto: {gb} ora"
+  },
+  "mlxMemory.defaultContext": {
+    "defaultMessage": "il contesto configurato del modello, altrimenti il suo massimo"
+  },
+  "mlxMemory.defaultContextLive": {
+    "defaultMessage": "il motore pianifica {tokens} token ora"
+  },
+  "mlxMemory.defaultEngineAuto": {
+    "defaultMessage": "auto del motore"
+  },
+  "mlxMemory.defaultEngineAutoLive": {
+    "defaultMessage": "auto del motore: {gb} ora"
+  },
+  "mlxMemory.defaultFloor": {
+    "defaultMessage": "predefinito goose {gb} GB (5% della RAM)"
+  },
+  "mlxMemory.defaultGoose": {
+    "defaultMessage": "predefinito goose {value}"
+  },
+  "mlxMemory.defaultMargin": {
+    "defaultMessage": "auto: 2% del tetto"
+  },
+  "mlxMemory.defaultValue": {
+    "defaultMessage": "predefinito del motore {value}"
+  },
+  "mlxMemory.increase": {
+    "defaultMessage": "Aumenta {label}"
+  },
+  "mlxMemory.intro": {
+    "defaultMessage": "Tutti i valori di memoria con cui il motore pianifica su questo Mac. Un campo vuoto mantiene il valore predefinito mostrato accanto. Queste impostazioni restano sul Mac a cui appartengono."
+  },
+  "mlxMemory.invalid": {
+    "defaultMessage": "Non possibile"
+  },
+  "mlxMemory.label.autoHeadroomFraction": {
+    "defaultMessage": "Margine automatico"
+  },
+  "mlxMemory.label.autoUtilizationCeiling": {
+    "defaultMessage": "Tetto del limite automatico"
+  },
+  "mlxMemory.label.autoUtilizationFloor": {
+    "defaultMessage": "Soglia minima del limite automatico"
+  },
+  "mlxMemory.label.guardMarginGb": {
+    "defaultMessage": "Margine di sicurezza del guard"
+  },
+  "mlxMemory.label.maxConcurrentRequests": {
+    "defaultMessage": "Richieste simultanee max"
+  },
+  "mlxMemory.label.maxContextTokens": {
+    "defaultMessage": "Contesto max (finestra ammessa)"
+  },
+  "mlxMemory.label.memoryFloorGb": {
+    "defaultMessage": "Soglia minima di memoria libera"
+  },
+  "mlxMemory.label.metalLimitGb": {
+    "defaultMessage": "Limite Metal del motore"
+  },
+  "mlxMemory.label.prefillStepSize": {
+    "defaultMessage": "Blocco prefill max"
+  },
+  "mlxMemory.label.prefixCacheGb": {
+    "defaultMessage": "Budget cache dei prefissi"
+  },
+  "mlxMemory.label.systemReserveFraction": {
+    "defaultMessage": "Riserva flessibile"
+  },
+  "mlxMemory.liveActive": {
+    "defaultMessage": "Motore attivo / picco"
+  },
+  "mlxMemory.liveCap": {
+    "defaultMessage": "Limite del motore"
+  },
+  "mlxMemory.liveCapValue": {
+    "defaultMessage": "{gb} · {source} · vincolato da {binding}"
+  },
+  "mlxMemory.liveEngineStopped": {
+    "defaultMessage": "motore non in esecuzione"
+  },
+  "mlxMemory.liveFree": {
+    "defaultMessage": "Libera"
+  },
+  "mlxMemory.liveKv": {
+    "defaultMessage": "Cache KV per token"
+  },
+  "mlxMemory.liveKvValue": {
+    "defaultMessage": "{bytes} byte · {gbPer100k} GB ogni 100k token"
+  },
+  "mlxMemory.liveMaxContext": {
+    "defaultMessage": "Contesto max al tetto"
+  },
+  "mlxMemory.liveOthers": {
+    "defaultMessage": "Altre app + macOS (inclusa la memoria che il driver GPU vincola)"
+  },
+  "mlxMemory.livePanel": {
+    "defaultMessage": "Memoria adesso"
+  },
+  "mlxMemory.livePhysical": {
+    "defaultMessage": "RAM fisica"
+  },
+  "mlxMemory.liveUnknown": {
+    "defaultMessage": "non indicato"
+  },
+  "mlxMemory.liveWired": {
+    "defaultMessage": "Limite wired GPU di macOS"
+  },
+  "mlxMemory.liveWorkingSet": {
+    "defaultMessage": "Working set GPU di macOS"
+  },
+  "mlxMemory.needsEngine": {
+    "defaultMessage": "Questo Mac avvia {launcher}. I campi contrassegnati con lz.20 richiedono Rapid-MLX v0.14.3-lz.20 o successivo: un avvio con uno di essi impostato viene rifiutato indicandolo per nome."
+  },
+  "mlxMemory.needsEngineChip": {
+    "defaultMessage": "lz.20"
+  },
+  "mlxMemory.presetInferenceBox": {
+    "defaultMessage": "Inference box"
+  },
+  "mlxMemory.presetWorkstation": {
+    "defaultMessage": "Workstation"
+  },
+  "mlxMemory.presetsLabel": {
+    "defaultMessage": "Inserisci valori iniziali"
+  },
+  "mlxMemory.presetsNote": {
+    "defaultMessage": "Workstation: limite automatico, soglia 8% della RAM. Inference box: limite = RAM in GiB meno 16 (112 GB su 128 GiB), soglia 4 GB. Un preset compila solo i campi; nulla cambia finché non salvi."
+  },
+  "mlxMemory.problemCapPlusFloor": {
+    "defaultMessage": "Limite {cap} GB + soglia {floor} GB supera i {physical} GB di RAM di questo Mac."
+  },
+  "mlxMemory.problemFloorAboveCeiling": {
+    "defaultMessage": "La soglia minima automatica {floor} è superiore al tetto automatico {ceiling}."
+  },
+  "mlxMemory.problemKvOverCap": {
+    "defaultMessage": "La sola cache KV di una finestra da {tokens} token occupa {kv} GB, più del limite di {cap} GB."
+  },
+  "mlxMemory.problemNotInteger": {
+    "defaultMessage": "{label}: deve essere un numero intero"
+  },
+  "mlxMemory.problemNotNumber": {
+    "defaultMessage": "{label}: non è un numero"
+  },
+  "mlxMemory.problemRange": {
+    "defaultMessage": "{label}: {range}"
+  },
+  "mlxMemory.rangeAboveBelow": {
+    "defaultMessage": "valido: sopra {min}, fino a {max}"
+  },
+  "mlxMemory.rangeBelow": {
+    "defaultMessage": "valido: da {min} a meno di {max}"
+  },
+  "mlxMemory.rangeBetween": {
+    "defaultMessage": "valido: da {min} a {max}"
+  },
+  "mlxMemory.rangeOpen": {
+    "defaultMessage": "valido: {min} o più"
+  },
+  "mlxMemory.readFailed": {
+    "defaultMessage": "Impossibile leggere la memoria di questo Mac"
+  },
+  "mlxMemory.restartNeeded": {
+    "defaultMessage": "Riavvio necessario"
+  },
+  "mlxMemory.restartNeededText": {
+    "defaultMessage": "Il motore in esecuzione usa ancora le vecchie impostazioni di memoria. Applica lo riavvia con quelle nuove; nulla si riavvia da solo."
+  },
+  "mlxMemory.save": {
+    "defaultMessage": "Salva"
+  },
+  "mlxMemory.saveFailed": {
+    "defaultMessage": "Salvataggio non riuscito"
+  },
+  "mlxMemory.savedStopped": {
+    "defaultMessage": "Ogni modifica qui richiede un riavvio del motore; non è in esecuzione, quindi si applicheranno al suo prossimo avvio."
+  },
+  "mlxMemory.tunablesPanel": {
+    "defaultMessage": "Memoria del motore"
+  },
+  "mlxMemory.unitFraction": {
+    "defaultMessage": "quota"
+  },
+  "mlxMemory.unitGb": {
+    "defaultMessage": "GB"
+  },
+  "mlxMemory.unitRequests": {
+    "defaultMessage": "richieste"
+  },
+  "mlxMemory.unitTokens": {
+    "defaultMessage": "token"
+  },
+  "mlxMemory.unsaved": {
+    "defaultMessage": "non salvato"
+  },
+  "mlxMemory.wiredBoot": {
+    "defaultMessage": "Impostazione all’avvio (LaunchDaemon)"
+  },
+  "mlxMemory.wiredBootNone": {
+    "defaultMessage": "non installata"
+  },
+  "mlxMemory.wiredCommand": {
+    "defaultMessage": "Eseguito come amministratore"
+  },
+  "mlxMemory.wiredCurrent": {
+    "defaultMessage": "Adesso (sysctl iogpu.wired_limit_mb)"
+  },
+  "mlxMemory.wiredDefault": {
+    "defaultMessage": "0 (predefinito macOS)"
+  },
+  "mlxMemory.wiredDone": {
+    "defaultMessage": "Fatto"
+  },
+  "mlxMemory.wiredDoneText": {
+    "defaultMessage": "Il limite wired ora è {mb} MB."
+  },
+  "mlxMemory.wiredFailed": {
+    "defaultMessage": "Non modificato"
+  },
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "Quanta RAM macOS lascia riservare (wired) alla GPU, il che limita ogni motore. Impostarlo esegue un comando come amministratore: macOS chiede la tua password. Si azzera al riavvio, a meno che tu non installi anche l’impostazione all’avvio. Metal lo legge all’avvio di un processo, quindi il motore vede il nuovo valore al suo prossimo avvio."
+  },
+  "mlxMemory.wiredInvalid": {
+    "defaultMessage": "Usa 0 o un numero intero da 8192 a {max}."
+  },
+  "mlxMemory.wiredPanel": {
+    "defaultMessage": "Limite wired GPU di macOS"
+  },
+  "mlxMemory.wiredPersist": {
+    "defaultMessage": "Imposta e mantieni dopo il riavvio"
+  },
+  "mlxMemory.wiredRange": {
+    "defaultMessage": "MB · 0 (predefinito macOS) oppure da 8192 a {max}"
+  },
+  "mlxMemory.wiredRemoteNote": {
+    "defaultMessage": "Il limite wired si imposta sul Mac stesso: apri goose su {mac} per cambiarlo."
+  },
+  "mlxMemory.wiredRemove": {
+    "defaultMessage": "Rimuovi impostazione all’avvio"
+  },
+  "mlxMemory.wiredRemoveNote": {
+    "defaultMessage": "Rimuovendo l’impostazione all’avvio il valore attuale resta fino al prossimo riavvio."
+  },
+  "mlxMemory.wiredSet": {
+    "defaultMessage": "Imposta fino al riavvio"
+  },
+  "mlxMemory.wiredSuggest": {
+    "defaultMessage": "suggerito per un inference box: {mb} MB"
+  },
+  "mlxMemory.wiredValue": {
+    "defaultMessage": "Nuovo limite"
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {Suddiviso su # Mac · {backend}} other {Suddiviso su # Mac · {backend}}}"
@@ -6200,14 +6494,14 @@
   "mlxSetup.step2": {
     "defaultMessage": "Modelli"
   },
-  "mlxSetup.step2Reading": {
-    "defaultMessage": "Lettura dei tuoi Mac…"
-  },
   "mlxSetup.step2Done": {
     "defaultMessage": "{count} sui tuoi Mac"
   },
   "mlxSetup.step2Next": {
     "defaultMessage": "Ottieni un modello"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Lettura dei tuoi Mac…"
   },
   "mlxSetup.step3": {
     "defaultMessage": "Esegui"

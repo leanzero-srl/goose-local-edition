@@ -5738,6 +5738,9 @@
   "mlxEngine.tabMacs": {
     "defaultMessage": "Mac’lerim"
   },
+  "mlxEngine.tabMemory": {
+    "defaultMessage": "Bellek"
+  },
   "mlxEngine.tabModels": {
     "defaultMessage": "Modeller"
   },
@@ -5878,6 +5881,297 @@
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV önbelleği sıkıştırması kullanılamıyor: {reason}"
+  },
+  "mlxMemory.advanced": {
+    "defaultMessage": "Gelişmiş: otomatik sınır ve esnek rezerv"
+  },
+  "mlxMemory.apply": {
+    "defaultMessage": "Uygula: motoru yeniden başlat"
+  },
+  "mlxMemory.bindingEngine": {
+    "defaultMessage": "motor sınırı"
+  },
+  "mlxMemory.bindingFloor": {
+    "defaultMessage": "boş bellek tabanı"
+  },
+  "mlxMemory.bindingMacos": {
+    "defaultMessage": "macOS çalışma kümesi"
+  },
+  "mlxMemory.busy": {
+    "defaultMessage": "{count,plural,one{Motor # istek işliyor: Uygula, motor boşta kalana kadar bekler.} other{Motor # istek işliyor: Uygula, motor boşta kalana kadar bekler.}}"
+  },
+  "mlxMemory.capAboveWorkingSet": {
+    "defaultMessage": "{cap} sınırı, macOS GPU çalışma kümesinin ({ws}) üzerinde: wired sınırı yükseltilmezse önce macOS sınırlar (önerilen {mb} MB, aşağıda)."
+  },
+  "mlxMemory.clear": {
+    "defaultMessage": "Temizle"
+  },
+  "mlxMemory.consequences": {
+    "defaultMessage": "Bu sınırda: maks. bağlam ~{tokens} token, macOS ve diğer uygulamalar için {free} boş."
+  },
+  "mlxMemory.consequencesAuto": {
+    "defaultMessage": "Otomatik sınır: motor bunu başlangıçta modele ve bağlama göre hesaplar."
+  },
+  "mlxMemory.consequencesNoKv": {
+    "defaultMessage": "Bu sınırda: macOS ve diğer uygulamalar için {free} boş. Maks. bağlam, motor çalışıp token başına KV değerini bildirdiğinde görünür."
+  },
+  "mlxMemory.decrease": {
+    "defaultMessage": "{label} azalt"
+  },
+  "mlxMemory.defaultAuto": {
+    "defaultMessage": "otomatik: motor başlangıçta hesaplar"
+  },
+  "mlxMemory.defaultAutoLive": {
+    "defaultMessage": "otomatik: şu an {gb}"
+  },
+  "mlxMemory.defaultContext": {
+    "defaultMessage": "modelin yapılandırılmış bağlamı, yoksa maksimumu"
+  },
+  "mlxMemory.defaultContextLive": {
+    "defaultMessage": "motor şu an {tokens} token planlıyor"
+  },
+  "mlxMemory.defaultEngineAuto": {
+    "defaultMessage": "motor otomatiği"
+  },
+  "mlxMemory.defaultEngineAutoLive": {
+    "defaultMessage": "motor otomatiği: şu an {gb}"
+  },
+  "mlxMemory.defaultFloor": {
+    "defaultMessage": "goose varsayılanı {gb} GB (RAM'in %5'i)"
+  },
+  "mlxMemory.defaultGoose": {
+    "defaultMessage": "goose varsayılanı {value}"
+  },
+  "mlxMemory.defaultMargin": {
+    "defaultMessage": "otomatik: tavanın %2'si"
+  },
+  "mlxMemory.defaultValue": {
+    "defaultMessage": "motor varsayılanı {value}"
+  },
+  "mlxMemory.increase": {
+    "defaultMessage": "{label} artır"
+  },
+  "mlxMemory.intro": {
+    "defaultMessage": "Motorun bu Mac'te planlama yaptığı tüm bellek değerleri. Boş bir alan yanında gösterilen varsayılanı korur. Bu ayarlar ait oldukları Mac'te durur."
+  },
+  "mlxMemory.invalid": {
+    "defaultMessage": "Mümkün değil"
+  },
+  "mlxMemory.label.autoHeadroomFraction": {
+    "defaultMessage": "Otomatik pay"
+  },
+  "mlxMemory.label.autoUtilizationCeiling": {
+    "defaultMessage": "Otomatik sınır tavanı"
+  },
+  "mlxMemory.label.autoUtilizationFloor": {
+    "defaultMessage": "Otomatik sınır tabanı"
+  },
+  "mlxMemory.label.guardMarginGb": {
+    "defaultMessage": "Koruma güvenlik payı"
+  },
+  "mlxMemory.label.maxConcurrentRequests": {
+    "defaultMessage": "Maks. eşzamanlı istek"
+  },
+  "mlxMemory.label.maxContextTokens": {
+    "defaultMessage": "Maks. bağlam (kabul edilen pencere)"
+  },
+  "mlxMemory.label.memoryFloorGb": {
+    "defaultMessage": "Boş bellek tabanı"
+  },
+  "mlxMemory.label.metalLimitGb": {
+    "defaultMessage": "Motor Metal sınırı"
+  },
+  "mlxMemory.label.prefillStepSize": {
+    "defaultMessage": "Maks. prefill öbeği"
+  },
+  "mlxMemory.label.prefixCacheGb": {
+    "defaultMessage": "Önek önbelleği bütçesi"
+  },
+  "mlxMemory.label.systemReserveFraction": {
+    "defaultMessage": "Esnek rezerv"
+  },
+  "mlxMemory.liveActive": {
+    "defaultMessage": "Motor etkin / tepe"
+  },
+  "mlxMemory.liveCap": {
+    "defaultMessage": "Motor sınırı"
+  },
+  "mlxMemory.liveCapValue": {
+    "defaultMessage": "{gb} · {source} · sınırlayan: {binding}"
+  },
+  "mlxMemory.liveEngineStopped": {
+    "defaultMessage": "motor çalışmıyor"
+  },
+  "mlxMemory.liveFree": {
+    "defaultMessage": "Boş"
+  },
+  "mlxMemory.liveKv": {
+    "defaultMessage": "Token başına KV önbelleği"
+  },
+  "mlxMemory.liveKvValue": {
+    "defaultMessage": "{bytes} bayt · 100k token başına {gbPer100k} GB"
+  },
+  "mlxMemory.liveMaxContext": {
+    "defaultMessage": "Tavanda maks. bağlam"
+  },
+  "mlxMemory.liveOthers": {
+    "defaultMessage": "Diğer uygulamalar + macOS (GPU sürücüsünün sabitlediği bellek dahil)"
+  },
+  "mlxMemory.livePanel": {
+    "defaultMessage": "Şu anki bellek"
+  },
+  "mlxMemory.livePhysical": {
+    "defaultMessage": "Fiziksel RAM"
+  },
+  "mlxMemory.liveUnknown": {
+    "defaultMessage": "bildirilmedi"
+  },
+  "mlxMemory.liveWired": {
+    "defaultMessage": "macOS GPU wired sınırı"
+  },
+  "mlxMemory.liveWorkingSet": {
+    "defaultMessage": "macOS GPU çalışma kümesi"
+  },
+  "mlxMemory.needsEngine": {
+    "defaultMessage": "Bu Mac {launcher} başlatıyor. lz.20 işaretli alanlar Rapid-MLX v0.14.3-lz.20 veya daha yenisini gerektirir: bunlardan biri ayarlıyken yapılan başlatma adıyla reddedilir."
+  },
+  "mlxMemory.needsEngineChip": {
+    "defaultMessage": "lz.20"
+  },
+  "mlxMemory.presetInferenceBox": {
+    "defaultMessage": "Çıkarım kutusu"
+  },
+  "mlxMemory.presetWorkstation": {
+    "defaultMessage": "İş istasyonu"
+  },
+  "mlxMemory.presetsLabel": {
+    "defaultMessage": "Başlangıç değerlerini doldur"
+  },
+  "mlxMemory.presetsNote": {
+    "defaultMessage": "İş istasyonu: otomatik sınır, taban RAM'in %8'i. Çıkarım kutusu: sınır = GiB cinsinden RAM eksi 16 (128 GiB'de 112 GB), taban 4 GB. Ön ayar yalnızca alanları doldurur; kaydedene kadar hiçbir şey değişmez."
+  },
+  "mlxMemory.problemCapPlusFloor": {
+    "defaultMessage": "{cap} GB sınır + {floor} GB taban, bu Mac'in {physical} GB RAM'inden fazla."
+  },
+  "mlxMemory.problemFloorAboveCeiling": {
+    "defaultMessage": "Otomatik sınır tabanı {floor}, otomatik sınır tavanı {ceiling} değerinin üzerinde."
+  },
+  "mlxMemory.problemKvOverCap": {
+    "defaultMessage": "{tokens} token'lık bir pencerenin yalnızca KV önbelleği {kv} GB, {cap} GB sınırından fazla."
+  },
+  "mlxMemory.problemNotInteger": {
+    "defaultMessage": "{label}: tam sayı olmalı"
+  },
+  "mlxMemory.problemNotNumber": {
+    "defaultMessage": "{label}: sayı değil"
+  },
+  "mlxMemory.problemRange": {
+    "defaultMessage": "{label}: {range}"
+  },
+  "mlxMemory.rangeAboveBelow": {
+    "defaultMessage": "geçerli: {min} üzeri, en çok {max}"
+  },
+  "mlxMemory.rangeBelow": {
+    "defaultMessage": "geçerli: {min} ile {max} altı arası"
+  },
+  "mlxMemory.rangeBetween": {
+    "defaultMessage": "geçerli: {min} ile {max} arası"
+  },
+  "mlxMemory.rangeOpen": {
+    "defaultMessage": "geçerli: {min} veya daha fazla"
+  },
+  "mlxMemory.readFailed": {
+    "defaultMessage": "Bu Mac'in belleği okunamadı"
+  },
+  "mlxMemory.restartNeeded": {
+    "defaultMessage": "Yeniden başlatma gerekli"
+  },
+  "mlxMemory.restartNeededText": {
+    "defaultMessage": "Çalışan motor hâlâ eski bellek ayarlarını kullanıyor. Uygula onu bunlarla yeniden başlatır; hiçbir şey kendiliğinden yeniden başlamaz."
+  },
+  "mlxMemory.save": {
+    "defaultMessage": "Kaydet"
+  },
+  "mlxMemory.saveFailed": {
+    "defaultMessage": "Kaydedilemedi"
+  },
+  "mlxMemory.savedStopped": {
+    "defaultMessage": "Buradaki her değişiklik motorun yeniden başlatılmasını gerektirir; motor çalışmıyor, bu yüzden değişiklikler bir sonraki başlatmada geçerli olur."
+  },
+  "mlxMemory.tunablesPanel": {
+    "defaultMessage": "Motor belleği"
+  },
+  "mlxMemory.unitFraction": {
+    "defaultMessage": "oran"
+  },
+  "mlxMemory.unitGb": {
+    "defaultMessage": "GB"
+  },
+  "mlxMemory.unitRequests": {
+    "defaultMessage": "istek"
+  },
+  "mlxMemory.unitTokens": {
+    "defaultMessage": "token"
+  },
+  "mlxMemory.unsaved": {
+    "defaultMessage": "kaydedilmedi"
+  },
+  "mlxMemory.wiredBoot": {
+    "defaultMessage": "Açılış ayarı (LaunchDaemon)"
+  },
+  "mlxMemory.wiredBootNone": {
+    "defaultMessage": "yüklü değil"
+  },
+  "mlxMemory.wiredCommand": {
+    "defaultMessage": "Yönetici olarak çalışır"
+  },
+  "mlxMemory.wiredCurrent": {
+    "defaultMessage": "Şimdi (sysctl iogpu.wired_limit_mb)"
+  },
+  "mlxMemory.wiredDefault": {
+    "defaultMessage": "0 (macOS varsayılanı)"
+  },
+  "mlxMemory.wiredDone": {
+    "defaultMessage": "Tamam"
+  },
+  "mlxMemory.wiredDoneText": {
+    "defaultMessage": "Wired sınırı şu an {mb} MB."
+  },
+  "mlxMemory.wiredFailed": {
+    "defaultMessage": "Değiştirilmedi"
+  },
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "macOS'un GPU'nun ne kadar RAM'i wired olarak ayırmasına izin verdiği; bu her motoru sınırlar. Ayarlamak yönetici olarak tek bir komut çalıştırır: macOS parolanızı ister. Açılış ayarını da yüklemezseniz yeniden başlatmada sıfırlanır. Metal bunu bir işlem başlarken okur, bu yüzden motor yeni değeri bir sonraki başlatmada görür."
+  },
+  "mlxMemory.wiredInvalid": {
+    "defaultMessage": "0 veya 8192 ile {max} arasında bir tam sayı kullanın."
+  },
+  "mlxMemory.wiredPanel": {
+    "defaultMessage": "macOS GPU wired sınırı"
+  },
+  "mlxMemory.wiredPersist": {
+    "defaultMessage": "Ayarla ve yeniden başlatmadan sonra koru"
+  },
+  "mlxMemory.wiredRange": {
+    "defaultMessage": "MB · 0 (macOS varsayılanı) veya 8192 ile {max} arası"
+  },
+  "mlxMemory.wiredRemoteNote": {
+    "defaultMessage": "Wired sınırı Mac'in kendisinde ayarlanır: değiştirmek için {mac} üzerinde goose'u açın."
+  },
+  "mlxMemory.wiredRemove": {
+    "defaultMessage": "Açılış ayarını kaldır"
+  },
+  "mlxMemory.wiredRemoveNote": {
+    "defaultMessage": "Açılış ayarını kaldırmak, mevcut değeri bir sonraki yeniden başlatmaya kadar korur."
+  },
+  "mlxMemory.wiredSet": {
+    "defaultMessage": "Yeniden başlatmaya kadar ayarla"
+  },
+  "mlxMemory.wiredSuggest": {
+    "defaultMessage": "çıkarım kutusu için önerilen: {mb} MB"
+  },
+  "mlxMemory.wiredValue": {
+    "defaultMessage": "Yeni sınır"
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {# Mac'e bölünmüş · {backend}} other {# Mac'e bölünmüş · {backend}}}"
@@ -6200,14 +6494,14 @@
   "mlxSetup.step2": {
     "defaultMessage": "Modeller"
   },
-  "mlxSetup.step2Reading": {
-    "defaultMessage": "Mac'leriniz okunuyor…"
-  },
   "mlxSetup.step2Done": {
     "defaultMessage": "Mac’lerinizde {count}"
   },
   "mlxSetup.step2Next": {
     "defaultMessage": "Bir model edinin"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Mac'leriniz okunuyor…"
   },
   "mlxSetup.step3": {
     "defaultMessage": "Çalıştır"

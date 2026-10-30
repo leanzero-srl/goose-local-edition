@@ -561,6 +561,11 @@ fn memory_budget_to_dto(b: EngineMemoryBudget) -> MlxEngineMemoryBudgetDto {
         active_bytes: b.active_bytes,
         peak_bytes: b.peak_bytes,
         max_context_at_ceiling: b.max_context_at_ceiling,
+        plan_limit_bytes: b.plan_limit_bytes,
+        step_binding: b.step_binding,
+        used_bytes: b.used_bytes,
+        cache_bytes: b.cache_bytes,
+        plan_sequence_need_bytes: b.plan_sequence_need_bytes,
         tunables: b.tunables,
     }
 }

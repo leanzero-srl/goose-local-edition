@@ -5738,6 +5738,9 @@
   "mlxEngine.tabMacs": {
     "defaultMessage": "मेरे Mac"
   },
+  "mlxEngine.tabMemory": {
+    "defaultMessage": "मेमोरी"
+  },
   "mlxEngine.tabModels": {
     "defaultMessage": "मॉडल"
   },
@@ -5878,6 +5881,297 @@
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV कैश संपीड़न उपलब्ध नहीं: {reason}"
+  },
+  "mlxMemory.advanced": {
+    "defaultMessage": "उन्नत: स्वचालित सीमा और सॉफ़्ट रिज़र्व"
+  },
+  "mlxMemory.apply": {
+    "defaultMessage": "लागू करें: इंजन रीस्टार्ट करें"
+  },
+  "mlxMemory.bindingEngine": {
+    "defaultMessage": "इंजन की सीमा"
+  },
+  "mlxMemory.bindingFloor": {
+    "defaultMessage": "खाली मेमोरी की न्यूनतम सीमा"
+  },
+  "mlxMemory.bindingMacos": {
+    "defaultMessage": "macOS वर्किंग सेट"
+  },
+  "mlxMemory.busy": {
+    "defaultMessage": "{count,plural,one{इंजन # अनुरोध संभाल रहा है: इंजन के निष्क्रिय होने तक \"लागू करें\" प्रतीक्षा करेगा।} other{इंजन # अनुरोध संभाल रहा है: इंजन के निष्क्रिय होने तक \"लागू करें\" प्रतीक्षा करेगा।}}"
+  },
+  "mlxMemory.capAboveWorkingSet": {
+    "defaultMessage": "सीमा {cap} macOS GPU वर्किंग सेट ({ws}) से ऊपर है: wired लिमिट बढ़ाए बिना macOS पहले सीमित करेगा (सुझाया गया {mb} MB, नीचे)।"
+  },
+  "mlxMemory.clear": {
+    "defaultMessage": "साफ़ करें"
+  },
+  "mlxMemory.consequences": {
+    "defaultMessage": "इस सीमा पर: अधिकतम कॉन्टेक्स्ट ~{tokens} टोकन, macOS और अन्य ऐप्स के लिए {free} खाली।"
+  },
+  "mlxMemory.consequencesAuto": {
+    "defaultMessage": "स्वचालित सीमा: इंजन इसे शुरू होते समय मॉडल और कॉन्टेक्स्ट से तय करता है।"
+  },
+  "mlxMemory.consequencesNoKv": {
+    "defaultMessage": "इस सीमा पर: macOS और अन्य ऐप्स के लिए {free} खाली। अधिकतम कॉन्टेक्स्ट तब दिखता है जब इंजन चल रहा हो और प्रति टोकन KV बताए।"
+  },
+  "mlxMemory.decrease": {
+    "defaultMessage": "{label} घटाएँ"
+  },
+  "mlxMemory.defaultAuto": {
+    "defaultMessage": "ऑटो: इंजन इसे शुरू होते समय तय करता है"
+  },
+  "mlxMemory.defaultAutoLive": {
+    "defaultMessage": "ऑटो: अभी {gb}"
+  },
+  "mlxMemory.defaultContext": {
+    "defaultMessage": "मॉडल का कॉन्फ़िगर किया कॉन्टेक्स्ट, नहीं तो उसका अधिकतम"
+  },
+  "mlxMemory.defaultContextLive": {
+    "defaultMessage": "इंजन अभी {tokens} टोकन की योजना बना रहा है"
+  },
+  "mlxMemory.defaultEngineAuto": {
+    "defaultMessage": "इंजन ऑटो"
+  },
+  "mlxMemory.defaultEngineAutoLive": {
+    "defaultMessage": "इंजन ऑटो: अभी {gb}"
+  },
+  "mlxMemory.defaultFloor": {
+    "defaultMessage": "goose डिफ़ॉल्ट {gb} GB (RAM का 5%)"
+  },
+  "mlxMemory.defaultGoose": {
+    "defaultMessage": "goose डिफ़ॉल्ट {value}"
+  },
+  "mlxMemory.defaultMargin": {
+    "defaultMessage": "ऑटो: सीमा का 2%"
+  },
+  "mlxMemory.defaultValue": {
+    "defaultMessage": "इंजन डिफ़ॉल्ट {value}"
+  },
+  "mlxMemory.increase": {
+    "defaultMessage": "{label} बढ़ाएँ"
+  },
+  "mlxMemory.intro": {
+    "defaultMessage": "इस Mac पर इंजन जिन सभी मेमोरी मानों के आधार पर योजना बनाता है। खाली फ़ील्ड बगल में दिखाया गया डिफ़ॉल्ट रखता है। ये सेटिंग उसी Mac पर रहती हैं जिसकी वे हैं।"
+  },
+  "mlxMemory.invalid": {
+    "defaultMessage": "संभव नहीं"
+  },
+  "mlxMemory.label.autoHeadroomFraction": {
+    "defaultMessage": "ऑटो हेडरूम"
+  },
+  "mlxMemory.label.autoUtilizationCeiling": {
+    "defaultMessage": "ऑटो सीमा की ऊपरी हद"
+  },
+  "mlxMemory.label.autoUtilizationFloor": {
+    "defaultMessage": "ऑटो सीमा की निचली हद"
+  },
+  "mlxMemory.label.guardMarginGb": {
+    "defaultMessage": "गार्ड सुरक्षा मार्जिन"
+  },
+  "mlxMemory.label.maxConcurrentRequests": {
+    "defaultMessage": "अधिकतम समवर्ती अनुरोध"
+  },
+  "mlxMemory.label.maxContextTokens": {
+    "defaultMessage": "अधिकतम कॉन्टेक्स्ट (स्वीकृत विंडो)"
+  },
+  "mlxMemory.label.memoryFloorGb": {
+    "defaultMessage": "खाली मेमोरी की न्यूनतम सीमा"
+  },
+  "mlxMemory.label.metalLimitGb": {
+    "defaultMessage": "इंजन की Metal सीमा"
+  },
+  "mlxMemory.label.prefillStepSize": {
+    "defaultMessage": "अधिकतम प्रीफ़िल चंक"
+  },
+  "mlxMemory.label.prefixCacheGb": {
+    "defaultMessage": "प्रीफ़िक्स-कैश बजट"
+  },
+  "mlxMemory.label.systemReserveFraction": {
+    "defaultMessage": "सॉफ़्ट रिज़र्व"
+  },
+  "mlxMemory.liveActive": {
+    "defaultMessage": "इंजन सक्रिय / चरम"
+  },
+  "mlxMemory.liveCap": {
+    "defaultMessage": "इंजन की सीमा"
+  },
+  "mlxMemory.liveCapValue": {
+    "defaultMessage": "{gb} · {source} · सीमा तय करने वाला: {binding}"
+  },
+  "mlxMemory.liveEngineStopped": {
+    "defaultMessage": "इंजन नहीं चल रहा"
+  },
+  "mlxMemory.liveFree": {
+    "defaultMessage": "खाली"
+  },
+  "mlxMemory.liveKv": {
+    "defaultMessage": "प्रति टोकन KV कैश"
+  },
+  "mlxMemory.liveKvValue": {
+    "defaultMessage": "{bytes} बाइट · प्रति 100k टोकन {gbPer100k} GB"
+  },
+  "mlxMemory.liveMaxContext": {
+    "defaultMessage": "ऊपरी सीमा पर अधिकतम कॉन्टेक्स्ट"
+  },
+  "mlxMemory.liveOthers": {
+    "defaultMessage": "अन्य ऐप्स + macOS (GPU ड्राइवर द्वारा wire की गई मेमोरी सहित)"
+  },
+  "mlxMemory.livePanel": {
+    "defaultMessage": "अभी की मेमोरी"
+  },
+  "mlxMemory.livePhysical": {
+    "defaultMessage": "भौतिक RAM"
+  },
+  "mlxMemory.liveUnknown": {
+    "defaultMessage": "रिपोर्ट नहीं किया गया"
+  },
+  "mlxMemory.liveWired": {
+    "defaultMessage": "macOS GPU wired लिमिट"
+  },
+  "mlxMemory.liveWorkingSet": {
+    "defaultMessage": "macOS GPU वर्किंग सेट"
+  },
+  "mlxMemory.needsEngine": {
+    "defaultMessage": "यह Mac {launcher} चलाता है। lz.20 चिह्नित फ़ील्ड के लिए Rapid-MLX v0.14.3-lz.20 या नया चाहिए: इनमें से कोई भी सेट होने पर शुरू करने को फ़ील्ड का नाम बताकर अस्वीकार कर दिया जाता है।"
+  },
+  "mlxMemory.needsEngineChip": {
+    "defaultMessage": "lz.20"
+  },
+  "mlxMemory.presetInferenceBox": {
+    "defaultMessage": "इन्फ़रेंस बॉक्स"
+  },
+  "mlxMemory.presetWorkstation": {
+    "defaultMessage": "वर्कस्टेशन"
+  },
+  "mlxMemory.presetsLabel": {
+    "defaultMessage": "शुरुआती मान भरें"
+  },
+  "mlxMemory.presetsNote": {
+    "defaultMessage": "वर्कस्टेशन: स्वचालित सीमा, न्यूनतम सीमा RAM का 8%। इन्फ़रेंस बॉक्स: सीमा = GiB में RAM घटा 16 (128 GiB पर 112 GB), न्यूनतम सीमा 4 GB। प्रीसेट केवल फ़ील्ड भरता है; सहेजने तक कुछ नहीं बदलता।"
+  },
+  "mlxMemory.problemCapPlusFloor": {
+    "defaultMessage": "सीमा {cap} GB + न्यूनतम सीमा {floor} GB इस Mac की {physical} GB RAM से अधिक है।"
+  },
+  "mlxMemory.problemFloorAboveCeiling": {
+    "defaultMessage": "ऑटो सीमा की निचली हद {floor} ऊपरी हद {ceiling} से ऊपर है।"
+  },
+  "mlxMemory.problemKvOverCap": {
+    "defaultMessage": "{tokens} टोकन की विंडो का अकेला KV कैश {kv} GB है, जो {cap} GB की सीमा से अधिक है।"
+  },
+  "mlxMemory.problemNotInteger": {
+    "defaultMessage": "{label}: पूर्ण संख्या होनी चाहिए"
+  },
+  "mlxMemory.problemNotNumber": {
+    "defaultMessage": "{label}: संख्या नहीं है"
+  },
+  "mlxMemory.problemRange": {
+    "defaultMessage": "{label}: {range}"
+  },
+  "mlxMemory.rangeAboveBelow": {
+    "defaultMessage": "मान्य: {min} से अधिक, {max} तक"
+  },
+  "mlxMemory.rangeBelow": {
+    "defaultMessage": "मान्य: {min} से {max} से कम तक"
+  },
+  "mlxMemory.rangeBetween": {
+    "defaultMessage": "मान्य: {min} से {max}"
+  },
+  "mlxMemory.rangeOpen": {
+    "defaultMessage": "मान्य: {min} या अधिक"
+  },
+  "mlxMemory.readFailed": {
+    "defaultMessage": "इस Mac की मेमोरी नहीं पढ़ी जा सकी"
+  },
+  "mlxMemory.restartNeeded": {
+    "defaultMessage": "रीस्टार्ट ज़रूरी"
+  },
+  "mlxMemory.restartNeededText": {
+    "defaultMessage": "चल रहा इंजन अब भी पुरानी मेमोरी सेटिंग इस्तेमाल कर रहा है। लागू करें इसे नई सेटिंग के साथ रीस्टार्ट करता है; अपने आप कुछ रीस्टार्ट नहीं होता।"
+  },
+  "mlxMemory.save": {
+    "defaultMessage": "सहेजें"
+  },
+  "mlxMemory.saveFailed": {
+    "defaultMessage": "सहेजना विफल"
+  },
+  "mlxMemory.savedStopped": {
+    "defaultMessage": "यहाँ हर बदलाव के लिए इंजन रीस्टार्ट ज़रूरी है; इंजन चल नहीं रहा, इसलिए बदलाव उसकी अगली शुरुआत पर लागू होंगे।"
+  },
+  "mlxMemory.tunablesPanel": {
+    "defaultMessage": "इंजन मेमोरी"
+  },
+  "mlxMemory.unitFraction": {
+    "defaultMessage": "हिस्सा"
+  },
+  "mlxMemory.unitGb": {
+    "defaultMessage": "GB"
+  },
+  "mlxMemory.unitRequests": {
+    "defaultMessage": "अनुरोध"
+  },
+  "mlxMemory.unitTokens": {
+    "defaultMessage": "टोकन"
+  },
+  "mlxMemory.unsaved": {
+    "defaultMessage": "सहेजा नहीं गया"
+  },
+  "mlxMemory.wiredBoot": {
+    "defaultMessage": "बूट सेटिंग (LaunchDaemon)"
+  },
+  "mlxMemory.wiredBootNone": {
+    "defaultMessage": "इंस्टॉल नहीं है"
+  },
+  "mlxMemory.wiredCommand": {
+    "defaultMessage": "एडमिनिस्ट्रेटर के रूप में चलता है"
+  },
+  "mlxMemory.wiredCurrent": {
+    "defaultMessage": "अभी (sysctl iogpu.wired_limit_mb)"
+  },
+  "mlxMemory.wiredDefault": {
+    "defaultMessage": "0 (macOS डिफ़ॉल्ट)"
+  },
+  "mlxMemory.wiredDone": {
+    "defaultMessage": "हो गया"
+  },
+  "mlxMemory.wiredDoneText": {
+    "defaultMessage": "wired लिमिट अभी {mb} MB है।"
+  },
+  "mlxMemory.wiredFailed": {
+    "defaultMessage": "बदला नहीं गया"
+  },
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "macOS GPU को कितनी RAM wire करने देता है, जो हर इंजन की सीमा तय करता है। इसे सेट करने पर एडमिनिस्ट्रेटर के रूप में एक कमांड चलती है: macOS आपका पासवर्ड माँगेगा। बूट सेटिंग भी इंस्टॉल न करें तो यह रीबूट पर रीसेट हो जाती है। Metal इसे प्रोसेस शुरू होते समय पढ़ता है, इसलिए इंजन नया मान अपनी अगली शुरुआत पर देखता है।"
+  },
+  "mlxMemory.wiredInvalid": {
+    "defaultMessage": "0 या 8192 से {max} तक की पूर्ण संख्या डालें।"
+  },
+  "mlxMemory.wiredPanel": {
+    "defaultMessage": "macOS GPU wired लिमिट"
+  },
+  "mlxMemory.wiredPersist": {
+    "defaultMessage": "सेट करें और रीबूट के बाद भी रखें"
+  },
+  "mlxMemory.wiredRange": {
+    "defaultMessage": "MB · 0 (macOS डिफ़ॉल्ट) या 8192 से {max}"
+  },
+  "mlxMemory.wiredRemoteNote": {
+    "defaultMessage": "wired लिमिट Mac पर ही सेट होती है: इसे बदलने के लिए {mac} पर goose खोलें।"
+  },
+  "mlxMemory.wiredRemove": {
+    "defaultMessage": "बूट सेटिंग हटाएँ"
+  },
+  "mlxMemory.wiredRemoveNote": {
+    "defaultMessage": "बूट सेटिंग हटाने पर मौजूदा मान अगले रीबूट तक बना रहता है।"
+  },
+  "mlxMemory.wiredSet": {
+    "defaultMessage": "रीबूट तक सेट करें"
+  },
+  "mlxMemory.wiredSuggest": {
+    "defaultMessage": "इन्फ़रेंस बॉक्स के लिए सुझाया गया: {mb} MB"
+  },
+  "mlxMemory.wiredValue": {
+    "defaultMessage": "नई लिमिट"
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {# Mac में विभाजित · {backend}} other {# Mac में विभाजित · {backend}}}"
@@ -6200,14 +6494,14 @@
   "mlxSetup.step2": {
     "defaultMessage": "मॉडल"
   },
-  "mlxSetup.step2Reading": {
-    "defaultMessage": "आपके Mac पढ़े जा रहे हैं…"
-  },
   "mlxSetup.step2Done": {
     "defaultMessage": "आपके Mac पर {count}"
   },
   "mlxSetup.step2Next": {
     "defaultMessage": "एक मॉडल लें"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "आपके Mac पढ़े जा रहे हैं…"
   },
   "mlxSetup.step3": {
     "defaultMessage": "चलाएँ"

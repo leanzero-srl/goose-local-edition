@@ -97,6 +97,14 @@ export interface MlxEngineStatus {
   gateFit?: MlxMountFitDto | null;
   /** Persisted settings would spawn the running engine differently; remount to apply. */
   restartRequired: boolean;
+  /** Metal's recommended working set on that Mac; absent exactly when `gpuCeilingError` says why. */
+  gpuCeilingBytes?: number | null;
+  gpuCeilingError?: string | null;
+  /** The engine's admission cap as configured on that Mac. */
+  maxConcurrentRequests?: number;
+  /** The engine's own memory plan and use (lz.20+); absent while stopped or on an older engine. */
+  memoryBudget?: MlxEngineMemoryBudget | null;
+  memoryBudgetError?: string | null;
   /**
    * Set while the manager is NOT running yet something already listens on the configured
    * port — an unsupervised engine orphaned by a previous session, or anyone else's. Unmount
@@ -290,6 +298,78 @@ export interface MlxEngineSettings {
   spawnCommand: string[];
   /** Per-model sampling/context profiles keyed by HF model id — the source of truth. */
   modelProfiles: Record<string, MlxModelProfile>;
+  /** This Mac's engine memory tunables (`mlx_engine.memory`); absent from a goose before them. */
+  memory?: MlxEngineMemoryTunables;
+}
+
+/**
+ * The engine memory tunables (goose-sidecar `memory_tunables`), each its own engine flag. An
+ * absent key = the engine's own default, except `memoryFloorGb`, whose absence means goose's
+ * per-machine default (`MlxMemoryMachine.defaultFloorGb`).
+ */
+export interface MlxEngineMemoryTunables {
+  metalLimitGb?: number;
+  memoryFloorGb?: number;
+  prefixCacheGb?: number;
+  prefillStepSize?: number;
+  maxContextTokens?: number;
+  guardMarginGb?: number;
+  maxConcurrentRequests?: number;
+  autoUtilizationFloor?: number;
+  autoUtilizationCeiling?: number;
+  autoHeadroomFraction?: number;
+  systemReserveFraction?: number;
+}
+
+/** The running engine's `/v1/status` `memory_budget` (lz.20+); every figure absent when not reported. */
+export interface MlxEngineMemoryBudget {
+  physicalBytes?: number;
+  deviceWorkingSetBytes?: number;
+  wiredLimitMb?: number;
+  mode?: string;
+  source?: string;
+  resolvedUtilization?: number;
+  limitBytes?: number;
+  binding?: string;
+  weightsBytes?: number;
+  planContextTokens?: number;
+  kvBytesPerToken?: number;
+  planNeedBytes?: number;
+  prefixBudgetBytes?: number;
+  memoryFloorBytes?: number;
+  othersBytes?: number;
+  freeBytes?: number;
+  effectiveCeilingBytes?: number;
+  activeBytes?: number;
+  peakBytes?: number;
+  maxContextAtCeiling?: number;
+  planLimitBytes?: number;
+  stepBinding?: string;
+  usedBytes?: number;
+  cacheBytes?: number;
+  planSequenceNeedBytes?: number;
+  tunables?: Record<string, unknown>;
+}
+
+/** This Mac's memory facts, readable while no engine runs (`mlxEngine/memoryMachine`). */
+export interface MlxMemoryMachine {
+  physicalBytes: number;
+  availableBytes: number;
+  workingSetBytes?: number;
+  workingSetError?: string;
+  wiredLimitMb?: number;
+  wiredLimitError?: string;
+  daemonWiredLimitMb?: number;
+  daemonError?: string;
+  defaultFloorGb: number;
+  tunablesSupported: boolean;
+  launcher: string;
+}
+
+export interface MlxWiredLimitResult {
+  wiredLimitMb?: number;
+  daemonWiredLimitMb?: number;
+  command: string;
 }
 
 /**
@@ -609,6 +689,29 @@ export async function mlxEngineSettingsUpdate(
     withNode({ settings }, nodeId)
   );
   return response.settings;
+}
+
+/** This Mac's memory facts. Local only: no `nodeId`. */
+export async function mlxEngineMemoryMachine(): Promise<MlxMemoryMachine> {
+  return await call<MlxMemoryMachine>('_goose/unstable/mlxEngine/memoryMachine', {});
+}
+
+/**
+ * Set this Mac's GPU wired limit through the macOS administrator prompt (the person types their
+ * password); `persist` also installs the boot LaunchDaemon. Local only.
+ */
+export async function mlxEngineWiredLimitApply(
+  mb: number,
+  persist: boolean
+): Promise<MlxWiredLimitResult> {
+  return await call<MlxWiredLimitResult>('_goose/unstable/mlxEngine/wiredLimitApply', {
+    mb,
+    persist,
+  });
+}
+
+export async function mlxEngineWiredLimitRemoveDaemon(): Promise<MlxWiredLimitResult> {
+  return await call<MlxWiredLimitResult>('_goose/unstable/mlxEngine/wiredLimitRemoveDaemon', {});
 }
 
 export async function mlxEngineModelsList(nodeId?: string): Promise<MlxModelsList> {

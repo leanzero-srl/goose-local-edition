@@ -5738,6 +5738,9 @@
   "mlxEngine.tabMacs": {
     "defaultMessage": "Mac Saya"
   },
+  "mlxEngine.tabMemory": {
+    "defaultMessage": "Memori"
+  },
   "mlxEngine.tabModels": {
     "defaultMessage": "Model"
   },
@@ -5878,6 +5881,297 @@
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "Kompresi cache KV tidak tersedia: {reason}"
+  },
+  "mlxMemory.advanced": {
+    "defaultMessage": "Lanjutan: batas otomatis dan cadangan lunak"
+  },
+  "mlxMemory.apply": {
+    "defaultMessage": "Terapkan: mulai ulang engine"
+  },
+  "mlxMemory.bindingEngine": {
+    "defaultMessage": "batas engine"
+  },
+  "mlxMemory.bindingFloor": {
+    "defaultMessage": "batas bawah memori bebas"
+  },
+  "mlxMemory.bindingMacos": {
+    "defaultMessage": "working set macOS"
+  },
+  "mlxMemory.busy": {
+    "defaultMessage": "{count,plural,one{Engine sedang melayani # permintaan: Terapkan menunggu hingga engine menganggur.} other{Engine sedang melayani # permintaan: Terapkan menunggu hingga engine menganggur.}}"
+  },
+  "mlxMemory.capAboveWorkingSet": {
+    "defaultMessage": "Batas {cap} berada di atas working set GPU macOS ({ws}): macOS membatasi lebih dulu kecuali batas wired dinaikkan (disarankan {mb} MB, di bawah)."
+  },
+  "mlxMemory.clear": {
+    "defaultMessage": "Hapus"
+  },
+  "mlxMemory.consequences": {
+    "defaultMessage": "Pada batas ini: konteks maks ~{tokens} token, {free} bebas untuk macOS dan aplikasi lain."
+  },
+  "mlxMemory.consequencesAuto": {
+    "defaultMessage": "Batas otomatis: engine menghitungnya saat mulai dari model dan konteks."
+  },
+  "mlxMemory.consequencesNoKv": {
+    "defaultMessage": "Pada batas ini: {free} bebas untuk macOS dan aplikasi lain. Konteks maks muncul setelah engine berjalan dan melaporkan KV per token."
+  },
+  "mlxMemory.decrease": {
+    "defaultMessage": "Kurangi {label}"
+  },
+  "mlxMemory.defaultAuto": {
+    "defaultMessage": "otomatis: engine menghitungnya saat mulai"
+  },
+  "mlxMemory.defaultAutoLive": {
+    "defaultMessage": "otomatis: sekarang {gb}"
+  },
+  "mlxMemory.defaultContext": {
+    "defaultMessage": "konteks model yang dikonfigurasi, jika tidak maksimumnya"
+  },
+  "mlxMemory.defaultContextLive": {
+    "defaultMessage": "engine merencanakan {tokens} token saat ini"
+  },
+  "mlxMemory.defaultEngineAuto": {
+    "defaultMessage": "otomatis engine"
+  },
+  "mlxMemory.defaultEngineAutoLive": {
+    "defaultMessage": "otomatis engine: sekarang {gb}"
+  },
+  "mlxMemory.defaultFloor": {
+    "defaultMessage": "default goose {gb} GB (5% dari RAM)"
+  },
+  "mlxMemory.defaultGoose": {
+    "defaultMessage": "default goose {value}"
+  },
+  "mlxMemory.defaultMargin": {
+    "defaultMessage": "otomatis: 2% dari batas atas"
+  },
+  "mlxMemory.defaultValue": {
+    "defaultMessage": "default engine {value}"
+  },
+  "mlxMemory.increase": {
+    "defaultMessage": "Tambah {label}"
+  },
+  "mlxMemory.intro": {
+    "defaultMessage": "Semua angka memori yang dipakai engine untuk merencanakan di Mac ini. Kolom kosong mempertahankan default yang ditampilkan di sampingnya. Pengaturan ini tersimpan di Mac tempat pengaturan dibuat."
+  },
+  "mlxMemory.invalid": {
+    "defaultMessage": "Tidak mungkin"
+  },
+  "mlxMemory.label.autoHeadroomFraction": {
+    "defaultMessage": "Ruang kosong otomatis"
+  },
+  "mlxMemory.label.autoUtilizationCeiling": {
+    "defaultMessage": "Batas atas otomatis"
+  },
+  "mlxMemory.label.autoUtilizationFloor": {
+    "defaultMessage": "Batas bawah otomatis"
+  },
+  "mlxMemory.label.guardMarginGb": {
+    "defaultMessage": "Margin pengaman guard"
+  },
+  "mlxMemory.label.maxConcurrentRequests": {
+    "defaultMessage": "Maks permintaan bersamaan"
+  },
+  "mlxMemory.label.maxContextTokens": {
+    "defaultMessage": "Konteks maks (jendela yang diterima)"
+  },
+  "mlxMemory.label.memoryFloorGb": {
+    "defaultMessage": "Batas bawah memori bebas"
+  },
+  "mlxMemory.label.metalLimitGb": {
+    "defaultMessage": "Batas Metal engine"
+  },
+  "mlxMemory.label.prefillStepSize": {
+    "defaultMessage": "Potongan prefill maks"
+  },
+  "mlxMemory.label.prefixCacheGb": {
+    "defaultMessage": "Anggaran cache prefiks"
+  },
+  "mlxMemory.label.systemReserveFraction": {
+    "defaultMessage": "Cadangan lunak"
+  },
+  "mlxMemory.liveActive": {
+    "defaultMessage": "Engine aktif / puncak"
+  },
+  "mlxMemory.liveCap": {
+    "defaultMessage": "Batas engine"
+  },
+  "mlxMemory.liveCapValue": {
+    "defaultMessage": "{gb} · {source} · dibatasi oleh {binding}"
+  },
+  "mlxMemory.liveEngineStopped": {
+    "defaultMessage": "engine tidak berjalan"
+  },
+  "mlxMemory.liveFree": {
+    "defaultMessage": "Bebas"
+  },
+  "mlxMemory.liveKv": {
+    "defaultMessage": "Cache KV per token"
+  },
+  "mlxMemory.liveKvValue": {
+    "defaultMessage": "{bytes} byte · {gbPer100k} GB per 100k token"
+  },
+  "mlxMemory.liveMaxContext": {
+    "defaultMessage": "Konteks maks di batas atas"
+  },
+  "mlxMemory.liveOthers": {
+    "defaultMessage": "Aplikasi lain + macOS (termasuk memori yang dikunci driver GPU)"
+  },
+  "mlxMemory.livePanel": {
+    "defaultMessage": "Memori saat ini"
+  },
+  "mlxMemory.livePhysical": {
+    "defaultMessage": "RAM fisik"
+  },
+  "mlxMemory.liveUnknown": {
+    "defaultMessage": "tidak dilaporkan"
+  },
+  "mlxMemory.liveWired": {
+    "defaultMessage": "Batas wired GPU macOS"
+  },
+  "mlxMemory.liveWorkingSet": {
+    "defaultMessage": "Working set GPU macOS"
+  },
+  "mlxMemory.needsEngine": {
+    "defaultMessage": "Mac ini menjalankan {launcher}. Kolom bertanda lz.20 memerlukan Rapid-MLX v0.14.3-lz.20 atau lebih baru: start dengan salah satunya diatur akan ditolak dengan menyebut namanya."
+  },
+  "mlxMemory.needsEngineChip": {
+    "defaultMessage": "lz.20"
+  },
+  "mlxMemory.presetInferenceBox": {
+    "defaultMessage": "Kotak inferensi"
+  },
+  "mlxMemory.presetWorkstation": {
+    "defaultMessage": "Workstation"
+  },
+  "mlxMemory.presetsLabel": {
+    "defaultMessage": "Isi nilai awal"
+  },
+  "mlxMemory.presetsNote": {
+    "defaultMessage": "Workstation: batas otomatis, batas bawah 8% dari RAM. Kotak inferensi: batas = RAM dalam GiB dikurangi 16 (112 GB pada 128 GiB), batas bawah 4 GB. Preset hanya mengisi kolom; tidak ada yang berubah sampai Anda menyimpan."
+  },
+  "mlxMemory.problemCapPlusFloor": {
+    "defaultMessage": "Batas {cap} GB + batas bawah {floor} GB melebihi {physical} GB RAM Mac ini."
+  },
+  "mlxMemory.problemFloorAboveCeiling": {
+    "defaultMessage": "Batas bawah otomatis {floor} berada di atas batas atas otomatis {ceiling}."
+  },
+  "mlxMemory.problemKvOverCap": {
+    "defaultMessage": "Cache KV jendela {tokens} token saja sudah {kv} GB, lebih dari batas {cap} GB."
+  },
+  "mlxMemory.problemNotInteger": {
+    "defaultMessage": "{label}: harus bilangan bulat"
+  },
+  "mlxMemory.problemNotNumber": {
+    "defaultMessage": "{label}: bukan angka"
+  },
+  "mlxMemory.problemRange": {
+    "defaultMessage": "{label}: {range}"
+  },
+  "mlxMemory.rangeAboveBelow": {
+    "defaultMessage": "valid: di atas {min}, hingga {max}"
+  },
+  "mlxMemory.rangeBelow": {
+    "defaultMessage": "valid: {min} hingga kurang dari {max}"
+  },
+  "mlxMemory.rangeBetween": {
+    "defaultMessage": "valid: {min} hingga {max}"
+  },
+  "mlxMemory.rangeOpen": {
+    "defaultMessage": "valid: {min} atau lebih"
+  },
+  "mlxMemory.readFailed": {
+    "defaultMessage": "Tidak dapat membaca memori Mac ini"
+  },
+  "mlxMemory.restartNeeded": {
+    "defaultMessage": "Perlu dimulai ulang"
+  },
+  "mlxMemory.restartNeededText": {
+    "defaultMessage": "Engine yang berjalan masih memakai pengaturan memori lama. Terapkan memulai ulangnya dengan pengaturan ini; tidak ada yang dimulai ulang sendiri."
+  },
+  "mlxMemory.save": {
+    "defaultMessage": "Simpan"
+  },
+  "mlxMemory.saveFailed": {
+    "defaultMessage": "Gagal menyimpan"
+  },
+  "mlxMemory.savedStopped": {
+    "defaultMessage": "Setiap perubahan di sini memerlukan engine dimulai ulang; engine tidak berjalan, jadi perubahan berlaku pada start berikutnya."
+  },
+  "mlxMemory.tunablesPanel": {
+    "defaultMessage": "Memori engine"
+  },
+  "mlxMemory.unitFraction": {
+    "defaultMessage": "bagian"
+  },
+  "mlxMemory.unitGb": {
+    "defaultMessage": "GB"
+  },
+  "mlxMemory.unitRequests": {
+    "defaultMessage": "permintaan"
+  },
+  "mlxMemory.unitTokens": {
+    "defaultMessage": "token"
+  },
+  "mlxMemory.unsaved": {
+    "defaultMessage": "belum disimpan"
+  },
+  "mlxMemory.wiredBoot": {
+    "defaultMessage": "Pengaturan saat boot (LaunchDaemon)"
+  },
+  "mlxMemory.wiredBootNone": {
+    "defaultMessage": "tidak terpasang"
+  },
+  "mlxMemory.wiredCommand": {
+    "defaultMessage": "Dijalankan sebagai administrator"
+  },
+  "mlxMemory.wiredCurrent": {
+    "defaultMessage": "Saat ini (sysctl iogpu.wired_limit_mb)"
+  },
+  "mlxMemory.wiredDefault": {
+    "defaultMessage": "0 (default macOS)"
+  },
+  "mlxMemory.wiredDone": {
+    "defaultMessage": "Selesai"
+  },
+  "mlxMemory.wiredDoneText": {
+    "defaultMessage": "Batas wired sekarang {mb} MB."
+  },
+  "mlxMemory.wiredFailed": {
+    "defaultMessage": "Tidak diubah"
+  },
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "Berapa banyak RAM yang boleh di-wire GPU oleh macOS, yang membatasi setiap engine. Mengaturnya menjalankan satu perintah sebagai administrator: macOS meminta kata sandi Anda. Nilai ini kembali semula saat reboot kecuali Anda juga memasang pengaturan boot. Metal membacanya saat proses dimulai, jadi engine melihat nilai baru pada start berikutnya."
+  },
+  "mlxMemory.wiredInvalid": {
+    "defaultMessage": "Gunakan 0 atau bilangan bulat dari 8192 hingga {max}."
+  },
+  "mlxMemory.wiredPanel": {
+    "defaultMessage": "Batas wired GPU macOS"
+  },
+  "mlxMemory.wiredPersist": {
+    "defaultMessage": "Atur dan pertahankan setelah reboot"
+  },
+  "mlxMemory.wiredRange": {
+    "defaultMessage": "MB · 0 (default macOS) atau 8192 hingga {max}"
+  },
+  "mlxMemory.wiredRemoteNote": {
+    "defaultMessage": "Batas wired diatur di Mac itu sendiri: buka goose di {mac} untuk mengubahnya."
+  },
+  "mlxMemory.wiredRemove": {
+    "defaultMessage": "Hapus pengaturan boot"
+  },
+  "mlxMemory.wiredRemoveNote": {
+    "defaultMessage": "Menghapus pengaturan boot mempertahankan nilai saat ini sampai reboot berikutnya."
+  },
+  "mlxMemory.wiredSet": {
+    "defaultMessage": "Atur sampai reboot"
+  },
+  "mlxMemory.wiredSuggest": {
+    "defaultMessage": "disarankan untuk kotak inferensi: {mb} MB"
+  },
+  "mlxMemory.wiredValue": {
+    "defaultMessage": "Batas baru"
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {Dibagi ke # Mac · {backend}} other {Dibagi ke # Mac · {backend}}}"
@@ -6200,14 +6494,14 @@
   "mlxSetup.step2": {
     "defaultMessage": "Model"
   },
-  "mlxSetup.step2Reading": {
-    "defaultMessage": "Membaca Mac Anda…"
-  },
   "mlxSetup.step2Done": {
     "defaultMessage": "{count} di Mac Anda"
   },
   "mlxSetup.step2Next": {
     "defaultMessage": "Dapatkan model"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Membaca Mac Anda…"
   },
   "mlxSetup.step3": {
     "defaultMessage": "Jalankan"

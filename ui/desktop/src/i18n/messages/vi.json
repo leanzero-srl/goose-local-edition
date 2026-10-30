@@ -5738,6 +5738,9 @@
   "mlxEngine.tabMacs": {
     "defaultMessage": "Các Mac của tôi"
   },
+  "mlxEngine.tabMemory": {
+    "defaultMessage": "Bộ nhớ"
+  },
   "mlxEngine.tabModels": {
     "defaultMessage": "Mô hình"
   },
@@ -5878,6 +5881,297 @@
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "Không thể nén bộ nhớ đệm KV: {reason}"
+  },
+  "mlxMemory.advanced": {
+    "defaultMessage": "Nâng cao: giới hạn tự động và phần dự trữ mềm"
+  },
+  "mlxMemory.apply": {
+    "defaultMessage": "Áp dụng: khởi động lại engine"
+  },
+  "mlxMemory.bindingEngine": {
+    "defaultMessage": "giới hạn của engine"
+  },
+  "mlxMemory.bindingFloor": {
+    "defaultMessage": "ngưỡng sàn bộ nhớ trống"
+  },
+  "mlxMemory.bindingMacos": {
+    "defaultMessage": "working set của macOS"
+  },
+  "mlxMemory.busy": {
+    "defaultMessage": "{count,plural,one{Engine đang phục vụ # yêu cầu: Áp dụng sẽ chờ đến khi engine rảnh.} other{Engine đang phục vụ # yêu cầu: Áp dụng sẽ chờ đến khi engine rảnh.}}"
+  },
+  "mlxMemory.capAboveWorkingSet": {
+    "defaultMessage": "Giới hạn {cap} cao hơn working set GPU của macOS ({ws}): macOS sẽ giới hạn trước trừ khi nâng giới hạn wired (đề xuất {mb} MB, bên dưới)."
+  },
+  "mlxMemory.clear": {
+    "defaultMessage": "Xóa"
+  },
+  "mlxMemory.consequences": {
+    "defaultMessage": "Với giới hạn này: ngữ cảnh tối đa ~{tokens} token, còn trống {free} cho macOS và các ứng dụng khác."
+  },
+  "mlxMemory.consequencesAuto": {
+    "defaultMessage": "Giới hạn tự động: engine tính khi khởi động dựa trên mô hình và ngữ cảnh."
+  },
+  "mlxMemory.consequencesNoKv": {
+    "defaultMessage": "Với giới hạn này: còn trống {free} cho macOS và các ứng dụng khác. Ngữ cảnh tối đa sẽ hiện khi engine chạy và báo KV mỗi token."
+  },
+  "mlxMemory.decrease": {
+    "defaultMessage": "Giảm {label}"
+  },
+  "mlxMemory.defaultAuto": {
+    "defaultMessage": "tự động: engine tính khi khởi động"
+  },
+  "mlxMemory.defaultAutoLive": {
+    "defaultMessage": "tự động: hiện là {gb}"
+  },
+  "mlxMemory.defaultContext": {
+    "defaultMessage": "ngữ cảnh đã cấu hình của mô hình, nếu không thì mức tối đa"
+  },
+  "mlxMemory.defaultContextLive": {
+    "defaultMessage": "engine hiện lập kế hoạch {tokens} token"
+  },
+  "mlxMemory.defaultEngineAuto": {
+    "defaultMessage": "engine tự động"
+  },
+  "mlxMemory.defaultEngineAutoLive": {
+    "defaultMessage": "engine tự động: hiện là {gb}"
+  },
+  "mlxMemory.defaultFloor": {
+    "defaultMessage": "mặc định của goose {gb} GB (5% RAM)"
+  },
+  "mlxMemory.defaultGoose": {
+    "defaultMessage": "mặc định của goose {value}"
+  },
+  "mlxMemory.defaultMargin": {
+    "defaultMessage": "tự động: 2% của mức trần"
+  },
+  "mlxMemory.defaultValue": {
+    "defaultMessage": "mặc định của engine {value}"
+  },
+  "mlxMemory.increase": {
+    "defaultMessage": "Tăng {label}"
+  },
+  "mlxMemory.intro": {
+    "defaultMessage": "Mọi con số bộ nhớ mà engine dùng để lập kế hoạch trên máy Mac này. Ô để trống sẽ giữ giá trị mặc định hiển thị bên cạnh. Các cài đặt này nằm trên chính máy Mac mà chúng thuộc về."
+  },
+  "mlxMemory.invalid": {
+    "defaultMessage": "Không thể"
+  },
+  "mlxMemory.label.autoHeadroomFraction": {
+    "defaultMessage": "Khoảng dự phòng tự động"
+  },
+  "mlxMemory.label.autoUtilizationCeiling": {
+    "defaultMessage": "Mức trần giới hạn tự động"
+  },
+  "mlxMemory.label.autoUtilizationFloor": {
+    "defaultMessage": "Mức sàn giới hạn tự động"
+  },
+  "mlxMemory.label.guardMarginGb": {
+    "defaultMessage": "Biên an toàn của guard"
+  },
+  "mlxMemory.label.maxConcurrentRequests": {
+    "defaultMessage": "Số yêu cầu đồng thời tối đa"
+  },
+  "mlxMemory.label.maxContextTokens": {
+    "defaultMessage": "Ngữ cảnh tối đa (cửa sổ được chấp nhận)"
+  },
+  "mlxMemory.label.memoryFloorGb": {
+    "defaultMessage": "Ngưỡng sàn bộ nhớ trống"
+  },
+  "mlxMemory.label.metalLimitGb": {
+    "defaultMessage": "Giới hạn Metal của engine"
+  },
+  "mlxMemory.label.prefillStepSize": {
+    "defaultMessage": "Khối prefill tối đa"
+  },
+  "mlxMemory.label.prefixCacheGb": {
+    "defaultMessage": "Ngân sách bộ nhớ đệm tiền tố"
+  },
+  "mlxMemory.label.systemReserveFraction": {
+    "defaultMessage": "Dự trữ mềm"
+  },
+  "mlxMemory.liveActive": {
+    "defaultMessage": "Engine đang dùng / đỉnh"
+  },
+  "mlxMemory.liveCap": {
+    "defaultMessage": "Giới hạn của engine"
+  },
+  "mlxMemory.liveCapValue": {
+    "defaultMessage": "{gb} · {source} · bị giới hạn bởi {binding}"
+  },
+  "mlxMemory.liveEngineStopped": {
+    "defaultMessage": "engine không chạy"
+  },
+  "mlxMemory.liveFree": {
+    "defaultMessage": "Trống"
+  },
+  "mlxMemory.liveKv": {
+    "defaultMessage": "Bộ nhớ đệm KV mỗi token"
+  },
+  "mlxMemory.liveKvValue": {
+    "defaultMessage": "{bytes} byte · {gbPer100k} GB mỗi 100k token"
+  },
+  "mlxMemory.liveMaxContext": {
+    "defaultMessage": "Ngữ cảnh tối đa ở mức trần"
+  },
+  "mlxMemory.liveOthers": {
+    "defaultMessage": "Ứng dụng khác + macOS (gồm bộ nhớ trình điều khiển GPU ghim)"
+  },
+  "mlxMemory.livePanel": {
+    "defaultMessage": "Bộ nhớ hiện tại"
+  },
+  "mlxMemory.livePhysical": {
+    "defaultMessage": "RAM vật lý"
+  },
+  "mlxMemory.liveUnknown": {
+    "defaultMessage": "không được báo cáo"
+  },
+  "mlxMemory.liveWired": {
+    "defaultMessage": "Giới hạn wired GPU của macOS"
+  },
+  "mlxMemory.liveWorkingSet": {
+    "defaultMessage": "Working set GPU của macOS"
+  },
+  "mlxMemory.needsEngine": {
+    "defaultMessage": "Máy Mac này khởi chạy {launcher}. Các trường đánh dấu lz.20 cần Rapid-MLX v0.14.3-lz.20 trở lên: khởi động khi có trường nào trong số đó được đặt sẽ bị từ chối kèm tên trường."
+  },
+  "mlxMemory.needsEngineChip": {
+    "defaultMessage": "lz.20"
+  },
+  "mlxMemory.presetInferenceBox": {
+    "defaultMessage": "Hộp suy luận"
+  },
+  "mlxMemory.presetWorkstation": {
+    "defaultMessage": "Máy trạm"
+  },
+  "mlxMemory.presetsLabel": {
+    "defaultMessage": "Điền giá trị khởi đầu"
+  },
+  "mlxMemory.presetsNote": {
+    "defaultMessage": "Máy trạm: giới hạn tự động, ngưỡng sàn 8% RAM. Hộp suy luận: giới hạn = RAM tính bằng GiB trừ 16 (112 GB trên 128 GiB), ngưỡng sàn 4 GB. Cài đặt sẵn chỉ điền vào các trường; không có gì thay đổi cho đến khi bạn lưu."
+  },
+  "mlxMemory.problemCapPlusFloor": {
+    "defaultMessage": "Giới hạn {cap} GB + ngưỡng sàn {floor} GB vượt quá {physical} GB RAM của máy Mac này."
+  },
+  "mlxMemory.problemFloorAboveCeiling": {
+    "defaultMessage": "Mức sàn tự động {floor} cao hơn mức trần tự động {ceiling}."
+  },
+  "mlxMemory.problemKvOverCap": {
+    "defaultMessage": "Riêng bộ nhớ đệm KV của cửa sổ {tokens} token đã là {kv} GB, vượt giới hạn {cap} GB."
+  },
+  "mlxMemory.problemNotInteger": {
+    "defaultMessage": "{label}: phải là số nguyên"
+  },
+  "mlxMemory.problemNotNumber": {
+    "defaultMessage": "{label}: không phải là số"
+  },
+  "mlxMemory.problemRange": {
+    "defaultMessage": "{label}: {range}"
+  },
+  "mlxMemory.rangeAboveBelow": {
+    "defaultMessage": "hợp lệ: lớn hơn {min}, tối đa {max}"
+  },
+  "mlxMemory.rangeBelow": {
+    "defaultMessage": "hợp lệ: từ {min} đến dưới {max}"
+  },
+  "mlxMemory.rangeBetween": {
+    "defaultMessage": "hợp lệ: từ {min} đến {max}"
+  },
+  "mlxMemory.rangeOpen": {
+    "defaultMessage": "hợp lệ: {min} trở lên"
+  },
+  "mlxMemory.readFailed": {
+    "defaultMessage": "Không đọc được bộ nhớ của máy Mac này"
+  },
+  "mlxMemory.restartNeeded": {
+    "defaultMessage": "Cần khởi động lại"
+  },
+  "mlxMemory.restartNeededText": {
+    "defaultMessage": "Engine đang chạy vẫn dùng cài đặt bộ nhớ cũ. Áp dụng sẽ khởi động lại engine với cài đặt mới; không có gì tự khởi động lại."
+  },
+  "mlxMemory.save": {
+    "defaultMessage": "Lưu"
+  },
+  "mlxMemory.saveFailed": {
+    "defaultMessage": "Lưu không thành công"
+  },
+  "mlxMemory.savedStopped": {
+    "defaultMessage": "Mọi thay đổi ở đây đều cần khởi động lại engine; engine đang không chạy nên thay đổi sẽ có hiệu lực ở lần khởi động tiếp theo."
+  },
+  "mlxMemory.tunablesPanel": {
+    "defaultMessage": "Bộ nhớ engine"
+  },
+  "mlxMemory.unitFraction": {
+    "defaultMessage": "tỷ lệ"
+  },
+  "mlxMemory.unitGb": {
+    "defaultMessage": "GB"
+  },
+  "mlxMemory.unitRequests": {
+    "defaultMessage": "yêu cầu"
+  },
+  "mlxMemory.unitTokens": {
+    "defaultMessage": "token"
+  },
+  "mlxMemory.unsaved": {
+    "defaultMessage": "chưa lưu"
+  },
+  "mlxMemory.wiredBoot": {
+    "defaultMessage": "Cài đặt khi khởi động máy (LaunchDaemon)"
+  },
+  "mlxMemory.wiredBootNone": {
+    "defaultMessage": "chưa cài đặt"
+  },
+  "mlxMemory.wiredCommand": {
+    "defaultMessage": "Chạy với quyền quản trị viên"
+  },
+  "mlxMemory.wiredCurrent": {
+    "defaultMessage": "Hiện tại (sysctl iogpu.wired_limit_mb)"
+  },
+  "mlxMemory.wiredDefault": {
+    "defaultMessage": "0 (mặc định của macOS)"
+  },
+  "mlxMemory.wiredDone": {
+    "defaultMessage": "Xong"
+  },
+  "mlxMemory.wiredDoneText": {
+    "defaultMessage": "Giới hạn wired hiện là {mb} MB."
+  },
+  "mlxMemory.wiredFailed": {
+    "defaultMessage": "Chưa thay đổi"
+  },
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "Lượng RAM mà macOS cho phép GPU wire, giới hạn mọi engine. Việc đặt giá trị chạy một lệnh với quyền quản trị viên: macOS sẽ hỏi mật khẩu của bạn. Giá trị đặt lại khi khởi động lại máy trừ khi bạn cũng cài đặt cài đặt khi khởi động. Metal đọc giá trị khi một tiến trình bắt đầu, nên engine thấy giá trị mới ở lần khởi động tiếp theo."
+  },
+  "mlxMemory.wiredInvalid": {
+    "defaultMessage": "Dùng 0 hoặc một số nguyên từ 8192 đến {max}."
+  },
+  "mlxMemory.wiredPanel": {
+    "defaultMessage": "Giới hạn wired GPU của macOS"
+  },
+  "mlxMemory.wiredPersist": {
+    "defaultMessage": "Đặt và giữ sau khi khởi động lại"
+  },
+  "mlxMemory.wiredRange": {
+    "defaultMessage": "MB · 0 (mặc định của macOS) hoặc 8192 đến {max}"
+  },
+  "mlxMemory.wiredRemoteNote": {
+    "defaultMessage": "Giới hạn wired được đặt ngay trên máy Mac: mở goose trên {mac} để thay đổi."
+  },
+  "mlxMemory.wiredRemove": {
+    "defaultMessage": "Xóa cài đặt khi khởi động"
+  },
+  "mlxMemory.wiredRemoveNote": {
+    "defaultMessage": "Xóa cài đặt khi khởi động sẽ giữ nguyên giá trị hiện tại cho đến lần khởi động lại máy tiếp theo."
+  },
+  "mlxMemory.wiredSet": {
+    "defaultMessage": "Đặt đến khi khởi động lại"
+  },
+  "mlxMemory.wiredSuggest": {
+    "defaultMessage": "đề xuất cho hộp suy luận: {mb} MB"
+  },
+  "mlxMemory.wiredValue": {
+    "defaultMessage": "Giới hạn mới"
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, other {Chia trên # máy Mac · {backend}}}"
@@ -6200,14 +6494,14 @@
   "mlxSetup.step2": {
     "defaultMessage": "Mô hình"
   },
-  "mlxSetup.step2Reading": {
-    "defaultMessage": "Đang đọc các máy Mac của bạn…"
-  },
   "mlxSetup.step2Done": {
     "defaultMessage": "{count} trên các Mac của bạn"
   },
   "mlxSetup.step2Next": {
     "defaultMessage": "Tải một mô hình"
+  },
+  "mlxSetup.step2Reading": {
+    "defaultMessage": "Đang đọc các máy Mac của bạn…"
   },
   "mlxSetup.step3": {
     "defaultMessage": "Chạy"

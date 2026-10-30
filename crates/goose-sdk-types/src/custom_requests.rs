@@ -2552,7 +2552,7 @@ pub struct MlxEngineSettingsDto {
 
 /// The engine memory tunables (goose-sidecar `memory_tunables::MemoryTunables`), each its own
 /// engine flag (fork lz/metal-tunables INTERFACE.md). Absent = the engine's default, except
-/// `memoryFloorGb`, whose absence means goose's per-machine default (round(8% x physical GB)).
+/// `memoryFloorGb`, whose absence means goose's per-machine default (round(5% x physical GB)).
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineMemoryTunablesDto {
@@ -2639,6 +2639,18 @@ pub struct MlxEngineMemoryBudgetDto {
     pub peak_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_context_at_ceiling: Option<u64>,
+    /// The auto plan's cap before the live bounds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_limit_bytes: Option<u64>,
+    /// Which bound held the last prefill step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step_binding: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub used_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_sequence_need_bytes: Option<u64>,
     /// The tunables the engine resolved, by its own names.
     #[serde(default)]
     pub tunables: BTreeMap<String, serde_json::Value>,
@@ -2677,7 +2689,7 @@ pub struct MlxEngineMemoryMachineResponse {
     pub daemon_wired_limit_mb: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daemon_error: Option<String>,
-    /// goose's default free-memory floor on this Mac: round(8% x physical GB).
+    /// goose's default free-memory floor on this Mac: round(5% x physical GB).
     pub default_floor_gb: f64,
     /// Whether the configured engine launcher reads the lz.20 memory flags.
     pub tunables_supported: bool,

@@ -13,17 +13,19 @@ pub const GB: f64 = 1e9;
 /// Bytes in the MB `--cache-memory-mb` takes (Rapid-MLX memory_cache.py multiplies by 1024 x 1024).
 pub const ENGINE_MB: f64 = 1024.0 * 1024.0;
 
-/// The goose default free-memory floor as a share of physical RAM: the engine's own soft reserve
-/// for optional memory (`--system-reserve-fraction` default 0.08, set after the RC10 laptop swap
-/// incident), so the floor and the reserve speak of the same 8 %.
-pub const DEFAULT_FLOOR_SHARE: f64 = 0.08; // ratio: Rapid-MLX system_reserve_fraction default (INTERFACE.md)
+/// The goose default free-memory floor as a share of physical RAM. Not the engine's 8 % soft
+/// reserve: the engine counts as "others" the memory the GPU driver wires for it plus file-cache side
+/// effects (~24.5 GB measured on the workmule's 128 GiB), so an 8 % floor (11 GB) would cap that Mac
+/// at 137.4 - 24.5 - 11 = 101.9 GB, below the 103.26 GB the lz.18 Gauntlet peaked at with ~9.7 GB
+/// free and swap flat (1.36 GB). 5 % keeps that headroom: 128 GiB -> 7 GB.
+pub const DEFAULT_FLOOR_SHARE: f64 = 0.05; // measured: workmule others 24.5 GB vs the lz.18 Gauntlet peak 103.26 GB (2026-10-30)
 
 /// The engine's defaults for the fractions goose validates against when the user leaves one side
 /// of a pair unset (INTERFACE.md receipts: #2858 for the auto plan, RC10 for the reserve).
 pub const ENGINE_AUTO_FLOOR: f64 = engine_profile::ENGINE_CAP_MIN_SHARE;
 pub const ENGINE_AUTO_CEILING: f64 = engine_profile::ENGINE_CAP_MAX_SHARE;
 pub const ENGINE_AUTO_HEADROOM: f64 = engine_profile::ENGINE_CAP_HEADROOM_SHARE;
-pub const ENGINE_SYSTEM_RESERVE: f64 = DEFAULT_FLOOR_SHARE;
+pub const ENGINE_SYSTEM_RESERVE: f64 = 0.08; // ratio: Rapid-MLX system_reserve_fraction default (RC10, INTERFACE.md)
 
 /// Valid ranges, the same the engine enforces at start (INTERFACE.md "Unit / range").
 pub const AUTO_FLOOR_RANGE: (f64, f64) = (0.1, 1.0);
@@ -62,7 +64,7 @@ pub struct MemoryTunables {
     pub system_reserve_fraction: Option<f64>,
 }
 
-/// round(8 % x physical GB): 128 GiB -> 11, 96 GiB -> 8, 64 GiB -> 5.
+/// round(5 % x physical GB): 128 GiB -> 7, 96 GiB -> 5, 64 GiB -> 3.
 pub fn default_memory_floor_gb(physical_bytes: u64) -> f64 {
     (DEFAULT_FLOOR_SHARE * physical_bytes as f64 / GB).round()
 }
@@ -350,6 +352,11 @@ pub struct EngineMemoryBudget {
     pub active_bytes: Option<u64>,
     pub peak_bytes: Option<u64>,
     pub max_context_at_ceiling: Option<u64>,
+    pub plan_limit_bytes: Option<u64>,
+    pub step_binding: Option<String>,
+    pub used_bytes: Option<u64>,
+    pub cache_bytes: Option<u64>,
+    pub plan_sequence_need_bytes: Option<u64>,
     pub tunables: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
@@ -412,16 +419,16 @@ mod tests {
     }
 
     #[test]
-    fn the_default_floor_is_eight_percent_of_physical_gb() {
-        assert_eq!(default_memory_floor_gb(128 * GIB), 11.0);
-        assert_eq!(default_memory_floor_gb(96 * GIB), 8.0);
-        assert_eq!(default_memory_floor_gb(64 * GIB), 5.0);
+    fn the_default_floor_is_five_percent_of_physical_gb() {
+        assert_eq!(default_memory_floor_gb(128 * GIB), 7.0);
+        assert_eq!(default_memory_floor_gb(96 * GIB), 5.0);
+        assert_eq!(default_memory_floor_gb(64 * GIB), 3.0);
     }
 
     #[test]
     fn an_unset_floor_follows_the_machine_and_a_set_one_wins() {
         let t = MemoryTunables::default();
-        assert_eq!(t.effective_floor_gb(Some(128 * GIB)), Some(11.0));
+        assert_eq!(t.effective_floor_gb(Some(128 * GIB)), Some(7.0));
         assert_eq!(t.effective_floor_gb(None), None);
         let t = MemoryTunables {
             memory_floor_gb: Some(4.0),
@@ -533,7 +540,7 @@ mod tests {
     #[test]
     fn unset_tunables_send_only_the_machine_floor() {
         let argv = flags(&MemoryTunables::default());
-        assert_eq!(argv, vec!["--memory-floor-gb".to_string(), "8".to_string()]);
+        assert_eq!(argv, vec!["--memory-floor-gb".to_string(), "5".to_string()]);
     }
 
     #[test]
