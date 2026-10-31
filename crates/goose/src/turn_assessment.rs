@@ -905,15 +905,19 @@ pub fn verified_answer_findings(raw: &str, inputs: &AnswerCheckInputs) -> Vec<An
                 let a = normalized(&against);
                 // Equal texts, or two wordings of one test run ("All **19 tests passed**." and
                 // "19 passed in 0.02s"), agree: a judge that pairs them is wrong (Q-525).
-                if a.is_empty()
-                    || q == a
-                    || crate::claim_check::report_the_same_run(&quote, &against)
-                {
+                if a.is_empty() || q == a {
                     continue;
                 }
                 replies
                     .iter()
                     .position(|r| r.contains(&q) && r.contains(&a))
+                    .filter(|&reply| {
+                        let reply = &inputs.replies[reply];
+                        !crate::claim_check::sentences_report_the_same_run(
+                            &crate::claim_check::sentences_holding(reply, &q),
+                            &crate::claim_check::sentences_holding(reply, &a),
+                        )
+                    })
                     .map(|reply| AnswerFinding {
                         reply,
                         line: format!(
@@ -928,23 +932,38 @@ pub fn verified_answer_findings(raw: &str, inputs: &AnswerCheckInputs) -> Vec<An
                     .map(normalized)
                     .filter(|p| !p.is_empty())
                     .collect();
-                if pieces.is_empty()
-                    || pieces.contains(&q)
-                    || crate::claim_check::report_the_same_run(&quote, &against)
-                {
+                if pieces.is_empty() || pieces.contains(&q) {
                     continue;
                 }
+                let holds = |t: &String| pieces.iter().all(|p| t.contains(p.as_str()));
                 replies
                     .iter()
                     .enumerate()
                     .find(|(reply, r)| {
                         r.contains(&q)
                             && sources.iter().any(|(before, texts)| {
-                                before <= reply
-                                    && texts
-                                        .iter()
-                                        .any(|t| pieces.iter().all(|p| t.contains(p.as_str())))
+                                before <= reply && texts.iter().any(holds)
                             })
+                    })
+                    // Two wordings of one test run agree (Q-525): the judge's "against" may be
+                    // part of a result line, so the WHOLE sentences that hold it are compared.
+                    .filter(|(reply, _)| {
+                        let against: Vec<String> = inputs
+                            .tool_outputs
+                            .iter()
+                            .filter(|o| o.replies_before <= *reply)
+                            .flat_map(|o| std::iter::once(&o.text).chain(o.record.as_ref()))
+                            .filter(|t| holds(&normalized(t)))
+                            .flat_map(|t| {
+                                pieces.iter().flat_map(|p| {
+                                    crate::claim_check::lines_holding(t, p)
+                                })
+                            })
+                            .collect();
+                        !crate::claim_check::sentences_report_the_same_run(
+                            &crate::claim_check::sentences_holding(&inputs.replies[*reply], &q),
+                            &against,
+                        )
                     })
                     .map(|(reply, _)| AnswerFinding {
                         reply,
@@ -1495,6 +1514,42 @@ mod tests {
             assert_eq!(found.len(), 1, "{against:?} contradicts the claim: {found:?}");
             assert!(found[0].starts_with("the answer says “All **19 tests passed**.”, but a tool result it had already seen says"));
         }
+    }
+
+    /// The judge's "against" may be PART of a result line ("19 passed" of "2 failed, 19 passed in
+    /// 0.50s"), and a negated claim is no pass claim: both stay shown.
+    #[test]
+    fn a_partial_quote_or_a_negated_claim_never_hides_a_real_failure() {
+        let mixed = "=== 2 failed, 19 passed in 0.50s ===";
+        for against in [
+            "19 passed",
+            "[before reply 1] …19 passed…",
+            "19 passed in 0.50s",
+        ] {
+            let found = lines(verified_answer_findings(
+                &contradicted("All 19 tests passed.", against),
+                &inputs_20261031_2(mixed, "All 19 tests passed.\n\nDone."),
+            ));
+            assert_eq!(
+                found.len(),
+                1,
+                "{against:?} is part of a line that says 2 failed: {found:?}"
+            );
+        }
+        for claim in ["Not all tests passed.", "None of the 19 tests passed."] {
+            let found = lines(verified_answer_findings(
+                &contradicted(claim, "19 passed in 0.02s"),
+                &inputs_20261031_2("19 passed in 0.02s", &format!("{claim}\n\nDone.")),
+            ));
+            assert_eq!(found.len(), 1, "{claim:?} is no pass claim: {found:?}");
+        }
+        let reply = "All 19 tests passed. The run said 2 failed, 19 passed in 0.50s.";
+        let half = r#"{"findings": [{"kind": "contradiction", "quote": "All 19 tests passed.", "against": "19 passed"}]}"#;
+        assert_eq!(
+            verified_answer_findings(half, &inputs_20261031_2(mixed, reply)).len(),
+            1,
+            "a half of one reply sentence is read as its whole sentence"
+        );
     }
 
     /// The same rule holds for two sentences of one reply.

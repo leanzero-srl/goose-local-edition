@@ -959,11 +959,10 @@ fn unsourced_counts(texts: &str, tools: &[ToolFact], earlier: &[Message]) -> Vec
         }
         // "There were 0 failures." after pytest's "19 passed in 0.02s": the sentence reports the
         // run a result line reports, in other words (Q-525).
-        if tools.iter().any(|t| {
-            t.output
-                .lines()
-                .any(|line| report_the_same_run(sentence, line))
-        }) {
+        if tools
+            .iter()
+            .any(|t| the_summary_reports(sentence, &t.output))
+        {
             continue;
         }
         let beside: Vec<i128> = NUMBER
@@ -1083,6 +1082,10 @@ static NONE_OF: LazyLock<Regex> = LazyLock::new(|| {
     ))
     .expect("static regex")
 });
+static NEGATION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b(?:not|no|none|never|nothing|neither|nor|without|cannot)\b|n't\b|n’t\b")
+        .expect("static regex")
+});
 static OUTCOME_WORD: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(r"\b({OUTCOME_WORDS}|panicked|traceback)\b")).expect("static regex")
 });
@@ -1201,6 +1204,11 @@ fn outcome_tally(text: &str) -> Option<Tally> {
             _ => {}
         }
     }
+    // "Not all tests passed", "None of the 19 tests passed", "it didn't fail": a negation the
+    // tally did not read as a zero count turns its words around, so the text is no tally.
+    if NEGATION.find_iter(&text).any(|m| !inside(m.start())) {
+        return None;
+    }
     let unaccounted = NUMBER.find_iter(&text).any(|m| {
         !inside(m.start())
             && !NOT_A_COUNT
@@ -1255,6 +1263,54 @@ pub(crate) fn report_the_same_run(a: &str, b: &str) -> bool {
         }
     }
     shared || (a.pass_only() && b.pass_only())
+}
+
+/// Whether a tool output's run summary reports the run `claim` states: every line of it that
+/// binds counts to outcomes ("1 failed, 1 passed in 0.03s") agrees, and there is at least one. A
+/// per-test line ("test_one PASSED") binds no count and never sources a count on its own: pytest
+/// -v prints one beside a summary that says "1 failed".
+pub(crate) fn the_summary_reports(claim: &str, output: &str) -> bool {
+    let mut summaries = output
+        .lines()
+        .filter(|line| outcome_tally(line).is_some_and(|t| !t.counts.is_empty()))
+        .peekable();
+    summaries.peek().is_some() && summaries.all(|line| report_the_same_run(claim, line))
+}
+
+/// The units of a text that hold `piece` (already read through `as_read` and lowercased): a quote
+/// can be part of a unit ("19 passed" of "2 failed, 19 passed in 0.50s"), and only the whole unit
+/// says how a run came out. A quote's closing mark is the sentence's, not its words.
+fn holding<'a>(units: impl Iterator<Item = &'a str>, piece: &str) -> Vec<String> {
+    let piece = piece.trim_end_matches(['.', '!', '?', ' ']);
+    if piece.is_empty() {
+        return Vec::new();
+    }
+    units
+        .filter(|u| as_read(u).to_lowercase().contains(piece))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The whole sentences of a reply that hold `piece`.
+pub(crate) fn sentences_holding(text: &str, piece: &str) -> Vec<String> {
+    holding(sentences(text).into_iter().map(|(s, _)| s), piece)
+}
+
+/// The whole lines of a tool result that hold `piece`: a run summary is one line ("test result:
+/// ok. 19 passed; 0 failed; …" is one line and two sentences).
+pub(crate) fn lines_holding(text: &str, piece: &str) -> Vec<String> {
+    holding(text.lines(), piece)
+}
+
+/// Whether every sentence holding `quote` reports the run every sentence holding `against`
+/// reports — false when either is missing or one sentence holds both (a sentence cannot
+/// contradict itself by being compared with itself).
+pub(crate) fn sentences_report_the_same_run(quote: &[String], against: &[String]) -> bool {
+    !quote.is_empty()
+        && !against.is_empty()
+        && quote
+            .iter()
+            .all(|q| against.iter().all(|a| q != a && report_the_same_run(q, a)))
 }
 
 /// Check the assistant text in `messages[from..]` (this model response) against this turn's tool
@@ -1452,6 +1508,10 @@ mod tests {
             ("The file has 19 rows.", "19 rows in 0.02s"),
             ("All 19 tests passed across 4 files.", "19 passed in 0.02s"),
             ("All 19 tests passed.", "the export wrote 3 columns"),
+            ("Not all tests passed.", "19 passed in 0.02s"),
+            ("None of the 19 tests passed.", "19 passed in 0.02s"),
+            ("The 19 tests didn't all pass.", "19 passed in 0.02s"),
+            ("19 passed in 0.02s", "Not all 19 tests passed."),
         ] {
             assert!(
                 !report_the_same_run(claim, summary),
@@ -1480,6 +1540,26 @@ mod tests {
             2026
         )
         .is_empty());
+        // pytest -v: a per-test PASSED line beside a summary that says "1 failed" sources nothing.
+        let verbose = |claim: &str, output: &str| {
+            vec![
+                Message::user().with_text("Run the whole test suite."),
+                call("t1", "pytest tests/ -v"),
+                result("t1", output, 1),
+                Message::assistant().with_text(claim),
+            ]
+        };
+        let zero = "the count 0 (“0 failures”) comes from none of this turn's 1 tool result(s), the user's messages, or earlier replies.";
+        for output in [
+            "tests/test_a.py::test_one PASSED [ 50%]\ntests/test_a.py::test_two FAILED [100%]\n=== 1 failed, 1 passed in 0.03s ===",
+            "tests/test_a.py::test_one PASSED [100%]",
+        ] {
+            assert_eq!(
+                check_new_text(&verbose("There were 0 failures.", output), 3, Path::new("/w"), &|_: &Path| false, 2026),
+                vec![zero],
+                "{output:?}"
+            );
+        }
         assert_eq!(
             check_new_text(&turn("There were 3 failures."), 3, Path::new("/w"), &|_: &Path| false, 2026),
             vec!["the count 3 (“3 failures”) comes from none of this turn's 1 tool result(s), the user's messages, or earlier replies."]
