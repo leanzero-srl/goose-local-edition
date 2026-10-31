@@ -179,3 +179,15 @@ llm_request.9.jsonl = the first request after its compaction, summary text insid
   longer get "(unverified)": a comma token is known when written with a space after each comma, or, when it cannot be
   one number, when each part was shown. PROOF: 4/4 mutations killed (~/scratch/steward/mutate.sh on gabee). OPEN
   (engine, not compaction): the MiMo tool parser leaking `<parameter=...>` tags into arguments.
+- STEWARD 2026-10-31 b (branch compaction-counts; the live MiMo run 8985a86d compacted at call 55 of 150, 07:38,
+  215,948 prompt -> ~42k; summary B+: facts true, 5 sections, D1-D3 + to-dos + next step kept, contracts verbatim;
+  the first 3 calls after it re-ran the browser self-test + screenshot done just before, then followed the Next step).
+  FIXED: (1) "Where the work is" counted only cd/cwd commands ("14 calls ran here" of the folder all 55 worked in):
+  a call now counts in the deepest work folder holding its cd/cwd folder, else the file it named, else the chat's
+  folder for a bare command (`call_place`); the "chat's own folder is X, but commands worked..." sentence still keys
+  on the commands that MOVED there (`WorkFolder::moved_here`). (2) a settled failure is one line in "The last 10 tool
+  calls" ("edit -> its arguments did not parse (nothing ran); a later edit succeeded (settled)"): the block carried 7
+  failed edits word for word (4 unparsed in errors/to-do, settled since round a, + 3 in the last calls). PROOF:
+  M5/M6 killed (gabee ~/scratch/steward/mutate.sh). Gates: clippy -D warnings clean; lib 2436 pass, 1 known env
+  failure (key_connection loopback, macOS 27); integration tests pass except providers::test_claude_code_provider
+  (live claude CLI on gabee, untouched code).
