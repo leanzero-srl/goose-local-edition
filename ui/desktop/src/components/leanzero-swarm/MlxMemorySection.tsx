@@ -1,3 +1,23 @@
+  const target = isSelf ? undefined : nodeId;
+  const reachable = isSelf || nodeId != null;
+  const readMachine = useCallback(() => {
+    if (!reachable) return;
+    mlxEngineMemoryMachine(target)
+      .then((m) => {
+        setMachine(m);
+        setMachineError(null);
+      })
+      .catch((e) => setMachineError(mlxErrorMessage(e, intl.formatMessage(i18n.readFailed))));
+  }, [intl, reachable, target]);
+
+  useEffect(() => {
+    setMachine(null);
+    if (!reachable) return;
+    readMachine();
+    const timer = window.setInterval(readMachine, target ? 15000 : 5000);
+    return () => window.clearInterval(timer);
+  }, [reachable, target, readMachine]);
+
 // The Memory tab: every memory number the engine and macOS use on the picked Mac, editable, with
 // its unit, valid range, engine flag and live effect. Presets only fill the fields; nothing is
 // saved until Save, and the engine restarts only on Apply (never while it serves requests).
@@ -20,10 +40,11 @@ import {
   cx,
   type KeyValueItem,
 } from '../lz';
-import { INPUT, ToneBanner } from './studio';
+import { INPUT, StudioSwitch, ToneBanner } from './studio';
 import {
   mlxEngineMemoryMachine,
   mlxEngineWiredLimitApply,
+  mlxEngineWiredLimitDisable,
   mlxEngineWiredLimitRemoveDaemon,
   type MlxEngineMemoryBudget,
   type MlxEngineSettings,
@@ -47,11 +68,14 @@ import {
   memoryConsequences,
   memoryDraftsEqual,
   parseMemoryDrafts,
+  WIRED_DEFAULT_MIN_RESERVE_GIB,
   physicalMb,
   presetDrafts,
-  suggestedWiredLimitMb,
+  suggestedWiredMb,
+  wiredFallbackCommand,
+  wiredLimitCheck,
   wiredLimitCommand,
-  wiredLimitValid,
+  wiredMaxMb,
   type MemoryDrafts,
   type MemoryFieldSpec,
   type MemoryKey,
@@ -269,44 +293,93 @@ const i18n = defineMessages({
   wiredIntro: {
     id: 'mlxMemory.wiredIntro',
     defaultMessage:
-      'How much RAM macOS lets the GPU wire, which bounds every engine. Setting it runs one command as administrator: macOS asks for your password. It resets at reboot unless you also install the boot setting. Metal reads it when a process starts, so the engine sees a new value at its next start.',
+      'How much RAM macOS lets the GPU wire, which bounds every engine on {mac}. Enable and Disable each run one command as administrator: macOS asks for the password on {mac} and goose never sees or stores it. The limit resets at restart unless you keep it. Metal reads it when a process starts, so an engine sees a new value at its next start.',
   },
+  wiredStateRaised: { id: 'mlxMemory.wiredStateRaised', defaultMessage: 'Raised to {mb} MB' },
+  wiredStateDefault: { id: 'mlxMemory.wiredStateDefault', defaultMessage: 'macOS default' },
+  wiredStateKept: { id: 'mlxMemory.wiredStateKept', defaultMessage: 'Kept after restart' },
   wiredCurrent: {
     id: 'mlxMemory.wiredCurrent',
     defaultMessage: 'Now (sysctl iogpu.wired_limit_mb)',
   },
   wiredBoot: { id: 'mlxMemory.wiredBoot', defaultMessage: 'Boot setting (LaunchDaemon)' },
   wiredBootNone: { id: 'mlxMemory.wiredBootNone', defaultMessage: 'not installed' },
-  wiredValue: { id: 'mlxMemory.wiredValue', defaultMessage: 'New limit' },
-  wiredRange: {
-    id: 'mlxMemory.wiredRange',
-    defaultMessage: 'MB · 0 (macOS default) or 8192 to {max}',
+  wiredOthers: { id: 'mlxMemory.wiredOthers', defaultMessage: 'In use outside the GPU now' },
+  wiredReserve: { id: 'mlxMemory.wiredReserve', defaultMessage: 'Minimum reserve for macOS' },
+  wiredReserveValue: {
+    id: 'mlxMemory.wiredReserveValue',
+    defaultMessage: '{gib} GiB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)',
   },
-  wiredSuggest: {
-    id: 'mlxMemory.wiredSuggest',
-    defaultMessage: 'suggested for an inference box: {mb} MB',
+  wiredValue: { id: 'mlxMemory.wiredValue', defaultMessage: 'New limit' },
+  wiredRangeReserve: {
+    id: 'mlxMemory.wiredRangeReserve',
+    defaultMessage: 'MB ({gib} GiB) · 8192 to {max}',
+  },
+  wiredKeep: {
+    id: 'mlxMemory.wiredKeep',
+    defaultMessage: 'macOS and other apps keep {keep} GiB of {physical} GiB',
+  },
+  wiredBelowReserve: {
+    id: 'mlxMemory.wiredBelowReserve',
+    defaultMessage:
+      'Refused: that leaves {keep} GiB, under the {reserve} GiB minimum. The MLX engine also needs RAM outside the GPU (about 12 GB measured under load) and the kernel and system about 10 GB more. The highest allowed here is {max} MB.',
+  },
+  wiredBelowOthers: {
+    id: 'mlxMemory.wiredBelowOthers',
+    defaultMessage:
+      'That leaves {keep} GiB, less than {mac} uses outside the GPU right now ({others} GiB) plus the {reserve} GiB reserve: expect memory pressure and swapping.',
+  },
+  wiredInvalidValue: {
+    id: 'mlxMemory.wiredInvalidValue',
+    defaultMessage: 'Use a whole number from 8192 to {max} MB, or Disable for the macOS default.',
+  },
+  wiredSuggested: {
+    id: 'mlxMemory.wiredSuggested',
+    defaultMessage:
+      'Suggested from measurement: {mb} MB (keeps {others} GiB in use now + the {reserve} GiB reserve)',
+  },
+  wiredSuggestedLow: {
+    id: 'mlxMemory.wiredSuggestedLow',
+    defaultMessage:
+      'The macOS default already gives the GPU {ws}: on what {mac} uses now, a raise above {mb} MB would cut into the reserve.',
+  },
+  wiredNoSuggestion: {
+    id: 'mlxMemory.wiredNoSuggestion',
+    defaultMessage:
+      'No raise suggested: what {mac} uses now plus the {reserve} GiB reserve leaves too little to wire.',
+  },
+  wiredUseSuggestion: { id: 'mlxMemory.wiredUseSuggestion', defaultMessage: 'Use' },
+  wiredPersistLabel: { id: 'mlxMemory.wiredPersistLabel', defaultMessage: 'Keep after restart' },
+  wiredPersistNote: {
+    id: 'mlxMemory.wiredPersistNote',
+    defaultMessage: 'Installs a LaunchDaemon that sets the value at every boot; Disable removes it.',
   },
   wiredCommand: { id: 'mlxMemory.wiredCommand', defaultMessage: 'Runs as administrator' },
-  wiredSet: { id: 'mlxMemory.wiredSet', defaultMessage: 'Set until reboot' },
-  wiredPersist: { id: 'mlxMemory.wiredPersist', defaultMessage: 'Set and keep after reboot' },
+  wiredEnable: { id: 'mlxMemory.wiredEnable', defaultMessage: 'Enable' },
+  wiredDisable: { id: 'mlxMemory.wiredDisable', defaultMessage: 'Disable (macOS default)' },
   wiredRemove: { id: 'mlxMemory.wiredRemove', defaultMessage: 'Remove boot setting' },
   wiredRemoveNote: {
     id: 'mlxMemory.wiredRemoveNote',
     defaultMessage: 'Removing the boot setting leaves the current value until the next reboot.',
   },
-  wiredInvalid: {
-    id: 'mlxMemory.wiredInvalid',
-    defaultMessage: 'Use 0 or a whole number from 8192 to {max}.',
+  wiredWaiting: {
+    id: 'mlxMemory.wiredWaiting',
+    defaultMessage:
+      'Waiting for the administrator prompt on {mac}: whoever is at it approves or cancels. Nothing changes until then.',
   },
   wiredDone: { id: 'mlxMemory.wiredDone', defaultMessage: 'Done' },
   wiredDoneText: {
     id: 'mlxMemory.wiredDoneText',
-    defaultMessage: 'The wired limit reads {mb} MB now.',
+    defaultMessage: 'The wired limit on {mac} reads {mb} MB now.',
+  },
+  wiredDoneDefault: {
+    id: 'mlxMemory.wiredDoneDefault',
+    defaultMessage: 'The wired limit on {mac} is back to the macOS default.',
   },
   wiredFailed: { id: 'mlxMemory.wiredFailed', defaultMessage: 'Not changed' },
-  wiredRemoteNote: {
-    id: 'mlxMemory.wiredRemoteNote',
-    defaultMessage: 'The wired limit is set at the Mac itself: open goose on {mac} to change it.',
+  wiredFallback: {
+    id: 'mlxMemory.wiredFallback',
+    defaultMessage: 'Or run this in Terminal on {mac}:',
   },
   readFailed: { id: 'mlxMemory.readFailed', defaultMessage: 'Could not read this Mac’s memory' },
 });
@@ -665,43 +738,90 @@ function LivePanel({
   );
 }
 
-function WiredLimitPanel({
+const gibText = (intl: IntlShape, mib: number) =>
+  intl.formatNumber(mib / 1024, { maximumFractionDigits: 1 });
+
+/** The picked Mac's wired limit: Enable (a value the person picks) or Disable (the macOS default
+ * and no boot setting), each behind the macOS administrator prompt on THAT Mac. */
+export function WiredLimitPanel({
   machine,
+  macName,
+  nodeId,
+  othersBytes,
   onChanged,
 }: {
   machine: MlxMemoryMachine;
+  macName: string;
+  /** A Link peer: every call is relayed and its app shows the prompt. */
+  nodeId?: string;
+  /** What the Mac uses outside the GPU: the running engine's own `othersBytes`, else physical − available. */
+  othersBytes: number;
   onChanged: () => void;
 }) {
   const intl = useIntl();
-  const suggestion = suggestedWiredLimitMb(machine.physicalBytes);
-  const [text, setText] = useState(String(machine.wiredLimitMb || suggestion));
+  const physical = machine.physicalBytes;
+  const reserve = machine.minReserveGib ?? WIRED_DEFAULT_MIN_RESERVE_GIB;
+  const max = wiredMaxMb(physical, reserve);
+  const suggestion = suggestedWiredMb(physical, othersBytes, reserve);
+  const current = machine.wiredLimitMb ?? null;
+  const daemon = machine.daemonWiredLimitMb ?? null;
+  const [text, setText] = useState(String(current || suggestion || max));
+  const [persist, setPersist] = useState(daemon != null);
   const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string; mb?: number } | null>(null);
   const mb = Number(text.trim());
-  const valid = text.trim() !== '' && wiredLimitValid(mb, machine.physicalBytes);
-  const max = physicalMb(machine.physicalBytes);
-  const run = (action: () => Promise<{ wiredLimitMb?: number }>) => {
+  const check =
+    text.trim() === '' ? ({ kind: 'invalid' } as const) : wiredLimitCheck(mb, physical, reserve, othersBytes);
+  const canEnable = check.kind === 'ok' || check.kind === 'belowOthers';
+  const canDisable = (current != null && current !== 0) || daemon != null;
+  const physicalGib = gibText(intl, physicalMb(physical));
+  const othersGib = intl.formatNumber(othersBytes / 1024 ** 3, { maximumFractionDigits: 1 });
+  const remote = nodeId != null;
+
+  const run = (action: () => Promise<{ wiredLimitMb?: number }>, fallbackMb: number) => {
     setRunning(true);
     setResult(null);
     void action()
       .then((r) =>
         setResult({
           ok: true,
-          text: intl.formatMessage(i18n.wiredDoneText, {
-            mb: intl.formatNumber(r.wiredLimitMb ?? 0),
-          }),
+          text: r.wiredLimitMb
+            ? intl.formatMessage(i18n.wiredDoneText, {
+                mac: macName,
+                mb: intl.formatNumber(r.wiredLimitMb),
+              })
+            : intl.formatMessage(i18n.wiredDoneDefault, { mac: macName }),
         })
       )
-      .catch((e) => setResult({ ok: false, text: mlxErrorMessage(e, '') }))
+      .catch((e) => setResult({ ok: false, text: mlxErrorMessage(e, ''), mb: fallbackMb }))
       .finally(() => {
         setRunning(false);
         onChanged();
       });
   };
+
   return (
-    <Panel title={intl.formatMessage(i18n.wiredPanel)}>
-      <div className="flex flex-col gap-3" data-testid="mlx-memory-wired">
-        <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.wiredIntro)}</p>
+    <Panel
+      title={intl.formatMessage(i18n.wiredPanel)}
+      headerRight={
+        <>
+          <span data-testid="mlx-memory-wired-state" data-raised={current ? 'true' : 'false'}>
+            <Chip tone={current ? 'ok' : undefined}>
+              {current
+                ? intl.formatMessage(i18n.wiredStateRaised, { mb: intl.formatNumber(current) })
+                : intl.formatMessage(i18n.wiredStateDefault)}
+            </Chip>
+          </span>
+          {daemon != null && <Chip tone="ok">{intl.formatMessage(i18n.wiredStateKept)}</Chip>}
+        </>
+      }
+    >
+      <div
+        className="flex flex-col gap-3"
+        data-testid="mlx-memory-wired"
+        data-remote={remote ? 'true' : 'false'}
+      >
+        <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.wiredIntro, { mac: macName })}</p>
         <KeyValue
           dense
           items={[
@@ -709,11 +829,11 @@ function WiredLimitPanel({
               key: 'now',
               label: intl.formatMessage(i18n.wiredCurrent),
               value:
-                machine.wiredLimitMb == null
+                current == null
                   ? (machine.wiredLimitError ?? intl.formatMessage(i18n.liveUnknown))
-                  : machine.wiredLimitMb === 0
+                  : current === 0
                     ? intl.formatMessage(i18n.wiredDefault)
-                    : `${intl.formatNumber(machine.wiredLimitMb)} MB`,
+                    : `${intl.formatNumber(current)} MB`,
             },
             {
               key: 'ws',
@@ -724,9 +844,19 @@ function WiredLimitPanel({
               key: 'boot',
               label: intl.formatMessage(i18n.wiredBoot),
               value:
-                machine.daemonWiredLimitMb == null
+                daemon == null
                   ? (machine.daemonError ?? intl.formatMessage(i18n.wiredBootNone))
-                  : `${intl.formatNumber(machine.daemonWiredLimitMb)} MB`,
+                  : `${intl.formatNumber(daemon)} MB`,
+            },
+            {
+              key: 'others',
+              label: intl.formatMessage(i18n.wiredOthers),
+              value: `${othersGib} GiB`,
+            },
+            {
+              key: 'reserve',
+              label: intl.formatMessage(i18n.wiredReserve),
+              value: intl.formatMessage(i18n.wiredReserveValue, { gib: reserve }),
             },
           ]}
         />
@@ -739,58 +869,149 @@ function WiredLimitPanel({
             onChange={(e) => setText(e.target.value)}
             className={cx(INPUT, 'w-36 text-right', TNUM)}
             aria-label={intl.formatMessage(i18n.wiredValue)}
-            aria-invalid={!valid}
+            aria-invalid={!canEnable}
+            data-testid="mlx-memory-wired-input"
           />
           <span className={cx(TYPE.meta, TNUM)}>
-            {intl.formatMessage(i18n.wiredRange, { max: intl.formatNumber(max) })}
+            {intl.formatMessage(i18n.wiredRangeReserve, {
+              gib: Number.isFinite(mb) ? gibText(intl, mb) : '—',
+              max: intl.formatNumber(max),
+            })}
           </span>
         </div>
-        <span className={cx(TYPE.meta, TNUM)}>
-          {intl.formatMessage(i18n.wiredSuggest, { mb: intl.formatNumber(suggestion) })}
-        </span>
-        {valid ? (
+        {'keepMb' in check && (
+          <p
+            className={cx(
+              TYPE.body,
+              WEIGHT.semibold,
+              TNUM,
+              check.kind === 'belowReserve'
+                ? TONE_TEXT.err
+                : check.kind === 'belowOthers'
+                  ? TONE_TEXT.warn
+                  : TONE_TEXT.ok
+            )}
+            data-testid="mlx-memory-wired-keep"
+            data-kind={check.kind}
+          >
+            {intl.formatMessage(i18n.wiredKeep, {
+              keep: gibText(intl, check.keepMb),
+              physical: physicalGib,
+            })}
+          </p>
+        )}
+        {check.kind === 'belowReserve' && (
+          <ToneBanner
+            tone="err"
+            label={intl.formatMessage(i18n.wiredFailed)}
+            text={intl.formatMessage(i18n.wiredBelowReserve, {
+              keep: gibText(intl, check.keepMb),
+              reserve,
+              max: intl.formatNumber(max),
+            })}
+            testId="mlx-memory-wired-refused"
+          />
+        )}
+        {check.kind === 'belowOthers' && (
+          <ToneBanner
+            tone="warn"
+            label={intl.formatMessage(i18n.wiredReserve)}
+            text={intl.formatMessage(i18n.wiredBelowOthers, {
+              keep: gibText(intl, check.keepMb),
+              mac: macName,
+              others: othersGib,
+              reserve,
+            })}
+            testId="mlx-memory-wired-warn"
+          />
+        )}
+        {(check.kind === 'invalid' || check.kind === 'default') && (
+          <span className={cx('text-lz-meta', WEIGHT.semibold, TONE_TEXT.err)} role="alert">
+            {intl.formatMessage(i18n.wiredInvalidValue, { max: intl.formatNumber(max) })}
+          </span>
+        )}
+        <div className="flex flex-wrap items-center gap-2" data-testid="mlx-memory-wired-suggestion">
+          <span className={cx(TYPE.meta, TNUM)}>
+            {suggestion == null
+              ? intl.formatMessage(i18n.wiredNoSuggestion, { mac: macName, reserve })
+              : machine.workingSetBytes != null && suggestion * 1024 * 1024 <= machine.workingSetBytes
+                ? intl.formatMessage(i18n.wiredSuggestedLow, {
+                    ws: gbText(intl, machine.workingSetBytes),
+                    mac: macName,
+                    mb: intl.formatNumber(suggestion),
+                  })
+                : intl.formatMessage(i18n.wiredSuggested, {
+                    mb: intl.formatNumber(suggestion),
+                    others: othersGib,
+                    reserve,
+                  })}
+          </span>
+          {suggestion != null && String(suggestion) !== text.trim() && (
+            <Button size="sm" variant="secondary" onClick={() => setText(String(suggestion))}>
+              {intl.formatMessage(i18n.wiredUseSuggestion)}
+            </Button>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <StudioSwitch
+            checked={persist}
+            onChange={setPersist}
+            aria-label={intl.formatMessage(i18n.wiredPersistLabel)}
+            disabled={running}
+          />
+          <span className={TYPE.body}>{intl.formatMessage(i18n.wiredPersistLabel)}</span>
+          <span className={TYPE.meta}>{intl.formatMessage(i18n.wiredPersistNote)}</span>
+        </div>
+        {canEnable && (
           <div className="flex flex-wrap items-center gap-2">
             <span className={TYPE.meta}>{intl.formatMessage(i18n.wiredCommand)}</span>
             <code className={TYPE.mono} data-testid="mlx-memory-wired-command">
               {wiredLimitCommand(mb)}
             </code>
           </div>
-        ) : (
-          <span className={cx('text-lz-meta', WEIGHT.semibold, TONE_TEXT.err)} role="alert">
-            {intl.formatMessage(i18n.wiredInvalid, { max: intl.formatNumber(max) })}
-          </span>
         )}
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="primary"
             size="sm"
-            disabled={!valid || running}
+            disabled={!canEnable || running}
             icon={running ? <Loader2 className="animate-spin" /> : undefined}
-            onClick={() => run(() => mlxEngineWiredLimitApply(mb, false))}
+            onClick={() => run(() => mlxEngineWiredLimitApply(mb, persist, nodeId), mb)}
+            data-testid="mlx-memory-wired-enable"
           >
-            {intl.formatMessage(i18n.wiredSet)}
+            {intl.formatMessage(i18n.wiredEnable)}
           </Button>
           <Button
-            variant="secondary"
+            variant="destructive"
             size="sm"
-            disabled={!valid || running}
-            onClick={() => run(() => mlxEngineWiredLimitApply(mb, true))}
+            disabled={!canDisable || running}
+            onClick={() => run(() => mlxEngineWiredLimitDisable(nodeId), 0)}
+            data-testid="mlx-memory-wired-disable"
           >
-            {intl.formatMessage(i18n.wiredPersist)}
+            {intl.formatMessage(i18n.wiredDisable)}
           </Button>
-          {machine.daemonWiredLimitMb != null && (
+          {daemon != null && (
             <Button
-              variant="destructive"
+              variant="secondary"
               size="sm"
               disabled={running}
-              onClick={() => run(() => mlxEngineWiredLimitRemoveDaemon())}
+              onClick={() => run(() => mlxEngineWiredLimitRemoveDaemon(nodeId), current ?? 0)}
             >
               {intl.formatMessage(i18n.wiredRemove)}
             </Button>
           )}
         </div>
-        {machine.daemonWiredLimitMb != null && (
+        {daemon != null && (
           <span className={TYPE.meta}>{intl.formatMessage(i18n.wiredRemoveNote)}</span>
+        )}
+        {running && (
+          <ToneBanner
+            tone="warn"
+            live
+            label={intl.formatMessage(i18n.wiredCommand)}
+            text={intl.formatMessage(i18n.wiredWaiting, { mac: macName })}
+            testId="mlx-memory-wired-waiting"
+          />
         )}
         {result && (
           <ToneBanner
@@ -799,6 +1020,14 @@ function WiredLimitPanel({
             text={result.text}
             testId="mlx-memory-wired-result"
           />
+        )}
+        {result && !result.ok && result.mb != null && (
+          <div className="flex flex-wrap items-center gap-2" data-testid="mlx-memory-wired-fallback">
+            <span className={TYPE.meta}>
+              {intl.formatMessage(i18n.wiredFallback, { mac: macName })}
+            </span>
+            <code className={TYPE.mono}>{wiredFallbackCommand(result.mb)}</code>
+          </div>
         )}
       </div>
     </Panel>
@@ -810,6 +1039,8 @@ export interface MlxMemorySectionProps {
   /** The picked Mac is this one: the machine facts and the wired limit are read here. */
   isSelf: boolean;
   macName: string;
+  /** The picked Mac's Link node id when it is a peer: its facts and wired limit are relayed. */
+  nodeId?: string;
   status: MlxEngineStatus | null;
   settings: MlxEngineSettings | null;
   engineBusy: boolean;
@@ -818,7 +1049,8 @@ export interface MlxMemorySectionProps {
 }
 
 export function MlxMemorySection(props: MlxMemorySectionProps) {
-  const { macPicker, isSelf, macName, status, settings, engineBusy, saveSettings, onApply } = props;
+  const { macPicker, isSelf, macName, nodeId, status, settings, engineBusy, saveSettings, onApply } =
+    props;
   const intl = useIntl();
   const [machine, setMachine] = useState<MlxMemoryMachine | null>(null);
   const [machineError, setMachineError] = useState<string | null>(null);
@@ -877,7 +1109,21 @@ export function MlxMemorySection(props: MlxMemorySectionProps) {
     return p ? problemText(intl, p, physicalGb) : null;
   };
   const comboProblems = parsed.problems.filter((p) => !('key' in p));
-  const unsupported = isSelf && machine != null && !machine.tunablesSupported;
+  const unsupported = machine != null && !machine.tunablesSupported;
+  const othersBytes =
+    running && budget?.othersBytes != null
+      ? budget.othersBytes
+      : machine
+        ? (machine.othersBytes ?? machine.physicalBytes - machine.availableBytes)
+        : null;
+  const wiredSuggestion =
+    physicalBytes != null && othersBytes != null
+      ? suggestedWiredMb(
+          physicalBytes,
+          othersBytes,
+          machine?.minReserveGib ?? WIRED_DEFAULT_MIN_RESERVE_GIB
+        )
+      : null;
   const active = status?.activeRequests ?? 0;
 
   const save = async (): Promise<boolean> => {
@@ -1051,7 +1297,7 @@ export function MlxMemorySection(props: MlxMemorySectionProps) {
                 text={intl.formatMessage(i18n.capAboveWorkingSet, {
                   cap: gbText(intl, consequences.capGb * GB),
                   ws: gbText(intl, workingSetBytes),
-                  mb: intl.formatNumber(suggestedWiredLimitMb(physicalBytes)),
+                  mb: wiredSuggestion != null ? intl.formatNumber(wiredSuggestion) : '—',
                 })}
                 testId="mlx-memory-cap-above-ws"
               />
@@ -1066,11 +1312,16 @@ export function MlxMemorySection(props: MlxMemorySectionProps) {
           </Disclosure>
         </div>
       </Panel>
-      {isSelf && machine ? (
-        <WiredLimitPanel machine={machine} onChanged={readMachine} />
-      ) : !isSelf ? (
-        <p className={TYPE.meta}>{intl.formatMessage(i18n.wiredRemoteNote, { mac: macName })}</p>
-      ) : null}
+      {machine && othersBytes != null && (
+        <WiredLimitPanel
+          key={target ?? 'self'}
+          machine={machine}
+          macName={macName}
+          nodeId={target}
+          othersBytes={othersBytes}
+          onChanged={readMachine}
+        />
+      )}
     </div>
   );
 }
