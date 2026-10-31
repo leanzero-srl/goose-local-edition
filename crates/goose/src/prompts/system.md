@@ -27,7 +27,10 @@ in your tool specification.
 {% endif %}
 {% if extension.instructions %}### Instructions
 {{extension.instructions}}{% endif %}
-{% endfor %}
+{% endfor %}{% for extension in extensions %}{% if extension.project_instructions %}
+
+## {{extension.name}}: this folder
+{{extension.project_instructions}}{% endif %}{% endfor %}
 
 {% else %}
 No extensions are defined. You should let the user know that they should add extensions.

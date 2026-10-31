@@ -63,6 +63,42 @@ impl SkillsClient {
             })
             .collect()
     }
+
+    /// The skill list the model sees, split (Q-524): the skills every project shares (global and
+    /// built-in) as the instructions, this folder's own as the project part the system prompt
+    /// renders after every extension's shared text. The heading goes with whichever part comes
+    /// first, so a folder with only its own skills still reads as one list.
+    fn skill_listing(&self) -> (Option<String>, Option<String>) {
+        let sources = self.discover_skills();
+        let mut skills: Vec<&SourceEntry> = sources
+            .iter()
+            .filter(|s| {
+                s.source_type == SourceType::Skill || s.source_type == SourceType::BuiltinSkill
+            })
+            .collect();
+        skills.sort_by(|a, b| (&a.name, &a.path).cmp(&(&b.name, &b.path)));
+        let (project, shared): (Vec<&SourceEntry>, Vec<&SourceEntry>) = skills
+            .into_iter()
+            .partition(|s| !s.global && crate::sources::found_under(&s.path, &self.working_dir));
+        let bullets = |list: &[&SourceEntry]| {
+            list.iter()
+                .map(|skill| format!("\n• {} - {}", skill.name, skill.description))
+                .collect::<String>()
+        };
+        const HEADING: &str = "\n\nYou have these skills at your disposal, when it is clear they can help you solve a problem or you are asked to use them:";
+        let shared_text = (!shared.is_empty()).then(|| format!("{HEADING}{}", bullets(&shared)));
+        let project_text = (!project.is_empty()).then(|| {
+            if shared_text.is_some() {
+                format!(
+                    "\nThis folder's own skills, loaded the same way:{}",
+                    bullets(&project)
+                )
+            } else {
+                format!("{HEADING}{}", bullets(&project))
+            }
+        });
+        (shared_text, project_text)
+    }
 }
 
 /// A supporting file is cut at the tool-response limit so one large file cannot fill a local model's
@@ -373,37 +409,12 @@ impl McpClientTrait for SkillsClient {
         Some(&self.info)
     }
 
-    fn instructions_follow_working_dir(&self) -> bool {
-        true
+    fn get_instructions(&self) -> Option<String> {
+        self.skill_listing().0
     }
 
-    fn get_instructions(&self) -> Option<String> {
-        let sources = self.discover_skills();
-        let mut skills: Vec<&SourceEntry> = sources
-            .iter()
-            .filter(|s| {
-                s.source_type == SourceType::Skill || s.source_type == SourceType::BuiltinSkill
-            })
-            .collect();
-        // The skills every project shares first, the working directory's own after them, so a new
-        // chat in another project still matches the shared list byte for byte up to its first
-        // project skill (Q-524, prefix cache).
-        let in_project = |s: &SourceEntry| crate::sources::found_under(&s.path, &self.working_dir);
-        skills.sort_by(|a, b| {
-            (in_project(a), &a.name, &a.path).cmp(&(in_project(b), &b.name, &b.path))
-        });
-
-        if skills.is_empty() {
-            return None;
-        }
-
-        let mut instructions = String::from(
-            "\n\nYou have these skills at your disposal, when it is clear they can help you solve a problem or you are asked to use them:",
-        );
-        for skill in &skills {
-            instructions.push_str(&format!("\n• {} - {}", skill.name, skill.description));
-        }
-        Some(instructions)
+    fn get_project_instructions(&self) -> Option<String> {
+        self.skill_listing().1
     }
 
     async fn subscribe(&self) -> mpsc::Receiver<ServerNotification> {
@@ -419,11 +430,35 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    /// Q-524: the working directory's own skills list after the ones every project shares, so a
-    /// new chat in another project matches the shared list byte for byte up to its first project
-    /// skill. "aaa-…" sorts before every built-in skill by name: name order would put it first.
+    /// Both parts of the listing the model sees (Q-524 renders them apart).
+    fn full_listing(client: &SkillsClient) -> String {
+        format!(
+            "{}{}",
+            client.get_instructions().unwrap_or_default(),
+            client.get_project_instructions().unwrap_or_default()
+        )
+    }
+
+    fn skills_client_in(dir: &std::path::Path) -> SkillsClient {
+        let session = std::sync::Arc::new(crate::session::Session {
+            working_dir: dir.to_path_buf(),
+            ..crate::session::Session::default()
+        });
+        SkillsClient::new(PlatformExtensionContext {
+            extension_manager: None,
+            session_manager: Arc::new(crate::session::SessionManager::instance()),
+            session: Some(session),
+            use_login_shell_path: false,
+            working_dir: None,
+        })
+        .unwrap()
+    }
+
+    /// Q-524: the folder's own skills are the project part, the shared list (built-in and global
+    /// skills) the instructions, so a new chat in another project matches the shared list byte for
+    /// byte. "aaa-…" sorts before every built-in skill by name: one list would put it first.
     #[tokio::test]
-    async fn project_skills_list_after_the_shared_ones() {
+    async fn project_skills_are_the_project_part() {
         let temp_dir = TempDir::new().unwrap();
         let skill_dir = temp_dir.path().join(".goose/skills/aaa-project-skill");
         fs::create_dir_all(&skill_dir).unwrap();
@@ -432,30 +467,23 @@ mod tests {
             "---\nname: aaa-project-skill\ndescription: Only this project has it\n---\nBody.",
         )
         .unwrap();
-        let session = std::sync::Arc::new(crate::session::Session {
-            working_dir: temp_dir.path().to_path_buf(),
-            ..crate::session::Session::default()
-        });
-        let client = SkillsClient::new(PlatformExtensionContext {
-            extension_manager: None,
-            session_manager: Arc::new(crate::session::SessionManager::instance()),
-            session: Some(session),
-            use_login_shell_path: false,
-            working_dir: None,
-        })
-        .unwrap();
-        assert!(client.instructions_follow_working_dir());
+        let client = skills_client_in(temp_dir.path());
+        let other = TempDir::new().unwrap();
+        let other_client = skills_client_in(other.path());
 
-        let instructions = client.get_instructions().unwrap();
-        let bullets: Vec<&str> = instructions.split("\n• ").skip(1).collect();
+        let shared = client.get_instructions().unwrap();
+        let project = client.get_project_instructions().unwrap();
         assert!(
-            bullets.len() > 1,
-            "built-in skills must be listed too, or the order proves nothing: {instructions}"
+            shared.matches("\n• ").count() > 0,
+            "built-in skills must be listed too, or the split proves nothing: {shared}"
         );
+        assert!(!shared.contains("aaa-project-skill"), "{shared}");
         assert!(
-            bullets.last().unwrap().starts_with("aaa-project-skill"),
-            "the project skill must be the last bullet: {bullets:?}"
+            project.contains("aaa-project-skill - Only this project has it"),
+            "{project}"
         );
+        assert_eq!(Some(shared), other_client.get_instructions());
+        assert_eq!(None, other_client.get_project_instructions());
     }
 
     #[tokio::test]
@@ -699,7 +727,7 @@ mod tests {
     async fn a_skill_changed_between_two_calls_is_what_the_next_call_sees() {
         let temp_dir = TempDir::new().unwrap();
         let (client, sessions, session_id, skill_dir) = session_with_skill(&temp_dir).await;
-        let listing = client.get_instructions().unwrap();
+        let listing = full_listing(&client);
         assert!(listing.contains("big-skill - A large skill"), "{listing}");
         let file = load(&client, &sessions, &session_id, "big-skill/template.md").await;
         assert!(file.contains("A template."), "{file}");
@@ -715,7 +743,7 @@ mod tests {
             "---\nname: late-skill\ndescription: Added between calls\n---\nLate.",
         )
         .unwrap();
-        let listing = client.get_instructions().unwrap();
+        let listing = full_listing(&client);
         assert!(
             listing.contains("late-skill - Added between calls"),
             "{listing}"
@@ -726,7 +754,7 @@ mod tests {
             "---\nname: big-skill\ndescription: A changed purpose\n---\nStep three.",
         )
         .unwrap();
-        let listing = client.get_instructions().unwrap();
+        let listing = full_listing(&client);
         assert!(
             listing.contains("big-skill - A changed purpose"),
             "{listing}"

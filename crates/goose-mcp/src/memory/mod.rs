@@ -219,6 +219,8 @@ pub struct SearchMemoriesParams {
 pub struct MemoryServer {
     tool_router: ToolRouter<Self>,
     instructions: String,
+    /// Where the folder-specific part of `instructions` starts (PROJECT_INSTRUCTIONS_CAPABILITY).
+    project_from_byte: usize,
     global_memory_dir: PathBuf,
     /// The folder of the session this server was started for: the local scope (`.goose/memory`)
     /// the instructions index and a call without the `agent-working-dir` header reads. Q-264: this
@@ -307,18 +309,25 @@ impl MemoryServer {
         let mut memory_router = Self {
             tool_router: Self::tool_router(),
             instructions: String::new(),
+            project_from_byte: 0,
             global_memory_dir,
             working_dir,
             proposals_dir,
         };
 
+        // Shared part first (the same in every project), this folder's part after it, with the byte
+        // where it starts advertised as PROJECT_INSTRUCTIONS_CAPABILITY (Q-524, prefix cache).
+        let store = memory_router.store(None);
         let mut updated_instructions = instructions;
-        if let Some(note) = home_folder_note(&memory_router.working_dir) {
-            updated_instructions.push_str("\n\n");
-            updated_instructions.push_str(note);
-        }
         updated_instructions.push_str("\n\nMemory index:\n");
-        updated_instructions.push_str(&memory_router.index(None));
+        updated_instructions.push_str(&store.index_scope(true));
+        memory_router.project_from_byte = updated_instructions.len();
+        updated_instructions.push_str(&store.index_scope(false));
+        if let Some(note) = home_folder_note(&memory_router.working_dir) {
+            updated_instructions.push('\n');
+            updated_instructions.push_str(note);
+            updated_instructions.push('\n');
+        }
         memory_router.set_instructions(updated_instructions);
 
         memory_router
@@ -986,7 +995,14 @@ impl MemoryServer {
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for MemoryServer {
     fn get_info(&self) -> ServerInfo {
-        InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
+        let mut capabilities = ServerCapabilities::builder().enable_tools().build();
+        let mut project = serde_json::Map::new();
+        project.insert("fromByte".to_string(), self.project_from_byte.into());
+        capabilities.experimental = Some(std::collections::BTreeMap::from([(
+            crate::PROJECT_INSTRUCTIONS_CAPABILITY.to_string(),
+            project,
+        )]));
+        InitializeResult::new(capabilities)
             .with_server_info(Implementation::new(
                 "goose-memory",
                 env!("CARGO_PKG_VERSION"),
@@ -1006,6 +1022,7 @@ mod tests {
         MemoryServer {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
+            project_from_byte: 0,
             global_memory_dir: dir.join("memory"),
             working_dir: dir.join("working"),
             proposals_dir: proposals.then(|| dir.join("proposals")),
@@ -1177,6 +1194,7 @@ mod tests {
         let router = MemoryServer {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
+            project_from_byte: 0,
             global_memory_dir: memory_base.join("global"),
             working_dir: memory_base.join("working"),
             proposals_dir: None,
@@ -1224,6 +1242,7 @@ mod tests {
         let router = MemoryServer {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
+            project_from_byte: 0,
             global_memory_dir: memory_base.join("global"),
             working_dir: memory_base.join("working"),
             proposals_dir: None,
@@ -1246,6 +1265,7 @@ mod tests {
         let router = MemoryServer {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
+            project_from_byte: 0,
             global_memory_dir: memory_base.join("global"),
             working_dir: memory_base.join("working"),
             proposals_dir: None,
@@ -1292,6 +1312,7 @@ mod tests {
         let router = MemoryServer {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
+            project_from_byte: 0,
             global_memory_dir: memory_base.join("global"),
             working_dir: memory_base.join("working"),
             proposals_dir: None,
@@ -1324,6 +1345,7 @@ mod tests {
         let router = MemoryServer {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
+            project_from_byte: 0,
             global_memory_dir: memory_base.join("global"),
             working_dir: memory_base.join("working"),
             proposals_dir: None,
@@ -1383,6 +1405,7 @@ mod tests {
         let router = MemoryServer {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
+            project_from_byte: 0,
             global_memory_dir: temp_dir.path().join("global"),
             working_dir: temp_dir.path().join("working"),
             proposals_dir: None,
@@ -1452,6 +1475,7 @@ mod tests {
         let router = MemoryServer {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
+            project_from_byte: 0,
             global_memory_dir: temp_dir.path().join("global"),
             working_dir: temp_dir.path().join("working"),
             proposals_dir: None,
@@ -1487,6 +1511,7 @@ mod tests {
         let router = MemoryServer {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
+            project_from_byte: 0,
             global_memory_dir: temp_dir.path().join("global"),
             working_dir: temp_dir.path().join("working"),
             proposals_dir: None,
@@ -1677,6 +1702,7 @@ mod tests {
         let router = MemoryServer {
             tool_router: ToolRouter::new(),
             instructions: String::new(),
+            project_from_byte: 0,
             global_memory_dir: temp_dir.path().join("global"),
             working_dir: temp_dir.path().join("working"),
             proposals_dir: None,

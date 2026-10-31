@@ -622,42 +622,45 @@ impl MemoryStore {
     /// The index a model sees at startup: one headline per entry, both scopes, bodies never included.
     /// A scope that cannot be read says so instead of appearing empty.
     pub fn index(&self) -> String {
-        let mut out = String::new();
-        for (is_global, label) in [
-            (true, "Global memories"),
-            (false, "Project memories (.goose/memory)"),
-        ] {
-            match self.entries(is_global) {
-                Ok(entries) if entries.is_empty() => {
-                    out.push_str(&format!("\n{label}: none saved yet.\n"));
-                }
-                Ok(entries) => {
-                    out.push_str(&format!(
-                        "\n{label} ({} entries, is_global={is_global}):\n",
-                        entries.len()
-                    ));
-                    for entry in &entries {
-                        let tags = if entry.tags.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" [{}]", entry.tags.join(" "))
-                        };
-                        out.push_str(&format!(
-                            "- {}{}: {}\n",
-                            entry.category,
-                            tags,
-                            entry.headline()
-                        ));
-                    }
-                }
-                Err(err) => {
-                    out.push_str(&format!(
-                        "\n{label}: could not be read ({err}) — this part of the index is missing.\n"
-                    ));
-                }
-            }
-        }
+        let mut out = self.index_scope(true);
+        out.push_str(&self.index_scope(false));
         out
+    }
+
+    /// One scope's part of [`MemoryStore::index`]: the global part is the same in every project, the
+    /// project part is this folder's own (Q-524: the prompt renders them apart, shared part first).
+    pub fn index_scope(&self, is_global: bool) -> String {
+        let label = if is_global {
+            "Global memories"
+        } else {
+            "Project memories (.goose/memory)"
+        };
+        match self.entries(is_global) {
+            Ok(entries) if entries.is_empty() => format!("\n{label}: none saved yet.\n"),
+            Ok(entries) => {
+                let mut out = format!(
+                    "\n{label} ({} entries, is_global={is_global}):\n",
+                    entries.len()
+                );
+                for entry in &entries {
+                    let tags = if entry.tags.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", entry.tags.join(" "))
+                    };
+                    out.push_str(&format!(
+                        "- {}{}: {}\n",
+                        entry.category,
+                        tags,
+                        entry.headline()
+                    ));
+                }
+                out
+            }
+            Err(err) => format!(
+                "\n{label}: could not be read ({err}) — this part of the index is missing.\n"
+            ),
+        }
     }
 
     /// Keyword search over category, tags and content: the entries the query NAMES first (see

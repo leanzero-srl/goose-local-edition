@@ -132,19 +132,26 @@ impl<'a> SystemPromptBuilder<'a, PromptManager> {
                 false,
             ));
         }
-        // Stable ordering is important for multi session prompt caching: by name, and every
-        // extension whose instructions list the working directory's contents (project skills,
-        // agents, recipes) after all the others, so a chat in another project still shares the
-        // whole stable bulk (Q-524: on Qwen3.5 the tools render first, then this text; a project
-        // skill sorted mid-list cut the shared prefix at the skills block, ~7.8k of ~21.7k tokens).
-        extensions_info.sort_by(|a, b| {
-            (a.follows_working_dir, &a.name).cmp(&(b.follows_working_dir, &b.name))
-        });
+        // Stable tool ordering is important for multi session prompt caching.
+        extensions_info.sort_by(|a, b| a.name.cmp(&b.name));
 
+        // Q-524: system.md renders every extension's folder-specific part (project skills, agents,
+        // recipes, memories) after all the shared parts, so a new chat in another project still
+        // shares the whole stable bulk with the engine's prefix cache (on Qwen3.5 the tools render
+        // first, then this text; a project skill sorted mid-list cut the shared prefix at the skills
+        // block, ~7.8k of ~21.7k tokens). An override template knows nothing of the split, so there
+        // the part is folded back into the extension's instructions: nothing is dropped.
+        let overridden = self.manager.system_prompt_override.is_some();
         let sanitized_extensions_info: Vec<ExtensionInfo> = extensions_info
             .into_iter()
             .map(|mut ext_info| {
+                if overridden && !ext_info.project_instructions.is_empty() {
+                    let project = std::mem::take(&mut ext_info.project_instructions);
+                    ext_info.instructions.push_str(&project);
+                }
                 ext_info.instructions = sanitize_unicode_tags(&ext_info.instructions);
+                ext_info.project_instructions =
+                    sanitize_unicode_tags(&ext_info.project_instructions);
                 ext_info
             })
             .collect();
@@ -506,7 +513,9 @@ mod tests {
                     .and_then(|i| i.capabilities.resources.as_ref())
                     .is_some();
                 ExtensionInfo::new(def.name, &instructions, has_resources)
-                    .following_working_dir(client.instructions_follow_working_dir())
+                    .with_project_instructions(
+                        &client.get_project_instructions().unwrap_or_default(),
+                    )
             })
             .collect();
 
@@ -526,12 +535,13 @@ mod tests {
         a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count()
     }
 
-    /// Q-524: two NEW chats (different session times, different project folders, one of them with
-    /// a project skill, a project agent and an AGENTS.md) must render a system prompt whose shared
-    /// prefix holds every extension that does not follow the working directory, and the shared
-    /// part of the skills list. The engine's prefix cache reuses a new chat only up to the first
-    /// differing token; on Gabee (2026-10-31, Qwen3.5-9B) the prefix was 21,860 tokens and a
-    /// project skill sorted mid-list would have cut it at the skills block.
+    /// Q-524: two NEW chats (different session times, different project folders, one with its own
+    /// memories, skill, agent and AGENTS.md) must render a system prompt whose shared prefix holds
+    /// every extension's shared text, including the shared parts of memory, skills and summon. The
+    /// engine's prefix cache reuses a new chat only up to the first differing token; on Gabee
+    /// (2026-10-31, Qwen3.5-9B) the prefix was 21,860 tokens and a project skill sorted mid-list
+    /// would have cut it at the skills block. memory sorts before summarize/todo/tom, so its
+    /// project index cut them too until its project part moved to the end.
     #[test]
     fn new_chats_in_other_projects_share_the_stable_prefix() {
         let project_a = tempfile::tempdir().unwrap();
@@ -542,69 +552,89 @@ mod tests {
         .unwrap();
         let project_b = tempfile::tempdir().unwrap();
 
-        let stable = [
+        // (name, shared text, project A's own part)
+        let extensions = [
             (
                 "developer",
                 "Use the developer extension to build software.",
+                "",
             ),
-            ("todo", "Your todo content is your SCRATCHPAD."),
-            ("tom", "Theory of mind notes for this person."),
+            (
+                "memory",
+                "Memory index: Global memories (1 entries): prefers-tabs",
+                "Project memories (.goose/memory): deploy-commands: make ship-it",
+            ),
+            (
+                "skills",
+                "• goose-doc - the shared skill every project sees",
+                "This folder's own skills: • aaa-project-a - only project A has it",
+            ),
+            (
+                "summon",
+                "Agents: • reviewer — shared",
+                "This folder's own subagents: • aaa-a-agent — only A",
+            ),
+            ("todo", "Your todo content is your SCRATCHPAD.", ""),
+            ("tom", "Theory of mind notes for this person.", ""),
         ];
-        let render = |at: i64, dir: &Path, skills: &str, summon: &str| {
+        let render = |at: i64, dir: &Path, with_project: bool| {
             let manager =
                 PromptManager::with_timestamp(DateTime::<Utc>::from_timestamp(at, 0).unwrap());
             let mut builder = manager.builder();
-            for (name, text) in stable {
-                builder = builder.with_extension(ExtensionInfo::new(name, text, false));
+            for (name, shared, project) in extensions {
+                let project = if with_project { project } else { "" };
+                builder = builder.with_extension(
+                    ExtensionInfo::new(name, shared, false).with_project_instructions(project),
+                );
             }
             builder
-                .with_extension(
-                    ExtensionInfo::new("skills", skills, false).following_working_dir(true),
-                )
-                .with_extension(
-                    ExtensionInfo::new("summon", summon, false).following_working_dir(true),
-                )
                 .with_goose_mode(GooseMode::Auto)
                 .with_hints(dir)
                 .build()
         };
-        let shared_skills = "\n• goose-doc - the shared skill every project sees";
-        let a = render(
-            0,
-            project_a.path(),
-            &format!("{shared_skills}\n• aaa-project-a - only project A has it"),
-            "\nAgents:\n• reviewer — shared\nProject agents:\n• aaa-a-agent — only A",
-        );
-        let b = render(
-            5 * 3600 + 17 * 60,
-            project_b.path(),
-            shared_skills,
-            "\nAgents:\n• reviewer — shared",
-        );
+        let a = render(0, project_a.path(), true);
+        let b = render(5 * 3600 + 17 * 60, project_b.path(), false);
 
         assert_ne!(
             a, b,
             "the two projects must differ somewhere, or the test proves nothing"
         );
         let lcp = shared_prefix(&a, &b);
-        for (name, text) in stable {
-            let end = a.find(text).expect("stable instructions rendered") + text.len();
+        for (name, shared, project) in extensions {
+            let end = a.find(shared).expect("shared instructions rendered") + shared.len();
             assert!(
                 end <= lcp,
                 "`{name}` ends at byte {end}, after the shared prefix ({lcp} bytes): a project-scoped \
                  block was rendered before it"
             );
+            if !project.is_empty() {
+                let at = a.find(project).expect("project part rendered");
+                assert!(
+                    at >= lcp,
+                    "`{name}`'s project part sits inside the shared prefix"
+                );
+            }
         }
-        let skills_end = a.find(shared_skills).unwrap() + shared_skills.len();
-        assert!(
-            skills_end <= lcp,
-            "the shared skills end at byte {skills_end}, after the shared prefix ({lcp} bytes)"
+        assert!(a.find("Project A runs on tabs.").unwrap() >= lcp);
+    }
+
+    /// An override template knows nothing of the project part: it is folded back into the
+    /// extension's instructions, never dropped.
+    #[test]
+    fn an_override_template_still_gets_the_project_part() {
+        let mut manager =
+            PromptManager::with_timestamp(DateTime::<Utc>::from_timestamp(0, 0).unwrap());
+        manager.set_system_prompt_override(
+            "{% for extension in extensions %}[{{extension.instructions}}]{% endfor %}".to_string(),
         );
-        for project_only in ["aaa-project-a", "Project A runs on tabs."] {
-            assert!(
-                a.find(project_only).unwrap() >= lcp,
-                "{project_only} inside the shared prefix"
-            );
-        }
+        let prompt = manager
+            .builder()
+            .with_extension(
+                ExtensionInfo::new("skills", "shared list", false)
+                    .with_project_instructions(" + project list"),
+            )
+            .with_goose_mode(GooseMode::Auto)
+            .build();
+        assert!(prompt.contains("[shared list + project list]"), "{prompt}");
     }
 }

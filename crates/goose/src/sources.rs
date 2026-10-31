@@ -571,7 +571,7 @@ pub(crate) fn global_agent_roots() -> Vec<PathBuf> {
     roots
 }
 
-fn is_global_agent_file(path: &Path) -> bool {
+pub(crate) fn is_global_agent_file(path: &Path) -> bool {
     let canonical_path = canonicalize_or_original(path);
     global_agent_roots()
         .into_iter()

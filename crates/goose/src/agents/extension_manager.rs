@@ -156,8 +156,8 @@ impl Extension {
         self.client.get_instructions()
     }
 
-    fn instructions_follow_working_dir(&self) -> bool {
-        self.client.instructions_follow_working_dir()
+    fn get_project_instructions(&self) -> Option<String> {
+        self.client.get_project_instructions()
     }
 
     fn get_client(&self) -> McpClientBox {
@@ -1273,8 +1273,13 @@ impl ExtensionManager {
             .map(|(name, ext)| {
                 let instructions = ext.get_instructions().unwrap_or_default();
                 let instructions = instructions.replace("{{WORKING_DIR}}", &working_dir_str);
+                // None means the extension has no folder-specific part: an honest empty.
+                let project = match ext.get_project_instructions() {
+                    Some(project) => project.replace("{{WORKING_DIR}}", &working_dir_str),
+                    None => String::new(),
+                };
                 ExtensionInfo::new(name, &instructions, ext.supports_resources())
-                    .following_working_dir(ext.instructions_follow_working_dir())
+                    .with_project_instructions(&project)
             })
             .collect()
     }
@@ -3582,11 +3587,23 @@ mod tests {
         let memory = info.iter().find(|i| i.name == "memory").unwrap();
         assert!(
             memory
-                .instructions
+                .project_instructions
                 .contains("deploy-commands [project]: This project deploys with make ship-it."),
+            "{}",
+            memory.project_instructions
+        );
+        // Q-524: the project's memories are the project part, rendered after every shared text;
+        // the shared part (instructions + global index) is the same in every folder.
+        assert!(
+            !memory.instructions.contains("deploy-commands"),
             "{}",
             memory.instructions
         );
+        assert!(memory.instructions.contains("Global memories"));
+        assert!(memory
+            .project_instructions
+            .contains("Project memories (.goose/memory)"));
+        assert!(!memory.project_instructions.contains("user's HOME folder"));
         assert!(!memory.instructions.contains("user's HOME folder"));
     }
 

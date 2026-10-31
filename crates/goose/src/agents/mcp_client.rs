@@ -100,14 +100,13 @@ pub trait McpClientTrait: Send + Sync {
         self.get_info().and_then(|info| info.instructions.clone())
     }
 
-    /// True when `get_instructions()` lists things found under the session's working directory
-    /// (project skills, project agents and recipes), so the same extension renders different bytes
-    /// in another project. The system prompt puts these extensions after every other one: the
-    /// engine's prefix cache reuses a new chat's prompt only up to the first differing token, and
-    /// a project-specific block mid-prompt cuts every extension after it out of the shared prefix
-    /// (Q-524).
-    fn instructions_follow_working_dir(&self) -> bool {
-        false
+    /// The part of the instructions that describes the session's folder (its own skills, agents,
+    /// recipes, memories): `get_instructions()` then returns only the part every project shares.
+    /// The system prompt renders every extension's shared part first and these after them all: the
+    /// engine's prefix cache reuses a new chat's prompt only up to the first differing token, and a
+    /// project-specific line mid-prompt cuts every extension after it out of the shared prefix (Q-524).
+    fn get_project_instructions(&self) -> Option<String> {
+        None
     }
 
     async fn list_resources(
@@ -729,10 +728,58 @@ async fn send_cancel_message(
     .await
 }
 
+/// A server's instructions split at the byte its `goose/projectInstructions` capability names
+/// (goose_mcp::PROJECT_INSTRUCTIONS_CAPABILITY): `(shared, Some(project))`. No capability, or a
+/// byte that is not a char boundary inside the text, keeps the whole text shared and says so in the
+/// log: nothing is dropped, the prompt only loses the reorder.
+fn split_project_instructions<'a>(
+    info: &InitializeResult,
+    instructions: &'a str,
+) -> (&'a str, Option<&'a str>) {
+    let Some(from) = info
+        .capabilities
+        .experimental
+        .as_ref()
+        .and_then(|caps| caps.get(goose_mcp::PROJECT_INSTRUCTIONS_CAPABILITY))
+    else {
+        return (instructions, None);
+    };
+    let at = from
+        .get("fromByte")
+        .and_then(|v| v.as_u64())
+        .and_then(|n| usize::try_from(n).ok());
+    match at.and_then(|at| instructions.split_at_checked(at)) {
+        Some((shared, project)) => (shared, Some(project)),
+        None => {
+            tracing::warn!(
+                "{} names no usable byte ({from:?}) in {} bytes of instructions; kept whole",
+                goose_mcp::PROJECT_INSTRUCTIONS_CAPABILITY,
+                instructions.len()
+            );
+            (instructions, None)
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl McpClientTrait for McpClient {
     fn get_info(&self) -> Option<&InitializeResult> {
         self.server_info.as_ref()
+    }
+
+    fn get_instructions(&self) -> Option<String> {
+        let info = self.server_info.as_ref()?;
+        let instructions = info.instructions.as_ref()?;
+        Some(split_project_instructions(info, instructions).0.to_string())
+    }
+
+    fn get_project_instructions(&self) -> Option<String> {
+        let info = self.server_info.as_ref()?;
+        let instructions = info.instructions.as_ref()?;
+        split_project_instructions(info, instructions)
+            .1
+            .filter(|project| !project.is_empty())
+            .map(str::to_string)
     }
 
     async fn list_resources(
@@ -1017,6 +1064,44 @@ fn inject_session_context_into_request(
 
 #[cfg(test)]
 mod tests {
+    fn info_with(instructions: &str, from: Option<serde_json::Value>) -> InitializeResult {
+        let mut caps = rmcp::model::ServerCapabilities::default();
+        if let Some(from) = from {
+            let mut obj = serde_json::Map::new();
+            obj.insert("fromByte".to_string(), from);
+            caps.experimental = Some(std::collections::BTreeMap::from([(
+                goose_mcp::PROJECT_INSTRUCTIONS_CAPABILITY.to_string(),
+                obj,
+            )]));
+        }
+        InitializeResult::new(caps).with_instructions(instructions.to_string())
+    }
+
+    /// Q-524: the server's advertised byte splits its instructions; a missing capability or a byte
+    /// outside the text or inside a character keeps the whole text shared, never drops any of it.
+    #[test]
+    fn project_instructions_split_at_the_advertised_byte() {
+        let text = "shared part|project part";
+        let at = text.find('|').unwrap();
+        let info = info_with(text, Some(at.into()));
+        assert_eq!(
+            split_project_instructions(&info, text),
+            ("shared part", Some("|project part"))
+        );
+        assert_eq!(
+            split_project_instructions(&info_with(text, None), text),
+            (text, None)
+        );
+        let past = info_with(text, Some((text.len() + 1).into()));
+        assert_eq!(split_project_instructions(&past, text), (text, None));
+        let accented = "é|x";
+        let inside = info_with(accented, Some(1.into()));
+        assert_eq!(
+            split_project_instructions(&inside, accented),
+            (accented, None)
+        );
+    }
+
     use super::*;
     use crate::agents::GoosePlatform;
     use serde_json::json;

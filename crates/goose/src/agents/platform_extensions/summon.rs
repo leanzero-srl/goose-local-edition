@@ -241,18 +241,10 @@ fn scan_agents_from_dir(
     }
 }
 
-pub fn discover_filesystem_sources(working_dir: &Path) -> Vec<SourceEntry> {
-    let mut sources: Vec<SourceEntry> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-
+/// The global recipe folders, in discovery precedence: GOOSE_RECIPE_PATH, then goose's own.
+fn global_recipe_dirs() -> Vec<PathBuf> {
     let config = Paths::config_dir();
-
-    let local_recipe_dirs: Vec<PathBuf> = vec![
-        working_dir.join(".goose/recipes"),
-        working_dir.join(".agents/recipes"),
-    ];
-
-    let global_recipe_dirs: Vec<PathBuf> = std::env::var("GOOSE_RECIPE_PATH")
+    std::env::var("GOOSE_RECIPE_PATH")
         .ok()
         .into_iter()
         .flat_map(|p| {
@@ -267,7 +259,19 @@ pub fn discover_filesystem_sources(working_dir: &Path) -> Vec<SourceEntry> {
                 Paths::in_agents_home_dir("recipes"),
             ],
         )
-        .collect();
+        .collect()
+}
+
+pub fn discover_filesystem_sources(working_dir: &Path) -> Vec<SourceEntry> {
+    let mut sources: Vec<SourceEntry> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let local_recipe_dirs: Vec<PathBuf> = vec![
+        working_dir.join(".goose/recipes"),
+        working_dir.join(".agents/recipes"),
+    ];
+
+    let global_recipe_dirs = global_recipe_dirs();
 
     let local_agent_dirs: Vec<PathBuf> = vec![
         working_dir.join(".goose/agents"),
@@ -312,9 +316,11 @@ fn build_instructions_with_context(context: &str, instructions: &str) -> String 
     result
 }
 
-fn build_subagent_instructions(session: Option<&crate::session::Session>) -> String {
+fn build_subagent_instructions(
+    session: Option<&crate::session::Session>,
+) -> (Option<String>, Option<String>) {
     let Some(session) = session else {
-        return String::new();
+        return (None, None);
     };
 
     // filter the sources down to what we want even though currently that is what we get
@@ -353,19 +359,56 @@ fn build_subagent_instructions(session: Option<&crate::session::Session>) -> Str
         }
     }
 
-    if sources.is_empty() {
-        return String::new();
+    // Q-524: the subagents every project shares are the instructions, this folder's own (its
+    // recipes and .goose/.claude/.agents agents, never a global agent root even when the folder is
+    // $HOME) the project part the system prompt renders after every extension's shared text.
+    sources.sort_by(|a, b| (&a.source_type, &a.name).cmp(&(&b.source_type, &b.name)));
+    let (project, shared): (Vec<&SourceEntry>, Vec<&SourceEntry>) = sources
+        .iter()
+        .partition(|s| is_project_source(&s.path, &session.working_dir));
+    match (shared.is_empty(), project.is_empty()) {
+        (true, true) => (None, None),
+        (false, true) => (Some(subagent_listing(&shared)), None),
+        (true, false) => (None, Some(subagent_listing(&project))),
+        (false, false) => (
+            Some(subagent_listing(&shared)),
+            Some(format!(
+                "\n\nThis folder's own subagents, called the same way (`delegate` or `load`):{}",
+                subagent_bullets(&project)
+            )),
+        ),
     }
+}
 
-    // The subagents every project shares first, the working directory's own after them (its
-    // recipes, .goose/.claude/.agents agents), so a new chat in another project still matches the
-    // shared list byte for byte up to its first project entry (Q-524, prefix cache).
-    let in_project = |s: &SourceEntry| crate::sources::found_under(&s.path, &session.working_dir);
-    sources.sort_by(|a, b| {
-        (in_project(a), &a.source_type, &a.name).cmp(&(in_project(b), &b.source_type, &b.name))
-    });
-    let subagents: Vec<&SourceEntry> = sources.iter().collect();
+/// A source discovered under `working_dir` that is not in a global agent or recipe root: the
+/// folder's own. A chat in $HOME finds ~/.claude/agents under its folder; that root is still global.
+fn is_project_source(path: &str, working_dir: &Path) -> bool {
+    let path = Path::new(path);
+    crate::sources::found_under(&path.to_string_lossy(), working_dir)
+        && !crate::sources::is_global_agent_file(path)
+        && !global_recipe_dirs()
+            .iter()
+            .any(|root| path.starts_with(root))
+}
 
+fn subagent_bullets(subagents: &[&SourceEntry]) -> String {
+    let mut out = String::new();
+    let mut current_kind: Option<SourceType> = None;
+    for s in subagents {
+        if current_kind != Some(s.source_type) {
+            out.push_str(&format!("\n{}:", kind_plural(s.source_type)));
+            current_kind = Some(s.source_type);
+        }
+        out.push_str(&format!(
+            "\n• {} — {}",
+            s.name,
+            safe_truncate(&s.description, SUBAGENT_DESCRIPTION_BUDGET)
+        ));
+    }
+    out
+}
+
+fn subagent_listing(subagents: &[&SourceEntry]) -> String {
     let names = subagents
         .iter()
         .map(|s| s.name.as_str())
@@ -378,25 +421,7 @@ fn build_subagent_instructions(session: Option<&crate::session::Session>) -> Str
          can be invoked through the `delegate` tool (run as a subagent) or \
          the `load` tool (read their instructions into your own context):\n",
     );
-
-    let mut current_kind: Option<(bool, SourceType)> = None;
-    for s in &subagents {
-        let kind = (in_project(s), s.source_type);
-        if current_kind != Some(kind) {
-            if kind.0 {
-                out.push_str(&format!("\nThis project's {}:", kind_plural(s.source_type)));
-            } else {
-                out.push_str(&format!("\n{}:", kind_plural(s.source_type)));
-            }
-            current_kind = Some(kind);
-        }
-        out.push_str(&format!(
-            "\n• {} — {}",
-            s.name,
-            safe_truncate(&s.description, SUBAGENT_DESCRIPTION_BUDGET)
-        ));
-    }
-
+    out.push_str(&subagent_bullets(subagents));
     out.push_str(&format!(
         "\n\nWhen to call a subagent (one of [{names}]):\n\
          • `@<name>` in the user's message — always call that subagent.\n\
@@ -2028,17 +2053,12 @@ impl McpClientTrait for SummonClient {
         Some(&self.info)
     }
 
-    fn instructions_follow_working_dir(&self) -> bool {
-        true
+    fn get_instructions(&self) -> Option<String> {
+        build_subagent_instructions(self.context.session.as_deref()).0
     }
 
-    fn get_instructions(&self) -> Option<String> {
-        let instructions = build_subagent_instructions(self.context.session.as_deref());
-        if instructions.is_empty() {
-            None
-        } else {
-            Some(instructions)
-        }
+    fn get_project_instructions(&self) -> Option<String> {
+        build_subagent_instructions(self.context.session.as_deref()).1
     }
 
     async fn subscribe(&self) -> mpsc::Receiver<ServerNotification> {
@@ -2707,6 +2727,65 @@ You review code."#;
         client
             .resolve_model_config(&params, &empty_recipe(), &session_with(parent), PROVIDER)
             .expect("resolve_model_config")
+    }
+
+    fn write_agent(dir: &Path, name: &str, description: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(
+            dir.join(format!("{name}.md")),
+            format!("---\nname: {name}\ndescription: {description}\n---\nDo it."),
+        )
+        .unwrap();
+    }
+
+    /// Q-524: the folder's own agents are the project part, rendered after every shared text; the
+    /// user's global agents stay shared even when the chat's folder IS the home folder (its
+    /// ~/.claude/agents is then "under" the folder, and is still the global root).
+    #[tokio::test]
+    #[serial]
+    async fn project_agents_are_the_project_part_and_home_agents_stay_global() {
+        let home = tempfile::tempdir().unwrap();
+        let home_str = home.path().display().to_string();
+        let _env = env_lock::lock_env([
+            ("HOME", Some(home_str.as_str())),
+            ("GOOSE_PATH_ROOT", Some(home_str.as_str())),
+            ("GOOSE_RECIPE_PATH", None),
+        ]);
+        write_agent(
+            &home.path().join(".claude/agents"),
+            "home-agent",
+            "The user's own",
+        );
+        let project = home.path().join("proj");
+        write_agent(
+            &project.join(".claude/agents"),
+            "aaa-proj-agent",
+            "Only this project",
+        );
+
+        let session_in = |dir: &Path| crate::session::Session {
+            working_dir: dir.to_path_buf(),
+            ..crate::session::Session::default()
+        };
+
+        let (shared, own) = build_subagent_instructions(Some(&session_in(&project)));
+        let shared = shared.expect("the global agent is listed");
+        assert!(shared.contains("home-agent"), "{shared}");
+        assert!(!shared.contains("aaa-proj-agent"), "{shared}");
+        let own = own.expect("the project agent is listed");
+        assert!(own.contains("aaa-proj-agent — Only this project"), "{own}");
+        assert!(!own.contains("home-agent"), "{own}");
+
+        let (home_shared, home_own) = build_subagent_instructions(Some(&session_in(home.path())));
+        assert_eq!(
+            home_own, None,
+            "a home-folder chat must not call the global agents its own"
+        );
+        assert_eq!(
+            Some(shared),
+            home_shared,
+            "the shared list is the same in both folders"
+        );
     }
 
     fn parent_config() -> goose_providers::model::ModelConfig {

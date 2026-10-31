@@ -33,6 +33,13 @@ pub fn goose_config_dir_under(path_root: Option<OsString>) -> PathBuf {
     }
 }
 
+/// MCP experimental server capability (Q-524): `{"fromByte": N}` says the server's instructions from
+/// byte N on describe the session's folder (project memories, a home-folder note) and the bytes
+/// before it are the same in every project. goose renders the two parts apart, every extension's
+/// shared part first, so a new chat in another project still shares the long stable prefix the
+/// engine's prefix cache reuses.
+pub const PROJECT_INSTRUCTIONS_CAPABILITY: &str = "goose/projectInstructions";
+
 pub mod autovisualiser;
 pub mod computercontroller;
 pub mod mcp_server_runner;
