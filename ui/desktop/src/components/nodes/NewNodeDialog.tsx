@@ -187,7 +187,8 @@ export interface NewNodeDialogProps {
    */
   serving: NodesServingWayDto | null;
   /** The def was written; `startIt` when the person chose "Create and start". */
-  onSaved: (def: NodeDef, startIt: boolean) => void;
+  /** `startsNewChats`: the write moved new chats onto this node (Q-522); the caller says so. */
+  onSaved: (def: NodeDef, startIt: boolean, startsNewChats: boolean) => void;
   /** Where "Set up another provider" and "Get one in Models" go; the host owns navigation. */
   onOpenCloudProviders: () => void;
   onOpenModels: () => void;
@@ -502,7 +503,7 @@ function NewNodeDialogBody({
     try {
       const response = await putNode(def);
       if (response.written) {
-        onSaved(def, startIt);
+        onSaved(def, startIt, response.startsNewChats);
         onClose();
         return;
       }

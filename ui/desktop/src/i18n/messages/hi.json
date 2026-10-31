@@ -8498,6 +8498,9 @@
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{लगभग {duration} में शुरू होता है · # लोड की माध्यिका} other{लगभग {duration} में शुरू होता है · # लोड की माध्यिका}}"
   },
+  "nodes.startsNewChats": {
+    "defaultMessage": "नई चैट अब इसी नोड पर शुरू होंगी: Any node (Auto) के पास जवाब देने के लिए कोई नोड नहीं था।"
+  },
   "nodes.stateCantRun": {
     "defaultMessage": "नहीं चल सकता"
   },
@@ -9205,9 +9208,6 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "“{name}” नोड के रूप में सहेजा गया।"
-  },
-  "placementCard.savedNewChats": {
-    "defaultMessage": "नई चैट अब इसी नोड पर शुरू होंगी: Any node (Auto) के पास जवाब देने के लिए कोई नोड नहीं था।"
   },
   "placementCard.short": {
     "defaultMessage": "नहीं समाता: {node} पर {gb} कम"

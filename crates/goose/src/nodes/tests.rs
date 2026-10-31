@@ -900,7 +900,8 @@ fn a_write_of_for_new_chats_writes_both_defaults() {
 /// new chats on it and writes the global defaults with it.
 #[test]
 fn a_node_added_while_auto_has_no_pool_becomes_where_new_chats_start() {
-    let t = test_config("GOOSE_PROVIDER: anthropic\n");
+    let t = test_config("");
+    crate::config::set_active_provider(&t.config, "swarm", "swarm").unwrap();
     let engine = no_engine();
     let mut next = read(&t.config, Ok("Mac".into())).unwrap().config;
     assert_eq!(next.for_new_chats, NodesForNewChats::Auto);
@@ -929,6 +930,34 @@ fn a_node_added_while_auto_has_no_pool_becomes_where_new_chats_start() {
             id: "sonnet".into()
         }
     );
+}
+
+/// The independent check of Q-522: `forNewChats = auto` is the nodes default for EVERY person,
+/// so a direct-provider user (anthropic here, no swarm pool) who saves a node must stay on their
+/// provider: Auto never ran their chats, and nothing may switch them onto the swarm.
+#[test]
+fn adv_direct_provider_user_is_not_switched_to_swarm() {
+    for provider in ["anthropic", "openai"] {
+        let t = test_config("");
+        crate::config::set_active_provider(&t.config, provider, "some-model").unwrap();
+        let engine = no_engine();
+        let mut next = read(&t.config, Ok("Mac".into())).unwrap().config;
+        next.defs.push(sonnet("sonnet"));
+        let out = write(&t.config, next, facts(&engine)).unwrap();
+        assert!(out.written, "{:?}", out.refusals);
+        assert_eq!(out.read.config.for_new_chats, NodesForNewChats::Auto);
+        assert_eq!(
+            crate::config::get_active_provider(&t.config).as_deref(),
+            Some(provider)
+        );
+        assert!(crate::config::get_provider_entry(&t.config, "swarm").is_none());
+    }
+    // A swarm user on a NODE (not Auto) is not on Auto either.
+    let t = test_config("");
+    crate::config::set_active_provider(&t.config, "swarm", "node:other").unwrap();
+    assert!(!new_chats_run_on_auto(&t.config));
+    crate::config::set_active_provider(&t.config, "swarm", "swarm").unwrap();
+    assert!(new_chats_run_on_auto(&t.config));
 }
 
 #[test]

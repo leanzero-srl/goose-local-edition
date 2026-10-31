@@ -41,6 +41,7 @@ import {
   nodeIdFor,
   placementOfCandidate,
   putNode,
+  startsNewChatsText,
   whereWords,
   type PinnedPlacement,
 } from '../nodes/nodeDraft';
@@ -288,10 +289,6 @@ const i18n = defineMessages({
     defaultMessage: 'Save this way as a node so chats and builds can pick it',
   },
   savedAs: { id: 'placementCard.savedAs', defaultMessage: 'Saved as the node “{name}”.' },
-  savedNewChats: {
-    id: 'placementCard.savedNewChats',
-    defaultMessage: 'New chats start on it now: Any node (Auto) had no node to answer them.',
-  },
   alreadyNode: {
     id: 'placementCard.alreadyNode',
     defaultMessage: 'Already a node: “{name}”.',
@@ -1155,14 +1152,9 @@ function PlacementCardBody({
       const response = await putNode(def, read.config);
       // The engine card and the setup strip name the node at once, not at the next glance event.
       if (response.written) refreshGlanceNodes();
-      // goosed's write door starts new chats on the node when Auto had nothing to route to; the
-      // row says so, read from what the write stored (never inferred here).
-      const after = response.read?.config.forNewChats;
-      const startsNewChats =
-        read.config.forNewChats?.kind !== 'node' && after?.kind === 'node' && after.id === id;
       say(
         response.written
-          ? { kind: 'saved', id, name, already: false, startsNewChats }
+          ? { kind: 'saved', id, name, already: false, startsNewChats: response.startsNewChats }
           : {
               kind: 'refused',
               text: (response.refusals ?? []).map((r) => r.message).join('; ') || refused,
@@ -1462,7 +1454,7 @@ function PlacementCardBody({
             })}{' '}
             {saved.startsNewChats && (
               <span data-testid={`placement-saved-new-chats-${way.kind}`}>
-                {intl.formatMessage(i18n.savedNewChats)}{' '}
+                {startsNewChatsText(intl)}{' '}
               </span>
             )}
             <a className="underline" href={`#${nodeHref(saved.id)}`}>

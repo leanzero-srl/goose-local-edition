@@ -8498,6 +8498,9 @@
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Mulai dalam sekitar {duration} · median dari # pemuatan} other{Mulai dalam sekitar {duration} · median dari # pemuatan}}"
   },
+  "nodes.startsNewChats": {
+    "defaultMessage": "Chat baru sekarang dimulai di node ini: Any node (Auto) tidak punya node untuk menjawabnya."
+  },
   "nodes.stateCantRun": {
     "defaultMessage": "Tidak bisa berjalan"
   },
@@ -9205,9 +9208,6 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "Disimpan sebagai node “{name}”."
-  },
-  "placementCard.savedNewChats": {
-    "defaultMessage": "Chat baru sekarang dimulai di node ini: Any node (Auto) tidak punya node untuk menjawabnya."
   },
   "placementCard.short": {
     "defaultMessage": "Tidak muat: kurang {gb} di {node}"

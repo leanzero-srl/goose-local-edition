@@ -428,6 +428,26 @@ describe('NodesTab', () => {
     expect(await within(flash).findByTestId('node-notice')).toHaveTextContent('Saved.');
   });
 
+  it('a write that moved new chats onto the node says so beside Saved (Q-522)', async () => {
+    mockWrite.mockImplementation(async (config: NodesConfig) => ({
+      written: true,
+      refusals: [],
+      read: { ...readOf([]), config: { ...config, forNewChats: { kind: 'node', id: NODE_FLASH.def.id } } },
+    }));
+    store.state = readState(
+      readOf([NODE_SPLIT, NODE_FLASH, NODE_POOL, NODE_CLOUD], { ...CONFIG, forNewChats: { kind: 'auto' } })
+    );
+    renderTab();
+    const flash = screen
+      .getAllByTestId('node-card')
+      .find((c) => c.getAttribute('data-node') === NODE_FLASH.def.id)!;
+    await userEvent.click(within(flash).getByTestId('node-more'));
+    await userEvent.click(await screen.findByTestId('node-keep-loaded'));
+    expect(await within(flash).findByTestId('node-notice')).toHaveTextContent(
+      'Saved. New chats start on it now: Any node (Auto) had no node to answer them.'
+    );
+  });
+
   it('Stop on the serving split stops the split', async () => {
     const { mlxDistributedStop } = await import('../../acp/mlx-distributed');
     const read = readOf([NODE_SPLIT, NODE_FLASH]);

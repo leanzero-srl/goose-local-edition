@@ -8498,6 +8498,9 @@
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Bermula dalam kira-kira {duration} · median daripada # pemuatan} other{Bermula dalam kira-kira {duration} · median daripada # pemuatan}}"
   },
+  "nodes.startsNewChats": {
+    "defaultMessage": "Sembang baharu kini bermula pada nod ini: Any node (Auto) tiada nod untuk menjawabnya."
+  },
   "nodes.stateCantRun": {
     "defaultMessage": "Tidak boleh berjalan"
   },
@@ -9205,9 +9208,6 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "Disimpan sebagai nod “{name}”."
-  },
-  "placementCard.savedNewChats": {
-    "defaultMessage": "Sembang baharu kini bermula pada nod ini: Any node (Auto) tiada nod untuk menjawabnya."
   },
   "placementCard.short": {
     "defaultMessage": "Tidak muat: kurang {gb} pada {node}"

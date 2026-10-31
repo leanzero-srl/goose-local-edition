@@ -8498,6 +8498,9 @@
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Inicia em cerca de {duration} · mediana de # carregamento} other{Inicia em cerca de {duration} · mediana de # carregamentos}}"
   },
+  "nodes.startsNewChats": {
+    "defaultMessage": "Os novos chats agora começam neste nó: Any node (Auto) não tinha nenhum nó para respondê-los."
+  },
   "nodes.stateCantRun": {
     "defaultMessage": "Não pode rodar"
   },
@@ -9205,9 +9208,6 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "Salvo como o nó “{name}”."
-  },
-  "placementCard.savedNewChats": {
-    "defaultMessage": "Os novos chats agora começam neste nó: Any node (Auto) não tinha nenhum nó para respondê-los."
   },
   "placementCard.short": {
     "defaultMessage": "Não cabe: faltam {gb} em {node}"

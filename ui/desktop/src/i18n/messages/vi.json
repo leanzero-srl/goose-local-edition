@@ -8498,6 +8498,9 @@
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Khởi động trong khoảng {duration} · trung vị của # lượt nạp} other{Khởi động trong khoảng {duration} · trung vị của # lượt nạp}}"
   },
+  "nodes.startsNewChats": {
+    "defaultMessage": "Các cuộc trò chuyện mới giờ bắt đầu trên nút này: Any node (Auto) không có nút nào để trả lời."
+  },
   "nodes.stateCantRun": {
     "defaultMessage": "Không chạy được"
   },
@@ -9205,9 +9208,6 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "Đã lưu thành nút “{name}”."
-  },
-  "placementCard.savedNewChats": {
-    "defaultMessage": "Các cuộc trò chuyện mới giờ bắt đầu trên nút này: Any node (Auto) không có nút nào để trả lời."
   },
   "placementCard.short": {
     "defaultMessage": "Không vừa: thiếu {gb} trên {node}"

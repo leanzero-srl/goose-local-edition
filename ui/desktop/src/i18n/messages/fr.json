@@ -8498,6 +8498,9 @@
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Démarre en environ {duration} · médiane de # chargement} other{Démarre en environ {duration} · médiane de # chargements}}"
   },
+  "nodes.startsNewChats": {
+    "defaultMessage": "Les nouveaux chats démarrent maintenant sur ce nœud : Any node (Auto) n’avait aucun nœud pour y répondre."
+  },
   "nodes.stateCantRun": {
     "defaultMessage": "Ne peut pas tourner"
   },
@@ -9205,9 +9208,6 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "Enregistré comme le nœud « {name} »."
-  },
-  "placementCard.savedNewChats": {
-    "defaultMessage": "Les nouveaux chats démarrent maintenant sur ce nœud : Any node (Auto) n’avait aucun nœud pour y répondre."
   },
   "placementCard.short": {
     "defaultMessage": "Ne tient pas : il manque {gb} sur {node}"

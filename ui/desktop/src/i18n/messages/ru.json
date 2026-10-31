@@ -8498,6 +8498,9 @@
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Запускается примерно за {duration} · медиана по # загрузке} few{Запускается примерно за {duration} · медиана по # загрузкам} many{Запускается примерно за {duration} · медиана по # загрузкам} other{Запускается примерно за {duration} · медиана по # загрузкам}}"
   },
+  "nodes.startsNewChats": {
+    "defaultMessage": "Новые чаты теперь начинаются на этом узле: у Any node (Auto) не было узла, чтобы ответить."
+  },
   "nodes.stateCantRun": {
     "defaultMessage": "Не может работать"
   },
@@ -9205,9 +9208,6 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "Сохранено как узел «{name}»."
-  },
-  "placementCard.savedNewChats": {
-    "defaultMessage": "Новые чаты теперь начинаются на этом узле: у Any node (Auto) не было узла, чтобы ответить."
   },
   "placementCard.short": {
     "defaultMessage": "Не помещается: не хватает {gb} на {node}"

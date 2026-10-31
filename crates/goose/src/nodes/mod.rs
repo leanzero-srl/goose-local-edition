@@ -961,7 +961,8 @@ fn store(
         incoming,
         &current.config,
         previous_for_new_chats,
-        crate::providers::swarm_router::auto_routes_nothing(config),
+        new_chats_run_on_auto(config)
+            && crate::providers::swarm_router::auto_routes_nothing(config),
     );
     refusals.extend(validate(&incoming));
     if let NodesForBuilds::Strategy { id } = &incoming.for_builds {
@@ -1002,8 +1003,19 @@ fn store(
     })
 }
 
-/// Q-522: a node added while new chats start on Any node (Auto) and Auto has nothing to route to
-/// (no pool, an empty pool, every device off, no remote route) becomes where new chats start, in
+/// Whether new chats really start on Any node (Auto): the active provider is `swarm` with the
+/// model `swarm`. `forNewChats = auto` is also the nodes default for a person who never chose the
+/// swarm (a direct openai/anthropic user), so it alone never says chats run on Auto.
+pub fn new_chats_run_on_auto(config: &Config) -> bool {
+    crate::config::get_active_provider(config).as_deref() == Some(SWARM_PROVIDER)
+        && crate::config::get_active_model(config).and_then(|m| parse_route_model(&m))
+            == Some(RouteModel::Auto)
+}
+
+/// Q-522: a node added while new chats really start on Any node (Auto) (the active provider is
+/// the swarm on `swarm`, [`new_chats_run_on_auto`]; never a direct-provider user) and Auto has
+/// nothing to route to (no pool, an empty pool, every device off, no remote route) becomes where
+/// new chats start, in
 /// the same write: Auto could only refuse every new chat, and the person just made the one node
 /// that can answer. Stated, never silent: the write's read carries the new `forNewChats`, which
 /// the desktop says beside "Saved as the node" and shows under "New chats start on", and the
@@ -1014,9 +1026,9 @@ pub fn new_chats_on_added_node(
     mut incoming: NodesConfig,
     current: &NodesConfig,
     previous_for_new_chats: &NodesForNewChats,
-    auto_routes_nothing: bool,
+    auto_strands_new_chats: bool,
 ) -> NodesConfig {
-    if !auto_routes_nothing
+    if !auto_strands_new_chats
         || *previous_for_new_chats != NodesForNewChats::Auto
         || incoming.for_new_chats != NodesForNewChats::Auto
     {

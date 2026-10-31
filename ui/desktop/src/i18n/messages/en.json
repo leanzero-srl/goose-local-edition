@@ -8498,6 +8498,9 @@
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Starts in about {duration} · median of # load} other{Starts in about {duration} · median of # loads}}"
   },
+  "nodes.startsNewChats": {
+    "defaultMessage": "New chats start on it now: Any node (Auto) had no node to answer them."
+  },
   "nodes.stateCantRun": {
     "defaultMessage": "Can’t run"
   },
@@ -9205,9 +9208,6 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "Saved as the node “{name}”."
-  },
-  "placementCard.savedNewChats": {
-    "defaultMessage": "New chats start on it now: Any node (Auto) had no node to answer them."
   },
   "placementCard.short": {
     "defaultMessage": "Does not fit: short {gb} on {node}"

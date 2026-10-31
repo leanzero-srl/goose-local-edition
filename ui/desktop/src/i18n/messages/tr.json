@@ -8498,6 +8498,9 @@
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Yaklaşık {duration} içinde başlar · # yüklemenin medyanı} other{Yaklaşık {duration} içinde başlar · # yüklemenin medyanı}}"
   },
+  "nodes.startsNewChats": {
+    "defaultMessage": "Yeni sohbetler artık bu düğümde başlıyor: Any node (Auto) içinde yanıt verecek düğüm yoktu."
+  },
   "nodes.stateCantRun": {
     "defaultMessage": "Çalışamaz"
   },
@@ -9205,9 +9208,6 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "“{name}” düğümü olarak kaydedildi."
-  },
-  "placementCard.savedNewChats": {
-    "defaultMessage": "Yeni sohbetler artık bu düğümde başlıyor: Any node (Auto) içinde yanıt verecek düğüm yoktu."
   },
   "placementCard.short": {
     "defaultMessage": "Sığmıyor: {node} üzerinde {gb} eksik"

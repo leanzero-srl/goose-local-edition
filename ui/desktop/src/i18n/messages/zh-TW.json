@@ -8498,6 +8498,9 @@
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{約 {duration} 後啟動 · # 次載入的中位數} other{約 {duration} 後啟動 · # 次載入的中位數}}"
   },
+  "nodes.startsNewChats": {
+    "defaultMessage": "新聊天現在從此節點開始：Any node (Auto) 沒有可以作答的節點。"
+  },
   "nodes.stateCantRun": {
     "defaultMessage": "無法執行"
   },
@@ -9205,9 +9208,6 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "已儲存為節點「{name}」。"
-  },
-  "placementCard.savedNewChats": {
-    "defaultMessage": "新聊天現在從此節點開始：Any node (Auto) 沒有可以作答的節點。"
   },
   "placementCard.short": {
     "defaultMessage": "放不下：{node} 上還差 {gb}"

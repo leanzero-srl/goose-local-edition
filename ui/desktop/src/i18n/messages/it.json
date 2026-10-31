@@ -8498,6 +8498,9 @@
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Si avvia in circa {duration} · mediana di # caricamento} other{Si avvia in circa {duration} · mediana di # caricamenti}}"
   },
+  "nodes.startsNewChats": {
+    "defaultMessage": "Le nuove chat ora partono su questo nodo: Any node (Auto) non aveva nessun nodo per rispondere."
+  },
   "nodes.stateCantRun": {
     "defaultMessage": "Non può girare"
   },
@@ -9205,9 +9208,6 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "Salvato come nodo «{name}»."
-  },
-  "placementCard.savedNewChats": {
-    "defaultMessage": "Le nuove chat ora partono su questo nodo: Any node (Auto) non aveva nessun nodo per rispondere."
   },
   "placementCard.short": {
     "defaultMessage": "Non entra: mancano {gb} su {node}"

@@ -8498,6 +8498,9 @@
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{約 {duration} で起動 · # 回のロードの中央値} other{約 {duration} で起動 · # 回のロードの中央値}}"
   },
+  "nodes.startsNewChats": {
+    "defaultMessage": "新しいチャットは今後このノードで始まります。Any node (Auto) には応答できるノードがありませんでした。"
+  },
   "nodes.stateCantRun": {
     "defaultMessage": "実行できません"
   },
@@ -9205,9 +9208,6 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "ノード「{name}」として保存しました。"
-  },
-  "placementCard.savedNewChats": {
-    "defaultMessage": "新しいチャットは今後このノードで始まります。Any node (Auto) には応答できるノードがありませんでした。"
   },
   "placementCard.short": {
     "defaultMessage": "収まりません：{node} で {gb} 不足"
