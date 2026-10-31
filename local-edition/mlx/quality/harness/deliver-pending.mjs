@@ -64,7 +64,7 @@ const note = (line) => appendFileSync(`${out}/events.log`, `${iso()} deliver-pen
 const tsv = `${out}/notes.tsv`;
 if (!existsSync(tsv)) writeFileSync(tsv, NOTES_TSV_HEADER);
 
-const { chromium } = await import('/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs');
+const { chromium } = await import('./pw.mjs');
 const { mainPage } = await import('./mainpage.mjs');
 const b = await chromium.connectOverCDP(`http://127.0.0.1:${arg('--cdp') || '9333'}`);
 let page = b.contexts()[0].pages().find((pg) => pg.url().includes(`resumeSessionId=${session}`));

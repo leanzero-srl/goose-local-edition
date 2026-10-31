@@ -3,7 +3,7 @@
 // usage: node recovery.mjs <dir> <kill-link|relaunch-peer> — starts a long answer in a new chat, breaks
 // the Studio once the answer is being written, then samples the chat screen every second for 60 s:
 // the readiness bar, the model chip, the tail of the transcript, and main's engine snapshot (the tray).
-import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
+import { chromium } from './pw.mjs';
 import { mainPage } from './mainpage.mjs';
 import { spawn } from 'node:child_process';
 import { writeFileSync, appendFileSync } from 'node:fs';

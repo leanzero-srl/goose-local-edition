@@ -1,7 +1,7 @@
-import json,sys,re
+import json,sys,re,os
 lab=sys.argv[1]
 lastkey=None
-for l in open('/Users/mihaiperdum/goose-builds/quality/DEMO-2026-09-28-strategy/turns.jsonl'):
+for l in open(os.path.expanduser('~/goose-builds/quality/DEMO-2026-09-28-strategy/turns.jsonl')):
     o=json.loads(l)
     if o['label']!=lab: continue
     c=o.get('composer')

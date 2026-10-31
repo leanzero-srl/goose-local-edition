@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import { existsSync, readdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
-import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
+import { chromium } from './pw.mjs';
 import { readTray, readChat, answerCard, planClick } from './needsyou.mjs';
 
 const card = (id, question, recommended, chips, folded) => `

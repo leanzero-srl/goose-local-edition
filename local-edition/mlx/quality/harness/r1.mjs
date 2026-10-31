@@ -1,5 +1,9 @@
 // R1 — a long AGENTIC goose session on whatever engine serves chat (the split, for R1), through the product.
-// usage: node r1.mjs <dir> [--turns N] [--brief <brief.json>]   (a goose-task-author brief; {WORK} → <dir>/work)
+// usage: node r1.mjs <dir> [--turns N] [--brief <brief.json>] [--no-attach]   (a goose-task-author brief; {WORK} → <dir>/work)
+// ATTACH (2026-10-31, attach.mjs): a brief turn's `attach` list is picked through the composer's file input and must
+// show as attached (image tile / audio-video chip / the path in the text) before the send; the stored user row is
+// then checked for the same images and media. ATTACH_FAIL stops the round. turns.tsv `attached` records it.
+// ERROR (Q-527, turnend.mjs): a reply that is the app's error notice ends its turn `error` and the round.
 // One new chat, opened IN <dir>/work (Projects + → New session here; sessions.db working_dir checked before turn 1,
 // recorded in <dir>/round.json — Q-390); turn after turn of real tool work inside <dir>/work (files, shell, tests), so the context
 // climbs from goose's ~49k-token prompt toward compaction. Per turn one TSV row: start, end, seconds, how the
@@ -23,13 +27,15 @@
 // notes.tsv row per note; a failed proof is a LIVE finding (it does not stop the run).
 // ROUND END (owner 2026-09-29: nothing stays pending): every card still open and every note not delivered as
 // acted is a `FAIL: …` line in round.json `fails`, events.log and r1's stdout (runwatch prints them).
-import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
+import { chromium } from './pw.mjs';
 import { mainPage } from './mainpage.mjs';
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { liveCheck } from './livecheck.mjs';
 import { loadGuidance, chooseAnswer, planClick, isAnswerMessage, readDbItems, sessionIdOf, readTray, readChat, answerCard, norm, textUseCell, openCardFails } from './needsyou.mjs';
 import { loadNoteGuidance, readNotes, actOnNote, noteFails, noteRow, NOTES_TSV_HEADER, userTextRowsWith, lastRowId } from './notes.mjs';
 import { workDirOf, projectRowTestId, readWorkingDir, checkWorkingDir } from './workdir.mjs';
+import { attachPlan, missingFails, attachFiles, attachedCell, composerHasAttachments, storedAttachments } from './attach.mjs';
+import { readNotices, turnEndVerdict } from './turnend.mjs';
 const dir = process.argv[2];
 const turnsArg = process.argv.indexOf('--turns'); const maxTurnsArg = turnsArg > 0 ? Number(process.argv[turnsArg + 1]) : 0;
 const work = workDirOf(dir); mkdirSync(work, { recursive: true });
@@ -39,7 +45,13 @@ const AWAY_IDLE_POLLS = 3; // three 2-s polls with nothing served: a gap between
 const LIVE_EVERY = 30; // ratio: 2-s polls per live check (~a minute, livecheck's cadence since Q-147); the needs-you look rides it
 const TRAY_SETTLE_POLLS = 5; // ratio: 2 x the tray's 5-s session-activity read (ACTIVITY_POLL_MS) in 2-s polls — bounds a UI refresh, never model work
 const out = `${dir}/turns.tsv`;
-writeFileSync(out, 'turn\tstart\tend\tsecs\tended\ttools\trecalled\tchip\tcounter\tnotice\n');
+// `attached` (2026-10-31): the brief turn's `attach` files, name:kind:ok|FAIL(why) each — '' for a turn with none.
+writeFileSync(out, 'turn\tstart\tend\tsecs\tended\ttools\trecalled\tchip\tcounter\tnotice\tattached\n');
+// A turn that ends any of these ways ends the round (STOP RULE). `error` (Q-527): the reply is the app's error notice.
+const STOP_ENDS = new Set(['hang', 'notice', 'error', 'attach_fail']);
+// --no-attach: run an attach brief the old way (the files only named in `say`), for the attached-vs-by-path pair
+// the 2026-10-31-3 brief asks for; every such turn's `attached` cell then says `off`.
+const noAttach = process.argv.includes('--no-attach');
 // What THIS turn added: the messages after the send, never the whole page (the smoke run matched an older
 // session's notice). A failed turn is any goose notice or the engine's empty-response line.
 const FAIL = /empty response|stopped answering|quit goose mid|No node can|Ran into this error|split across your Macs stopped|stopped making progress/;
@@ -148,16 +160,17 @@ const openedSession = await openChatInWork();
 // live check and the needs-you look every LIVE_EVERY polls, one turns.tsv row. `label` is the brief turn's
 // number, or `<n>a<k>` for the k-th answer turn after brief turn n (Q-376). n0 = assistant messages before it.
 // The user rows goose stored after `after` — does one carry this prompt's words?
-function sentLanded(after, prompt) {
-  const head = prompt.slice(0, 80);
+function landedRow(after, prompt) {
+  const head = prompt.trim().slice(0, 80);
   // A JSON-escaped probe of the prompt's opening words narrows the rows in SQL; the exact 80-char head decides.
   const probe = JSON.stringify(head.slice(0, 40)).slice(1, -1);
-  return userTextRowsWith(openedSession, after, probe).some((row) => {
+  return userTextRowsWith(openedSession, after, probe).find((row) => {
     try { return JSON.parse(row.content_json).some((c) => c.type === 'text' && c.text.slice(0, 80) === head); } catch { return false; }
-  });
+  }) ?? null;
 }
+const sentLanded = (after, prompt) => !!landedRow(after, prompt);
 
-async function runTurn(label, n0, start) {
+async function runTurn(label, n0, start, attachedOf = () => '') {
   let lastChange = Date.now(); let prev = null; let ended = ''; let stallLogged = false;
   await p.waitForTimeout(3000);
   let polls = 0; let away = false; let idleAway = 0;
@@ -204,8 +217,12 @@ async function runTurn(label, n0, start) {
   logCalls(label);
   const a = await added(n0); const failed = a.text.match(FAIL);
   if (failed && ended === 'done') { ended = 'notice'; await p.screenshot({ path: `${dir}/notice-${label}.png` }); }
+  // Q-527: the app draws its error notices as components, not as the agent's words — read the elements.
+  const v = turnEndVerdict(ended, await readNotices(p, n0).catch((e) => [{ testid: 'probe-error', cls: '', text: String(e).slice(0, 200) }]));
+  let noticeCell = failed ? a.text.slice(Math.max(0, failed.index - 60), failed.index + 140) : '';
+  if (v.ended === 'error') { ended = 'error'; noticeCell = v.notice; await p.screenshot({ path: `${dir}/error-${label}.png` }); note(`TURN_ERROR turn ${label}: ${v.notice}`); }
   if (ended === 'done') lengths.push(secs);
-  appendFileSync(out, [label, new Date(start).toISOString(), new Date(end).toISOString(), secs.toFixed(1), ended, a.tools, a.recalled, s.chip, s.counter, failed ? a.text.slice(Math.max(0, failed.index - 60), failed.index + 140) : ''].join('\t') + '\n');
+  appendFileSync(out, [label, new Date(start).toISOString(), new Date(end).toISOString(), secs.toFixed(1), ended, a.tools, a.recalled, s.chip, s.counter, noticeCell.replace(/[\t\n]/g, ' '), attachedOf()].join('\t') + '\n');
   return { ended, secs, text: a.text };
 }
 
@@ -409,7 +426,7 @@ async function nyTurnEnd(turn) {
     const label = `${turn}a${k++}`;
     const res = await runTurn(label, Math.min(...batch.map((r) => r.assistAtDelivery)), Date.parse(batch[0].deliveredAt));
     await nyFinalize(label, batch, res);
-    if (res.ended === 'hang' || res.ended === 'notice') return true;
+    if (STOP_ENDS.has(res.ended)) return true;
     await p.waitForTimeout(3000);
   }
   return false;
@@ -452,8 +469,47 @@ for (let turn = 0; turn < maxTurns; turn++) {
   if (chatUrl && p.url() !== chatUrl) { note(`RETURN to own chat from ${p.url().split('#')[1]}`); await p.goto(chatUrl); await p.waitForTimeout(3000); }
   const input = p.locator('[data-testid=chat-input]:visible').first();
   const row0 = lastRowId(openedSession);
-  await input.click(); await input.fill(prompt); await p.keyboard.press('Enter');
-  let r = await runTurn(String(turn), n0, Date.now());
+  // ATTACH (2026-10-31): the turn's files go in through the composer's own file input, the way a pick lands, and
+  // each must show as attached before the turn is sent; a missing file or a chip that never comes is ATTACH_FAIL
+  // (events.log + the turn's row) and the turn is NOT sent — a send without its file would test another turn.
+  const plan = turn < steps.length && brief && !noAttach ? attachPlan(brief.turns[turn], work) : [];
+  const offCell = noAttach && brief?.turns[turn]?.attach?.length ? 'off' : '';
+  let attached = [];
+  const sendWithFiles = async () => {
+    const firstPass = plan.filter((f) => f.kind !== 'file'); // image/audio/video become chips: picked before typing
+    const pathPass = plan.filter((f) => f.kind === 'file'); // a plain file's pick appends its PATH to the text: after typing
+    const res = [...(await attachFiles(p, firstPass))];
+    await input.click(); await input.fill(prompt);
+    res.push(...(await attachFiles(p, pathPass)));
+    return res;
+  };
+  if (plan.length) {
+    for (const f of missingFails(plan)) note(f);
+    attached = await sendWithFiles();
+    const bad = attached.filter((r) => !r.ok);
+    if (bad.length) {
+      for (const r of bad) if (r.why !== 'missing file') note(`ATTACH_FAIL turn ${turn} ${r.path}: ${r.why}`);
+      await p.screenshot({ path: `${dir}/attach-fail-${turn}.png` }).catch(() => {});
+      const now = iso();
+      appendFileSync(out, [String(turn), now, now, '0.0', 'attach_fail', 0, '', '', '', '', attachedCell(attached)].join('\t') + '\n');
+      note(`STOPPED: turn ${turn} not sent, its attachments did not land (ATTACH_FAIL): ${attachedCell(bad)}`);
+      console.error(`r1 STOPPED at turn ${turn}: ATTACH_FAIL ${attachedCell(bad)}`);
+      break;
+    }
+    note(`ATTACH turn ${turn}: ${attachedCell(attached)}`);
+  } else { await input.click(); await input.fill(prompt); }
+  // What went out with the stored user row: one image entry per image, one media entry per audio/video file.
+  const attachedOf = (after) => () => {
+    if (!plan.length) return offCell;
+    const want = { images: plan.filter((f) => f.kind === 'image').length, media: plan.filter((f) => f.kind === 'audio' || f.kind === 'video').length };
+    const row = landedRow(after, prompt);
+    const got = row ? storedAttachments(row.content_json) : null;
+    const stored = !row ? 'stored:no-row' : !got ? 'stored:unreadable' : got.images === want.images && got.media === want.media ? 'stored:ok' : `stored:MISMATCH(images ${got.images}/${want.images}, media ${got.media}/${want.media})`;
+    if (!stored.startsWith('stored:ok')) note(`ATTACH_FAIL turn ${turn}: the stored user row does not carry the attachments (${stored})`);
+    return `${attachedCell(attached)} ${stored}`;
+  };
+  await p.keyboard.press('Enter');
+  let r = await runTurn(String(turn), n0, Date.now(), attachedOf(row0));
   // Q-492: a turn is DONE only when its words reached the chat. #3x's turn 1 (the memory turn) was pressed,
   // never stored, and counted done in 5 s with 0 tools — the Stop button's absence proves nothing about a send.
   if (r.ended === 'done' && !sentLanded(row0, prompt)) {
@@ -464,8 +520,11 @@ for (let turn = 0; turn < maxTurns; turn++) {
     // A person who sees their message vanish sends it again; one resend, recorded as its own turn row.
     const n1 = await p.evaluate(() => [...document.querySelectorAll('.goose-message')].filter((m) => m.offsetParent).length);
     const row1 = lastRowId(openedSession);
-    await input.click(); await input.fill(prompt); await p.keyboard.press('Enter');
-    r = await runTurn(`${turn}r`, n1, Date.now());
+    // A lost send can leave the chips in the composer; a person re-picks only what is gone.
+    if (plan.length && !(await composerHasAttachments(p))) { attached = await sendWithFiles(); note(`ATTACH re-picked for the resend of turn ${turn}: ${attachedCell(attached)}`); }
+    else { await input.click(); await input.fill(prompt); }
+    await p.keyboard.press('Enter');
+    r = await runTurn(`${turn}r`, n1, Date.now(), attachedOf(row1));
     if (!sentLanded(row1, prompt)) { note(`STOPPED: turn ${turn} did not reach the chat twice (SEND_LOST)`); break; }
   }
   // Q-390: the turn went into the chat opened (and verified) in <dir>/work, not some other chat.
@@ -473,7 +532,7 @@ for (let turn = 0; turn < maxTurns; turn++) {
   if (turn % 5 === 0) await p.screenshot({ path: `${dir}/turn-${turn}.png` });
   // STOP RULE (skill): a turn that ends in a notice ends the round — E2E #3e sent 29 more turns into a stopped
   // split, 5 s each, and recorded them as turns.
-  if (r.ended === 'hang' || r.ended === 'notice') break;
+  if (STOP_ENDS.has(r.ended)) { note(`STOPPED: turn ${turn} ended ${r.ended}${r.ended === 'error' ? ' — the reply is the app\'s error notice (Q-527)' : ''}`); break; }
   await p.waitForTimeout(3000);
   // Q-376: the cards this turn raised are answered, and their answer turns run, before the next brief turn.
   const answerTurnFailed = await nyTurnEnd(turn);
