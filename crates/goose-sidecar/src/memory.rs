@@ -45,6 +45,7 @@ pub(crate) struct VmPageCounts {
 /// - the file-cache figure: truly-free + file-backed + purgeable pages (what Activity Monitor
 ///   draws as physical memory minus App Memory, Wired and Compressed);
 /// - the aged-out figure: free (incl. speculative) + INACTIVE + purgeable pages.
+///
 /// Their true union (free + file cache + inactive ANONYMOUS + purgeable) cannot be built from the
 /// counters (inactive mixes anonymous and file pages), so the larger of the two is taken: never
 /// more than the union, and never counting a page twice.

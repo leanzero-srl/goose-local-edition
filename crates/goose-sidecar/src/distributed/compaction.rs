@@ -411,16 +411,25 @@ Anonymous pages:                             1000000.
 ";
 
     fn vm(free: u64, file: u64) -> String {
+        vm_inactive(free, file, 1_000_000)
+    }
+
+    fn vm_inactive(free: u64, file: u64, inactive: u64) -> String {
         VM_77
             .replace("4000000", &free.to_string())
             .replace("900000", &file.to_string())
+            .replace(
+                "Pages inactive:                              1000000.",
+                &format!("Pages inactive:                              {inactive}."),
+            )
     }
 
     fn answer(levels: &str) -> String {
         format!(
             "\n@@before\n103079215104\n1\n{}\n@@ballast\n16716\n\n@@levels\n{levels}\n@@peak\n{}\n@@released\n143\n\n@@after\n103079215104\n1\n{}\n@@end\n",
             vm(4_000_000, 900_000),
-            vm(200_000, 30_000),
+            // At the WARN point the ballast has pushed the idle pages out: no inactive page left.
+            vm_inactive(200_000, 30_000, 0),
             vm(4_300_000, 950_000),
         )
     }
@@ -434,10 +443,12 @@ Anonymous pages:                             1000000.
         assert_eq!(phase.ballast_pid, 16716);
         assert_eq!(phase.levels.len(), 4);
         assert_eq!(phase.after_level, Pressure::Normal);
-        // vm_stat's "Pages free" already excludes speculative: (free + file + purgeable) × 16 KiB.
+        // The one available rule (`memory::darwin_reading`): the larger of free + file + purgeable
+        // and free + speculative + inactive + purgeable (vm_stat's "Pages free" excludes
+        // speculative); this fixture's 100,000 speculative pages outweigh its 30,000 file pages.
         assert_eq!(
             phase.at_peak.available_bytes,
-            (200_000 + 30_000 + 10_000) * 16_384
+            (200_000 + 100_000 + 10_000) * 16_384
         );
         assert_eq!(phase.before.total_bytes, 103_079_215_104);
         assert!(phase.after.available_bytes > phase.before.available_bytes);
