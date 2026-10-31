@@ -188,8 +188,189 @@ const NEGATORS: &[&str] = &[
     "sin",
     "non",
 ];
-/// The most words a label before the quote may have ("User preference:", "Jira titles:").
+/// The most words a label before the quote may have ("User preference:", "Client rule:").
 const FRAMING_MAX_WORDS: usize = 4;
+
+/// The only words a label before the quote may be made of: neutral nouns that name what the
+/// memory is, never how it applies. WR-17 r6: any free label of four words or fewer could reverse
+/// or widen the quote it frames ("Wrong:", "Old rule, now dropped:", "Unless asked otherwise:",
+/// "Always:", "User preference, except:"), so a label is this list or nothing.
+const LABEL_WORDS: &[&str] = &[
+    // English ("user's" reads as "user" "s").
+    "user",
+    "users",
+    "s",
+    "my",
+    "our",
+    "the",
+    "team",
+    "preference",
+    "preferences",
+    "rule",
+    "rules",
+    "client",
+    "project",
+    "style",
+    "convention",
+    "conventions",
+    "note",
+    "notes",
+    // Polish.
+    "zasada",
+    "zasady",
+    "preferencja",
+    "preferencje",
+    "reguła",
+    "reguły",
+    "regula",
+    "styl",
+    "konwencja",
+    "notatka",
+    "uwaga",
+    "klient",
+    "klienta",
+    "projekt",
+    "projektu",
+    "użytkownik",
+    "użytkownika",
+    "moja",
+    "moje",
+    "nasza",
+    "nasze",
+    // Romanian.
+    "regulă",
+    "regula",
+    "reguli",
+    "regulile",
+    "preferință",
+    "preferinta",
+    "preferințe",
+    "preferinte",
+    "preferința",
+    "stil",
+    "convenție",
+    "conventie",
+    "notă",
+    "nota",
+    "client",
+    "clientului",
+    "proiect",
+    "proiectului",
+    "utilizator",
+    "utilizatorului",
+    // German.
+    "regel",
+    "regeln",
+    "präferenz",
+    "präferenzen",
+    "praeferenz",
+    "vorliebe",
+    "stil",
+    "konvention",
+    "notiz",
+    "hinweis",
+    "kunde",
+    "kunden",
+    "kundenregel",
+    "projekt",
+    "projektregel",
+    "nutzer",
+    "benutzer",
+    "mein",
+    "meine",
+    "unsere",
+];
+
+/// Words that make a tail of the sentence part of the rule: a negator ([`NEGATORS`]) or one of
+/// these. A tail holding one is never dropped from a memory, and a lead-in before a colon holding
+/// one never lets the clause after the colon stand alone.
+const CONTRAST_WORDS: &[&str] = &[
+    "unless",
+    "except",
+    "but",
+    "only",
+    "if",
+    "however",
+    "otherwise",
+    "instead",
+    "chyba",
+    "oprócz",
+    "poza",
+    "ale",
+    "lecz",
+    "tylko",
+    "jeśli",
+    "jesli",
+    "jeżeli",
+    "jezeli",
+    "dacă",
+    "daca",
+    "decât",
+    "decat",
+    "excepția",
+    "exceptia",
+    "dar",
+    "însă",
+    "insa",
+    "doar",
+    "numai",
+    "außer",
+    "ausser",
+    "aber",
+    "sondern",
+    "nur",
+    "wenn",
+    "falls",
+    "sofern",
+];
+
+/// Politeness and time tails a memory may drop from the end of the user's sentence ("…, please",
+/// "… from now on"), as words.
+const DROPPABLE_TAILS: &[&str] = &[
+    "please",
+    "thanks",
+    "thank you",
+    "from now on",
+    "going forward",
+    "for now",
+    "proszę",
+    "dzięki",
+    "dziękuję",
+    "od teraz",
+    "vă rog",
+    "va rog",
+    "mersi",
+    "de acum",
+    "bitte",
+    "danke",
+    "ab jetzt",
+];
+
+/// Asides a memory may drop from the end of the user's sentence when a comma opens them
+/// ("…, e.g. YAML and TOML."), lower case, as typed.
+const DROPPABLE_ASIDES: &[&str] = &[
+    "e.g.",
+    "i.e.",
+    "eg ",
+    "ie ",
+    "for example",
+    "for instance",
+    "such as",
+    "np.",
+    "na przykład",
+    "tj.",
+    "z.b.",
+    "zum beispiel",
+    "d.h.",
+    "de exemplu",
+    "ex.",
+];
+
+/// Abbreviations a full stop does not end a sentence after ("i.e. the v1 SDK").
+const ABBREVIATIONS: &[&str] = &[
+    "e.g", "i.e", "etc", "vs", "cf", "approx", "dr", "mr", "mrs", "ms", "prof", "st", "jr", "sr",
+    "nr", "np", "tj", "itd", "itp", "z.b", "d.h", "u.a", "bzw", "usw", "ca", "ex",
+];
 
 /// Openers that answer the assistant, not part of the rule: dropped from the front of a quote.
 const DISCOURSE_MARKERS: &[&str] = &[
@@ -227,16 +408,37 @@ fn strip_discourse(quote: &str) -> &str {
     }
 }
 
+/// The token a full stop closes is an abbreviation ("e.g", "z.B", "etc"), an initial ("J") or a
+/// version ("v1", "v1.2"): that full stop does not end the sentence.
+fn abbreviation_before(before: &str) -> bool {
+    let start = before
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '.'))
+        .map_or(0, |(at, c)| at + c.len_utf8());
+    let token = before[start..].to_lowercase();
+    let version = token.strip_prefix('v').is_some_and(|rest| {
+        !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit() || c == '.')
+    });
+    ABBREVIATIONS.contains(&token.as_str())
+        || version
+        || (token.chars().count() == 1 && token.chars().all(char::is_alphabetic))
+}
+
 /// The user's text as sentences: split after `.` `!` `?` `;` that end a word (followed by a space
-/// or the end — "DD.MM.YYYY", "report.md" and "0.5" stay whole) and at line breaks; commas never
-/// split. Each with whether it asks (ends on `?`).
+/// or the end — "DD.MM.YYYY", "report.md" and "0.5" stay whole, and never after an abbreviation:
+/// [`abbreviation_before`]) and at line breaks; commas never split. Each with whether it asks
+/// (ends on `?`).
 fn sentences(text: &str) -> Vec<(&str, bool)> {
     let mut out = Vec::new();
     let mut start = 0;
     let mut chars = text.char_indices().peekable();
     while let Some((at, c)) = chars.next() {
         let next_is_space = chars.peek().is_none_or(|(_, n)| n.is_whitespace());
-        let ends = c == '\n' || (matches!(c, '.' | '!' | '?' | ';') && next_is_space);
+        let ends = c == '\n'
+            || (matches!(c, '.' | '!' | '?' | ';')
+                && next_is_space
+                && !(c == '.' && abbreviation_before(&text[..at])));
         if ends {
             let end = at + c.len_utf8();
             let sentence = &text[start..end];
@@ -252,37 +454,104 @@ fn sentences(text: &str) -> Vec<(&str, bool)> {
     out
 }
 
-/// The quote is one or more WHOLE sentences of `text`, from a sentence's start (openers aside) to
-/// a sentence's end, none of them a question. So a negation anywhere in the user's sentence —
-/// "Never, use tabs…", "Do not, under any circumstances in this repo, use tabs", "Pushing to
-/// main without review is not allowed." — is inside the quote, and so inside the memory.
-fn whole_sentences_in(text: &str, quote: &[String]) -> bool {
-    let sentences = sentences(text);
-    (0..sentences.len()).any(|first| {
-        let mut words = Vec::new();
-        for (k, &(sentence, asks)) in sentences[first..].iter().enumerate() {
-            if k == 0 {
-                words.extend(quote_words(strip_discourse(sentence)));
-            } else {
-                words.extend(quote_words(sentence));
-            }
-            if asks || words.len() > quote.len() {
-                return false;
-            }
-            if words == quote {
-                return true;
+fn holds_a_turn(words: &[String]) -> bool {
+    words
+        .iter()
+        .any(|w| NEGATORS.contains(&w.as_str()) || CONTRAST_WORDS.contains(&w.as_str()))
+}
+
+/// How many words may be dropped from the end of a sentence: none; a politeness or time tail
+/// ([`DROPPABLE_TAILS`], repeatedly: "…, thanks, from now on"); or an aside a comma opens
+/// ([`DROPPABLE_ASIDES`]) with no negator or contrast word in it. Never every word.
+fn droppable_tails(sentence: &str) -> Vec<usize> {
+    let words = quote_words(sentence);
+    let mut out = vec![0];
+    let mut kept = words.len();
+    'tails: loop {
+        for tail in DROPPABLE_TAILS {
+            let tail = quote_words(tail);
+            if kept > tail.len() && words[..kept].ends_with(&tail) {
+                kept -= tail.len();
+                out.push(words.len() - kept);
+                continue 'tails;
             }
         }
-        false
+        break;
+    }
+    let lower = sentence.to_lowercase();
+    let aside = lower.match_indices(',').find(|(at, _)| {
+        let after = lower[at + 1..].trim_start();
+        DROPPABLE_ASIDES.iter().any(|a| after.starts_with(a))
+    });
+    if let Some((at, _)) = aside {
+        let tail = quote_words(&sentence[at..]);
+        if !tail.is_empty() && tail.len() < words.len() && !holds_a_turn(&tail) {
+            out.push(tail.len());
+        }
+    }
+    out
+}
+
+/// Where a span may start in a sentence: its start (openers aside), or after its FIRST colon
+/// ("Remember how I like things: Jira titles as …") when a space follows the colon ("10:30" and
+/// "https://" are not one) and the lead-in holds no negator or contrast word.
+fn span_starts(sentence: &str) -> Vec<Vec<String>> {
+    let mut out = vec![quote_words(strip_discourse(sentence))];
+    if let Some(at) = sentence.find(':') {
+        let (lead, rest) = (&sentence[..at], &sentence[at + 1..]);
+        let spaced = rest.chars().next().is_some_and(char::is_whitespace);
+        let clause = quote_words(strip_discourse(rest));
+        if spaced && !clause.is_empty() && !holds_a_turn(&quote_words(lead)) {
+            out.push(clause);
+        }
+    }
+    out
+}
+
+/// `target` is one or more WHOLE sentences of `text`, from a sentence's start (openers aside, or
+/// the clause after its first colon: [`span_starts`]) to a sentence's end (or that end without a
+/// politeness/time tail or a harmless aside: [`droppable_tails`]), none of them a question. So a
+/// negation anywhere in the user's sentence — "Never, use tabs…", "Do not, under any
+/// circumstances in this repo, use tabs", "Pushing to main without review is not allowed." — is
+/// inside the span, and so inside the memory.
+fn whole_sentences_in(text: &str, target: &[String]) -> bool {
+    let sentences = sentences(text);
+    (0..sentences.len()).any(|first| {
+        span_starts(sentences[first].0).into_iter().any(|start| {
+            let mut words = Vec::new();
+            for (k, &(sentence, asks)) in sentences[first..].iter().enumerate() {
+                if asks {
+                    return false;
+                }
+                let own = if k == 0 {
+                    start.clone()
+                } else {
+                    quote_words(sentence)
+                };
+                words.extend(own.iter().cloned());
+                let fits = droppable_tails(sentence)
+                    .into_iter()
+                    .filter(|&drop| drop < own.len())
+                    .any(|drop| words[..words.len() - drop] == *target);
+                if fits {
+                    return true;
+                }
+                if words.len() >= target.len() {
+                    return false;
+                }
+            }
+            false
+        })
     })
 }
 
-/// A label before the quote: at most [`FRAMING_MAX_WORDS`] words, ending in `:`, no negator.
+/// A label before the quote: one to [`FRAMING_MAX_WORDS`] words, every one of them in
+/// [`LABEL_WORDS`], ending in `:`.
 fn is_label(label: &str) -> bool {
     let words = quote_words(label);
     !words.is_empty()
         && words.len() <= FRAMING_MAX_WORDS
-        && !words.iter().any(|w| NEGATORS.contains(&w.as_str()))
+        && words.iter().all(|w| LABEL_WORDS.contains(&w.as_str()))
 }
 
 /// WR-17: the memory is the user's own sentence(s). History: r1 checked only that the quote was
@@ -291,8 +560,10 @@ fn is_label(label: &str) -> bool {
 /// 1. the quote, openers that answer the assistant aside ("no,", "ok so", "also"), has at least
 ///    [`ASSESSMENT_QUOTE_MIN_CONTENT_WORDS`] content words and is one or more whole sentences of
 ///    one of this turn's user messages, none a question;
-/// 2. the memory, openers aside, is the quote word for word (after [`quote_words`]), or a label
-///    ([`is_label`]) and then the quote.
+/// 2. the memory, openers aside, is the quote word for word (after [`quote_words`]), or a span of
+///    both the quote and the user's text with as many content words (r6: the clause after the
+///    first colon, a politeness/time tail or a comma aside dropped — [`whole_sentences_in`]);
+///    optionally after a label of neutral nouns only ([`is_label`], [`LABEL_WORDS`]).
 ///
 /// This is a quality filter, not a security boundary: every proposal is shown on an editable
 /// Save/Decline card (MemoryProposalCard) and nothing is stored until the person saves it.
@@ -309,18 +580,29 @@ fn memory_rests_on_users_words(quote: &str, memory: &str, user_texts: &[String])
     if quote.iter().filter(|w| is_content_word(w)).count() < ASSESSMENT_QUOTE_MIN_CONTENT_WORDS {
         return false;
     }
-    if !user_texts
-        .iter()
-        .any(|text| whole_sentences_in(text, &quote))
-    {
+    let users = |words: &[String]| {
+        user_texts
+            .iter()
+            .any(|text| whole_sentences_in(text, words))
+    };
+    if !users(&quote) {
         return false;
     }
-    if quote_words(strip_discourse(memory)) == quote {
+    // The memory is the quote, or a span of the quote (its tail or its lead-in dropped), and a
+    // span of the user's own text too.
+    let stated = |words: Vec<String>| {
+        words == quote
+            || (words.iter().filter(|w| is_content_word(w)).count()
+                >= ASSESSMENT_QUOTE_MIN_CONTENT_WORDS
+                && whole_sentences_in(&restored, &words)
+                && users(&words))
+    };
+    if stated(quote_words(strip_discourse(memory))) {
         return true;
     }
     memory
         .split_once(':')
-        .is_some_and(|(label, rest)| is_label(label) && quote_words(strip_discourse(rest)) == quote)
+        .is_some_and(|(label, rest)| is_label(label) && stated(quote_words(strip_discourse(rest))))
 }
 
 /// The facts of one turn, as the prompt sees them: the user's messages of THIS turn and the
@@ -1754,7 +2036,8 @@ mod tests {
             ("Also run clippy before every commit.", "Also run clippy before every commit.", "Also run clippy before every commit."),
             ("Also run clippy before every commit.", "run clippy before every commit", "And run clippy before every commit."),
             ("No, keep the build logs in /var/tmp.", "No, keep the build logs in /var/tmp.", "No, keep the build logs in /var/tmp."),
-            ("Keep Jira titles under 70 characters.", "Keep Jira titles under 70 characters.", "Jira titles: keep Jira titles under 70 characters."),
+            // r6: a topic label ("Jira titles:") is not a neutral noun any more; "Style:" is.
+            ("Keep Jira titles under 70 characters.", "Keep Jira titles under 70 characters.", "Style: keep Jira titles under 70 characters."),
             // A sentence among others, and two whole sentences.
             ("Thanks. Keep Jira titles under 70 characters! Now the report.", "Keep Jira titles under 70 characters!", "Keep Jira titles under 70 characters"),
             ("Thanks. Keep Jira titles short. Dates as DD.MM.YYYY. Now the report.", "Keep Jira titles short. Dates as DD.MM.YYYY.", "Keep Jira titles short. Dates as DD.MM.YYYY."),
@@ -1767,17 +2050,227 @@ mod tests {
         }
     }
 
-    /// WR-17 r5: a label is at most FRAMING_MAX_WORDS words.
+    /// WR-17 r5: a label is at most FRAMING_MAX_WORDS words; r6: of neutral nouns only.
     #[test]
     fn a_label_has_at_most_framing_max_words() {
         assert_eq!(FRAMING_MAX_WORDS, 4);
         let said = "Keep Jira titles under 70 characters.";
-        assert!(judge_one(said, said, &format!("My standing client rule: {said}")).is_some());
+        assert!(judge_one(said, said, &format!("My client rule: {said}")).is_some());
+        assert!(judge_one(said, said, &format!("Our project style rule: {said}")).is_some());
         assert_eq!(
-            judge_one(said, said, &format!("My standing client rule here: {said}")),
+            judge_one(said, said, &format!("My client project style rule: {said}")),
             None
         );
+        // r6: "standing" widens; a topic is not a neutral noun.
+        assert_eq!(
+            judge_one(said, said, &format!("My standing client rule: {said}")),
+            None
+        );
+        assert_eq!(judge_one(said, said, &format!("Jira titles: {said}")), None);
         assert_eq!(judge_one(said, said, &format!("Not allowed: {said}")), None);
+        for label in [
+            "Zasada",
+            "Preferencja użytkownika",
+            "Regulă",
+            "Preferință",
+            "Regel",
+            "Präferenz",
+        ] {
+            assert!(
+                judge_one(said, said, &format!("{label}: {said}")).is_some(),
+                "{label:?}"
+            );
+        }
+    }
+
+    /// WR-17 r6 D1: a label that reverses or widens what it frames, and a sentence cut after an
+    /// abbreviation, are never proposed.
+    #[test]
+    fn a_label_that_turns_the_quote_is_never_proposed() {
+        let q = "Keep Jira titles under 70 characters.";
+        let tabs = "never use tabs for indenting";
+        let staging = "use the staging database for this one test run";
+        let legacy = "Avoid the legacy client, i.e. the v1 SDK in production code.";
+        let cases: &[(&str, &str, String)] = &[
+            (q, q, format!("User preference, except: {q}")),
+            (q, q, format!("Wrong: {q}")),
+            (tabs, tabs, format!("Wrong: {tabs}")),
+            (q, q, format!("Old rule, now dropped: {q}")),
+            (q, q, format!("Unless asked otherwise: {q}")),
+            (staging, staging, format!("Always: {staging}")),
+            (q, q, format!("Required: {q}")),
+            (q, q, format!("Never: {q}")),
+            (
+                legacy,
+                "the v1 SDK in production code.",
+                "Required: the v1 SDK in production code.".into(),
+            ),
+            (
+                legacy,
+                "the v1 SDK in production code",
+                "Rule: the v1 SDK in production code.".into(),
+            ),
+            (
+                legacy,
+                "the v1 SDK in production code",
+                "The v1 SDK in production code.".into(),
+            ),
+            (
+                "Nie używaj starego klienta, np. SDK v1 w kodzie produkcyjnym.",
+                "SDK v1 w kodzie produkcyjnym",
+                "SDK v1 w kodzie produkcyjnym.".into(),
+            ),
+            (
+                "Nie den alten Client nutzen, z.B. das v1 SDK im Produktionscode.",
+                "das v1 SDK im Produktionscode",
+                "Das v1 SDK im Produktionscode.".into(),
+            ),
+            // A tail that holds a negator or a contrast is never dropped.
+            (
+                "Use spaces in all config files, e.g. not in Makefiles.",
+                "Use spaces in all config files, e.g. not in Makefiles.",
+                "Use spaces in all config files.".into(),
+            ),
+            (
+                "Use spaces in all config files, such as YAML but only if asked.",
+                "Use spaces in all config files, such as YAML but only if asked.",
+                "Use spaces in all config files.".into(),
+            ),
+            (
+                "Use spaces in all config files unless told otherwise.",
+                "Use spaces in all config files unless told otherwise.",
+                "Use spaces in all config files.".into(),
+            ),
+            // A lead-in with a negator never frees the clause after its colon.
+            (
+                "Never do this: push straight to main.",
+                "push straight to main",
+                "Push straight to main.".into(),
+            ),
+            (
+                "Never do this: push straight to main.",
+                "Never do this: push straight to main.",
+                "Push straight to main.".into(),
+            ),
+            // A dropped tail leaves too little; a colon inside the quote is not the user's colon.
+            (
+                "Use tabs, e.g. in YAML and TOML files.",
+                "Use tabs, e.g. in YAML and TOML files.",
+                "Use tabs.".into(),
+            ),
+            (
+                "Remember how I like things: Jira titles as 'Area: problem', under 70 characters",
+                "Jira titles as 'Area: problem', under 70 characters",
+                "problem', under 70 characters".into(),
+            ),
+            // A full stop inside a token never ends a sentence (kills the "split on every ." mutant).
+            (
+                "Don't touch config.yaml files in production.",
+                "yaml files in production",
+                "YAML files in production.".into(),
+            ),
+            (
+                "Never deploy v2.1 builds to production.",
+                "1 builds to production",
+                "1 builds to production".into(),
+            ),
+        ];
+        for (said, quote, memory) in cases {
+            assert_eq!(
+                judge_one(said, quote, memory),
+                None,
+                "{memory:?} under {quote:?}"
+            );
+        }
+        assert!(judge_one(q, q, &format!("Client rule: {q}")).is_some());
+    }
+
+    /// WR-17 r6 D2: true memories the r5 rule dropped — a politeness or time tail, a comma aside,
+    /// the clause after the first colon — are proposed.
+    #[test]
+    fn a_memory_without_its_polite_tail_or_lead_in_is_proposed() {
+        let jira =
+            "Remember how I like things: Jira titles as 'Area: problem', under 70 characters";
+        let clause = "Jira titles as 'Area: problem', under 70 characters";
+        let gabee = "For everything we write for this client: English, but keep Portuguese law and authority names in Portuguese, and put the source link right after each claim, not in a list at the end.";
+        let gabee_clause = "English, but keep Portuguese law and authority names in Portuguese, and put the source link right after each claim, not in a list at the end.";
+        let cases: &[(&str, &str, String)] = &[
+            (
+                "keep the build logs in /var/tmp from now on",
+                "keep the build logs in /var/tmp from now on",
+                "Keep the build logs in /var/tmp.".into(),
+            ),
+            (
+                "keep the build logs in /var/tmp from now on",
+                "keep the build logs in /var/tmp",
+                "Keep the build logs in /var/tmp".into(),
+            ),
+            (
+                "Run clippy before every commit please.",
+                "Run clippy before every commit please.",
+                "Run clippy before every commit.".into(),
+            ),
+            (
+                "Keep Jira titles under 70 characters, thanks!",
+                "Keep Jira titles under 70 characters, thanks!",
+                "Keep Jira titles under 70 characters.".into(),
+            ),
+            (
+                "Keep Jira titles under 70 characters, thank you, going forward.",
+                "Keep Jira titles under 70 characters, thank you, going forward.",
+                "Keep Jira titles under 70 characters.".into(),
+            ),
+            (
+                "Trzymaj logi budowania w /var/tmp, proszę.",
+                "Trzymaj logi budowania w /var/tmp, proszę.",
+                "Trzymaj logi budowania w /var/tmp.".into(),
+            ),
+            (
+                "Păstrează logurile în /var/tmp, vă rog.",
+                "Păstrează logurile în /var/tmp",
+                "Preferință: Păstrează logurile în /var/tmp".into(),
+            ),
+            (
+                "Build-Logs bitte in /var/tmp ablegen, danke.",
+                "Build-Logs bitte in /var/tmp ablegen, danke.",
+                "Build-Logs bitte in /var/tmp ablegen.".into(),
+            ),
+            (
+                "Use spaces in all config files, e.g. YAML and TOML.",
+                "Use spaces in all config files, e.g. YAML and TOML.",
+                "Use spaces in all config files".into(),
+            ),
+            (
+                "Use spaces in all config files, e.g. YAML and TOML.",
+                "Use spaces in all config files",
+                "Rule: use spaces in all config files.".into(),
+            ),
+            (jira, clause, clause.into()),
+            (jira, jira, clause.into()),
+            (jira, jira, format!("User preference: {clause}")),
+            (gabee, gabee, format!("Client rule: {gabee_clause}")),
+            (gabee, gabee_clause, gabee_clause.into()),
+            // A full stop inside a token keeps the sentence whole.
+            (
+                "Keep the settings in config.yaml.",
+                "Keep the settings in config.yaml.",
+                "Keep the settings in config.yaml.".into(),
+            ),
+            (
+                "Pin the SDK to v2.1 in production.",
+                "Pin the SDK to v2.1 in production.",
+                "Pin the SDK to v2.1 in production.".into(),
+            ),
+        ];
+        for (said, quote, memory) in cases {
+            assert!(
+                judge_one(said, quote, memory).is_some(),
+                "{memory:?} under {quote:?}"
+            );
+        }
+        // The WR-17 trigger turn itself, with its second line.
+        let said = "Remember how I like things: Jira titles as 'Area: problem', under 70 characters.\nAnd dates **DD.MM.YYYY** <always>.";
+        assert!(judge_one(said, clause, clause).is_some());
     }
 
     /// WR-17 round 2: a true quote survives the punctuation a model changes when it copies —
