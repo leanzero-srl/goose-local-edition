@@ -62,6 +62,10 @@ Write each answer into the run's NOTES.md / parity file.
    growing multi-turn session; record TTFT, peak Metal GB, swap; operating point = largest step clear of the Metal
    ceiling (workmule ~115 GB, workhorse ~77, laptop ~115, Gabee ~48). Then set `GOOSE_CONTEXT_LIMIT` (and
    `context_limit`) to what the memory guard ADMITS. Never leave goose's 128k default on a model proven for more.
+   On a SPLIT the growing session must be GOOSE-SHAPED (tools + `agent-session-id` header + every answer kept in
+   the history) and must cross the compaction width (~212k on a 262k plan): only then does the rank keep the chat
+   (Q-522) and copy a kept entry beside it. A plain needle replay never exercised that path and MiMo a005ed73 died
+   on it (Q-528, rank 1 KV 10.9 vs 8.08 GB planned). Read each rank's peak against its plan, not only the limit.
 4. **Speed levers on and proven lossless** (MTP, n-gram, PLE, prefix cache): greedy A/B at 8k and at the operating
    context, code_edit byte-identical, streamed == non-streamed bytes. A lever that changes output or gains nothing
    stays OFF with a ledger line.
