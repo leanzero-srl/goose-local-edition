@@ -6230,6 +6230,9 @@
   "mlxMemory.wiredKeep": {
     "defaultMessage": "macOS ve diğer uygulamalara {physical} GB içinden {keep} GB kalır"
   },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "Bu, macOS’un şu an GPU’ya verdiği çalışma kümesinin ({ws}) altında: Etkinleştir onu yükseltmez, düşürür."
+  },
   "mlxMemory.wiredNoSuggestion": {
     "defaultMessage": "Artış önerilmiyor: {mac} cihazının şu anki kullanımı artı {reserve} GB rezerv, wired için çok az yer bırakıyor."
   },

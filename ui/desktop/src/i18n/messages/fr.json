@@ -6230,6 +6230,9 @@
   "mlxMemory.wiredKeep": {
     "defaultMessage": "macOS et les autres apps gardent {keep} GB sur {physical} GB"
   },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "C’est en dessous de l’ensemble de travail GPU que macOS accorde maintenant ({ws}) : Activer le réduirait au lieu de l’augmenter."
+  },
   "mlxMemory.wiredNoSuggestion": {
     "defaultMessage": "Aucune hausse suggérée : ce que {mac} utilise actuellement plus la réserve de {reserve} GB laisse trop peu à verrouiller."
   },

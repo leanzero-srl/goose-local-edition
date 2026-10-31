@@ -328,6 +328,11 @@ const i18n = defineMessages({
     defaultMessage:
       'No raise suggested: what {mac} uses now plus the {reserve} GB reserve leaves too little to wire.',
   },
+  wiredLowers: {
+    id: 'mlxMemory.wiredLowers',
+    defaultMessage:
+      'That is below the GPU working set macOS gives now ({ws}): Enable would lower it, not raise it.',
+  },
   wiredUseSuggestion: { id: 'mlxMemory.wiredUseSuggestion', defaultMessage: 'Use' },
   wiredPersistLabel: { id: 'mlxMemory.wiredPersistLabel', defaultMessage: 'Keep after restart' },
   wiredPersistNote: {
@@ -745,7 +750,12 @@ export function WiredLimitPanel({
   const suggestion = suggestedWiredMb(physical, othersBytes, reserve);
   const current = machine.wiredLimitMb ?? null;
   const daemon = machine.daemonWiredLimitMb ?? null;
-  const [text, setText] = useState(String(current || suggestion || max));
+  const ws = machine.workingSetBytes ?? null;
+  const raises = (v: number) => ws == null || v * 1024 * 1024 > ws;
+  // Never prefill a value that would LOWER the GPU working set macOS gives now.
+  const [text, setText] = useState(
+    String(current || (suggestion != null && raises(suggestion) ? suggestion : max))
+  );
   const [persist, setPersist] = useState(daemon != null);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string; mb?: number } | null>(null);
@@ -903,6 +913,14 @@ export function WiredLimitPanel({
               reserve,
             })}
             testId="mlx-memory-wired-warn"
+          />
+        )}
+        {canEnable && !current && !raises(mb) && ws != null && (
+          <ToneBanner
+            tone="warn"
+            label={intl.formatMessage(i18n.wiredValue)}
+            text={intl.formatMessage(i18n.wiredLowers, { ws: gbText(intl, ws) })}
+            testId="mlx-memory-wired-lowers"
           />
         )}
         {(check.kind === 'invalid' || check.kind === 'default') && (

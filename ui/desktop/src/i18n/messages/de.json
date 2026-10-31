@@ -6230,6 +6230,9 @@
   "mlxMemory.wiredKeep": {
     "defaultMessage": "macOS und andere Apps behalten {keep} GB von {physical} GB"
   },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "Das liegt unter dem GPU-Arbeitsbereich, den macOS jetzt gewährt ({ws}): Aktivieren würde ihn senken, nicht erhöhen."
+  },
   "mlxMemory.wiredNoSuggestion": {
     "defaultMessage": "Keine Erhöhung vorgeschlagen: Die aktuelle Nutzung von {mac} plus {reserve} GB Reserve lässt zu wenig zum Zuweisen übrig."
   },

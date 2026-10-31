@@ -6230,6 +6230,9 @@
   "mlxMemory.wiredKeep": {
     "defaultMessage": "macOS와 다른 앱에 {physical} GB 중 {keep} GiB가 남습니다"
   },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "macOS가 지금 GPU에 주는 작업 세트({ws})보다 낮습니다. 활성화하면 올라가지 않고 내려갑니다."
+  },
   "mlxMemory.wiredNoSuggestion": {
     "defaultMessage": "상향 제안 없음: {mac}의 현재 사용량과 {reserve} GB 예약을 합하면 와이어드로 고정할 여유가 너무 적습니다."
   },

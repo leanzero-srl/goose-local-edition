@@ -6230,6 +6230,9 @@
   "mlxMemory.wiredKeep": {
     "defaultMessage": "macOS 和其他应用保留 {physical} GB 中的 {keep} GB"
   },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "这低于 macOS 当前给 GPU 的工作集 ({ws})：启用会降低它，而不是提高。"
+  },
   "mlxMemory.wiredNoSuggestion": {
     "defaultMessage": "不建议提高：{mac} 当前的占用加上 {reserve} GB 预留后，可联动的内存太少。"
   },

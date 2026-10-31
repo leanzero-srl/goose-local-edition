@@ -231,6 +231,22 @@ describe('MlxMemorySection', () => {
     expect(enable().disabled).toBe(true);
   });
 
+  it('never prefills a value that lowers the macOS working set, and warns when one is typed', async () => {
+    mockMachine.mockResolvedValue(machine({ othersBytes: 46.5e9, workingSetBytes: 115.4e9 }));
+    mount();
+    const panel = await screen.findByTestId('mlx-memory-wired');
+    expect(within(panel).getByTestId('mlx-memory-wired-command').textContent).toBe(
+      '/usr/sbin/sysctl iogpu.wired_limit_mb=114688'
+    );
+    expect(within(panel).queryByTestId('mlx-memory-wired-lowers')).toBeNull();
+    const input = within(panel).getByLabelText('New limit');
+    await userEvent.clear(input);
+    await userEvent.type(input, '66000');
+    expect(within(panel).getByTestId('mlx-memory-wired-lowers').textContent).toContain(
+      'Enable would lower it'
+    );
+  });
+
   it('a running engine’s own measure of what is outside the GPU drives the suggestion', async () => {
     mount({ status: running() });
     const panel = await screen.findByTestId('mlx-memory-wired');

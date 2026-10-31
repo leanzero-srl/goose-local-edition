@@ -6230,6 +6230,9 @@
   "mlxMemory.wiredKeep": {
     "defaultMessage": "macOS と他のアプリに {physical} GB 中 {keep} GB が残ります"
   },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "macOS が現在 GPU に割り当てているワーキングセット ({ws}) を下回っています。有効にすると上がらずに下がります。"
+  },
   "mlxMemory.wiredNoSuggestion": {
     "defaultMessage": "引き上げの推奨はありません: {mac} の現在の使用量と {reserve} GB の予約を合わせると、ワイヤードに回せる量がほとんど残りません。"
   },

@@ -6230,6 +6230,9 @@
   "mlxMemory.wiredKeep": {
     "defaultMessage": "macOS và các ứng dụng khác giữ {keep} GB trên {physical} GB"
   },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "Giá trị này thấp hơn working set GPU mà macOS đang cấp ({ws}): Bật sẽ hạ nó xuống, không nâng lên."
+  },
   "mlxMemory.wiredNoSuggestion": {
     "defaultMessage": "Không đề xuất nâng: lượng {mac} đang dùng cộng dự trữ {reserve} GB còn quá ít để cố định."
   },

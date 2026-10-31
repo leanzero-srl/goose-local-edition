@@ -6230,6 +6230,9 @@
   "mlxMemory.wiredKeep": {
     "defaultMessage": "macOS and other apps keep {keep} GB of {physical} GB"
   },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "That is below the GPU working set macOS gives now ({ws}): Enable would lower it, not raise it."
+  },
   "mlxMemory.wiredNoSuggestion": {
     "defaultMessage": "No raise suggested: what {mac} uses now plus the {reserve} GB reserve leaves too little to wire."
   },
