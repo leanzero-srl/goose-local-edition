@@ -1143,7 +1143,8 @@ async fn core_wired_limit_apply(
 ) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
     let (physical, _) =
         memory_tunables::machine_memory().internal_err_ctx("reading this Mac's memory")?;
-    let mb = wired_limit::validate_mb(req.mb, physical, wired_reserve_gib()).invalid_params_err()?;
+    let mb =
+        wired_limit::validate_mb(req.mb, physical, wired_reserve_gib()).invalid_params_err()?;
     let what = if req.persist {
         format!("set the GPU wired limit to {mb} MB and keep it after restart")
     } else {

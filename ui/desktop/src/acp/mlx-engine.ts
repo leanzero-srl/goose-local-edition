@@ -366,6 +366,12 @@ export interface MlxMemoryMachine {
   defaultFloorGb: number;
   tunablesSupported: boolean;
   launcher: string;
+  /** What a raised wired limit must leave to macOS (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB). */
+  minReserveGib: number;
+  /** physical − available right now (includes a running engine). */
+  othersBytes: number;
+  maxWiredLimitMb: number;
+  suggestedWiredLimitMb?: number;
 }
 
 export interface MlxWiredLimitResult {
@@ -693,27 +699,44 @@ export async function mlxEngineSettingsUpdate(
   return response.settings;
 }
 
-/** This Mac's memory facts. Local only: no `nodeId`. */
-export async function mlxEngineMemoryMachine(): Promise<MlxMemoryMachine> {
-  return await call<MlxMemoryMachine>('_goose/unstable/mlxEngine/memoryMachine', {});
+/** The picked Mac's memory facts (`nodeId` = a Link peer, relayed to its app). */
+export async function mlxEngineMemoryMachine(nodeId?: string): Promise<MlxMemoryMachine> {
+  return await call<MlxMemoryMachine>(
+    '_goose/unstable/mlxEngine/memoryMachine',
+    withNode({}, nodeId)
+  );
 }
 
 /**
- * Set this Mac's GPU wired limit through the macOS administrator prompt (the person types their
- * password); `persist` also installs the boot LaunchDaemon. Local only.
+ * Set the picked Mac's GPU wired limit through the macOS administrator prompt on THAT Mac (whoever
+ * is at it types the password; nothing is stored); `persist` also installs the boot LaunchDaemon.
  */
 export async function mlxEngineWiredLimitApply(
   mb: number,
-  persist: boolean
+  persist: boolean,
+  nodeId?: string
 ): Promise<MlxWiredLimitResult> {
-  return await call<MlxWiredLimitResult>('_goose/unstable/mlxEngine/wiredLimitApply', {
-    mb,
-    persist,
-  });
+  return await call<MlxWiredLimitResult>(
+    '_goose/unstable/mlxEngine/wiredLimitApply',
+    withNode({ mb, persist }, nodeId)
+  );
 }
 
-export async function mlxEngineWiredLimitRemoveDaemon(): Promise<MlxWiredLimitResult> {
-  return await call<MlxWiredLimitResult>('_goose/unstable/mlxEngine/wiredLimitRemoveDaemon', {});
+/** Restore the macOS default (`iogpu.wired_limit_mb=0`) and remove the boot setting if installed. */
+export async function mlxEngineWiredLimitDisable(nodeId?: string): Promise<MlxWiredLimitResult> {
+  return await call<MlxWiredLimitResult>(
+    '_goose/unstable/mlxEngine/wiredLimitDisable',
+    withNode({}, nodeId)
+  );
+}
+
+export async function mlxEngineWiredLimitRemoveDaemon(
+  nodeId?: string
+): Promise<MlxWiredLimitResult> {
+  return await call<MlxWiredLimitResult>(
+    '_goose/unstable/mlxEngine/wiredLimitRemoveDaemon',
+    withNode({}, nodeId)
+  );
 }
 
 export async function mlxEngineModelsList(nodeId?: string): Promise<MlxModelsList> {

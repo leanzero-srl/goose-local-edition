@@ -152,7 +152,9 @@ pub fn admin_osascript_argv(shell: &str, prompt: &str) -> Result<Vec<String>> {
     Ok(vec![
         "/usr/bin/osascript".to_string(),
         "-e".to_string(),
-        format!("do shell script \"{shell}\" with prompt \"{prompt}\" with administrator privileges"),
+        format!(
+            "do shell script \"{shell}\" with prompt \"{prompt}\" with administrator privileges"
+        ),
     ])
 }
 
@@ -313,7 +315,8 @@ mod tests {
     #[test]
     fn the_reserve_math_on_64_96_and_128_gb_macs() {
         // (physical GiB, others measured GB, keep for 120,000 MB, max, suggestion)
-        let table: [(u64, u64, Option<u64>, u64, Option<u64>); 3] = [
+        type Row = (u64, u64, Option<u64>, u64, Option<u64>);
+        let table: [Row; 3] = [
             (64, 8, None, 49_152, Some(41_000)),
             (96, 10, None, 81_920, Some(72_000)),
             (128, 10, Some(11_072), 114_688, Some(105_000)),
@@ -342,7 +345,10 @@ mod tests {
 
     #[test]
     fn enable_is_exactly_one_sysctl_behind_a_prompt_that_names_the_requester() {
-        let prompt = prompt_text("set the GPU wired limit to 110000 MB", Some("Mihai's \"MBP\"\\"));
+        let prompt = prompt_text(
+            "set the GPU wired limit to 110000 MB",
+            Some("Mihai's \"MBP\"\\"),
+        );
         assert_eq!(
             prompt,
             "goose on Mihais MBP asks to set the GPU wired limit to 110000 MB on this Mac."
@@ -361,15 +367,22 @@ mod tests {
         assert!(admin_osascript_argv("echo \"x\"; rm -rf /", "p").is_err());
         assert!(admin_osascript_argv("a\\\" & do shell script \"b", "p").is_err());
         assert!(admin_osascript_argv("ls", "p\" & do shell script \"rm").is_err());
-        assert_eq!(fallback_command(110_000), "sudo /usr/sbin/sysctl iogpu.wired_limit_mb=110000");
+        assert_eq!(
+            fallback_command(110_000),
+            "sudo /usr/sbin/sysctl iogpu.wired_limit_mb=110000"
+        );
     }
 
     #[test]
     fn disable_restores_zero_and_removes_the_boot_setting_only_when_installed() {
-        assert_eq!(disable_shell(false), "/usr/sbin/sysctl iogpu.wired_limit_mb=0");
+        assert_eq!(
+            disable_shell(false),
+            "/usr/sbin/sysctl iogpu.wired_limit_mb=0"
+        );
         let both = disable_shell(true);
         assert!(both.starts_with("/usr/sbin/sysctl iogpu.wired_limit_mb=0 && /bin/launchctl bootout system/net.leanzero.iogpu-wired-limit"));
-        assert!(both.ends_with("/bin/rm -f '/Library/LaunchDaemons/net.leanzero.iogpu-wired-limit.plist'"));
+        assert!(both
+            .ends_with("/bin/rm -f '/Library/LaunchDaemons/net.leanzero.iogpu-wired-limit.plist'"));
         assert!(admin_osascript_argv(&both, "p").is_ok());
     }
 

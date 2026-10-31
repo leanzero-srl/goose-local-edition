@@ -1564,10 +1564,17 @@ fn ceiling_binds(budget_bytes: u64, ceiling_left: u64) -> bool {
 /// The wired limit a what-if plans with for a node: the suggestion (physical − others − reserve)
 /// when it is above the node's ceiling now, else the most the reserve allows when THAT is; `None`
 /// when no allowed limit raises the ceiling. Returns (MB, beyond the suggestion).
-pub fn what_if_mb(total: u64, available: u64, ceiling: u64, reserve_gib: u64) -> Option<(u64, bool)> {
+pub fn what_if_mb(
+    total: u64,
+    available: u64,
+    ceiling: u64,
+    reserve_gib: u64,
+) -> Option<(u64, bool)> {
     use crate::wired_limit::{ceiling_bytes, max_mb, suggested_mb};
     let others = total.saturating_sub(available);
-    if let Some(mb) = suggested_mb(total, others, reserve_gib).filter(|mb| ceiling_bytes(*mb) > ceiling) {
+    if let Some(mb) =
+        suggested_mb(total, others, reserve_gib).filter(|mb| ceiling_bytes(*mb) > ceiling)
+    {
         return Some((mb, false));
     }
     let max = max_mb(total, reserve_gib);
@@ -1622,7 +1629,9 @@ async fn wired_what_ifs(
         let layers = |p: &RankPlan| p.layer_end.saturating_sub(p.layer_start);
         out[rank] = Some(WiredWhatIf {
             mb,
-            keep_bytes: figures.total.saturating_sub(crate::wired_limit::ceiling_bytes(mb)),
+            keep_bytes: figures
+                .total
+                .saturating_sub(crate::wired_limit::ceiling_bytes(mb)),
             beyond_suggestion,
             max_context_now: report.max_context_fits,
             max_context_then: scratch.max_context_fits,
