@@ -5579,11 +5579,20 @@ devices:
             let reason = refusal
                 .strip_prefix("swarm chat: no node can serve this turn — ")
                 .unwrap_or_else(|| panic!("not the notice's form: {refusal}"));
-            assert!(reason.starts_with("no enabled device is configured"), "{reason}");
+            assert!(
+                reason.starts_with("no enabled device is configured"),
+                "{reason}"
+            );
             assert!(reason.contains("Open Nodes"), "{reason}");
-            assert!(reason.contains("\u{201c}New chats start on\u{201d}"), "{reason}");
+            assert!(
+                reason.contains("\u{201c}New chats start on\u{201d}"),
+                "{reason}"
+            );
             assert!(!reason.contains("swarm.devices"), "{reason}");
-            assert!(!reason.contains("; "), "the notice splits reasons on '; ': {reason}");
+            assert!(
+                !reason.contains("; "),
+                "the notice splits reasons on '; ': {reason}"
+            );
         }
         assert!(auto_pool_empty_reason(None).contains("you have no swarm pool"));
         assert!(auto_pool_empty_reason(Some(&empty)).contains("your swarm pool is empty"));
