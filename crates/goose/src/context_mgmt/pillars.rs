@@ -85,6 +85,9 @@ pub struct WorkFolder {
     /// Calls that worked here ([`call_place`]): a shell command that opened with `cd` to it or ran
     /// in it, a call whose `cwd` argument named it, a call on a file under it.
     pub calls: usize,
+    /// The commands that moved here (`cd` to it, a `cwd` naming it): what makes a folder other than
+    /// the chat's one whose relative paths are not the chat's.
+    moved_here: usize,
     /// Files the `write`/`edit` calls changed under it.
     pub files: usize,
     /// The newest call that worked here, by its place among the conversation's calls.
@@ -761,7 +764,7 @@ impl Pillars {
     /// paths were that folder's.
     fn elsewhere(&self) -> Option<String> {
         let chat = self.chat_folder.as_deref()?;
-        if !self.work.iter().any(|f| f.calls > 0 && f.path != chat) {
+        if !self.work.iter().any(|f| f.moved_here > 0 && f.path != chat) {
             return None;
         }
         Some(format!(
@@ -1148,13 +1151,15 @@ fn work_folders(
             continue;
         };
         let path = folder.display().to_string();
-        if !folders.iter().any(|f| f.path == path) {
-            folders.push(WorkFolder {
+        match folders.iter_mut().find(|f| f.path == path) {
+            Some(known) => known.moved_here += 1,
+            None => folders.push(WorkFolder {
                 path,
                 calls: 0,
+                moved_here: 1,
                 files: 0,
                 newest: position,
-            });
+            }),
         }
     }
     let written_at = |file: &WrittenFile| {
@@ -1187,6 +1192,7 @@ fn work_folders(
                         folders.push(WorkFolder {
                             path,
                             calls: 0,
+                            moved_here: 0,
                             files: 0,
                             newest: 0,
                         });
