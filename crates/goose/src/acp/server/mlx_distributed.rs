@@ -45,6 +45,7 @@ fn gib(bytes: u64) -> f64 {
 fn owned_manager() -> Result<&'static distributed::DistributedManager, agent_client_protocol::Error>
 {
     let manager = distributed::global_manager();
+    super::mlx_engine::wired_reserve_gib();
     manager.set_owner(
         owner_record::install_token()
             .internal_err_ctx("reading this install's distributed owner token")?,
@@ -224,6 +225,21 @@ fn preflight_to_dto(report: PreflightReport) -> MlxDistributedPreflightDto {
                         rss_bytes: a.rss_bytes,
                     })
                     .collect(),
+                wired_what_if: n.wired_what_if.map(|w| {
+                    let fallback_command = goose_sidecar::wired_limit::fallback_command(w.mb);
+                    MlxDistributedWiredWhatIfDto {
+                        mb: w.mb,
+                        keep_bytes: w.keep_bytes,
+                        beyond_suggestion: w.beyond_suggestion,
+                        max_context_now: w.max_context_now,
+                        max_context_then: w.max_context_then,
+                        layers_now: w.layers_now,
+                        layers_then: w.layers_then,
+                        budget_now_bytes: w.budget_now_bytes,
+                        budget_then_bytes: w.budget_then_bytes,
+                        fallback_command,
+                    }
+                }),
             })
             .collect(),
         repairs: report.repairs,

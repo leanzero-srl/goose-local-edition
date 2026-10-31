@@ -4940,6 +4940,63 @@
   "microphoneSelector.test": {
     "defaultMessage": "testi"
   },
+  "mlxDistWired.beyond": {
+    "defaultMessage": "Bu, rezervin izin verdiği en yüksek değer ve {mac} cihazının şu anki kullanımına göre yapılan önerinin üzerinde: orada bellek baskısı bekleyin."
+  },
+  "mlxDistWired.binds": {
+    "defaultMessage": "Tavan sınırlıyor"
+  },
+  "mlxDistWired.buys": {
+    "defaultMessage": "{mac} üzerinde {mb} MB’a yükselt: {layers}maks. bağlam {now} → ~{then}"
+  },
+  "mlxDistWired.buysLayers": {
+    "defaultMessage": "{count, plural, other {+# katman}} {mac} cihazına geçer → "
+  },
+  "mlxDistWired.buysNothing": {
+    "defaultMessage": "{mac} cihazını {mb} MB’a yükseltmek burada bir şey kazandırmaz: planlayıcı yine maks. bağlam {now} sığdırır (başka bir sınır belirleyici)."
+  },
+  "mlxDistWired.done": {
+    "defaultMessage": "Yükseltildi"
+  },
+  "mlxDistWired.doneText": {
+    "defaultMessage": "{mac} artık {mb} MB gösteriyor. Bununla planlamak için ön kontrolü yeniden çalıştırın."
+  },
+  "mlxDistWired.failed": {
+    "defaultMessage": "Değiştirilmedi"
+  },
+  "mlxDistWired.fallback": {
+    "defaultMessage": "{mac} üzerinde çalışan bir goose uygulaması yoksa veya orada onaylayabilecek kimse yoksa, bunu {mac} üzerinde Terminal’de çalıştırın:"
+  },
+  "mlxDistWired.intro": {
+    "defaultMessage": "Bir düğümün bütçesi, boş belleği ile macOS’un wired sınırından belirlediği GPU tavanından küçük olanıdır. Tavanın sınırladığı yerlerde ön kontrol, bölmeyi yükseltilmiş bir sınırla yeniden planladı."
+  },
+  "mlxDistWired.keepAfterRestart": {
+    "defaultMessage": "Yeniden başlatmada koru"
+  },
+  "mlxDistWired.keeps": {
+    "defaultMessage": "{mac} üzerindeki macOS ve diğer uygulamalara {keep} GB kalır"
+  },
+  "mlxDistWired.limitDefault": {
+    "defaultMessage": "wired sınırı 0 (macOS varsayılanı) · GPU tavanı {ceiling} GB"
+  },
+  "mlxDistWired.limitRaised": {
+    "defaultMessage": "wired sınırı {mb} MB · GPU tavanı {ceiling} GB"
+  },
+  "mlxDistWired.limitUnread": {
+    "defaultMessage": "wired sınırı okunamadı"
+  },
+  "mlxDistWired.noApp": {
+    "defaultMessage": "{mac} cihazına goose uygulamasıyla değil ssh ile erişiliyor, bu yüzden buradan oradaki kimseye sorulamaz. Bunu {mac} üzerinde Terminal’de çalıştırın:"
+  },
+  "mlxDistWired.raise": {
+    "defaultMessage": "{mac} üzerinde yükselt"
+  },
+  "mlxDistWired.title": {
+    "defaultMessage": "GPU wired sınırları"
+  },
+  "mlxDistWired.waiting": {
+    "defaultMessage": "Yönetici istemi {mac} üzerinde açık: başındaki kişi onaylar ya da iptal eder. Bölmenin bir sonraki başlatılmasında geçerli olur."
+  },
   "mlxDistributed.action.preflight": {
     "defaultMessage": "Preflight (deneme çalıştırması)"
   },
@@ -6122,6 +6179,12 @@
   "mlxMemory.unsaved": {
     "defaultMessage": "kaydedilmedi"
   },
+  "mlxMemory.wiredBelowOthers": {
+    "defaultMessage": "Geriye {keep} GB kalır; bu, {mac} cihazının şu anda GPU dışında kullandığı miktar ({others} GB) artı {reserve} GB rezervden az: bellek baskısı ve takas bekleyin."
+  },
+  "mlxMemory.wiredBelowReserve": {
+    "defaultMessage": "Reddedildi: geriye {keep} GB kalır, bu da {reserve} GB minimumun altında. MLX motoru GPU dışında da RAM’e ihtiyaç duyar (yük altında yaklaşık 12 GB ölçüldü), çekirdek ve sistem de yaklaşık 10 GB daha. Burada izin verilen en yüksek değer {max} MB."
+  },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "Açılış ayarı (LaunchDaemon)"
   },
@@ -6137,32 +6200,56 @@
   "mlxMemory.wiredDefault": {
     "defaultMessage": "0 (macOS varsayılanı)"
   },
+  "mlxMemory.wiredDisable": {
+    "defaultMessage": "Devre Dışı Bırak (macOS varsayılanı)"
+  },
   "mlxMemory.wiredDone": {
     "defaultMessage": "Tamam"
   },
+  "mlxMemory.wiredDoneDefault": {
+    "defaultMessage": "{mac} üzerindeki wired sınırı macOS varsayılanına döndü."
+  },
   "mlxMemory.wiredDoneText": {
-    "defaultMessage": "Wired sınırı şu an {mb} MB."
+    "defaultMessage": "{mac} üzerindeki wired sınırı artık {mb} MB."
+  },
+  "mlxMemory.wiredEnable": {
+    "defaultMessage": "Etkinleştir"
   },
   "mlxMemory.wiredFailed": {
     "defaultMessage": "Değiştirilmedi"
   },
-  "mlxMemory.wiredIntro": {
-    "defaultMessage": "macOS'un GPU'nun ne kadar RAM'i wired olarak ayırmasına izin verdiği; bu her motoru sınırlar. Ayarlamak yönetici olarak tek bir komut çalıştırır: macOS parolanızı ister. Açılış ayarını da yüklemezseniz yeniden başlatmada sıfırlanır. Metal bunu bir işlem başlarken okur, bu yüzden motor yeni değeri bir sonraki başlatmada görür."
+  "mlxMemory.wiredFallback": {
+    "defaultMessage": "Ya da bunu {mac} üzerinde Terminal’de çalıştırın:"
   },
-  "mlxMemory.wiredInvalid": {
-    "defaultMessage": "0 veya 8192 ile {max} arasında bir tam sayı kullanın."
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "macOS’un GPU’nun wired olarak ayırmasına izin verdiği RAM miktarı; {mac} üzerindeki her motoru bununla sınırlar. Etkinleştir ve Devre Dışı Bırak her biri yönetici olarak tek bir komut çalıştırır: macOS parolayı {mac} üzerinde sorar, goose onu asla görmez veya saklamaz. Sınır, korunmadıkça yeniden başlatmada sıfırlanır. Metal bunu bir işlem başlarken okur, bu yüzden motor yeni değeri bir sonraki başlatmada görür."
+  },
+  "mlxMemory.wiredInvalidValue": {
+    "defaultMessage": "8192 ile {max} MB arasında bir tam sayı girin veya macOS varsayılanı için Devre Dışı Bırak’ı kullanın."
+  },
+  "mlxMemory.wiredKeep": {
+    "defaultMessage": "macOS ve diğer uygulamalara {physical} GB içinden {keep} GB kalır"
+  },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "Bu, macOS’un şu an GPU’ya verdiği çalışma kümesinin ({ws}) altında: Etkinleştir onu yükseltmez, düşürür."
+  },
+  "mlxMemory.wiredNoSuggestion": {
+    "defaultMessage": "Artış önerilmiyor: {mac} cihazının şu anki kullanımı artı {reserve} GB rezerv, wired için çok az yer bırakıyor."
+  },
+  "mlxMemory.wiredOthers": {
+    "defaultMessage": "Şu anda GPU dışında kullanılan"
   },
   "mlxMemory.wiredPanel": {
     "defaultMessage": "macOS GPU wired sınırı"
   },
-  "mlxMemory.wiredPersist": {
-    "defaultMessage": "Ayarla ve yeniden başlatmadan sonra koru"
+  "mlxMemory.wiredPersistLabel": {
+    "defaultMessage": "Yeniden başlatmada koru"
   },
-  "mlxMemory.wiredRange": {
-    "defaultMessage": "MB · 0 (macOS varsayılanı) veya 8192 ile {max} arası"
+  "mlxMemory.wiredPersistNote": {
+    "defaultMessage": "Her açılışta değeri ayarlayan bir LaunchDaemon yükler; Devre Dışı Bırak onu kaldırır."
   },
-  "mlxMemory.wiredRemoteNote": {
-    "defaultMessage": "Wired sınırı Mac'in kendisinde ayarlanır: değiştirmek için {mac} üzerinde goose'u açın."
+  "mlxMemory.wiredRangeReserve": {
+    "defaultMessage": "MB ({gib} GB) · 8192 ile {max} arası"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "Açılış ayarını kaldır"
@@ -6170,14 +6257,35 @@
   "mlxMemory.wiredRemoveNote": {
     "defaultMessage": "Açılış ayarını kaldırmak, mevcut değeri bir sonraki yeniden başlatmaya kadar korur."
   },
-  "mlxMemory.wiredSet": {
-    "defaultMessage": "Yeniden başlatmaya kadar ayarla"
+  "mlxMemory.wiredReserve": {
+    "defaultMessage": "macOS için minimum rezerv"
   },
-  "mlxMemory.wiredSuggest": {
-    "defaultMessage": "çıkarım kutusu için önerilen: {mb} MB"
+  "mlxMemory.wiredReserveValue": {
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+  },
+  "mlxMemory.wiredStateDefault": {
+    "defaultMessage": "macOS varsayılanı"
+  },
+  "mlxMemory.wiredStateKept": {
+    "defaultMessage": "Yeniden başlatmada korunur"
+  },
+  "mlxMemory.wiredStateRaised": {
+    "defaultMessage": "Yükseltildi: {mb} MB"
+  },
+  "mlxMemory.wiredSuggested": {
+    "defaultMessage": "Ölçüme göre öneri: {mb} MB (şu anda kullanılan {others} GB + {reserve} GB rezervi korur)"
+  },
+  "mlxMemory.wiredSuggestedLow": {
+    "defaultMessage": "macOS varsayılanı GPU’ya zaten {ws} veriyor: {mac} cihazının şu anki kullanımıyla {mb} MB üzerine çıkmak rezerve dokunur."
+  },
+  "mlxMemory.wiredUseSuggestion": {
+    "defaultMessage": "Kullan"
   },
   "mlxMemory.wiredValue": {
     "defaultMessage": "Yeni sınır"
+  },
+  "mlxMemory.wiredWaiting": {
+    "defaultMessage": "{mac} üzerinde yönetici istemi bekleniyor: başındaki kişi onaylar ya da iptal eder. O zamana kadar hiçbir şey değişmez."
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {# Mac'e bölünmüş · {backend}} other {# Mac'e bölünmüş · {backend}}}"

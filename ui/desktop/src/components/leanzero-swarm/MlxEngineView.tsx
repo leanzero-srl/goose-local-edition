@@ -3314,6 +3314,7 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
           macPicker={samplingMacPicker}
           isSelf={samplingIsSelf}
           macName={samplingMacObj.name}
+          nodeId={macTarget(samplingMacObj)}
           status={samplingStatus}
           settings={samplingSettings}
           engineBusy={engineBusy}

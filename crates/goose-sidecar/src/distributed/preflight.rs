@@ -135,6 +135,25 @@ pub struct NodePreflight {
     /// FAILed on one: what the start's `modelLoading` refusal names in plain words.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loading: Option<crate::machine::LoadHolder>,
+    /// What raising this node's wired limit would buy ([`wired_what_ifs`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wired_what_if: Option<WiredWhatIf>,
+}
+
+/// The split planned again with one node's GPU ceiling at `mb` MiB, every other figure as
+/// measured: the planner's own answer to "what would raising this node's wired limit buy".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WiredWhatIf {
+    pub mb: u64,
+    pub keep_bytes: u64,
+    /// `mb` is the most the reserve allows, above the suggestion (others + reserve).
+    pub beyond_suggestion: bool,
+    pub max_context_now: Option<u64>,
+    pub max_context_then: Option<u64>,
+    pub layers_now: Option<u32>,
+    pub layers_then: Option<u32>,
+    pub budget_now_bytes: u64,
+    pub budget_then_bytes: Option<u64>,
 }
 
 /// One node's measured memory figures and the budget the rule builds from them.
@@ -1422,6 +1441,27 @@ pub async fn run_preflight(
         ));
     }
 
+    let mut what_ifs = match (runner, budgets.iter().all(Option::is_some)) {
+        (Some(runner), true) => {
+            let budgets: Vec<NodeFigures> = budgets.iter().map(|b| b.unwrap()).collect();
+            let ceilings: Vec<(Option<u64>, u64)> = answers
+                .iter()
+                .map(|a| (a.ceiling, a.other_engines_bytes))
+                .collect();
+            wired_what_ifs(
+                config,
+                &exec,
+                runner,
+                &budgets,
+                &ceilings,
+                &report,
+                &plans,
+                crate::wired_limit::min_reserve_gib(),
+            )
+            .await
+        }
+        _ => vec![None; config.size()],
+    };
     for (rank, mut answer) in answers.into_iter().enumerate() {
         let node = &config.nodes[rank];
         let plan = plans[rank].clone();
@@ -1508,10 +1548,100 @@ pub async fn run_preflight(
             leftovers: answer.leftovers,
             foreign_splits: answer.foreign_splits,
             loading: answer.loading,
+            wired_what_if: what_ifs[rank].take(),
         });
     }
     report.ok = report.failures().is_empty() && report.nodes.iter().all(|n| n.plan.is_some());
     Ok(report)
+}
+
+/// A node's GPU ceiling binds its budget when the budget reaches it (64 MiB of slack for the
+/// fork planner's GiB arguments).
+fn ceiling_binds(budget_bytes: u64, ceiling_left: u64) -> bool {
+    budget_bytes + 64 * 1024 * 1024 >= ceiling_left
+}
+
+/// The wired limit a what-if plans with for a node: the suggestion (physical − others − reserve)
+/// when it is above the node's ceiling now, else the most the reserve allows when THAT is; `None`
+/// when no allowed limit raises the ceiling. Returns (MB, beyond the suggestion).
+pub fn what_if_mb(
+    total: u64,
+    available: u64,
+    ceiling: u64,
+    reserve_gib: u64,
+) -> Option<(u64, bool)> {
+    use crate::wired_limit::{ceiling_bytes, max_mb, suggested_mb};
+    let others = total.saturating_sub(available);
+    if let Some(mb) =
+        suggested_mb(total, others, reserve_gib).filter(|mb| ceiling_bytes(*mb) > ceiling)
+    {
+        return Some((mb, false));
+    }
+    let max = max_mb(total, reserve_gib);
+    (ceiling_bytes(max) > ceiling).then_some((max, true))
+}
+
+/// For every node whose GPU ceiling binds its budget, the split planned again with that node's
+/// ceiling raised to [`what_if_mb`] — the same `plan_tensor` / `plan_pipeline` the preflight
+/// just ran, on a scratch report, so the answer is the planner's arithmetic and nothing else.
+#[allow(clippy::too_many_arguments)]
+async fn wired_what_ifs(
+    config: &DistributedConfig,
+    exec: &Arc<dyn NodeExec>,
+    runner: Runner,
+    budgets: &[NodeFigures],
+    ceilings: &[(Option<u64>, u64)],
+    report: &PreflightReport,
+    plans: &[Option<RankPlan>],
+    reserve_gib: u64,
+) -> Vec<Option<WiredWhatIf>> {
+    let mut out = vec![None; config.size()];
+    for (rank, plan) in plans.iter().enumerate() {
+        let (Some(plan), (Some(ceiling), other_engines)) = (plan, ceilings[rank]) else {
+            continue;
+        };
+        let figures = budgets[rank];
+        if !ceiling_binds(plan.budget_bytes, figures.ceiling) {
+            continue;
+        }
+        let Some((mb, beyond_suggestion)) =
+            what_if_mb(figures.total, figures.available, ceiling, reserve_gib)
+        else {
+            continue;
+        };
+        let mut raised = budgets.to_vec();
+        raised[rank] = NodeFigures::new(
+            figures.available,
+            figures.total,
+            crate::wired_limit::ceiling_bytes(mb).saturating_sub(other_engines),
+        );
+        let mut scratch = report.clone();
+        scratch.checks.clear();
+        scratch.max_context_fits = None;
+        scratch.pipeline_starts = None;
+        let mut then: Vec<Option<RankPlan>> = vec![None; config.size()];
+        match runner {
+            Runner::MlxLmTensor => plan_tensor(config, &raised, &mut scratch, &mut then),
+            Runner::PipelineQwen4 => {
+                plan_pipeline(config, exec, &raised, &mut scratch, &mut then).await;
+            }
+        }
+        let layers = |p: &RankPlan| p.layer_end.saturating_sub(p.layer_start);
+        out[rank] = Some(WiredWhatIf {
+            mb,
+            keep_bytes: figures
+                .total
+                .saturating_sub(crate::wired_limit::ceiling_bytes(mb)),
+            beyond_suggestion,
+            max_context_now: report.max_context_fits,
+            max_context_then: scratch.max_context_fits,
+            layers_now: Some(layers(plan)),
+            layers_then: then[rank].as_ref().map(layers),
+            budget_now_bytes: plan.budget_bytes,
+            budget_then_bytes: then[rank].as_ref().map(|p| p.budget_bytes),
+        });
+    }
+    out
 }
 
 /// An APP's process tree is subject to its Local Network privilege: this Mac's, and a LeanZero Link
@@ -2073,6 +2203,29 @@ async fn repair_node(
 pub(crate) mod tests {
     use super::*;
     use crate::distributed::config::tests::two_mac_config;
+
+    #[test]
+    fn the_what_if_raises_to_the_suggestion_else_to_the_reserve_and_only_when_the_ceiling_binds() {
+        const MIB: u64 = 1024 * 1024;
+        let gib = |g: u64| g * 1024 * MIB;
+        // workmule tonight: 128 GiB, the 115.45 GB default ceiling, 10 GB in use outside the GPU.
+        let ceiling = 115_448_725_504;
+        assert_eq!(
+            what_if_mb(gib(128), gib(128) - 10_000_000_000, ceiling, 16),
+            Some((114_688, true)),
+            "the suggestion (105,000 MB) is under the default, so the most the reserve allows"
+        );
+        // Little in use: the suggestion itself clears the ceiling.
+        assert_eq!(
+            what_if_mb(gib(128), gib(128) - 2_000_000_000, 100_000 * MIB, 16),
+            Some((112_000, false))
+        );
+        // Already at the reserve's maximum: nothing to raise.
+        assert_eq!(what_if_mb(gib(128), gib(120), 114_688 * MIB, 16), None);
+        assert!(ceiling_binds(ceiling, ceiling));
+        assert!(ceiling_binds(ceiling - 1024, ceiling));
+        assert!(!ceiling_binds(ceiling - gib(1), ceiling));
+    }
 
     #[test]
     fn the_repair_is_licensed_only_on_the_configured_thunderbolt_service() {

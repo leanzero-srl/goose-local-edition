@@ -117,8 +117,18 @@ Write the answers into the run's NOTES.md / parity file. A step that cannot pass
    c2. What raising `iogpu.wired_limit_mb` buys is min(0.97 x new working set, floor room) - today's cap: on the mule
       (2026-10-30, lz.20 boot with Flash-Next) floor room = 137.4 - others 19.6 idle (22 under a Gauntlet) - floor 7
       = 110.9 GB < the 112.0 GB cap, so at the default floor it buys 0 GB. With floor 4 GB it is 113.9 GB idle:
-      `sudo sysctl iogpu.wired_limit_mb=112000` (working set 117.4 GB, cap 113.9) buys +1.9 GB (~77k tokens at
+      wired limit 112000 MB (working set 117.4 GB, cap 113.9) buys +1.9 GB (~77k tokens at
       24,576 B/token) only while others stay ~19.6 GB; any value above 112000 buys nothing more. Measure others first.
+   c3. SET IT WITH THE BUTTON, never a typed sysctl (owner 2026-10-31). Settings > LeanZero MLX > Memory > "macOS GPU
+      wired limit", per Mac (pick the Mac; a Link peer is relayed): Enable (a value, optional "Keep after restart" =
+      LaunchDaemon) / Disable (back to 0 and the LaunchDaemon removed). The macOS admin prompt appears on THAT Mac
+      (180 s, then "nobody approved"); goose never sees the password. It shows "macOS and other apps keep X GiB",
+      REFUSES a value leaving under the reserve (`GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB`, default 16 GiB: engine ~12 GB
+      anonymous + kernel/system ~10 GB measured 10-30/31; 122000 on 128 GiB leaves 8.9 GiB = refused), warns under
+      others + reserve, and suggests physical - others - reserve. A split: the distributed view's "GPU wired limits"
+      rows show every node's limit and, where the ceiling binds, the preflight's own re-plan ("+1 layer moves to
+      workmule -> max context 262k -> ~323k") with "Raise on <Mac>"; an ssh-only node or a failed/cancelled prompt
+      shows the exact `sudo /usr/sbin/sysctl iogpu.wired_limit_mb=N` to run on that Mac.
    d. The tunables (Settings > LeanZero MLX > Memory; config key `mlx_engine.memory.<key>` -> engine flag):
       | key | flag | default |
       |---|---|---|
@@ -132,7 +142,7 @@ Write the answers into the run's NOTES.md / parity file. A step that cannot pass
       | auto_utilization_floor / _ceiling | --auto-utilization-floor / -ceiling | 0.90 / 0.97 |
       | auto_headroom_fraction | --auto-headroom-fraction | 0.08 |
       | system_reserve_fraction | --system-reserve-fraction | 0.08 |
-      | (macOS) | `sudo sysctl iogpu.wired_limit_mb=N` via the tab's button (admin password; optional LaunchDaemon) | 0 |
+      | (macOS) | the tab's Enable / Disable button (c3; admin prompt on that Mac; optional LaunchDaemon) | 0 |
       lz.20-only flags are sent only when ENGINE_LAUNCHER pins >= v0.14.3-lz.20; a set one on an older pin fails the
       mount by name.
    e. Procedure: read the spec (a); set EVERY tunable on purpose (blank = the default, chosen knowingly); record the

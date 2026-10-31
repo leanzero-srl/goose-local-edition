@@ -4940,6 +4940,63 @@
   "microphoneSelector.test": {
     "defaultMessage": "Uji"
   },
+  "mlxDistWired.beyond": {
+    "defaultMessage": "Itu nilai paling tinggi yang dibenarkan rizab, melebihi cadangan berdasarkan penggunaan {mac} sekarang: jangkakan tekanan memori di sana."
+  },
+  "mlxDistWired.binds": {
+    "defaultMessage": "Siling mengehadkan"
+  },
+  "mlxDistWired.buys": {
+    "defaultMessage": "Naikkan kepada {mb} MB pada {mac}: {layers}konteks maks {now} → ~{then}"
+  },
+  "mlxDistWired.buysLayers": {
+    "defaultMessage": "{count, plural, other {+# lapisan berpindah}} ke {mac} → "
+  },
+  "mlxDistWired.buysNothing": {
+    "defaultMessage": "Menaikkan {mac} kepada {mb} MB tidak memberi apa-apa di sini: perancang masih memuatkan konteks maks {now} (had lain yang mengehadkan)."
+  },
+  "mlxDistWired.done": {
+    "defaultMessage": "Dinaikkan"
+  },
+  "mlxDistWired.doneText": {
+    "defaultMessage": "{mac} kini membaca {mb} MB. Jalankan preflight semula untuk merancang dengannya."
+  },
+  "mlxDistWired.failed": {
+    "defaultMessage": "Tidak diubah"
+  },
+  "mlxDistWired.fallback": {
+    "defaultMessage": "Jika tiada apl goose berjalan pada {mac}, atau tiada sesiapa di situ boleh meluluskan, jalankan ini dalam Terminal pada {mac}:"
+  },
+  "mlxDistWired.intro": {
+    "defaultMessage": "Bajet sesuatu nod ialah yang lebih kecil antara memori bebasnya dan siling GPU-nya, yang ditetapkan macOS daripada had wired. Di mana siling itu mengehadkan, preflight merancang semula pembahagian dengan had yang dinaikkan."
+  },
+  "mlxDistWired.keepAfterRestart": {
+    "defaultMessage": "Kekalkan selepas mula semula"
+  },
+  "mlxDistWired.keeps": {
+    "defaultMessage": "macOS dan apl lain pada {mac} mengekalkan {keep} GB"
+  },
+  "mlxDistWired.limitDefault": {
+    "defaultMessage": "had wired 0 (lalai macOS) · siling GPU {ceiling} GB"
+  },
+  "mlxDistWired.limitRaised": {
+    "defaultMessage": "had wired {mb} MB · siling GPU {ceiling} GB"
+  },
+  "mlxDistWired.limitUnread": {
+    "defaultMessage": "had wired tidak dibaca"
+  },
+  "mlxDistWired.noApp": {
+    "defaultMessage": "{mac} dicapai melalui ssh, bukan melalui apl goose, jadi tiada sesiapa di situ boleh ditanya dari sini. Jalankan ini dalam Terminal pada {mac}:"
+  },
+  "mlxDistWired.raise": {
+    "defaultMessage": "Naikkan pada {mac}"
+  },
+  "mlxDistWired.title": {
+    "defaultMessage": "Had wired GPU"
+  },
+  "mlxDistWired.waiting": {
+    "defaultMessage": "Gesaan pentadbir dipaparkan pada {mac}: sesiapa yang berada di situ meluluskan atau membatalkan. Ia berkuat kuasa pada permulaan pembahagian seterusnya."
+  },
   "mlxDistributed.action.preflight": {
     "defaultMessage": "Preflight (larian kering)"
   },
@@ -6122,6 +6179,12 @@
   "mlxMemory.unsaved": {
     "defaultMessage": "belum disimpan"
   },
+  "mlxMemory.wiredBelowOthers": {
+    "defaultMessage": "Ini meninggalkan {keep} GB, kurang daripada yang digunakan {mac} di luar GPU sekarang ({others} GB) ditambah rizab {reserve} GB: jangkakan tekanan memori dan swapping."
+  },
+  "mlxMemory.wiredBelowReserve": {
+    "defaultMessage": "Ditolak: ini meninggalkan {keep} GB, di bawah minimum {reserve} GB. Enjin MLX juga memerlukan RAM di luar GPU (kira-kira 12 GB diukur semasa beban) dan kernel serta sistem kira-kira 10 GB lagi. Nilai tertinggi yang dibenarkan di sini ialah {max} MB."
+  },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "Tetapan but (LaunchDaemon)"
   },
@@ -6137,32 +6200,56 @@
   "mlxMemory.wiredDefault": {
     "defaultMessage": "0 (lalai macOS)"
   },
+  "mlxMemory.wiredDisable": {
+    "defaultMessage": "Nyahdayakan (lalai macOS)"
+  },
   "mlxMemory.wiredDone": {
     "defaultMessage": "Selesai"
   },
+  "mlxMemory.wiredDoneDefault": {
+    "defaultMessage": "Had wired pada {mac} kembali kepada lalai macOS."
+  },
   "mlxMemory.wiredDoneText": {
-    "defaultMessage": "Had wired kini {mb} MB."
+    "defaultMessage": "Had wired pada {mac} kini {mb} MB."
+  },
+  "mlxMemory.wiredEnable": {
+    "defaultMessage": "Dayakan"
   },
   "mlxMemory.wiredFailed": {
     "defaultMessage": "Tidak diubah"
   },
-  "mlxMemory.wiredIntro": {
-    "defaultMessage": "Berapa banyak RAM yang dibenarkan macOS untuk di-wire oleh GPU, yang menghad setiap enjin. Menetapkannya menjalankan satu arahan sebagai pentadbir: macOS meminta kata laluan anda. Ia ditetapkan semula semasa but semula melainkan anda juga memasang tetapan but. Metal membacanya apabila proses bermula, jadi enjin melihat nilai baharu pada permulaan seterusnya."
+  "mlxMemory.wiredFallback": {
+    "defaultMessage": "Atau jalankan ini dalam Terminal pada {mac}:"
   },
-  "mlxMemory.wiredInvalid": {
-    "defaultMessage": "Gunakan 0 atau nombor bulat dari 8192 hingga {max}."
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "Jumlah RAM yang dibenarkan macOS untuk di-wire oleh GPU, yang mengehadkan setiap enjin pada {mac}. Dayakan dan Nyahdayakan masing-masing menjalankan satu arahan sebagai pentadbir: macOS meminta kata laluan pada {mac} dan goose tidak pernah melihat atau menyimpannya. Had ditetapkan semula apabila dimulakan semula melainkan anda mengekalkannya. Metal membacanya apabila proses bermula, jadi enjin melihat nilai baharu pada permulaan seterusnya."
+  },
+  "mlxMemory.wiredInvalidValue": {
+    "defaultMessage": "Gunakan nombor bulat dari 8192 hingga {max} MB, atau Nyahdayakan untuk lalai macOS."
+  },
+  "mlxMemory.wiredKeep": {
+    "defaultMessage": "macOS dan apl lain mengekalkan {keep} GB daripada {physical} GB"
+  },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "Itu di bawah set kerja GPU yang macOS berikan sekarang ({ws}): Dayakan akan merendahkannya, bukan menaikkannya."
+  },
+  "mlxMemory.wiredNoSuggestion": {
+    "defaultMessage": "Tiada kenaikan dicadangkan: penggunaan {mac} sekarang ditambah rizab {reserve} GB meninggalkan terlalu sedikit untuk di-wire."
+  },
+  "mlxMemory.wiredOthers": {
+    "defaultMessage": "Digunakan di luar GPU sekarang"
   },
   "mlxMemory.wiredPanel": {
     "defaultMessage": "Had wired GPU macOS"
   },
-  "mlxMemory.wiredPersist": {
-    "defaultMessage": "Tetapkan dan kekalkan selepas but semula"
+  "mlxMemory.wiredPersistLabel": {
+    "defaultMessage": "Kekalkan selepas mula semula"
   },
-  "mlxMemory.wiredRange": {
-    "defaultMessage": "MB · 0 (lalai macOS) atau 8192 hingga {max}"
+  "mlxMemory.wiredPersistNote": {
+    "defaultMessage": "Memasang LaunchDaemon yang menetapkan nilai pada setiap but; Nyahdayakan membuangnya."
   },
-  "mlxMemory.wiredRemoteNote": {
-    "defaultMessage": "Had wired ditetapkan pada Mac itu sendiri: buka goose pada {mac} untuk mengubahnya."
+  "mlxMemory.wiredRangeReserve": {
+    "defaultMessage": "MB ({gib} GB) · 8192 hingga {max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "Alih keluar tetapan but"
@@ -6170,14 +6257,35 @@
   "mlxMemory.wiredRemoveNote": {
     "defaultMessage": "Mengalih keluar tetapan but mengekalkan nilai semasa sehingga but semula seterusnya."
   },
-  "mlxMemory.wiredSet": {
-    "defaultMessage": "Tetapkan sehingga but semula"
+  "mlxMemory.wiredReserve": {
+    "defaultMessage": "Rizab minimum untuk macOS"
   },
-  "mlxMemory.wiredSuggest": {
-    "defaultMessage": "dicadangkan untuk kotak inferens: {mb} MB"
+  "mlxMemory.wiredReserveValue": {
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+  },
+  "mlxMemory.wiredStateDefault": {
+    "defaultMessage": "Lalai macOS"
+  },
+  "mlxMemory.wiredStateKept": {
+    "defaultMessage": "Dikekalkan selepas mula semula"
+  },
+  "mlxMemory.wiredStateRaised": {
+    "defaultMessage": "Dinaikkan kepada {mb} MB"
+  },
+  "mlxMemory.wiredSuggested": {
+    "defaultMessage": "Cadangan daripada pengukuran: {mb} MB (mengekalkan {others} GB yang digunakan sekarang + rizab {reserve} GB)"
+  },
+  "mlxMemory.wiredSuggestedLow": {
+    "defaultMessage": "Lalai macOS sudah memberi GPU {ws}: berdasarkan penggunaan {mac} sekarang, kenaikan melebihi {mb} MB akan memakan rizab."
+  },
+  "mlxMemory.wiredUseSuggestion": {
+    "defaultMessage": "Guna"
   },
   "mlxMemory.wiredValue": {
     "defaultMessage": "Had baharu"
+  },
+  "mlxMemory.wiredWaiting": {
+    "defaultMessage": "Menunggu gesaan pentadbir pada {mac}: sesiapa yang berada di situ meluluskan atau membatalkan. Tiada apa berubah sehingga itu."
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {Dibahagikan merentas # Mac · {backend}} other {Dibahagikan merentas # Mac · {backend}}}"

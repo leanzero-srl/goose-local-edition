@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import type { IntlShape, MessageDescriptor } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
+import { DistributedWiredLimits } from './DistributedWiredLimits';
 import {
   Button,
   Chip,
@@ -1051,6 +1052,7 @@ function PreflightReportView({
           ))}
         </div>
       )}
+      <DistributedWiredLimits nodes={report.nodes} />
       {report.checks.length > 0 && (
         <div className="flex flex-col gap-2">
           <span className={TYPE.meta}>{intl.formatMessage(i18n.clusterChecks)}</span>

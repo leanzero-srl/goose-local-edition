@@ -6,9 +6,14 @@ import {
   memoryConsequences,
   parseMemoryDrafts,
   presetDrafts,
-  suggestedWiredLimitMb,
+  suggestedWiredMb,
+  wiredDisableCommand,
+  wiredFallbackCommand,
+  wiredKeepMb,
+  wiredLimitCheck,
   wiredLimitCommand,
   wiredLimitValid,
+  wiredMaxMb,
   type MemoryDrafts,
 } from './memoryTunables';
 import { sanitizeSettingsForWrite } from './MlxEngineView';
@@ -158,15 +163,43 @@ describe('presets only fill fields', () => {
 });
 
 describe('the wired limit', () => {
-  it('suggests 122000 MB on 128 GiB and validates 0 or 8192..physical', () => {
-    expect(suggestedWiredLimitMb(MAC_128)).toBe(122000);
-    expect(wiredLimitValid(0, MAC_128)).toBe(true);
-    expect(wiredLimitValid(8192, MAC_128)).toBe(true);
-    expect(wiredLimitValid(131072, MAC_128)).toBe(true);
-    expect(wiredLimitValid(8191, MAC_128)).toBe(false);
-    expect(wiredLimitValid(131073, MAC_128)).toBe(false);
-    expect(wiredLimitValid(9000.5, MAC_128)).toBe(false);
-    expect(wiredLimitCommand(122000)).toBe('/usr/sbin/sysctl iogpu.wired_limit_mb=122000');
+  const GIB_ = 1024 ** 3;
+  const R = 16;
+  // The same table as goose-sidecar wired_limit.rs the_reserve_math_on_64_96_and_128_gb_macs.
+  it.each([
+    [64, 8, 49_152, 41_000],
+    [96, 10, 81_920, 72_000],
+    [128, 10, 114_688, 105_000],
+  ])('%i GiB with %i GB in use: max %i MB, suggestion %i MB', (gib, othersGb, max, suggestion) => {
+    const physical = gib * GIB_;
+    expect(wiredMaxMb(physical, R)).toBe(max);
+    expect(suggestedWiredMb(physical, othersGb * 1e9, R)).toBe(suggestion);
+    expect(wiredLimitCheck(suggestion, physical, R, othersGb * 1e9).kind).toBe('ok');
+    expect(wiredLimitCheck(max, physical, R, othersGb * 1e9).kind).toBe('belowOthers');
+    expect(wiredLimitCheck(max + 1, physical, R, null).kind).toBe('belowReserve');
+    expect(wiredKeepMb(0, physical)).toBeNull();
+  });
+
+  it("refuses the owner's first number below the reserve, and validates 0 or 8192..physical", () => {
+    expect(wiredKeepMb(122000, MAC_128)).toBe(9072);
+    expect(wiredLimitCheck(122000, MAC_128, R, null)).toEqual({ kind: 'belowReserve', keepMb: 9072 });
+    expect(wiredLimitValid(122000, MAC_128, R)).toBe(false);
+    expect(wiredLimitValid(122000, MAC_128, 8)).toBe(true);
+    expect(wiredLimitValid(0, MAC_128, R)).toBe(true);
+    expect(wiredLimitValid(8192, MAC_128, R)).toBe(true);
+    expect(wiredLimitValid(8191, MAC_128, R)).toBe(false);
+    expect(wiredLimitValid(131073, MAC_128, 0)).toBe(false);
+    expect(wiredLimitValid(9000.5, MAC_128, R)).toBe(false);
+    expect(suggestedWiredMb(16 * GIB_, 4 * GIB_, R)).toBeNull();
+  });
+
+  it('builds the enable, disable and fallback commands the backend runs', () => {
+    expect(wiredLimitCommand(110000)).toBe('/usr/sbin/sysctl iogpu.wired_limit_mb=110000');
+    expect(wiredDisableCommand(false)).toBe('/usr/sbin/sysctl iogpu.wired_limit_mb=0');
+    expect(wiredDisableCommand(true)).toBe(
+      "/usr/sbin/sysctl iogpu.wired_limit_mb=0 && /bin/launchctl bootout system/net.leanzero.iogpu-wired-limit 2>/dev/null; /bin/rm -f '/Library/LaunchDaemons/net.leanzero.iogpu-wired-limit.plist'"
+    );
+    expect(wiredFallbackCommand(110000)).toBe('sudo /usr/sbin/sysctl iogpu.wired_limit_mb=110000');
   });
 });
 

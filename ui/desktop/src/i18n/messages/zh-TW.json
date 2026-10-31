@@ -4940,6 +4940,63 @@
   "microphoneSelector.test": {
     "defaultMessage": "測試"
   },
+  "mlxDistWired.beyond": {
+    "defaultMessage": "這是保留量允許的最大值，高於依 {mac} 目前佔用提出的建議：那台電腦上預計會出現記憶體壓力。"
+  },
+  "mlxDistWired.binds": {
+    "defaultMessage": "受上限約束"
+  },
+  "mlxDistWired.buys": {
+    "defaultMessage": "在 {mac} 上提高到 {mb} MB：{layers}最大上下文 {now} → ~{then}"
+  },
+  "mlxDistWired.buysLayers": {
+    "defaultMessage": "{count, plural, other {+# 層}}移到 {mac} → "
+  },
+  "mlxDistWired.buysNothing": {
+    "defaultMessage": "將 {mac} 提高到 {mb} MB 在這裡沒有效益：規劃器仍只能容納最大上下文 {now}（受其他限制約束）。"
+  },
+  "mlxDistWired.done": {
+    "defaultMessage": "已提高"
+  },
+  "mlxDistWired.doneText": {
+    "defaultMessage": "{mac} 現為 {mb} MB。重新執行預檢以依此規劃。"
+  },
+  "mlxDistWired.failed": {
+    "defaultMessage": "未變更"
+  },
+  "mlxDistWired.fallback": {
+    "defaultMessage": "如果 {mac} 上沒有執行 goose App，或那邊無人可以核准，請在 {mac} 的 Terminal 中執行："
+  },
+  "mlxDistWired.intro": {
+    "defaultMessage": "節點的預算取其可用記憶體與 GPU 上限中的較小值，GPU 上限由 macOS 依固定記憶體上限設定。在 GPU 上限成為瓶頸之處，預檢已依提高後的上限重新規劃分割。"
+  },
+  "mlxDistWired.keepAfterRestart": {
+    "defaultMessage": "重新開機後保留"
+  },
+  "mlxDistWired.keeps": {
+    "defaultMessage": "{mac} 上的 macOS 與其他 App 保留 {keep} GB"
+  },
+  "mlxDistWired.limitDefault": {
+    "defaultMessage": "固定上限 0（macOS 預設）· GPU 上限 {ceiling} GB"
+  },
+  "mlxDistWired.limitRaised": {
+    "defaultMessage": "固定上限 {mb} MB · GPU 上限 {ceiling} GB"
+  },
+  "mlxDistWired.limitUnread": {
+    "defaultMessage": "未讀取到固定上限"
+  },
+  "mlxDistWired.noApp": {
+    "defaultMessage": "{mac} 透過 ssh 連線，而非透過 goose App，因此無法從這裡詢問那邊的人。請在 {mac} 的 Terminal 中執行："
+  },
+  "mlxDistWired.raise": {
+    "defaultMessage": "在 {mac} 上提高"
+  },
+  "mlxDistWired.title": {
+    "defaultMessage": "GPU 固定記憶體上限"
+  },
+  "mlxDistWired.waiting": {
+    "defaultMessage": "{mac} 上已跳出管理者提示：由在那台電腦前的人核准或取消。將在分割下次啟動時生效。"
+  },
   "mlxDistributed.action.preflight": {
     "defaultMessage": "預檢（試執行）"
   },
@@ -6122,6 +6179,12 @@
   "mlxMemory.unsaved": {
     "defaultMessage": "未儲存"
   },
+  "mlxMemory.wiredBelowOthers": {
+    "defaultMessage": "剩餘 {keep} GB，少於 {mac} 目前在 GPU 以外的佔用（{others} GB）加上 {reserve} GB 保留量：預計會出現記憶體壓力與置換。"
+  },
+  "mlxMemory.wiredBelowReserve": {
+    "defaultMessage": "已拒絕：剩餘 {keep} GB，低於 {reserve} GB 的最低值。MLX 引擎在 GPU 以外也需要記憶體（負載下實測約 12 GB），核心與系統還需約 10 GB。此處允許的最大值為 {max} MB。"
+  },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "開機設定（LaunchDaemon）"
   },
@@ -6137,32 +6200,56 @@
   "mlxMemory.wiredDefault": {
     "defaultMessage": "0（macOS 預設值）"
   },
+  "mlxMemory.wiredDisable": {
+    "defaultMessage": "停用（macOS 預設）"
+  },
   "mlxMemory.wiredDone": {
     "defaultMessage": "完成"
   },
+  "mlxMemory.wiredDoneDefault": {
+    "defaultMessage": "{mac} 的固定記憶體上限已恢復為 macOS 預設值。"
+  },
   "mlxMemory.wiredDoneText": {
-    "defaultMessage": "wired 限制目前為 {mb} MB。"
+    "defaultMessage": "{mac} 的固定記憶體上限現為 {mb} MB。"
+  },
+  "mlxMemory.wiredEnable": {
+    "defaultMessage": "啟用"
   },
   "mlxMemory.wiredFailed": {
     "defaultMessage": "未變更"
   },
-  "mlxMemory.wiredIntro": {
-    "defaultMessage": "macOS 允許 GPU 鎖定（wire）的 RAM 量，它會限制所有引擎。設定時會以管理員身分執行一個指令：macOS 會要求輸入密碼。除非同時安裝開機設定，否則重新啟動後會重設。Metal 在程序啟動時讀取該值，因此引擎要到下次啟動才會看到新值。"
+  "mlxMemory.wiredFallback": {
+    "defaultMessage": "或在 {mac} 的 Terminal 中執行："
   },
-  "mlxMemory.wiredInvalid": {
-    "defaultMessage": "請使用 0 或 8192 到 {max} 之間的整數。"
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "macOS 允許 GPU 固定（wired）的記憶體量，它限制了 {mac} 上的每個引擎。啟用和停用各以管理者身分執行一道指令：macOS 會在 {mac} 上要求輸入密碼，goose 從不查看或儲存它。除非選擇保留，該上限會在重新開機後重設。Metal 在程序啟動時讀取該值，因此引擎會在下次啟動時使用新值。"
+  },
+  "mlxMemory.wiredInvalidValue": {
+    "defaultMessage": "請使用 8192 至 {max} MB 之間的整數，或選擇停用以恢復 macOS 預設值。"
+  },
+  "mlxMemory.wiredKeep": {
+    "defaultMessage": "macOS 與其他 App 保留 {physical} GB 中的 {keep} GB"
+  },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "這低於 macOS 目前給 GPU 的工作集 ({ws})：啟用會降低它，而不是提高。"
+  },
+  "mlxMemory.wiredNoSuggestion": {
+    "defaultMessage": "不建議提高：{mac} 目前的佔用加上 {reserve} GB 保留量後，可固定的記憶體太少。"
+  },
+  "mlxMemory.wiredOthers": {
+    "defaultMessage": "目前 GPU 以外的佔用"
   },
   "mlxMemory.wiredPanel": {
     "defaultMessage": "macOS GPU wired 限制"
   },
-  "mlxMemory.wiredPersist": {
-    "defaultMessage": "設定並在重新啟動後保留"
+  "mlxMemory.wiredPersistLabel": {
+    "defaultMessage": "重新開機後保留"
   },
-  "mlxMemory.wiredRange": {
-    "defaultMessage": "MB · 0（macOS 預設值）或 8192 到 {max}"
+  "mlxMemory.wiredPersistNote": {
+    "defaultMessage": "安裝一個在每次開機時設定該值的 LaunchDaemon；停用會將其移除。"
   },
-  "mlxMemory.wiredRemoteNote": {
-    "defaultMessage": "wired 限制需在 Mac 本機設定：請在 {mac} 上開啟 goose 進行變更。"
+  "mlxMemory.wiredRangeReserve": {
+    "defaultMessage": "MB（{gib} GB）· 8192 至 {max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "移除開機設定"
@@ -6170,14 +6257,35 @@
   "mlxMemory.wiredRemoveNote": {
     "defaultMessage": "移除開機設定後，目前的值會保留到下次重新啟動。"
   },
-  "mlxMemory.wiredSet": {
-    "defaultMessage": "設定到重新啟動為止"
+  "mlxMemory.wiredReserve": {
+    "defaultMessage": "macOS 最低保留量"
   },
-  "mlxMemory.wiredSuggest": {
-    "defaultMessage": "推論主機建議值：{mb} MB"
+  "mlxMemory.wiredReserveValue": {
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+  },
+  "mlxMemory.wiredStateDefault": {
+    "defaultMessage": "macOS 預設值"
+  },
+  "mlxMemory.wiredStateKept": {
+    "defaultMessage": "重新開機後保留"
+  },
+  "mlxMemory.wiredStateRaised": {
+    "defaultMessage": "已提高到 {mb} MB"
+  },
+  "mlxMemory.wiredSuggested": {
+    "defaultMessage": "依測量建議：{mb} MB（保留目前佔用的 {others} GB + {reserve} GB 保留量）"
+  },
+  "mlxMemory.wiredSuggestedLow": {
+    "defaultMessage": "macOS 預設值已為 GPU 提供 {ws}：依 {mac} 目前的佔用，提高到 {mb} MB 以上會擠占保留量。"
+  },
+  "mlxMemory.wiredUseSuggestion": {
+    "defaultMessage": "使用"
   },
   "mlxMemory.wiredValue": {
     "defaultMessage": "新限制"
+  },
+  "mlxMemory.wiredWaiting": {
+    "defaultMessage": "正在等待 {mac} 上的管理者提示：由在那台電腦前的人核准或取消。在此之前不會有任何變更。"
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, other {分割到 # 台 Mac · {backend}}}"

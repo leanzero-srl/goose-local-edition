@@ -2670,7 +2670,11 @@ pub struct MlxEngineMemoryBudgetDto {
     response = MlxEngineMemoryMachineResponse
 )]
 #[serde(rename_all = "camelCase")]
-pub struct MlxEngineMemoryMachineRequest {}
+pub struct MlxEngineMemoryMachineRequest {
+    /// A Link peer to run this on (its app shows the prompt); absent = this Mac.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
@@ -2701,6 +2705,19 @@ pub struct MlxEngineMemoryMachineResponse {
     pub tunables_supported: bool,
     /// The configured launcher, for the "needs lz.20" line.
     pub launcher: String,
+    /// What a raised wired limit must leave to macOS (`GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB`).
+    #[serde(default)]
+    pub min_reserve_gib: u64,
+    /// RAM in use outside the file cache right now: physical − available (includes a running
+    /// engine; the panel prefers the engine's own `othersBytes` while one runs).
+    #[serde(default)]
+    pub others_bytes: u64,
+    /// The highest limit that leaves the reserve.
+    #[serde(default)]
+    pub max_wired_limit_mb: u64,
+    /// physical − (others + reserve), rounded down to 1,000 MB; absent when that is under 8,192.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_wired_limit_mb: Option<u64>,
 }
 
 /// Set the macOS GPU wired limit through the macOS administrator prompt (the person types their
@@ -2715,6 +2732,28 @@ pub struct MlxEngineWiredLimitApplyRequest {
     pub mb: u64,
     #[serde(default)]
     pub persist: bool,
+    /// A Link peer to run this on (its app shows the prompt); absent = this Mac.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    /// Set by the relaying Mac (never by a client): the name the peer's prompt shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_by: Option<String>,
+}
+
+/// "Disable": the macOS default (`iogpu.wired_limit_mb=0`) and the boot LaunchDaemon removed when
+/// one is installed, behind one administrator prompt.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/wiredLimitDisable",
+    response = MlxEngineWiredLimitResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineWiredLimitDisableRequest {
+    /// A Link peer to run this on (its app shows the prompt); absent = this Mac.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_by: Option<String>,
 }
 
 /// Remove the boot-time LaunchDaemon (the live limit stays until reboot).
@@ -2724,7 +2763,13 @@ pub struct MlxEngineWiredLimitApplyRequest {
     response = MlxEngineWiredLimitResponse
 )]
 #[serde(rename_all = "camelCase")]
-pub struct MlxEngineWiredLimitRemoveDaemonRequest {}
+pub struct MlxEngineWiredLimitRemoveDaemonRequest {
+    /// A Link peer to run this on (its app shows the prompt); absent = this Mac.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_by: Option<String>,
+}
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
@@ -4189,6 +4234,35 @@ pub struct MlxDistributedNodePreflightDto {
     /// largest first — what the owner could close when compaction is off or not enough.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub top_apps: Vec<MlxDistributedAppMemoryDto>,
+    /// What raising this node's wired limit would buy, planned with the split's own planner;
+    /// present only when its GPU ceiling bounds its budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wired_what_if: Option<MlxDistributedWiredWhatIfDto>,
+}
+
+/// One node's wired-limit what-if: the split planned again with this node's GPU ceiling at
+/// `mb` MiB and every other figure as measured.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedWiredWhatIfDto {
+    pub mb: u64,
+    /// What macOS and the other apps keep at `mb`.
+    pub keep_bytes: u64,
+    /// `mb` is above the suggestion (others + reserve): the most the reserve allows instead.
+    pub beyond_suggestion: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_now: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_then: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layers_now: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layers_then: Option<u32>,
+    pub budget_now_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_then_bytes: Option<u64>,
+    /// The exact command a person at that Mac can run instead.
+    pub fallback_command: String,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]

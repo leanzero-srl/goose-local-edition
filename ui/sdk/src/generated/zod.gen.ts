@@ -4104,7 +4104,12 @@ export const zMlxEngineSettingsResponse_unstable = z.object({
  * This Mac's memory facts for the Memory tab, readable while no engine runs. Local only: the
  * GPU wired limit can only be changed at the Mac whose password prompt appears.
  */
-export const zMlxEngineMemoryMachineRequest_unstable = z.record(z.unknown());
+export const zMlxEngineMemoryMachineRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
 
 export const zMlxEngineMemoryMachineResponse_unstable = z.object({
     physicalBytes: z.number().int().gte(0),
@@ -4135,7 +4140,14 @@ export const zMlxEngineMemoryMachineResponse_unstable = z.object({
     ]).optional(),
     defaultFloorGb: z.number(),
     tunablesSupported: z.boolean(),
-    launcher: z.string()
+    launcher: z.string(),
+    minReserveGib: z.number().int().gte(0).optional().default(0),
+    othersBytes: z.number().int().gte(0).optional().default(0),
+    maxWiredLimitMb: z.number().int().gte(0).optional().default(0),
+    suggestedWiredLimitMb: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
 });
 
 /**
@@ -4144,7 +4156,15 @@ export const zMlxEngineMemoryMachineResponse_unstable = z.object({
  */
 export const zMlxEngineWiredLimitApplyRequest_unstable = z.object({
     mb: z.number().int().gte(0),
-    persist: z.boolean().optional().default(false)
+    persist: z.boolean().optional().default(false),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    requestedBy: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 export const zMlxEngineWiredLimitResponse_unstable = z.object({
@@ -4162,7 +4182,31 @@ export const zMlxEngineWiredLimitResponse_unstable = z.object({
 /**
  * Remove the boot-time LaunchDaemon (the live limit stays until reboot).
  */
-export const zMlxEngineWiredLimitRemoveDaemonRequest_unstable = z.record(z.unknown());
+export const zMlxEngineWiredLimitRemoveDaemonRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    requestedBy: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * "Disable": the macOS default (`iogpu.wired_limit_mb=0`) and the boot LaunchDaemon removed when
+ * one is installed, behind one administrator prompt.
+ */
+export const zMlxEngineWiredLimitDisableRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    requestedBy: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
 
 /**
  * Persist MLX engine settings. A running engine keeps its old arguments; status reports
@@ -4778,6 +4822,38 @@ export const zMlxDistributedAppMemoryDto = z.object({
     rssBytes: z.number().int().gte(0)
 });
 
+/**
+ * One node's wired-limit what-if: the split planned again with this node's GPU ceiling at
+ * `mb` MiB and every other figure as measured.
+ */
+export const zMlxDistributedWiredWhatIfDto = z.object({
+    mb: z.number().int().gte(0),
+    keepBytes: z.number().int().gte(0),
+    beyondSuggestion: z.boolean(),
+    maxContextNow: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    maxContextThen: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    layersNow: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    layersThen: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    budgetNowBytes: z.number().int().gte(0),
+    budgetThenBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    fallbackCommand: z.string()
+});
+
 export const zMlxDistributedNodePreflightDto = z.object({
     name: z.string(),
     rank: z.number().int().gte(0),
@@ -4822,7 +4898,11 @@ export const zMlxDistributedNodePreflightDto = z.object({
         z.number().int().gte(0),
         z.null()
     ]).optional(),
-    topApps: z.array(zMlxDistributedAppMemoryDto).optional()
+    topApps: z.array(zMlxDistributedAppMemoryDto).optional(),
+    wiredWhatIf: z.union([
+        zMlxDistributedWiredWhatIfDto,
+        z.null()
+    ]).optional()
 });
 
 export const zMlxDistributedPreflightDto = z.object({
@@ -8954,6 +9034,7 @@ export const zExtRequest = z.object({
             zMlxEngineMemoryMachineRequest_unstable,
             zMlxEngineWiredLimitApplyRequest_unstable,
             zMlxEngineWiredLimitRemoveDaemonRequest_unstable,
+            zMlxEngineWiredLimitDisableRequest_unstable,
             zMlxEngineSettingsUpdateRequest_unstable,
             zMlxEngineModelsListRequest_unstable,
             zMlxEngineModelDeleteRequest_unstable,

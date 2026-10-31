@@ -7,9 +7,11 @@ import type { MlxEngineSettings, MlxEngineStatus, MlxMemoryMachine } from '../..
 const mockMachine = vi.fn();
 const mockWiredApply = vi.fn();
 const mockWiredRemove = vi.fn();
+const mockWiredDisable = vi.fn();
 vi.mock('../../acp/mlx-engine', () => ({
   mlxEngineMemoryMachine: (...a: unknown[]) => mockMachine(...a),
   mlxEngineWiredLimitApply: (...a: unknown[]) => mockWiredApply(...a),
+  mlxEngineWiredLimitDisable: (...a: unknown[]) => mockWiredDisable(...a),
   mlxEngineWiredLimitRemoveDaemon: (...a: unknown[]) => mockWiredRemove(...a),
 }));
 
@@ -27,6 +29,10 @@ const machine = (over: Partial<MlxMemoryMachine> = {}): MlxMemoryMachine => ({
   defaultFloorGb: 7,
   tunablesSupported: true,
   launcher: 'uvx rapid-mlx',
+  minReserveGib: 16,
+  othersBytes: 10e9,
+  maxWiredLimitMb: 114688,
+  suggestedWiredLimitMb: 105000,
   ...over,
 });
 const settings = (memory = {}): MlxEngineSettings => ({
@@ -81,7 +87,8 @@ function mount(props: Partial<React.ComponentProps<typeof MlxMemorySection>> = {
 beforeEach(() => {
   mockMachine.mockReset().mockResolvedValue(machine());
   mockWiredApply.mockReset().mockResolvedValue({ wiredLimitMb: 122000, command: 'x' });
-  mockWiredRemove.mockReset().mockResolvedValue({ wiredLimitMb: 122000, command: 'x' });
+  mockWiredRemove.mockReset().mockResolvedValue({ wiredLimitMb: 110000, command: 'x' });
+  mockWiredDisable.mockReset().mockResolvedValue({ wiredLimitMb: 0, command: 'x' });
 });
 
 describe('MlxMemorySection', () => {
@@ -115,7 +122,7 @@ describe('MlxMemorySection', () => {
     expect((screen.getByLabelText('Engine Metal cap') as HTMLInputElement).value).toBe('112');
     expect((screen.getByLabelText('Free-memory floor') as HTMLInputElement).value).toBe('4');
     expect(saveSettings).not.toHaveBeenCalled();
-    expect(screen.getByTestId('mlx-memory-cap-above-ws').textContent).toContain('122,000 MB');
+    expect(screen.getByTestId('mlx-memory-cap-above-ws').textContent).toContain('105,000 MB');
     await userEvent.click(screen.getByTestId('mlx-memory-save'));
     expect(saveSettings).toHaveBeenCalledWith(
       expect.objectContaining({ memory: { metalLimitGb: 112, memoryFloorGb: 4 } })
@@ -182,31 +189,92 @@ describe('MlxMemorySection', () => {
     expect(busy.onApply).not.toHaveBeenCalled();
   });
 
-  it('the wired-limit buttons build the right command and pass persist apart', async () => {
+  it('Enable starts at the measured suggestion, shows what macOS keeps and passes persist apart', async () => {
+    mount();
+    const panel = await screen.findByTestId('mlx-memory-wired');
+    expect(within(panel).getByTestId('mlx-memory-wired-suggestion').textContent).toContain(
+      'Suggested from measurement: 105,000 MB'
+    );
+    expect(within(panel).getByTestId('mlx-memory-wired-command').textContent).toBe(
+      '/usr/sbin/sysctl iogpu.wired_limit_mb=105000'
+    );
+    const keep = within(panel).getByTestId('mlx-memory-wired-keep');
+    expect(keep.textContent).toBe('macOS and other apps keep 25.5 GB of 128 GB');
+    expect(keep.getAttribute('data-kind')).toBe('ok');
+    await userEvent.click(within(panel).getByTestId('mlx-memory-wired-enable'));
+    expect(mockWiredApply).toHaveBeenCalledWith(105000, false, undefined);
+    await userEvent.click(within(panel).getByRole('switch', { name: 'Keep after restart' }));
+    await userEvent.click(within(panel).getByTestId('mlx-memory-wired-enable'));
+    expect(mockWiredApply).toHaveBeenLastCalledWith(105000, true, undefined);
+  });
+
+  it('refuses a limit below the reserve and warns below what the Mac uses now', async () => {
+    mount();
+    const panel = await screen.findByTestId('mlx-memory-wired');
+    const input = within(panel).getByLabelText('New limit');
+    const enable = () => within(panel).getByTestId('mlx-memory-wired-enable') as HTMLButtonElement;
+    await userEvent.clear(input);
+    await userEvent.type(input, '122000');
+    const refused = within(panel).getByTestId('mlx-memory-wired-refused');
+    expect(refused.textContent).toContain('leaves 8.9 GB, under the 16 GB minimum');
+    expect(refused.textContent).toContain('114,688 MB');
+    expect(enable().disabled).toBe(true);
+    await userEvent.clear(input);
+    await userEvent.type(input, '114000');
+    expect(within(panel).getByTestId('mlx-memory-wired-warn').textContent).toContain(
+      'less than workhorse uses outside the GPU right now (9.3 GB)'
+    );
+    expect(enable().disabled).toBe(false);
+    await userEvent.clear(input);
+    await userEvent.type(input, '4000');
+    expect(within(panel).getByRole('alert').textContent).toContain('8192 to 114,688');
+    expect(enable().disabled).toBe(true);
+  });
+
+  it('never prefills a value that lowers the macOS working set, and warns when one is typed', async () => {
+    mockMachine.mockResolvedValue(machine({ othersBytes: 46.5e9, workingSetBytes: 115.4e9 }));
     mount();
     const panel = await screen.findByTestId('mlx-memory-wired');
     expect(within(panel).getByTestId('mlx-memory-wired-command').textContent).toBe(
-      '/usr/sbin/sysctl iogpu.wired_limit_mb=122000'
+      '/usr/sbin/sysctl iogpu.wired_limit_mb=114688'
     );
-    await userEvent.click(within(panel).getByRole('button', { name: 'Set until reboot' }));
-    expect(mockWiredApply).toHaveBeenCalledWith(122000, false);
-    await userEvent.click(within(panel).getByRole('button', { name: 'Set and keep after reboot' }));
-    expect(mockWiredApply).toHaveBeenLastCalledWith(122000, true);
+    expect(within(panel).queryByTestId('mlx-memory-wired-lowers')).toBeNull();
     const input = within(panel).getByLabelText('New limit');
     await userEvent.clear(input);
-    await userEvent.type(input, '4000');
-    expect(within(panel).getByRole('alert').textContent).toContain('8192 to 131,072');
-    expect(
-      (within(panel).getByRole('button', { name: 'Set until reboot' }) as HTMLButtonElement)
-        .disabled
-    ).toBe(true);
+    await userEvent.type(input, '66000');
+    expect(within(panel).getByTestId('mlx-memory-wired-lowers').textContent).toContain(
+      'Enable would lower it'
+    );
   });
 
-  it('offers removal of an installed boot setting', async () => {
-    mockMachine.mockResolvedValue(machine({ wiredLimitMb: 122000, daemonWiredLimitMb: 122000 }));
+  it('a running engine’s own measure of what is outside the GPU drives the suggestion', async () => {
+    mount({ status: running() });
+    const panel = await screen.findByTestId('mlx-memory-wired');
+    expect(within(panel).getByTestId('mlx-memory-wired-suggestion').textContent).toContain(
+      '103,000 MB'
+    );
+  });
+
+  it('Disable restores the macOS default and is off when nothing is raised', async () => {
     mount();
-    await userEvent.click(await screen.findByRole('button', { name: 'Remove boot setting' }));
-    expect(mockWiredRemove).toHaveBeenCalledTimes(1);
+    const panel = await screen.findByTestId('mlx-memory-wired');
+    expect(
+      (within(panel).getByTestId('mlx-memory-wired-disable') as HTMLButtonElement).disabled
+    ).toBe(true);
+    cleanup();
+    mockMachine.mockResolvedValue(machine({ wiredLimitMb: 110000, daemonWiredLimitMb: 110000 }));
+    mount();
+    const raised = await screen.findByTestId('mlx-memory-wired');
+    expect(screen.getByTestId('mlx-memory-wired-state').textContent).toBe(
+      'Raised to 110,000 MB'
+    );
+    await userEvent.click(within(raised).getByTestId('mlx-memory-wired-disable'));
+    expect(mockWiredDisable).toHaveBeenCalledWith(undefined);
+    expect((await screen.findByTestId('mlx-memory-wired-result')).textContent).toContain(
+      'back to the macOS default'
+    );
+    await userEvent.click(within(raised).getByRole('button', { name: 'Remove boot setting' }));
+    expect(mockWiredRemove).toHaveBeenCalledWith(undefined);
   });
 
   it('marks the lz.20 fields when this Mac launches an older engine', async () => {
@@ -222,9 +290,26 @@ describe('MlxMemorySection', () => {
     ).toBeTruthy();
   });
 
-  it('another Mac shows its tunables but sets the wired limit only at that Mac', async () => {
+  it('a Link peer is read and changed through its own app, with the command as a fallback', async () => {
+    mockWiredApply.mockRejectedValue(new Error('nobody approved the administrator prompt on this Mac within 3 minutes; nothing changed'));
+    mount({ isSelf: false, nodeId: 'node-mule', macName: 'workmule' });
+    const panel = await screen.findByTestId('mlx-memory-wired');
+    expect(mockMachine).toHaveBeenCalledWith('node-mule');
+    expect(panel.getAttribute('data-remote')).toBe('true');
+    expect(within(panel).getByText(/macOS asks for the password on workmule/)).toBeTruthy();
+    await userEvent.click(within(panel).getByTestId('mlx-memory-wired-enable'));
+    expect(mockWiredApply).toHaveBeenCalledWith(105000, false, 'node-mule');
+    expect((await screen.findByTestId('mlx-memory-wired-result')).textContent).toContain(
+      'nobody approved'
+    );
+    expect(screen.getByTestId('mlx-memory-wired-fallback').textContent).toContain(
+      'sudo /usr/sbin/sysctl iogpu.wired_limit_mb=105000'
+    );
+  });
+
+  it('a Mac with no Link route shows its tunables but no wired-limit controls', async () => {
     mount({ isSelf: false, macName: 'workmule', status: running() });
-    expect(await screen.findByText(/open goose on workmule/)).toBeTruthy();
+    await screen.findByTestId('mlx-memory-section');
     expect(mockMachine).not.toHaveBeenCalled();
     expect(screen.queryByTestId('mlx-memory-wired')).toBeNull();
   });

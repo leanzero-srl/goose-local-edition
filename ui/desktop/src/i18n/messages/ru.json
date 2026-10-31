@@ -4940,6 +4940,63 @@
   "microphoneSelector.test": {
     "defaultMessage": "Проверить"
   },
+  "mlxDistWired.beyond": {
+    "defaultMessage": "Это максимум, допустимый резервом, выше рекомендации по текущему потреблению {mac}: там ожидайте нехватки памяти."
+  },
+  "mlxDistWired.binds": {
+    "defaultMessage": "Упирается в потолок"
+  },
+  "mlxDistWired.buys": {
+    "defaultMessage": "Повысить до {mb} MB на {mac}: {layers}макс. контекст {now} → ~{then}"
+  },
+  "mlxDistWired.buysLayers": {
+    "defaultMessage": "{count, plural, one {+# слой переходит} few {+# слоя переходят} many {+# слоёв переходят} other {+# слоя переходят}} на {mac} → "
+  },
+  "mlxDistWired.buysNothing": {
+    "defaultMessage": "Повышение {mac} до {mb} MB здесь ничего не даёт: планировщик по-прежнему укладывает макс. контекст {now} (ограничивает другой лимит)."
+  },
+  "mlxDistWired.done": {
+    "defaultMessage": "Повышен"
+  },
+  "mlxDistWired.doneText": {
+    "defaultMessage": "{mac} сейчас показывает {mb} MB. Запустите предварительную проверку снова, чтобы спланировать с этим значением."
+  },
+  "mlxDistWired.failed": {
+    "defaultMessage": "Не изменено"
+  },
+  "mlxDistWired.fallback": {
+    "defaultMessage": "Если на {mac} не запущено приложение goose или там некому подтвердить, выполните это в Terminal на {mac}:"
+  },
+  "mlxDistWired.intro": {
+    "defaultMessage": "Бюджет узла — меньшее из его свободной памяти и потолка GPU, который macOS задаёт по лимиту wired-памяти. Там, где упирается в потолок, предварительная проверка заново спланировала разбиение с повышенным лимитом."
+  },
+  "mlxDistWired.keepAfterRestart": {
+    "defaultMessage": "Сохранять после перезагрузки"
+  },
+  "mlxDistWired.keeps": {
+    "defaultMessage": "macOS и другим приложениям на {mac} остаётся {keep} GB"
+  },
+  "mlxDistWired.limitDefault": {
+    "defaultMessage": "лимит wired 0 (по умолчанию macOS) · потолок GPU {ceiling} GB"
+  },
+  "mlxDistWired.limitRaised": {
+    "defaultMessage": "лимит wired {mb} MB · потолок GPU {ceiling} GB"
+  },
+  "mlxDistWired.limitUnread": {
+    "defaultMessage": "лимит wired не прочитан"
+  },
+  "mlxDistWired.noApp": {
+    "defaultMessage": "К {mac} подключение идёт по ssh, а не через приложение goose, поэтому отсюда никого там спросить нельзя. Выполните это в Terminal на {mac}:"
+  },
+  "mlxDistWired.raise": {
+    "defaultMessage": "Повысить на {mac}"
+  },
+  "mlxDistWired.title": {
+    "defaultMessage": "Лимиты wired-памяти GPU"
+  },
+  "mlxDistWired.waiting": {
+    "defaultMessage": "На {mac} открыт запрос администратора: тот, кто за компьютером, подтвердит или отменит. Изменение вступит в силу при следующем запуске разбиения."
+  },
   "mlxDistributed.action.preflight": {
     "defaultMessage": "Preflight (пробный прогон)"
   },
@@ -6122,6 +6179,12 @@
   "mlxMemory.unsaved": {
     "defaultMessage": "не сохранено"
   },
+  "mlxMemory.wiredBelowOthers": {
+    "defaultMessage": "Останется {keep} GB — меньше, чем {mac} сейчас использует вне GPU ({others} GB), плюс резерв {reserve} GB: ожидайте нехватки памяти и подкачки."
+  },
+  "mlxMemory.wiredBelowReserve": {
+    "defaultMessage": "Отклонено: останется {keep} GB, меньше минимума {reserve} GB. Движку MLX нужна и RAM вне GPU (около 12 GB по замерам под нагрузкой), а ядру и системе ещё около 10 GB. Максимум, разрешённый здесь, — {max} MB."
+  },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "Настройка при загрузке (LaunchDaemon)"
   },
@@ -6137,32 +6200,56 @@
   "mlxMemory.wiredDefault": {
     "defaultMessage": "0 (по умолчанию в macOS)"
   },
+  "mlxMemory.wiredDisable": {
+    "defaultMessage": "Выключить (по умолчанию macOS)"
+  },
   "mlxMemory.wiredDone": {
     "defaultMessage": "Готово"
   },
+  "mlxMemory.wiredDoneDefault": {
+    "defaultMessage": "Лимит wired-памяти на {mac} возвращён к значению macOS по умолчанию."
+  },
   "mlxMemory.wiredDoneText": {
-    "defaultMessage": "Wired-лимит сейчас: {mb} MB."
+    "defaultMessage": "Лимит wired-памяти на {mac} сейчас {mb} MB."
+  },
+  "mlxMemory.wiredEnable": {
+    "defaultMessage": "Включить"
   },
   "mlxMemory.wiredFailed": {
     "defaultMessage": "Не изменено"
   },
-  "mlxMemory.wiredIntro": {
-    "defaultMessage": "Сколько RAM macOS позволяет GPU закрепить (wired); это ограничивает любой движок. Для установки выполняется одна команда от имени администратора: macOS запросит пароль. После перезагрузки значение сбросится, если не установить и настройку при загрузке. Metal читает его при запуске процесса, поэтому движок увидит новое значение при следующем запуске."
+  "mlxMemory.wiredFallback": {
+    "defaultMessage": "Или выполните это в Terminal на {mac}:"
   },
-  "mlxMemory.wiredInvalid": {
-    "defaultMessage": "Укажите 0 или целое число от 8192 до {max}."
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "Сколько RAM macOS позволяет GPU закрепить (wired); это ограничивает каждый движок на {mac}. Включить и Выключить выполняют по одной команде от имени администратора: macOS запрашивает пароль на {mac}, а goose никогда его не видит и не хранит. Лимит сбрасывается при перезагрузке, если его не сохранить. Metal считывает его при запуске процесса, поэтому движок увидит новое значение при следующем запуске."
+  },
+  "mlxMemory.wiredInvalidValue": {
+    "defaultMessage": "Введите целое число от 8192 до {max} MB или нажмите Выключить для значения macOS по умолчанию."
+  },
+  "mlxMemory.wiredKeep": {
+    "defaultMessage": "macOS и другим приложениям остаётся {keep} GB из {physical} GB"
+  },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "Это ниже рабочего набора GPU, который macOS даёт сейчас ({ws}): включение понизит его, а не повысит."
+  },
+  "mlxMemory.wiredNoSuggestion": {
+    "defaultMessage": "Повышение не рекомендуется: текущее потребление {mac} плюс резерв {reserve} GB оставляют слишком мало для закрепления."
+  },
+  "mlxMemory.wiredOthers": {
+    "defaultMessage": "Сейчас занято вне GPU"
   },
   "mlxMemory.wiredPanel": {
     "defaultMessage": "Wired-лимит GPU в macOS"
   },
-  "mlxMemory.wiredPersist": {
-    "defaultMessage": "Задать и сохранить после перезагрузки"
+  "mlxMemory.wiredPersistLabel": {
+    "defaultMessage": "Сохранять после перезагрузки"
   },
-  "mlxMemory.wiredRange": {
-    "defaultMessage": "MB · 0 (по умолчанию в macOS) или от 8192 до {max}"
+  "mlxMemory.wiredPersistNote": {
+    "defaultMessage": "Устанавливает LaunchDaemon, который задаёт значение при каждой загрузке; Выключить удаляет его."
   },
-  "mlxMemory.wiredRemoteNote": {
-    "defaultMessage": "Wired-лимит задаётся на самом Mac: откройте goose на {mac}, чтобы изменить его."
+  "mlxMemory.wiredRangeReserve": {
+    "defaultMessage": "MB ({gib} GB) · от 8192 до {max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "Удалить настройку при загрузке"
@@ -6170,14 +6257,35 @@
   "mlxMemory.wiredRemoveNote": {
     "defaultMessage": "Удаление настройки при загрузке оставляет текущее значение до следующей перезагрузки."
   },
-  "mlxMemory.wiredSet": {
-    "defaultMessage": "Задать до перезагрузки"
+  "mlxMemory.wiredReserve": {
+    "defaultMessage": "Минимальный резерв для macOS"
   },
-  "mlxMemory.wiredSuggest": {
-    "defaultMessage": "рекомендуется для сервера инференса: {mb} MB"
+  "mlxMemory.wiredReserveValue": {
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+  },
+  "mlxMemory.wiredStateDefault": {
+    "defaultMessage": "По умолчанию macOS"
+  },
+  "mlxMemory.wiredStateKept": {
+    "defaultMessage": "Сохраняется после перезагрузки"
+  },
+  "mlxMemory.wiredStateRaised": {
+    "defaultMessage": "Повышен до {mb} MB"
+  },
+  "mlxMemory.wiredSuggested": {
+    "defaultMessage": "Рекомендация по замерам: {mb} MB (оставляет {others} GB, занятых сейчас, + резерв {reserve} GB)"
+  },
+  "mlxMemory.wiredSuggestedLow": {
+    "defaultMessage": "macOS по умолчанию уже даёт GPU {ws}: при текущем потреблении {mac} повышение выше {mb} MB заденет резерв."
+  },
+  "mlxMemory.wiredUseSuggestion": {
+    "defaultMessage": "Применить"
   },
   "mlxMemory.wiredValue": {
     "defaultMessage": "Новый лимит"
+  },
+  "mlxMemory.wiredWaiting": {
+    "defaultMessage": "Ожидание запроса администратора на {mac}: тот, кто за компьютером, подтвердит или отменит. До этого ничего не меняется."
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {Разделено между # Mac · {backend}} few {Разделено между # Mac · {backend}} many {Разделено между # Mac · {backend}} other {Разделено между # Mac · {backend}}}"

@@ -434,6 +434,7 @@ mod tests {
             leftovers: Vec::new(),
             foreign_splits: Vec::new(),
             loading: None,
+            wired_what_if: None,
         }
     }
 

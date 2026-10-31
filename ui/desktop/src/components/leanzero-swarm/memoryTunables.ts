@@ -324,16 +324,10 @@ export function memoryConsequences(
 export const INFERENCE_BOX_RESERVE_GIB = 16;
 /** The Inference box's floor: the box runs the engine and little else. */
 export const INFERENCE_BOX_FLOOR_GB = 4;
-/** The wired limit suggested beside an Inference box cap: the owner's 122,000 MB on 128 GiB (131,072 MB). */
-export const SUGGESTED_WIRED_SHARE = 122000 / 131072;
 
 /** cap = (physical in GiB) - 16, as GB: 128 GiB -> 112 GB, 96 GiB -> 80 GB, 64 GiB -> 48 GB. */
 export function inferenceBoxCapGb(physicalBytes: number): number {
   return Math.round(physicalBytes / GIB) - INFERENCE_BOX_RESERVE_GIB;
-}
-
-export function suggestedWiredLimitMb(physicalBytes: number): number {
-  return Math.round(((physicalBytes / MIB) * SUGGESTED_WIRED_SHARE) / 1000) * 1000;
 }
 
 export type PresetId = 'workstation' | 'inferenceBox';
@@ -358,13 +352,70 @@ export function presetDrafts(
 }
 
 // --- macOS GPU wired limit ----------------------------------------------------------------------
+// Mirrors goose-sidecar wired_limit.rs (the backend refuses the same cases; its tests hold the same
+// 64/96/128 GiB table): the panel needs the answer on every keystroke.
 
 export const WIRED_MIN_NONZERO_MB = 8192;
+/** wired_limit::DEFAULT_MIN_RESERVE_GIB: the engine's ~12 GB outside Metal + ~10 GB kernel, measured. */
+export const WIRED_DEFAULT_MIN_RESERVE_GIB = 16;
+const SUGGEST_STEP_MB = 1000;
 
-export function wiredLimitValid(mb: number, physicalBytes: number): boolean {
-  if (!Number.isInteger(mb)) return false;
-  const physicalMb = Math.floor(physicalBytes / MIB);
-  return mb === 0 || (mb >= WIRED_MIN_NONZERO_MB && mb <= physicalMb);
+export function physicalMb(physicalBytes: number): number {
+  return Math.floor(physicalBytes / MIB);
+}
+
+/** What macOS and every process outside the GPU keep under `mb`; `null` for 0 (the macOS default). */
+export function wiredKeepMb(mb: number, physicalBytes: number): number | null {
+  return mb === 0 ? null : Math.max(0, physicalMb(physicalBytes) - mb);
+}
+
+export function wiredMaxMb(physicalBytes: number, reserveGib: number): number {
+  return Math.max(0, physicalMb(physicalBytes) - reserveGib * 1024);
+}
+
+/** physical − (others + reserve), rounded down to 1,000 MB; `null` below 8,192 MB. */
+export function suggestedWiredMb(
+  physicalBytes: number,
+  othersBytes: number,
+  reserveGib: number
+): number | null {
+  const room = Math.min(
+    physicalMb(physicalBytes) - Math.ceil(othersBytes / MIB) - reserveGib * 1024,
+    wiredMaxMb(physicalBytes, reserveGib)
+  );
+  const rounded = Math.floor(Math.max(0, room) / SUGGEST_STEP_MB) * SUGGEST_STEP_MB;
+  return rounded >= WIRED_MIN_NONZERO_MB ? rounded : null;
+}
+
+export type WiredCheck =
+  | { kind: 'default' }
+  | { kind: 'invalid' }
+  /** Refused: leaves less than the reserve (the backend refuses it too). */
+  | { kind: 'belowReserve'; keepMb: number }
+  /** Allowed, but leaves less than what the Mac uses outside the GPU now plus the reserve. */
+  | { kind: 'belowOthers'; keepMb: number }
+  | { kind: 'ok'; keepMb: number };
+
+export function wiredLimitCheck(
+  mb: number,
+  physicalBytes: number,
+  reserveGib: number,
+  othersBytes: number | null
+): WiredCheck {
+  if (!Number.isInteger(mb)) return { kind: 'invalid' };
+  if (mb === 0) return { kind: 'default' };
+  if (mb < WIRED_MIN_NONZERO_MB || mb > physicalMb(physicalBytes)) return { kind: 'invalid' };
+  const keepMb = physicalMb(physicalBytes) - mb;
+  if (keepMb < reserveGib * 1024) return { kind: 'belowReserve', keepMb };
+  if (othersBytes != null && keepMb * MIB < othersBytes + reserveGib * GIB) {
+    return { kind: 'belowOthers', keepMb };
+  }
+  return { kind: 'ok', keepMb };
+}
+
+export function wiredLimitValid(mb: number, physicalBytes: number, reserveGib: number): boolean {
+  const k = wiredLimitCheck(mb, physicalBytes, reserveGib, null).kind;
+  return k !== 'invalid' && k !== 'belowReserve';
 }
 
 /** The exact root command the backend runs (goose-sidecar wired_limit::sysctl_command). */
@@ -372,6 +423,19 @@ export function wiredLimitCommand(mb: number): string {
   return `/usr/sbin/sysctl iogpu.wired_limit_mb=${mb}`;
 }
 
-export function physicalMb(physicalBytes: number): number {
-  return Math.floor(physicalBytes / MIB);
+/** wired_limit::disable_shell: the default again, plus the boot setting removed when installed. */
+export function wiredDisableCommand(daemonInstalled: boolean): string {
+  const reset = wiredLimitCommand(0);
+  return daemonInstalled
+    ? `${reset} && /bin/launchctl bootout system/net.leanzero.iogpu-wired-limit 2>/dev/null; /bin/rm -f '/Library/LaunchDaemons/net.leanzero.iogpu-wired-limit.plist'`
+    : reset;
+}
+
+/** What a person at that Mac types when no goose there can ask for them. */
+export function wiredFallbackCommand(mb: number): string {
+  return `sudo ${wiredLimitCommand(mb)}`;
+}
+
+export function mibToGib(mb: number): number {
+  return mb / 1024;
 }

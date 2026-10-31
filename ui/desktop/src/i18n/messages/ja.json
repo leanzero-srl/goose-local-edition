@@ -4940,6 +4940,63 @@
   "microphoneSelector.test": {
     "defaultMessage": "テスト"
   },
+  "mlxDistWired.beyond": {
+    "defaultMessage": "予約が許す最大値で、{mac} の現在の使用量に基づく推奨を上回っています: そのマシンでメモリ圧迫が予想されます。"
+  },
+  "mlxDistWired.binds": {
+    "defaultMessage": "上限が制約"
+  },
+  "mlxDistWired.buys": {
+    "defaultMessage": "{mac} で {mb} MB に引き上げ: {layers}最大コンテキスト {now} → ~{then}"
+  },
+  "mlxDistWired.buysLayers": {
+    "defaultMessage": "{count, plural, other {+# 層}}が {mac} へ移動 → "
+  },
+  "mlxDistWired.buysNothing": {
+    "defaultMessage": "{mac} を {mb} MB に引き上げてもここでは効果がありません: プランナーの最大コンテキストは {now} のままです（別の上限が制約）。"
+  },
+  "mlxDistWired.done": {
+    "defaultMessage": "引き上げ済み"
+  },
+  "mlxDistWired.doneText": {
+    "defaultMessage": "{mac} は現在 {mb} MB です。この値で計画するにはプリフライトを再実行してください。"
+  },
+  "mlxDistWired.failed": {
+    "defaultMessage": "変更なし"
+  },
+  "mlxDistWired.fallback": {
+    "defaultMessage": "{mac} で goose アプリが動いていない場合、またはその場で承認できる人がいない場合は、{mac} の Terminal でこれを実行してください:"
+  },
+  "mlxDistWired.intro": {
+    "defaultMessage": "ノードの予算は、空きメモリと GPU 上限（macOS がワイヤード上限から設定）のうち小さい方です。GPU 上限が制約になる箇所では、プリフライトが引き上げた上限で分割を再計画しました。"
+  },
+  "mlxDistWired.keepAfterRestart": {
+    "defaultMessage": "再起動後も保持"
+  },
+  "mlxDistWired.keeps": {
+    "defaultMessage": "{mac} の macOS と他のアプリに {keep} GB が残ります"
+  },
+  "mlxDistWired.limitDefault": {
+    "defaultMessage": "ワイヤード上限 0（macOS のデフォルト）· GPU 上限 {ceiling} GB"
+  },
+  "mlxDistWired.limitRaised": {
+    "defaultMessage": "ワイヤード上限 {mb} MB · GPU 上限 {ceiling} GB"
+  },
+  "mlxDistWired.limitUnread": {
+    "defaultMessage": "ワイヤード上限を読み取れません"
+  },
+  "mlxDistWired.noApp": {
+    "defaultMessage": "{mac} には goose アプリではなく ssh で接続しているため、ここからその場の人に確認できません。{mac} の Terminal でこれを実行してください:"
+  },
+  "mlxDistWired.raise": {
+    "defaultMessage": "{mac} で引き上げ"
+  },
+  "mlxDistWired.title": {
+    "defaultMessage": "GPU ワイヤード上限"
+  },
+  "mlxDistWired.waiting": {
+    "defaultMessage": "{mac} に管理者プロンプトが表示されています: その場にいる人が承認またはキャンセルします。分割の次回起動時に反映されます。"
+  },
   "mlxDistributed.action.preflight": {
     "defaultMessage": "プリフライト（ドライラン）"
   },
@@ -6122,6 +6179,12 @@
   "mlxMemory.unsaved": {
     "defaultMessage": "未保存"
   },
+  "mlxMemory.wiredBelowOthers": {
+    "defaultMessage": "残りは {keep} GB で、{mac} が現在 GPU 以外で使用している量（{others} GB）と {reserve} GB の予約の合計を下回ります: メモリ圧迫とスワップが発生します。"
+  },
+  "mlxMemory.wiredBelowReserve": {
+    "defaultMessage": "拒否されました: 残りが {keep} GB となり、最小値 {reserve} GB を下回ります。MLX エンジンは GPU 以外にも RAM を必要とし（負荷時の実測で約 12 GB）、カーネルとシステムにもさらに約 10 GB 必要です。ここで許可される最大値は {max} MB です。"
+  },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "起動時の設定 (LaunchDaemon)"
   },
@@ -6137,32 +6200,56 @@
   "mlxMemory.wiredDefault": {
     "defaultMessage": "0 (macOS の既定値)"
   },
+  "mlxMemory.wiredDisable": {
+    "defaultMessage": "無効化（macOS のデフォルト）"
+  },
   "mlxMemory.wiredDone": {
     "defaultMessage": "完了"
   },
+  "mlxMemory.wiredDoneDefault": {
+    "defaultMessage": "{mac} のワイヤード上限は macOS のデフォルトに戻りました。"
+  },
   "mlxMemory.wiredDoneText": {
-    "defaultMessage": "wired 制限は現在 {mb} MB です。"
+    "defaultMessage": "{mac} のワイヤード上限は現在 {mb} MB です。"
+  },
+  "mlxMemory.wiredEnable": {
+    "defaultMessage": "有効化"
   },
   "mlxMemory.wiredFailed": {
     "defaultMessage": "変更されていません"
   },
-  "mlxMemory.wiredIntro": {
-    "defaultMessage": "macOS が GPU に wire させる RAM の量で、すべてのエンジンの上限になります。設定すると管理者として 1 つのコマンドを実行します。macOS がパスワードを求めます。起動時の設定も導入しない限り、再起動でリセットされます。Metal はプロセスの開始時にこの値を読むため、エンジンは次回の起動で新しい値を使います。"
+  "mlxMemory.wiredFallback": {
+    "defaultMessage": "または {mac} の Terminal でこれを実行してください:"
   },
-  "mlxMemory.wiredInvalid": {
-    "defaultMessage": "0、または 8192 から {max} までの整数を指定してください。"
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "macOS が GPU にワイヤードとして確保させる RAM の量で、{mac} 上のすべてのエンジンの上限になります。有効化と無効化はそれぞれ管理者として 1 つのコマンドを実行します。macOS が {mac} でパスワードを求め、goose がそれを見たり保存したりすることはありません。保持しない限り、上限は再起動でリセットされます。Metal はプロセス起動時にこの値を読むため、エンジンは次回の起動時に新しい値を認識します。"
+  },
+  "mlxMemory.wiredInvalidValue": {
+    "defaultMessage": "8192〜{max} MB の整数を入力するか、macOS のデフォルトに戻すには無効化を使用してください。"
+  },
+  "mlxMemory.wiredKeep": {
+    "defaultMessage": "macOS と他のアプリに {physical} GB 中 {keep} GB が残ります"
+  },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "macOS が現在 GPU に割り当てているワーキングセット ({ws}) を下回っています。有効にすると上がらずに下がります。"
+  },
+  "mlxMemory.wiredNoSuggestion": {
+    "defaultMessage": "引き上げの推奨はありません: {mac} の現在の使用量と {reserve} GB の予約を合わせると、ワイヤードに回せる量がほとんど残りません。"
+  },
+  "mlxMemory.wiredOthers": {
+    "defaultMessage": "現在 GPU 以外で使用中"
   },
   "mlxMemory.wiredPanel": {
     "defaultMessage": "macOS GPU の wired 制限"
   },
-  "mlxMemory.wiredPersist": {
-    "defaultMessage": "設定して再起動後も保持"
+  "mlxMemory.wiredPersistLabel": {
+    "defaultMessage": "再起動後も保持"
   },
-  "mlxMemory.wiredRange": {
-    "defaultMessage": "MB · 0 (macOS の既定値) または 8192 ～ {max}"
+  "mlxMemory.wiredPersistNote": {
+    "defaultMessage": "起動のたびに値を設定する LaunchDaemon をインストールします。無効化すると削除されます。"
   },
-  "mlxMemory.wiredRemoteNote": {
-    "defaultMessage": "wired 制限は Mac 本体で設定します。変更するには {mac} で goose を開いてください。"
+  "mlxMemory.wiredRangeReserve": {
+    "defaultMessage": "MB ({gib} GB) · 8192〜{max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "起動時の設定を削除"
@@ -6170,14 +6257,35 @@
   "mlxMemory.wiredRemoveNote": {
     "defaultMessage": "起動時の設定を削除しても、現在の値は次回の再起動まで残ります。"
   },
-  "mlxMemory.wiredSet": {
-    "defaultMessage": "再起動まで設定"
+  "mlxMemory.wiredReserve": {
+    "defaultMessage": "macOS 用の最小予約"
   },
-  "mlxMemory.wiredSuggest": {
-    "defaultMessage": "推論ボックスの推奨値: {mb} MB"
+  "mlxMemory.wiredReserveValue": {
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+  },
+  "mlxMemory.wiredStateDefault": {
+    "defaultMessage": "macOS のデフォルト"
+  },
+  "mlxMemory.wiredStateKept": {
+    "defaultMessage": "再起動後も保持"
+  },
+  "mlxMemory.wiredStateRaised": {
+    "defaultMessage": "{mb} MB に引き上げ済み"
+  },
+  "mlxMemory.wiredSuggested": {
+    "defaultMessage": "実測に基づく推奨: {mb} MB（現在使用中の {others} GB + {reserve} GB の予約を確保）"
+  },
+  "mlxMemory.wiredSuggestedLow": {
+    "defaultMessage": "macOS のデフォルトですでに GPU に {ws} が割り当てられています: {mac} の現在の使用量では、{mb} MB を超えて引き上げると予約に食い込みます。"
+  },
+  "mlxMemory.wiredUseSuggestion": {
+    "defaultMessage": "適用"
   },
   "mlxMemory.wiredValue": {
     "defaultMessage": "新しい制限"
+  },
+  "mlxMemory.wiredWaiting": {
+    "defaultMessage": "{mac} で管理者プロンプトを待っています: その場にいる人が承認またはキャンセルします。それまでは何も変わりません。"
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, other {# 台の Mac に分割 · {backend}}}"

@@ -4940,6 +4940,63 @@
   "microphoneSelector.test": {
     "defaultMessage": "Testar"
   },
+  "mlxDistWired.beyond": {
+    "defaultMessage": "É o máximo que a reserva permite, acima da sugestão com base no uso atual de {mac}: espere pressão de memória lá."
+  },
+  "mlxDistWired.binds": {
+    "defaultMessage": "O teto limita"
+  },
+  "mlxDistWired.buys": {
+    "defaultMessage": "Aumentar para {mb} MB em {mac}: {layers}contexto máx. {now} → ~{then}"
+  },
+  "mlxDistWired.buysLayers": {
+    "defaultMessage": "{count, plural, one {+# camada vai} other {+# camadas vão}} para {mac} → "
+  },
+  "mlxDistWired.buysNothing": {
+    "defaultMessage": "Aumentar {mac} para {mb} MB não ganha nada aqui: o planejador continua com contexto máx. {now} (outro limite prevalece)."
+  },
+  "mlxDistWired.done": {
+    "defaultMessage": "Aumentado"
+  },
+  "mlxDistWired.doneText": {
+    "defaultMessage": "{mac} indica {mb} MB agora. Execute a verificação prévia de novo para planejar com esse valor."
+  },
+  "mlxDistWired.failed": {
+    "defaultMessage": "Não alterado"
+  },
+  "mlxDistWired.fallback": {
+    "defaultMessage": "Se nenhum app goose estiver rodando em {mac}, ou ninguém lá puder aprovar, execute isto no Terminal em {mac}:"
+  },
+  "mlxDistWired.intro": {
+    "defaultMessage": "O orçamento de um nó é o menor entre sua memória livre e seu teto de GPU, que o macOS define a partir do limite wired. Onde o teto limita, a verificação prévia replanejou a divisão com um limite aumentado."
+  },
+  "mlxDistWired.keepAfterRestart": {
+    "defaultMessage": "Manter após reiniciar"
+  },
+  "mlxDistWired.keeps": {
+    "defaultMessage": "O macOS e outros apps em {mac} ficam com {keep} GB"
+  },
+  "mlxDistWired.limitDefault": {
+    "defaultMessage": "limite wired 0 (padrão do macOS) · teto de GPU {ceiling} GB"
+  },
+  "mlxDistWired.limitRaised": {
+    "defaultMessage": "limite wired {mb} MB · teto de GPU {ceiling} GB"
+  },
+  "mlxDistWired.limitUnread": {
+    "defaultMessage": "limite wired não lido"
+  },
+  "mlxDistWired.noApp": {
+    "defaultMessage": "{mac} é acessado por ssh, não por um app goose, então ninguém lá pode ser consultado daqui. Execute isto no Terminal em {mac}:"
+  },
+  "mlxDistWired.raise": {
+    "defaultMessage": "Aumentar em {mac}"
+  },
+  "mlxDistWired.title": {
+    "defaultMessage": "Limites wired da GPU"
+  },
+  "mlxDistWired.waiting": {
+    "defaultMessage": "O aviso de administrador está aberto em {mac}: quem estiver lá aprova ou cancela. Entra em vigor na próxima inicialização da divisão."
+  },
   "mlxDistributed.action.preflight": {
     "defaultMessage": "Preflight (teste a seco)"
   },
@@ -6122,6 +6179,12 @@
   "mlxMemory.unsaved": {
     "defaultMessage": "não salvo"
   },
+  "mlxMemory.wiredBelowOthers": {
+    "defaultMessage": "Sobram {keep} GB, menos do que {mac} usa fora da GPU agora ({others} GB) mais a reserva de {reserve} GB: espere pressão de memória e swap."
+  },
+  "mlxMemory.wiredBelowReserve": {
+    "defaultMessage": "Recusado: sobram {keep} GB, abaixo do mínimo de {reserve} GB. O motor MLX também precisa de RAM fora da GPU (cerca de 12 GB medidos sob carga) e o kernel e o sistema de cerca de 10 GB a mais. O máximo permitido aqui é {max} MB."
+  },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "Configuração de inicialização (LaunchDaemon)"
   },
@@ -6137,32 +6200,56 @@
   "mlxMemory.wiredDefault": {
     "defaultMessage": "0 (padrão do macOS)"
   },
+  "mlxMemory.wiredDisable": {
+    "defaultMessage": "Desativar (padrão do macOS)"
+  },
   "mlxMemory.wiredDone": {
     "defaultMessage": "Concluído"
   },
+  "mlxMemory.wiredDoneDefault": {
+    "defaultMessage": "O limite wired em {mac} voltou ao padrão do macOS."
+  },
   "mlxMemory.wiredDoneText": {
-    "defaultMessage": "O limite wired agora é {mb} MB."
+    "defaultMessage": "O limite wired em {mac} agora é {mb} MB."
+  },
+  "mlxMemory.wiredEnable": {
+    "defaultMessage": "Ativar"
   },
   "mlxMemory.wiredFailed": {
     "defaultMessage": "Não alterado"
   },
-  "mlxMemory.wiredIntro": {
-    "defaultMessage": "Quanta RAM o macOS deixa a GPU reservar (wired), o que limita todos os motores. Definir isso executa um comando como administrador: o macOS pede sua senha. Volta ao padrão na reinicialização, a menos que você instale também a configuração de inicialização. O Metal lê o valor quando um processo inicia, então o motor vê o novo valor na próxima inicialização."
+  "mlxMemory.wiredFallback": {
+    "defaultMessage": "Ou execute isto no Terminal em {mac}:"
   },
-  "mlxMemory.wiredInvalid": {
-    "defaultMessage": "Use 0 ou um número inteiro de 8192 a {max}."
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "Quanta RAM o macOS permite que a GPU reserve como wired, o que limita todos os motores em {mac}. Ativar e Desativar executam, cada um, um comando como administrador: o macOS pede a senha em {mac} e o goose nunca a vê nem a armazena. O limite é redefinido ao reiniciar, a menos que você o mantenha. O Metal o lê quando um processo inicia, então um motor vê o novo valor na próxima inicialização."
+  },
+  "mlxMemory.wiredInvalidValue": {
+    "defaultMessage": "Use um número inteiro de 8192 a {max} MB, ou Desativar para o padrão do macOS."
+  },
+  "mlxMemory.wiredKeep": {
+    "defaultMessage": "O macOS e outros apps ficam com {keep} GB de {physical} GB"
+  },
+  "mlxMemory.wiredLowers": {
+    "defaultMessage": "Está abaixo do conjunto de trabalho da GPU que o macOS dá agora ({ws}): Ativar o reduziria, não aumentaria."
+  },
+  "mlxMemory.wiredNoSuggestion": {
+    "defaultMessage": "Nenhum aumento sugerido: o uso atual de {mac} mais a reserva de {reserve} GB deixa muito pouco para reservar."
+  },
+  "mlxMemory.wiredOthers": {
+    "defaultMessage": "Em uso fora da GPU agora"
   },
   "mlxMemory.wiredPanel": {
     "defaultMessage": "Limite wired da GPU do macOS"
   },
-  "mlxMemory.wiredPersist": {
-    "defaultMessage": "Definir e manter após reiniciar"
+  "mlxMemory.wiredPersistLabel": {
+    "defaultMessage": "Manter após reiniciar"
   },
-  "mlxMemory.wiredRange": {
-    "defaultMessage": "MB · 0 (padrão do macOS) ou 8192 a {max}"
+  "mlxMemory.wiredPersistNote": {
+    "defaultMessage": "Instala um LaunchDaemon que define o valor a cada inicialização; Desativar o remove."
   },
-  "mlxMemory.wiredRemoteNote": {
-    "defaultMessage": "O limite wired é definido no próprio Mac: abra o goose em {mac} para alterá-lo."
+  "mlxMemory.wiredRangeReserve": {
+    "defaultMessage": "MB ({gib} GB) · de 8192 a {max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "Remover configuração de inicialização"
@@ -6170,14 +6257,35 @@
   "mlxMemory.wiredRemoveNote": {
     "defaultMessage": "Remover a configuração de inicialização mantém o valor atual até a próxima reinicialização."
   },
-  "mlxMemory.wiredSet": {
-    "defaultMessage": "Definir até reiniciar"
+  "mlxMemory.wiredReserve": {
+    "defaultMessage": "Reserva mínima para o macOS"
   },
-  "mlxMemory.wiredSuggest": {
-    "defaultMessage": "sugerido para uma caixa de inferência: {mb} MB"
+  "mlxMemory.wiredReserveValue": {
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+  },
+  "mlxMemory.wiredStateDefault": {
+    "defaultMessage": "Padrão do macOS"
+  },
+  "mlxMemory.wiredStateKept": {
+    "defaultMessage": "Mantido após reiniciar"
+  },
+  "mlxMemory.wiredStateRaised": {
+    "defaultMessage": "Aumentado para {mb} MB"
+  },
+  "mlxMemory.wiredSuggested": {
+    "defaultMessage": "Sugerido pela medição: {mb} MB (mantém {others} GB em uso agora + a reserva de {reserve} GB)"
+  },
+  "mlxMemory.wiredSuggestedLow": {
+    "defaultMessage": "O padrão do macOS já dá à GPU {ws}: com o uso atual de {mac}, aumentar acima de {mb} MB invadiria a reserva."
+  },
+  "mlxMemory.wiredUseSuggestion": {
+    "defaultMessage": "Usar"
   },
   "mlxMemory.wiredValue": {
     "defaultMessage": "Novo limite"
+  },
+  "mlxMemory.wiredWaiting": {
+    "defaultMessage": "Aguardando o aviso de administrador em {mac}: quem estiver lá aprova ou cancela. Nada muda até lá."
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {Dividido entre # Mac · {backend}} other {Dividido entre # Macs · {backend}}}"
