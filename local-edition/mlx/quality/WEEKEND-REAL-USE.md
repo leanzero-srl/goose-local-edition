@@ -29,6 +29,8 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
 - 18:20 coordinator: MiMo FIRST then Flash (no 4 h Flash run before MiMo is relaunched and scored). Studios meanwhile: workhorse = 3.0.138 gate + cut (CUT given), workmule = lz.22 Flash readiness replay (lz.21 agent a9702aa602d899e94); both yield to the MiMo relaunch.
 - 11:06 MiMo 8985a86d scored; release agent waits for the Studio holds, then builds on the workhorse. Workmule Flash round runs AFTER the workmule auto-update check (tests the new release).
 
+- 18:35 OWNER RULE (via coordinator): MacBooks (laptop, Gabee) are for office + episode work (Gabee also runs the episode voice): NO model inference and NO real-use rounds there. All real-use rounds run on the Studios. Round RU-2026-10-31-2 on Gabee cancelled (job cfef); Gabee engine rapid-mlx pid 37337 stopped (SIGTERM, exited in ~15 s, no respawn); only light leftovers: the app's web-search MCP child (Gabee config has Web Search/Documents/Memory enabled by the runner at 18:10).
+
 ## Problems (one line each: id · found · evidence · fixed sha · re-test)
 | id | rank | problem | found (round, evidence) | fixed sha | re-test |
 |----|------|---------|-------------------------|-----------|---------|
