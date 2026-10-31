@@ -16,8 +16,9 @@ use crate::formats::openai_responses::{
 };
 use crate::http_status::sanitize_url;
 use crate::images::{
-    announced, convert_image, convert_media, split_pcm_wav, withheld_images_notice, ImageFormat,
-    ImageInput,
+    announced, convert_image, convert_media, detect_image_path, load_image_file, path_image_label,
+    split_pcm_wav, tool_image_label, withheld_images_notice, ImageFormat, ImageInput,
+    WithholdReason,
 };
 use crate::openai_compatible::{
     handle_response_openai_compat, handle_status, stream_responses_compat,
@@ -32,7 +33,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::base::{MessageStream, ProviderDescriptor};
 use crate::model::ModelConfig;
-use rmcp::model::Tool;
+use rmcp::model::{AnnotateAble as _, RawContent, Tool};
 
 pub const OPEN_AI_PROVIDER_NAME: &str = "openai";
 pub const OPEN_AI_DEFAULT_BASE_PATH: &str = "v1/chat/completions";
@@ -627,11 +628,29 @@ impl OpenAiProvider {
     /// the pipeline split, the tensor split's wrapper). Asked fresh on every request that carries
     /// an image — never cached, because a remount can move the same id to another lane — and
     /// never asked when the request carries none, so a text request is byte-identical.
-    async fn image_input(&self, model_name: &str) -> Result<ImageInput, ProviderError> {
-        let models_path =
-            Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
-        let json = self.fetch_models_json(&models_path).await?;
+    async fn image_input(
+        &self,
+        model_name: &str,
+        listing: Option<&serde_json::Value>,
+    ) -> Result<ImageInput, ProviderError> {
+        let json = self.models_listing(listing).await?;
         Ok(declared_image_input(&json, model_name))
+    }
+
+    /// The `/v1/models` body this request already fetched (the media pre-pass asks first), or a
+    /// fresh one: one listing per request, never one cached across requests.
+    async fn models_listing(
+        &self,
+        listing: Option<&serde_json::Value>,
+    ) -> Result<serde_json::Value, ProviderError> {
+        match listing {
+            Some(json) => Ok(json.clone()),
+            None => {
+                let models_path =
+                    Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
+                self.fetch_models_json(&models_path).await
+            }
+        }
     }
 
     /// The format options with attached audio/video withheld behind their named placeholders when
@@ -643,6 +662,7 @@ impl OpenAiProvider {
         model_name: &str,
         messages: &[Message],
         options: OpenAiFormatOptions,
+        listing: Option<&serde_json::Value>,
     ) -> OpenAiFormatOptions {
         let carries_media = messages.iter().any(|m| {
             m.content
@@ -652,9 +672,7 @@ impl OpenAiProvider {
         if !carries_media || !self.asks_engine_for_image_input() {
             return options;
         }
-        let models_path =
-            Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
-        match self.fetch_models_json(&models_path).await {
+        match self.models_listing(listing).await {
             Ok(json) => {
                 let (withhold_audio, withhold_video) = withheld_media(&json, model_name);
                 if withhold_audio || withhold_video {
@@ -699,62 +717,162 @@ impl OpenAiProvider {
         &self,
         model_config: &ModelConfig,
         messages: &[Message],
-    ) -> Option<Vec<Message>> {
+    ) -> (Option<Prepared>, Option<serde_json::Value>) {
+        // F22 (Gabee, 2026-10-31): the pre-pass covered attached images and media only. An image
+        // read_image returned (a tool result) and an image a user message names by its path went
+        // into the agent turn itself, so the MLLM lane refused the 40,704-token turn over its
+        // 8,192-token image-request cap, and the text-only retry told the chat a model served
+        // with `vision` "reads text only". Every image the agent turn would carry is now
+        // described first on that lane, wherever it sits in the history.
+        let has_path_image = |m: &Message| {
+            m.role == rmcp::model::Role::User
+                && m.content.iter().any(|c| match c {
+                    MessageContent::Text(t) => {
+                        !crate::conversation::is_turn_context_text(&t.text)
+                            && detect_image_path(&t.text).is_some()
+                    }
+                    _ => false,
+                })
+        };
         let carries = |m: &Message| {
             m.role == rmcp::model::Role::User
-                && m.content
-                    .iter()
-                    .any(|c| matches!(c, MessageContent::Media(_) | MessageContent::Image(_)))
+                && m.content.iter().any(|c| match c {
+                    MessageContent::Media(_) | MessageContent::Image(_) => true,
+                    MessageContent::ToolResponse(r) => r.tool_result.as_ref().is_ok_and(|res| {
+                        res.content
+                            .iter()
+                            .any(|item| matches!(&item.raw, RawContent::Image(_)))
+                    }),
+                    _ => false,
+                })
         };
-        if !messages.iter().any(carries) || !self.asks_engine_for_image_input() {
-            return None;
+        if !messages.iter().any(|m| carries(m) || has_path_image(m))
+            || !self.asks_engine_for_image_input()
+        {
+            return (None, None);
         }
         let model_name = model_config.model_name.as_str();
         let models_path =
             Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
-        let json = self.fetch_models_json(&models_path).await.ok()?;
+        // A listing that cannot be fetched leaves the turn as it is; chat_request asks again and
+        // logs image_input_probe_failed / media_input_probe_failed by name.
+        let Ok(json) = self.fetch_models_json(&models_path).await else {
+            return (None, None);
+        };
         let caps = prepass_kinds(&json, model_name);
         if !caps.audio && !caps.video {
-            return None;
+            return (None, Some(json));
+        }
+        // The tool each tool-result image came from, by the id of the call that returned it.
+        let mut tool_names: HashMap<&str, &str> = HashMap::new();
+        for message in messages {
+            for content in &message.content {
+                if let MessageContent::ToolRequest(request) = content {
+                    if let Ok(call) = &request.tool_call {
+                        tool_names.insert(request.id.as_str(), call.name.as_ref());
+                    }
+                }
+            }
         }
         let mut changed = false;
         let mut out = Vec::with_capacity(messages.len());
         for message in messages {
-            if !carries(message) {
+            let mut image_no = 0usize;
+            let path_images = caps.images && has_path_image(message);
+            if !carries(message) && !path_images {
                 out.push(message.clone());
                 continue;
             }
             let mut rewritten = message.clone();
             rewritten.content.clear();
-            let mut image_no = 0usize;
             for content in &message.content {
-                let attachment = match content {
+                match content {
                     MessageContent::Media(media)
                         if match media.kind {
                             MediaKind::Audio => caps.audio,
                             MediaKind::Video => caps.video,
                         } =>
                     {
-                        Some(Attachment::Media(media))
+                        changed = true;
+                        let text = self
+                            .attachment_text(model_name, &Attachment::Media(media))
+                            .await;
+                        rewritten.content.push(MessageContent::text(text));
                     }
                     MessageContent::Image(image) if caps.images => {
-                        image_no += 1;
-                        Some(Attachment::Image(image, image_no))
-                    }
-                    _ => None,
-                };
-                match attachment {
-                    Some(attachment) => {
                         changed = true;
+                        image_no += 1;
+                        let attachment = Attachment::Image {
+                            image: image.clone(),
+                            name: format!("#{image_no} ({})", image.mime_type),
+                            source: ImageSource::Attached,
+                        };
                         let text = self.attachment_text(model_name, &attachment).await;
                         rewritten.content.push(MessageContent::text(text));
                     }
-                    None => rewritten.content.push(content.clone()),
+                    MessageContent::Text(t)
+                        if path_images && !crate::conversation::is_turn_context_text(&t.text) =>
+                    {
+                        rewritten.content.push(content.clone());
+                        let Some(path) = detect_image_path(&t.text) else {
+                            continue;
+                        };
+                        let label = path_image_label(path.as_ref());
+                        let text = match load_image_file(path.as_ref()) {
+                            Ok(image) => {
+                                let attachment = Attachment::Image {
+                                    name: format!("{label} ({})", image.mime_type),
+                                    image,
+                                    source: ImageSource::Path,
+                                };
+                                self.attachment_text(model_name, &attachment).await
+                            }
+                            // The formatter skips loading named paths on this lane; the agent
+                            // turn says the file could not be read rather than nothing.
+                            Err(e) => format!("[Image {label} - could not be read: {e}]"),
+                        };
+                        changed = true;
+                        rewritten.content.push(MessageContent::text(text));
+                    }
+                    MessageContent::ToolResponse(response) if caps.images => {
+                        let mut response = response.clone();
+                        if let Ok(result) = response.tool_result.as_mut() {
+                            let tool = tool_names.get(response.id.as_str()).copied();
+                            let mut items = Vec::with_capacity(result.content.len());
+                            for item in &result.content {
+                                match &item.raw {
+                                    RawContent::Image(image) => {
+                                        changed = true;
+                                        let attachment = Attachment::Image {
+                                            image: image.clone().no_annotation(),
+                                            name: tool_image_label(tool, &image.mime_type),
+                                            source: ImageSource::Tool,
+                                        };
+                                        let text =
+                                            self.attachment_text(model_name, &attachment).await;
+                                        items.push(rmcp::model::Content::text(text));
+                                    }
+                                    _ => items.push(item.clone()),
+                                }
+                            }
+                            result.content = items;
+                        }
+                        rewritten
+                            .content
+                            .push(MessageContent::ToolResponse(response));
+                    }
+                    _ => rewritten.content.push(content.clone()),
                 }
             }
             out.push(rewritten);
         }
-        changed.then_some(out)
+        (
+            changed.then_some(Prepared {
+                messages: out,
+                image_paths_described: caps.images,
+            }),
+            Some(json),
+        )
     }
 
     /// The labelled text the agent turn carries for one attachment: the engine's transcript or
@@ -880,6 +998,7 @@ impl OpenAiProvider {
         messages: &[Message],
         tools: &[Tool],
         format_options: OpenAiFormatOptions,
+        reason: WithholdReason,
     ) -> Result<(serde_json::Value, Option<String>), ProviderError> {
         let (payload, images) = create_request_reporting_images(
             model_config,
@@ -890,6 +1009,7 @@ impl OpenAiProvider {
             self.supports_streaming,
             OpenAiFormatOptions {
                 text_only_engine: true,
+                withhold_reason: reason,
                 ..format_options
             },
         )?;
@@ -946,6 +1066,7 @@ impl OpenAiProvider {
         messages: &[Message],
         tools: &[Tool],
         format_options: OpenAiFormatOptions,
+        listing: Option<&serde_json::Value>,
     ) -> Result<(serde_json::Value, Option<String>), ProviderError> {
         let build = |options: OpenAiFormatOptions| -> Result<_, ProviderError> {
             Ok(create_request_reporting_images(
@@ -959,13 +1080,13 @@ impl OpenAiProvider {
             )?)
         };
         let format_options = self
-            .media_format_options(&model_config.model_name, messages, format_options)
+            .media_format_options(&model_config.model_name, messages, format_options, listing)
             .await;
         let (payload, images) = build(format_options)?;
         if images.sent == 0 || !self.asks_engine_for_image_input() {
             return Ok((payload, None));
         }
-        match self.image_input(&model_config.model_name).await {
+        match self.image_input(&model_config.model_name, listing).await {
             Ok(ImageInput::TextOnly) => {
                 let (payload, images) = build(OpenAiFormatOptions {
                     text_only_engine: true,
@@ -1242,9 +1363,31 @@ fn prepass_kinds(json: &serde_json::Value, model_name: &str) -> PrepassKinds {
     }
 }
 
+/// The agent turn after the media pre-pass, and whether every image a user message names by its
+/// path was described in it (then the formatter must not load those files into the turn).
+struct Prepared {
+    messages: Vec<Message>,
+    image_paths_described: bool,
+}
+
+/// Where an image the pre-pass describes sat in the agent turn.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImageSource {
+    /// Attached to a user message (a paste or a dropped file).
+    Attached,
+    /// Named by its path in a user message.
+    Path,
+    /// Returned by a tool (read_image, a screenshot).
+    Tool,
+}
+
 enum Attachment<'a> {
     Media(&'a MediaContent),
-    Image(&'a rmcp::model::ImageContent, usize),
+    Image {
+        image: rmcp::model::ImageContent,
+        name: String,
+        source: ImageSource,
+    },
 }
 
 impl Attachment<'_> {
@@ -1254,7 +1397,7 @@ impl Attachment<'_> {
                 MediaKind::Audio => "audio",
                 MediaKind::Video => "video",
             },
-            Attachment::Image(..) => "image",
+            Attachment::Image { .. } => "image",
         }
     }
 
@@ -1262,7 +1405,7 @@ impl Attachment<'_> {
         use sha2::{Digest, Sha256};
         let (mime, data) = match self {
             Attachment::Media(m) => (m.mime_type.as_str(), m.data.as_str()),
-            Attachment::Image(i, _) => (i.mime_type.as_str(), i.data.as_str()),
+            Attachment::Image { image, .. } => (image.mime_type.as_str(), image.data.as_str()),
         };
         let digest = Sha256::digest(data.as_bytes());
         let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
@@ -1272,7 +1415,7 @@ impl Attachment<'_> {
     fn part(&self) -> serde_json::Value {
         match self {
             Attachment::Media(m) => convert_media(m),
-            Attachment::Image(i, _) => convert_image(i, &ImageFormat::OpenAi),
+            Attachment::Image { image, .. } => convert_image(image, &ImageFormat::OpenAi),
         }
     }
 
@@ -1310,7 +1453,7 @@ impl Attachment<'_> {
                 "Describe this video in detail, in time order: what is shown, what moves or \
                  changes, and any text that appears on screen."
             }
-            Attachment::Image(..) => {
+            Attachment::Image { .. } => {
                 "Describe this image in detail: what it shows, its layout, and every piece of \
                  text in it, verbatim."
             }
@@ -1323,7 +1466,7 @@ impl Attachment<'_> {
                 Some(name) => format!("{name} ({})", m.mime_type),
                 None => format!("({})", m.mime_type),
             },
-            Attachment::Image(i, n) => format!("#{n} ({})", i.mime_type),
+            Attachment::Image { name, .. } => name.clone(),
         }
     }
 
@@ -1335,6 +1478,26 @@ impl Attachment<'_> {
             Attachment::Media(m) if m.kind == MediaKind::Audio => "transcript",
             _ => "description",
         };
+        let attached = !matches!(
+            self,
+            Attachment::Image {
+                source: ImageSource::Path | ImageSource::Tool,
+                ..
+            }
+        );
+        if !attached {
+            return match text {
+                Ok(text) => format!(
+                    "[Image {} - description made from the image by {model}, not the image \
+                     itself:]\n{text}\n[End of the description of the image]",
+                    self.name()
+                ),
+                Err(reason) => format!(
+                    "[Image {} - {model} could not turn it into text: {reason}]",
+                    self.name()
+                ),
+            };
+        }
         match text {
             Ok(text) => format!(
                 "[Attached {kind} {} - {made} made from the attachment by {model}, not the \
@@ -1745,10 +1908,24 @@ impl Provider for OpenAiProvider {
                 text_only_engine: false,
                 ..Default::default()
             };
-            let prepared = self.media_prepass(model_config, messages).await;
-            let messages: &[Message] = prepared.as_deref().unwrap_or(messages);
+            let (prepared, listing) = self.media_prepass(model_config, messages).await;
+            let format_options = OpenAiFormatOptions {
+                image_paths_described: prepared.as_ref().is_some_and(|p| p.image_paths_described),
+                ..format_options
+            };
+            let messages: &[Message] = prepared
+                .as_ref()
+                .map(|p| p.messages.as_slice())
+                .unwrap_or(messages);
             let (payload, mut images_notice) = self
-                .chat_request(model_config, system, messages, tools, format_options)
+                .chat_request(
+                    model_config,
+                    system,
+                    messages,
+                    tools,
+                    format_options,
+                    listing.as_ref(),
+                )
                 .await?;
             let payload = self.finish_chat_payload(
                 model_config,
@@ -1775,12 +1952,20 @@ impl Provider for OpenAiProvider {
                         && payload_carries_images(&payload) =>
                 {
                     let _ = log.error(&e);
+                    // The refusal decides what the chat is told: an engine that reads images
+                    // but refused this turn over its media prompt cap is never called text-only.
+                    let reason = if refuses_media_prefill(&e) {
+                        WithholdReason::OverMediaPromptCap
+                    } else {
+                        WithholdReason::TextOnly
+                    };
                     tracing::warn!(
                         host = %sanitize_url(self.api_client.host()),
                         model = %model_config.model_name,
                         error = %e,
-                        "images_refused: the endpoint reads text only; the turn is sent again with \
-                         every image part as a named placeholder"
+                        reason = ?reason,
+                        "images_refused: the endpoint refused the turn's image parts; the turn is \
+                         sent again with every image part as a named placeholder that names why"
                     );
                     let (retry, notice) = self.text_only_request(
                         model_config,
@@ -1788,6 +1973,7 @@ impl Provider for OpenAiProvider {
                         messages,
                         tools,
                         format_options,
+                        reason,
                     )?;
                     images_notice = notice;
                     let retry = self.finish_chat_payload(
@@ -3545,6 +3731,209 @@ mod media_input_tests {
         assert!(serde_json::to_string(&bodies[0]).unwrap().contains(png));
     }
 
+    /// The `/v1/models` entry Rapid-MLX v0.14.3-lz.19 served for Gemma 4 E4B on Gabee
+    /// (RU-2026-10-31-3-single-gemma4-e4b NOTES.md: "capabilities text,vision,video,audio,tools").
+    fn gemma4_e4b_entry() -> serde_json::Value {
+        json!(OMNI_CAPS)
+    }
+
+    /// F22's turn: the person asks about a file, the model calls read_image, and the tool returns
+    /// the PNG beside its text line.
+    fn read_image_turn(png_b64: &str) -> Vec<Message> {
+        use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
+        vec![
+            Message::user().with_text("What do you see in booking-screenshot.png?"),
+            Message::assistant()
+                .with_tool_request("call_img", Ok(CallToolRequestParams::new("read_image"))),
+            Message::user().with_tool_response(
+                "call_img",
+                Ok(CallToolResult::success(vec![
+                    Content::text("Loaded image from booking-screenshot.png (28540 bytes)."),
+                    Content::image(png_b64, "image/png"),
+                ])),
+            ),
+        ]
+    }
+
+    /// F22 (Gabee, 3.0.136, 2026-10-31): Gemma 4 E4B is served with `vision`, yet read_image's PNG
+    /// went into the 40,704-token agent turn, the MLLM lane refused it over its 8,192-token image
+    /// cap, and the retry told the chat "gemma-4-e4b-it-8bit reads text only — the image from
+    /// read_image (image/png) was not sent". A tool's image is described in a side request first,
+    /// exactly as an attached one is, and the agent turn carries the description.
+    #[tokio::test]
+    async fn a_read_image_result_is_described_first_on_the_lane_that_hears_audio() {
+        let png = "iVBORw0KGgoF22tool";
+        let bodies = prepass_bodies(gemma4_e4b_entry(), &[read_image_turn(png)], 200).await;
+        let side: Vec<_> = bodies.iter().filter(|b| is_side(b)).collect();
+        assert_eq!(side.len(), 1, "{bodies:#?}");
+        assert_eq!(side[0]["messages"][1]["content"][1]["type"], "image_url");
+        assert!(serde_json::to_string(side[0]).unwrap().contains(png));
+        let main = bodies.iter().find(|b| !is_side(b)).unwrap();
+        let wire = serde_json::to_string(main).unwrap();
+        assert!(!wire.contains("image_url") && !wire.contains(png), "{wire}");
+        let tool = main["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == "tool")
+            .unwrap();
+        let tool_text = tool["content"].as_str().unwrap();
+        assert!(
+            tool_text.starts_with("Loaded image from booking-screenshot.png"),
+            "{tool_text}"
+        );
+        assert!(
+            tool_text.contains(
+                "[Image from read_image (image/png) - description made from the image by served"
+            ),
+            "{tool_text}"
+        );
+        assert!(tool_text.contains("HEARD Thursday at 4 pm"));
+        assert!(!wire.contains("text only"), "{wire}");
+
+        // A vision engine without audio (no MLLM lane) still gets the tool's image itself.
+        let bodies = prepass_bodies(
+            json!(["text", "vision", "tools"]),
+            &[read_image_turn(png)],
+            200,
+        )
+        .await;
+        assert_eq!(bodies.len(), 1);
+        assert!(serde_json::to_string(&bodies[0])
+            .unwrap()
+            .contains("image_url"));
+    }
+
+    /// The sibling of F22: an image a user message names by its path is described first on the
+    /// same lane; the path stays in the person's words and the file is not loaded into the turn.
+    #[tokio::test]
+    async fn an_image_named_by_its_path_is_described_first_and_not_loaded_into_the_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("clinic-booking.png");
+        std::fs::write(
+            &path,
+            [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2],
+        )
+        .unwrap();
+        let asked = format!("What is wrong in {} ?", path.display());
+        let turn = vec![Message::user().with_text(asked)];
+        let bodies = prepass_bodies(gemma4_e4b_entry(), std::slice::from_ref(&turn), 200).await;
+        assert_eq!(
+            bodies.iter().filter(|b| is_side(b)).count(),
+            1,
+            "{bodies:#?}"
+        );
+        let main = bodies.iter().find(|b| !is_side(b)).unwrap();
+        let wire = serde_json::to_string(main).unwrap();
+        assert!(!wire.contains("image_url"), "{wire}");
+        assert!(wire.contains("What is wrong in ") && wire.contains("clinic-booking.png ?"));
+        assert!(
+            wire.contains(
+                "[Image clinic-booking.png (image/png) - description made from the image"
+            ),
+            "{wire}"
+        );
+
+        // Without the MLLM lane the file is attached to the turn as before.
+        let bodies = prepass_bodies(json!(["text", "vision", "tools"]), &[turn], 200).await;
+        assert_eq!(bodies.len(), 1);
+        assert!(serde_json::to_string(&bodies[0])
+            .unwrap()
+            .contains("image_url"));
+    }
+
+    /// When the engine reads images but still refuses a turn over its media prompt cap (the real
+    /// Rapid-MLX 400 text from Gabee's mlx-engine log), the retry withholds the image and says
+    /// THAT — never "reads text only".
+    #[tokio::test]
+    async fn a_media_prompt_cap_refusal_is_never_reported_as_a_text_only_model() {
+        use futures::StreamExt;
+        use wiremock::matchers::{body_string_contains, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "object": "list",
+                "data": [{"id": "served", "capabilities": ["text", "vision", "tools"]}],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(body_string_contains("image_url"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({"error":
+                "Vision-request prompt tokens (40704) exceeds the per-batch cap (8192 = vision \
+                 token budget 8192 × 1 vision request(s)). For image inputs, downscale the image; \
+                 for text inputs, shorten the prompt or restart the server with \
+                 --prefill-step-size set higher."})))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+                             "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            })))
+            .mount(&server)
+            .await;
+        let mut provider = super::tests::make_provider("omlx");
+        provider.api_client =
+            ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        provider.supports_streaming = false;
+        let stream = provider
+            .stream(
+                &ModelConfig::new("served"),
+                "system",
+                &read_image_turn("iVBORw0KGgoF22cap"),
+                &[],
+            )
+            .await
+            .unwrap();
+        let items: Vec<_> = stream.collect().await;
+        let notices: Vec<String> = items
+            .into_iter()
+            .filter_map(|item| item.unwrap().0)
+            .flat_map(|m| m.content)
+            .filter_map(|c| match c {
+                MessageContent::SystemNotification(n) => Some(n.msg),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            notices,
+            [
+                "served reads images, but this request was too long for the engine to take one — \
+              the image from read_image (image/png) was not sent"
+            ]
+        );
+        let bodies: Vec<serde_json::Value> = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
+            .collect();
+        let (retry, refused) = bodies.split_last().unwrap();
+        assert!(!refused.is_empty(), "the refused turn, then the retry");
+        for body in refused {
+            assert!(serde_json::to_string(body).unwrap().contains("image_url"));
+        }
+        let retry = serde_json::to_string(retry).unwrap();
+        assert!(
+            !retry.contains("image_url") && !retry.contains("text only"),
+            "{retry}"
+        );
+        assert!(retry.contains(
+            "[image from read_image (image/png) not sent: this request was too long for the \
+             engine to take an image with it]"
+        ));
+    }
+
     fn pcm_wav_b64(sample_rate: u32, secs: u32) -> String {
         use base64::Engine as _;
         let data_len = sample_rate * 2 * secs;
@@ -3660,10 +4049,10 @@ mod media_input_tests {
                 name: Some(name.to_string()),
             });
             let started = std::time::Instant::now();
-            let prepared = provider.media_prepass(&model, &[message]).await;
+            let (prepared, _) = provider.media_prepass(&model, &[message]).await;
             let text = prepared
                 .as_ref()
-                .and_then(|m| m.first())
+                .and_then(|p| p.messages.first())
                 .map(|m| m.as_concat_text())
                 .unwrap_or_else(|| "(no pre-pass: the engine does not take this kind)".into());
             let row = json!({"path": path, "elapsed_ms": started.elapsed().as_millis() as u64, "text": text});
