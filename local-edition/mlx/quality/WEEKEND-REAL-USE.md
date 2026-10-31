@@ -57,6 +57,10 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
 
 ## Rounds
 PURPOSE line required before every round (owner 18:40): `PURPOSE <id>: <decision/fix it drives> · <why this Mac>`.
+PLANNED (not run yet; Studios are busy with the MiMo relaunch, so these wait for a free Studio):
+- PURPOSE RU-138-a: decides whether 3.0.138 really fixes WR-1/WR-2 (first run, Run it + Save as node) and WR-11 (gemma vision), or a 3.0.139 fix is needed · Studio: a generic path, any Mac reproduces it (fresh profile, small model).
+- PURPOSE RU-139-a: decides whether WR-17 (memory + bundled tools on by default, missing tool makes the model say "could not") and WR-19 grounding are merged for real use · Studio, on the 3.0.139 candidate build.
+- NOT planned on a MacBook: no open WR needs one. WR-5/WR-14 (NFS model load, Gabee only) are explained/minor and drive no decision now.
 | round | host · config · model · build | brief | result |
 |-------|-------------------------------|-------|--------|
 | MiMo-137 | workhorse+workmule · split 18/30 · MiMo-V2.6-Flash 4-bit · 3.0.137 | Gauntlet sb-7.2 | launched 13:09:12; ENDED EARLY 15:14 (incomplete-agent, 7515 s): at ~200k the compaction request got "stream ended before completion ... 0 data frames", then 127.0.0.1:8191 refused: the split engine died during the compaction prefill; CAUSE OURS: rank 1 (workmule) METAL OOM at 13:14:19Z in prompt_batch.prompt width 212,048 on the compaction request (110.5->114.8 GB vs 111.9 planned / 115.45 limit); fixer a7e2fce1fe17d79ce (suspects prefix-keep e8b721c1ab overshoot + planner under-sizing ~3 GB; my angle: unchunked/unreused 212k prefill). Holds released 18:20. |
