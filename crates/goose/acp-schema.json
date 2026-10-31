@@ -10529,6 +10529,17 @@
           "type": "boolean",
           "description": "False while the memory watchdog holds new requests out (WARN on some node)."
         },
+        "hold": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedHoldDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "While `admissionOpen` is false for memory: the node that holds it, what it has available\nand what admission reopens at."
+        },
         "inflight": {
           "type": [
             "integer",
@@ -10702,6 +10713,41 @@
         "events",
         "restarts"
       ]
+    },
+    "MlxDistributedHoldDto": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string",
+          "description": "The node whose memory holds admission (its configured name)."
+        },
+        "cause": {
+          "type": "string",
+          "description": "\"floor\" (available under the WARN reserve) | \"pressure\" (the kernel's own level) |\n\"growth\" (the engine grew by what is left above CRITICAL)."
+        },
+        "availableBytes": {
+          "type": "integer",
+          "description": "The hold's available figure on that node: free + speculative + inactive + purgeable.",
+          "minimum": 0
+        },
+        "neededBytes": {
+          "type": "integer",
+          "description": "What admission reopens at on that node.",
+          "minimum": 0
+        },
+        "pressure": {
+          "type": "string",
+          "description": "The node's kernel memory-pressure level: \"normal\" | \"warn\" | \"critical\"."
+        }
+      },
+      "required": [
+        "node",
+        "cause",
+        "availableBytes",
+        "neededBytes",
+        "pressure"
+      ],
+      "description": "The distributed engine's memory hold, as the engine card names it."
     },
     "MlxDistributedLivenessDto": {
       "type": "object",
