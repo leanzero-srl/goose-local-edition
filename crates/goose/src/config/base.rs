@@ -2442,6 +2442,53 @@ mod tests {
         Ok(())
     }
 
+    /// WR-27 (2026-10-31): after the 3.0.138 install the workhorse config had no `mlx_distributed`,
+    /// `GOOSE_CONTEXT_LIMIT` or `OPENAI_HOST: :8191`. The cause was a run agent copying its pre-run
+    /// backup back at 18:03, not goose; this pins that every write path goose has (startup
+    /// migrations, set_param, set_param_values, delete of another key) keeps the person's own keys.
+    /// (Flat GOOSE_PROVIDER/GOOSE_MODEL are the one designed exception: migrate_provider_config moves them.)
+    #[test]
+    fn every_write_keeps_the_persons_own_and_unknown_keys() -> Result<(), ConfigError> {
+        let dir = tempfile::tempdir().unwrap();
+        let (config, config_path, _) = config_in(&dir)?;
+        std::fs::write(
+            &config_path,
+            "OPENAI_HOST: http://127.0.0.1:8191\n\
+             OPENAI_BASE_PATH: v1/chat/completions\n\
+             GOOSE_CONTEXT_LIMIT: 262144\n\
+             GOOSE_TOOLSHIM: true\n\
+             some_future_key:\n  nested: [1, 2]\n\
+             mlx_distributed:\n  model_id: EigenLabs/MiMo\n  context: 262144\n  backend: jaccl\n  \
+             nodes:\n  - name: a\n    tb_ip: 192.168.0.2\n  - name: b\n    ssh: workmule\n",
+        )?;
+
+        config.set_param("GOOSE_MODE", "auto")?;
+        config.set_param_values(&[("GOOSE_TELEMETRY_ENABLED".into(), Value::Bool(false))])?;
+        config.delete("GOOSE_TOOLSHIM")?;
+
+        let after: Mapping = serde_yaml::from_str(&std::fs::read_to_string(&config_path)?)?;
+        for key in [
+            "OPENAI_HOST",
+            "OPENAI_BASE_PATH",
+            "GOOSE_CONTEXT_LIMIT",
+            "some_future_key",
+            "mlx_distributed",
+            "GOOSE_MODE",
+            "GOOSE_TELEMETRY_ENABLED",
+        ] {
+            assert!(after.contains_key(key), "{key} lost: {after:?}");
+        }
+        assert!(!after.contains_key("GOOSE_TOOLSHIM"));
+        let host: String = config.get_param("OPENAI_HOST")?;
+        assert_eq!(host, "http://127.0.0.1:8191");
+        let limit: u64 = config.get_param("GOOSE_CONTEXT_LIMIT")?;
+        assert_eq!(limit, 262144);
+        let dist: Value = config.get_param("mlx_distributed")?;
+        assert_eq!(dist["nodes"][1]["ssh"], "workmule");
+        assert_eq!(dist["context"], 262144);
+        Ok(())
+    }
+
     #[test]
     fn test_missing_config_created_on_write() -> Result<(), ConfigError> {
         let config_file = NamedTempFile::new().unwrap();
