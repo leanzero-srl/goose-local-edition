@@ -4940,6 +4940,63 @@
   "microphoneSelector.test": {
     "defaultMessage": "परीक्षण"
   },
+  "mlxDistWired.beyond": {
+    "defaultMessage": "यह रिज़र्व द्वारा अनुमत अधिकतम है, जो {mac} के मौजूदा उपयोग पर आधारित सुझाव से ऊपर है: वहाँ मेमोरी दबाव की संभावना है।"
+  },
+  "mlxDistWired.binds": {
+    "defaultMessage": "ऊपरी सीमा बाधक है"
+  },
+  "mlxDistWired.buys": {
+    "defaultMessage": "{mac} पर {mb} MB तक बढ़ाएँ: {layers}अधिकतम संदर्भ {now} → ~{then}"
+  },
+  "mlxDistWired.buysLayers": {
+    "defaultMessage": "{mac} पर {count, plural, one {+# लेयर जाती है} other {+# लेयर जाती हैं}} → "
+  },
+  "mlxDistWired.buysNothing": {
+    "defaultMessage": "{mac} को {mb} MB तक बढ़ाने से यहाँ कोई लाभ नहीं: प्लानर अब भी अधिकतम संदर्भ {now} ही रखता है (कोई और सीमा बाधक है)।"
+  },
+  "mlxDistWired.done": {
+    "defaultMessage": "बढ़ाया गया"
+  },
+  "mlxDistWired.doneText": {
+    "defaultMessage": "{mac} अब {mb} MB दिखाता है। इसके साथ योजना बनाने के लिए प्रीफ़्लाइट दोबारा चलाएँ।"
+  },
+  "mlxDistWired.failed": {
+    "defaultMessage": "नहीं बदला"
+  },
+  "mlxDistWired.fallback": {
+    "defaultMessage": "अगर {mac} पर कोई goose ऐप नहीं चल रहा, या वहाँ कोई स्वीकृत नहीं कर सकता, तो {mac} पर Terminal में यह चलाएँ:"
+  },
+  "mlxDistWired.intro": {
+    "defaultMessage": "किसी नोड का बजट उसकी खाली मेमोरी और उसकी GPU ऊपरी सीमा में से छोटा होता है, जिसे macOS wired सीमा से तय करता है। जहाँ ऊपरी सीमा बाधक बनती है, वहाँ प्रीफ़्लाइट जाँच ने बढ़ी हुई सीमा के साथ विभाजन दोबारा योजनाबद्ध किया।"
+  },
+  "mlxDistWired.keepAfterRestart": {
+    "defaultMessage": "रीस्टार्ट के बाद भी रखें"
+  },
+  "mlxDistWired.keeps": {
+    "defaultMessage": "{mac} पर macOS और अन्य ऐप्स के पास {keep} GiB रहते हैं"
+  },
+  "mlxDistWired.limitDefault": {
+    "defaultMessage": "wired सीमा 0 (macOS डिफ़ॉल्ट) · GPU ऊपरी सीमा {ceiling} GB"
+  },
+  "mlxDistWired.limitRaised": {
+    "defaultMessage": "wired सीमा {mb} MB · GPU ऊपरी सीमा {ceiling} GB"
+  },
+  "mlxDistWired.limitUnread": {
+    "defaultMessage": "wired सीमा पढ़ी नहीं गई"
+  },
+  "mlxDistWired.noApp": {
+    "defaultMessage": "{mac} तक ssh से पहुँचा जाता है, goose ऐप से नहीं, इसलिए यहाँ से वहाँ किसी से पूछा नहीं जा सकता। {mac} पर Terminal में यह चलाएँ:"
+  },
+  "mlxDistWired.raise": {
+    "defaultMessage": "{mac} पर बढ़ाएँ"
+  },
+  "mlxDistWired.title": {
+    "defaultMessage": "GPU wired सीमाएँ"
+  },
+  "mlxDistWired.waiting": {
+    "defaultMessage": "{mac} पर व्यवस्थापक प्रॉम्प्ट खुला है: वहाँ मौजूद व्यक्ति स्वीकृत या रद्द करेगा। यह विभाजन की अगली शुरुआत पर लागू होगा।"
+  },
   "mlxDistributed.action.preflight": {
     "defaultMessage": "प्रीफ़्लाइट (ड्राई रन)"
   },
@@ -6122,6 +6179,12 @@
   "mlxMemory.unsaved": {
     "defaultMessage": "सहेजा नहीं गया"
   },
+  "mlxMemory.wiredBelowOthers": {
+    "defaultMessage": "इससे {keep} GiB बचते हैं, जो {mac} द्वारा अभी GPU के बाहर उपयोग की जा रही मेमोरी ({others} GiB) और {reserve} GiB रिज़र्व के योग से कम है: मेमोरी दबाव और स्वैपिंग की संभावना है।"
+  },
+  "mlxMemory.wiredBelowReserve": {
+    "defaultMessage": "अस्वीकृत: इससे {keep} GiB बचते हैं, जो {reserve} GiB न्यूनतम से कम है। MLX इंजन को GPU के बाहर भी RAM चाहिए (लोड में लगभग 12 GB मापा गया) और कर्नेल व सिस्टम को लगभग 10 GB और। यहाँ अधिकतम {max} MB की अनुमति है।"
+  },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "बूट सेटिंग (LaunchDaemon)"
   },
@@ -6137,32 +6200,53 @@
   "mlxMemory.wiredDefault": {
     "defaultMessage": "0 (macOS डिफ़ॉल्ट)"
   },
+  "mlxMemory.wiredDisable": {
+    "defaultMessage": "अक्षम करें (macOS डिफ़ॉल्ट)"
+  },
   "mlxMemory.wiredDone": {
     "defaultMessage": "हो गया"
   },
+  "mlxMemory.wiredDoneDefault": {
+    "defaultMessage": "{mac} पर wired सीमा वापस macOS डिफ़ॉल्ट पर है।"
+  },
   "mlxMemory.wiredDoneText": {
-    "defaultMessage": "wired लिमिट अभी {mb} MB है।"
+    "defaultMessage": "{mac} पर wired सीमा अब {mb} MB है।"
+  },
+  "mlxMemory.wiredEnable": {
+    "defaultMessage": "सक्षम करें"
   },
   "mlxMemory.wiredFailed": {
     "defaultMessage": "बदला नहीं गया"
   },
-  "mlxMemory.wiredIntro": {
-    "defaultMessage": "macOS GPU को कितनी RAM wire करने देता है, जो हर इंजन की सीमा तय करता है। इसे सेट करने पर एडमिनिस्ट्रेटर के रूप में एक कमांड चलती है: macOS आपका पासवर्ड माँगेगा। बूट सेटिंग भी इंस्टॉल न करें तो यह रीबूट पर रीसेट हो जाती है। Metal इसे प्रोसेस शुरू होते समय पढ़ता है, इसलिए इंजन नया मान अपनी अगली शुरुआत पर देखता है।"
+  "mlxMemory.wiredFallback": {
+    "defaultMessage": "या {mac} पर Terminal में यह चलाएँ:"
   },
-  "mlxMemory.wiredInvalid": {
-    "defaultMessage": "0 या 8192 से {max} तक की पूर्ण संख्या डालें।"
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "macOS GPU के लिए कितनी RAM wire करने देता है; यही {mac} पर हर इंजन की सीमा तय करता है। सक्षम करें और अक्षम करें, दोनों एक-एक कमांड व्यवस्थापक के रूप में चलाते हैं: macOS {mac} पर पासवर्ड माँगता है और goose उसे कभी देखता या सहेजता नहीं। जब तक आप इसे बनाए न रखें, रीस्टार्ट पर सीमा रीसेट हो जाती है। Metal इसे प्रोसेस शुरू होने पर पढ़ता है, इसलिए इंजन नया मान अपनी अगली शुरुआत पर देखता है।"
+  },
+  "mlxMemory.wiredInvalidValue": {
+    "defaultMessage": "8192 से {max} MB तक की पूर्ण संख्या डालें, या macOS डिफ़ॉल्ट के लिए अक्षम करें चुनें।"
+  },
+  "mlxMemory.wiredKeep": {
+    "defaultMessage": "macOS और अन्य ऐप्स के पास {physical} GiB में से {keep} GiB रहते हैं"
+  },
+  "mlxMemory.wiredNoSuggestion": {
+    "defaultMessage": "बढ़ाने का कोई सुझाव नहीं: {mac} का मौजूदा उपयोग और {reserve} GiB रिज़र्व मिलाकर wire करने के लिए बहुत कम बचता है।"
+  },
+  "mlxMemory.wiredOthers": {
+    "defaultMessage": "अभी GPU के बाहर उपयोग में"
   },
   "mlxMemory.wiredPanel": {
     "defaultMessage": "macOS GPU wired लिमिट"
   },
-  "mlxMemory.wiredPersist": {
-    "defaultMessage": "सेट करें और रीबूट के बाद भी रखें"
+  "mlxMemory.wiredPersistLabel": {
+    "defaultMessage": "रीस्टार्ट के बाद भी रखें"
   },
-  "mlxMemory.wiredRange": {
-    "defaultMessage": "MB · 0 (macOS डिफ़ॉल्ट) या 8192 से {max}"
+  "mlxMemory.wiredPersistNote": {
+    "defaultMessage": "एक LaunchDaemon इंस्टॉल करता है जो हर बूट पर मान सेट करता है; अक्षम करें इसे हटा देता है।"
   },
-  "mlxMemory.wiredRemoteNote": {
-    "defaultMessage": "wired लिमिट Mac पर ही सेट होती है: इसे बदलने के लिए {mac} पर goose खोलें।"
+  "mlxMemory.wiredRangeReserve": {
+    "defaultMessage": "MB ({gib} GiB) · 8192 से {max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "बूट सेटिंग हटाएँ"
@@ -6170,14 +6254,35 @@
   "mlxMemory.wiredRemoveNote": {
     "defaultMessage": "बूट सेटिंग हटाने पर मौजूदा मान अगले रीबूट तक बना रहता है।"
   },
-  "mlxMemory.wiredSet": {
-    "defaultMessage": "रीबूट तक सेट करें"
+  "mlxMemory.wiredReserve": {
+    "defaultMessage": "macOS के लिए न्यूनतम रिज़र्व"
   },
-  "mlxMemory.wiredSuggest": {
-    "defaultMessage": "इन्फ़रेंस बॉक्स के लिए सुझाया गया: {mb} MB"
+  "mlxMemory.wiredReserveValue": {
+    "defaultMessage": "{gib} GiB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+  },
+  "mlxMemory.wiredStateDefault": {
+    "defaultMessage": "macOS डिफ़ॉल्ट"
+  },
+  "mlxMemory.wiredStateKept": {
+    "defaultMessage": "रीस्टार्ट के बाद भी बना रहता है"
+  },
+  "mlxMemory.wiredStateRaised": {
+    "defaultMessage": "{mb} MB तक बढ़ाया गया"
+  },
+  "mlxMemory.wiredSuggested": {
+    "defaultMessage": "माप के आधार पर सुझाव: {mb} MB (अभी उपयोग में {others} GiB + {reserve} GiB रिज़र्व छोड़ता है)"
+  },
+  "mlxMemory.wiredSuggestedLow": {
+    "defaultMessage": "macOS डिफ़ॉल्ट पहले से GPU को {ws} देता है: {mac} के मौजूदा उपयोग पर, {mb} MB से ऊपर बढ़ाने से रिज़र्व में कटौती होगी।"
+  },
+  "mlxMemory.wiredUseSuggestion": {
+    "defaultMessage": "उपयोग करें"
   },
   "mlxMemory.wiredValue": {
     "defaultMessage": "नई लिमिट"
+  },
+  "mlxMemory.wiredWaiting": {
+    "defaultMessage": "{mac} पर व्यवस्थापक प्रॉम्प्ट की प्रतीक्षा: वहाँ मौजूद व्यक्ति स्वीकृत या रद्द करेगा। तब तक कुछ नहीं बदलता।"
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {# Mac में विभाजित · {backend}} other {# Mac में विभाजित · {backend}}}"

@@ -4940,6 +4940,63 @@
   "microphoneSelector.test": {
     "defaultMessage": "Kiểm tra"
   },
+  "mlxDistWired.beyond": {
+    "defaultMessage": "Đây là mức cao nhất dự trữ cho phép, cao hơn đề xuất dựa trên mức {mac} đang dùng: sẽ có áp lực bộ nhớ ở máy đó."
+  },
+  "mlxDistWired.binds": {
+    "defaultMessage": "Chạm trần"
+  },
+  "mlxDistWired.buys": {
+    "defaultMessage": "Nâng lên {mb} MB trên {mac}: {layers}ngữ cảnh tối đa {now} → ~{then}"
+  },
+  "mlxDistWired.buysLayers": {
+    "defaultMessage": "{count, plural, other {+# lớp chuyển}} sang {mac} → "
+  },
+  "mlxDistWired.buysNothing": {
+    "defaultMessage": "Nâng {mac} lên {mb} MB không được gì ở đây: bộ lập kế hoạch vẫn chỉ vừa ngữ cảnh tối đa {now} (giới hạn khác đang ràng buộc)."
+  },
+  "mlxDistWired.done": {
+    "defaultMessage": "Đã nâng"
+  },
+  "mlxDistWired.doneText": {
+    "defaultMessage": "{mac} hiện đọc {mb} MB. Chạy lại bước kiểm tra trước để lập kế hoạch với giá trị này."
+  },
+  "mlxDistWired.failed": {
+    "defaultMessage": "Không thay đổi"
+  },
+  "mlxDistWired.fallback": {
+    "defaultMessage": "Nếu không có ứng dụng goose nào chạy trên {mac}, hoặc không ai ở đó có thể duyệt, hãy chạy lệnh này trong Terminal trên {mac}:"
+  },
+  "mlxDistWired.intro": {
+    "defaultMessage": "Ngân sách của một node là giá trị nhỏ hơn giữa bộ nhớ trống và trần GPU của nó, do macOS đặt từ giới hạn wired. Ở nơi trần GPU là giới hạn, bước kiểm tra trước đã lập lại phương án chia với giới hạn được nâng."
+  },
+  "mlxDistWired.keepAfterRestart": {
+    "defaultMessage": "Giữ sau khi khởi động lại"
+  },
+  "mlxDistWired.keeps": {
+    "defaultMessage": "macOS và các ứng dụng khác trên {mac} giữ {keep} GiB"
+  },
+  "mlxDistWired.limitDefault": {
+    "defaultMessage": "giới hạn wired 0 (mặc định macOS) · trần GPU {ceiling} GB"
+  },
+  "mlxDistWired.limitRaised": {
+    "defaultMessage": "giới hạn wired {mb} MB · trần GPU {ceiling} GB"
+  },
+  "mlxDistWired.limitUnread": {
+    "defaultMessage": "chưa đọc được giới hạn wired"
+  },
+  "mlxDistWired.noApp": {
+    "defaultMessage": "{mac} được kết nối qua ssh, không qua ứng dụng goose, nên từ đây không thể hỏi ai ở đó. Chạy lệnh này trong Terminal trên {mac}:"
+  },
+  "mlxDistWired.raise": {
+    "defaultMessage": "Nâng trên {mac}"
+  },
+  "mlxDistWired.title": {
+    "defaultMessage": "Giới hạn wired của GPU"
+  },
+  "mlxDistWired.waiting": {
+    "defaultMessage": "Lời nhắc quản trị đang hiện trên {mac}: người ở máy đó sẽ duyệt hoặc hủy. Thay đổi có hiệu lực ở lần khởi động tiếp theo của phương án chia."
+  },
   "mlxDistributed.action.preflight": {
     "defaultMessage": "Preflight (chạy thử)"
   },
@@ -6122,6 +6179,12 @@
   "mlxMemory.unsaved": {
     "defaultMessage": "chưa lưu"
   },
+  "mlxMemory.wiredBelowOthers": {
+    "defaultMessage": "Chỉ còn {keep} GiB, ít hơn lượng {mac} đang dùng ngoài GPU ({others} GiB) cộng dự trữ {reserve} GiB: sẽ có áp lực bộ nhớ và swap."
+  },
+  "mlxMemory.wiredBelowReserve": {
+    "defaultMessage": "Bị từ chối: chỉ còn {keep} GiB, dưới mức tối thiểu {reserve} GiB. Engine MLX cũng cần RAM ngoài GPU (khoảng 12 GB đo được khi tải) và kernel cùng hệ thống cần thêm khoảng 10 GB. Mức cao nhất cho phép ở đây là {max} MB."
+  },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "Cài đặt khi khởi động máy (LaunchDaemon)"
   },
@@ -6137,32 +6200,53 @@
   "mlxMemory.wiredDefault": {
     "defaultMessage": "0 (mặc định của macOS)"
   },
+  "mlxMemory.wiredDisable": {
+    "defaultMessage": "Tắt (mặc định macOS)"
+  },
   "mlxMemory.wiredDone": {
     "defaultMessage": "Xong"
   },
+  "mlxMemory.wiredDoneDefault": {
+    "defaultMessage": "Giới hạn wired trên {mac} đã về mặc định của macOS."
+  },
   "mlxMemory.wiredDoneText": {
-    "defaultMessage": "Giới hạn wired hiện là {mb} MB."
+    "defaultMessage": "Giới hạn wired trên {mac} hiện là {mb} MB."
+  },
+  "mlxMemory.wiredEnable": {
+    "defaultMessage": "Bật"
   },
   "mlxMemory.wiredFailed": {
     "defaultMessage": "Chưa thay đổi"
   },
-  "mlxMemory.wiredIntro": {
-    "defaultMessage": "Lượng RAM mà macOS cho phép GPU wire, giới hạn mọi engine. Việc đặt giá trị chạy một lệnh với quyền quản trị viên: macOS sẽ hỏi mật khẩu của bạn. Giá trị đặt lại khi khởi động lại máy trừ khi bạn cũng cài đặt cài đặt khi khởi động. Metal đọc giá trị khi một tiến trình bắt đầu, nên engine thấy giá trị mới ở lần khởi động tiếp theo."
+  "mlxMemory.wiredFallback": {
+    "defaultMessage": "Hoặc chạy lệnh này trong Terminal trên {mac}:"
   },
-  "mlxMemory.wiredInvalid": {
-    "defaultMessage": "Dùng 0 hoặc một số nguyên từ 8192 đến {max}."
+  "mlxMemory.wiredIntro": {
+    "defaultMessage": "Lượng RAM mà macOS cho phép GPU cố định (wired), giới hạn mọi engine trên {mac}. Bật và Tắt mỗi nút chạy một lệnh với quyền quản trị: macOS hỏi mật khẩu trên {mac} và goose không bao giờ thấy hay lưu nó. Giới hạn sẽ đặt lại khi khởi động lại, trừ khi bạn giữ nó. Metal đọc giá trị khi một tiến trình khởi động, nên engine thấy giá trị mới ở lần khởi động tiếp theo."
+  },
+  "mlxMemory.wiredInvalidValue": {
+    "defaultMessage": "Dùng số nguyên từ 8192 đến {max} MB, hoặc Tắt để về mặc định của macOS."
+  },
+  "mlxMemory.wiredKeep": {
+    "defaultMessage": "macOS và các ứng dụng khác giữ {keep} GiB trên {physical} GiB"
+  },
+  "mlxMemory.wiredNoSuggestion": {
+    "defaultMessage": "Không đề xuất nâng: lượng {mac} đang dùng cộng dự trữ {reserve} GiB còn quá ít để cố định."
+  },
+  "mlxMemory.wiredOthers": {
+    "defaultMessage": "Đang dùng ngoài GPU hiện tại"
   },
   "mlxMemory.wiredPanel": {
     "defaultMessage": "Giới hạn wired GPU của macOS"
   },
-  "mlxMemory.wiredPersist": {
-    "defaultMessage": "Đặt và giữ sau khi khởi động lại"
+  "mlxMemory.wiredPersistLabel": {
+    "defaultMessage": "Giữ sau khi khởi động lại"
   },
-  "mlxMemory.wiredRange": {
-    "defaultMessage": "MB · 0 (mặc định của macOS) hoặc 8192 đến {max}"
+  "mlxMemory.wiredPersistNote": {
+    "defaultMessage": "Cài một LaunchDaemon đặt giá trị mỗi lần khởi động; Tắt sẽ gỡ nó."
   },
-  "mlxMemory.wiredRemoteNote": {
-    "defaultMessage": "Giới hạn wired được đặt ngay trên máy Mac: mở goose trên {mac} để thay đổi."
+  "mlxMemory.wiredRangeReserve": {
+    "defaultMessage": "MB ({gib} GiB) · từ 8192 đến {max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "Xóa cài đặt khi khởi động"
@@ -6170,14 +6254,35 @@
   "mlxMemory.wiredRemoveNote": {
     "defaultMessage": "Xóa cài đặt khi khởi động sẽ giữ nguyên giá trị hiện tại cho đến lần khởi động lại máy tiếp theo."
   },
-  "mlxMemory.wiredSet": {
-    "defaultMessage": "Đặt đến khi khởi động lại"
+  "mlxMemory.wiredReserve": {
+    "defaultMessage": "Dự trữ tối thiểu cho macOS"
   },
-  "mlxMemory.wiredSuggest": {
-    "defaultMessage": "đề xuất cho hộp suy luận: {mb} MB"
+  "mlxMemory.wiredReserveValue": {
+    "defaultMessage": "{gib} GiB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+  },
+  "mlxMemory.wiredStateDefault": {
+    "defaultMessage": "Mặc định của macOS"
+  },
+  "mlxMemory.wiredStateKept": {
+    "defaultMessage": "Giữ sau khi khởi động lại"
+  },
+  "mlxMemory.wiredStateRaised": {
+    "defaultMessage": "Đã nâng lên {mb} MB"
+  },
+  "mlxMemory.wiredSuggested": {
+    "defaultMessage": "Đề xuất theo đo đạc: {mb} MB (giữ {others} GiB đang dùng + dự trữ {reserve} GiB)"
+  },
+  "mlxMemory.wiredSuggestedLow": {
+    "defaultMessage": "Mặc định của macOS đã cho GPU {ws}: với mức {mac} đang dùng, nâng quá {mb} MB sẽ lấn vào dự trữ."
+  },
+  "mlxMemory.wiredUseSuggestion": {
+    "defaultMessage": "Dùng"
   },
   "mlxMemory.wiredValue": {
     "defaultMessage": "Giới hạn mới"
+  },
+  "mlxMemory.wiredWaiting": {
+    "defaultMessage": "Đang chờ lời nhắc quản trị trên {mac}: người ở máy đó sẽ duyệt hoặc hủy. Chưa có gì thay đổi cho đến lúc đó."
   },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, other {Chia trên # máy Mac · {backend}}}"
