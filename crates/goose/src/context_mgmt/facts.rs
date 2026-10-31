@@ -323,6 +323,8 @@ struct Call {
     /// The call named no command or path: a later success of the same tool settles it (the
     /// Flash-Next run's `edit` calls that left out `path` failed, and the next ones named it).
     targetless: bool,
+    /// The call failed because its arguments did not parse: it ran nothing.
+    unparsed: bool,
     line: String,
     failed: Option<bool>,
     command: Option<String>,
@@ -394,6 +396,7 @@ fn calls_of(messages: &[Message]) -> Vec<Call> {
             key,
             tool: call.name.to_string(),
             targetless,
+            unparsed,
             // The arguments are cut first: the outcome is what the line is for.
             line: format!(
                 "{} {} → {}",
@@ -420,11 +423,28 @@ fn arguments_did_not_parse(result: &rmcp::model::CallToolResult) -> bool {
     })
 }
 
-/// The newest [`LAST_CALLS`] tool calls, oldest first, each with its outcome.
+/// The newest [`LAST_CALLS`] tool calls, oldest first, each with its outcome; a failed call a
+/// later one settled ([`settled_failures`]) is one short line without its arguments. Why (MiMo
+/// two-Mac Gauntlet run 8985a86d, compaction at call 55, 2026-10-31): the list carried three failed
+/// `edit` calls with their `before` text word for word, though the next edit of the file worked.
 pub fn last_calls(messages: &[Message]) -> Vec<String> {
     let calls = calls_of(messages);
+    let settled = settled_failures(messages);
     let from = calls.len().saturating_sub(LAST_CALLS);
-    calls[from..].iter().map(|c| c.line.clone()).collect()
+    calls[from..]
+        .iter()
+        .map(|c| {
+            if !settled.contains(&c.id) {
+                return c.line.clone();
+            }
+            let why = if c.unparsed {
+                "its arguments did not parse (nothing ran)"
+            } else {
+                "failed"
+            };
+            format!("{} → {why}; a later {} succeeded (settled)", c.tool, c.tool)
+        })
+        .collect()
 }
 
 /// The ids of the failed calls a LATER call of the same tool on the same command (from any folder,
