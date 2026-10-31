@@ -2267,6 +2267,12 @@
   "engineGlance.stage.held": {
     "defaultMessage": "保留 · メモリ不足"
   },
+  "engineGlance.stage.heldFloor": {
+    "defaultMessage": "保留 · {node} 空き {available} GB（必要 {needed}）"
+  },
+  "engineGlance.stage.heldPressure": {
+    "defaultMessage": "保留 · {node} メモリ圧迫 {pressure}（空き {available} GB）"
+  },
   "engineGlance.stage.hosting": {
     "defaultMessage": "ランクを提供中"
   },

@@ -300,6 +300,13 @@ fn status_to_dto(
         base_url: status.base_url,
         context_limit: status.context_limit,
         admission_open: status.admission_open,
+        hold: status.hold.map(|h| MlxDistributedHoldDto {
+            node: h.node,
+            cause: h.cause.as_str().to_string(),
+            available_bytes: h.available_bytes,
+            needed_bytes: h.needed_bytes,
+            pressure: h.pressure,
+        }),
         inflight: status.inflight,
         waiting: status.waiting,
         slots: status.slots,

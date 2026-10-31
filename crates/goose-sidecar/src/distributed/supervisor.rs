@@ -307,6 +307,10 @@ pub struct DistributedStatus {
     pub base_url: Option<String>,
     pub context_limit: Option<u64>,
     pub admission_open: bool,
+    /// While admission is held for memory: the node, the figure and the bar it waits for, live on
+    /// every poll — what the engine card names ("Held · <node> 4.5 GB available (needs 6.0)").
+    #[serde(default)]
+    pub hold: Option<MemoryHold>,
     pub inflight: Option<u32>,
     /// Rank 0's `/v1/status`, read on every poll: requests queued behind the running batch (the
     /// pipeline's KV admission holds a request that would overrun some rank's budget — it waits,
@@ -348,6 +352,7 @@ impl DistributedStatus {
             base_url: None,
             context_limit: None,
             admission_open: true,
+            hold: None,
             inflight: None,
             waiting: None,
             slots: None,
@@ -662,6 +667,110 @@ fn breaker_allows(
     }
     restarts.push_back(now);
     true
+}
+
+/// Why admission is held, in the card's terms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HoldCause {
+    /// The node's available memory is under the WARN reserve.
+    Floor,
+    /// The kernel itself reports memory pressure WARN (or worse).
+    Pressure,
+    /// The engine grew by at least what is left above the CRITICAL reserve.
+    Growth,
+}
+
+impl HoldCause {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HoldCause::Floor => "floor",
+            HoldCause::Pressure => "pressure",
+            HoldCause::Growth => "growth",
+        }
+    }
+}
+
+/// The memory hold, as the card names it: which node, what it has, what it waits for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoryHold {
+    pub node: String,
+    pub cause: HoldCause,
+    /// The hold's available figure on that node (`probe::vm_hold_available_bytes`).
+    pub available_bytes: u64,
+    /// What admission reopens at: the reopen bar for a floor or pressure hold, the CRITICAL
+    /// reserve plus the engine's growth for a growth hold.
+    pub needed_bytes: u64,
+    pub pressure: String,
+}
+
+/// Polls in a row a node must read WARN before admission closes (2 s each): a dip shorter than
+/// this never refuses a request. Tonight's (2026-10-31) 56 closes lasted 1.3–30 s each.
+const HOLD_CLOSE_POLLS: u32 = 3;
+/// Polls in a row every node must read clear (kernel NORMAL, above the reopen bar) before admission
+/// reopens.
+const HOLD_OPEN_POLLS: u32 = 2;
+/// The reopen bar as a multiple of the WARN reserve: the band between them is the hysteresis that
+/// keeps a node hovering at the reserve from flapping the hold.
+const HOLD_REOPEN_MARGIN: f64 = 1.25;
+/// Polls in a row the bytes-only CRITICAL floor must hold before the run is stopped. The kernel's
+/// own CRITICAL level stops it at once; a single low byte reading only closes admission.
+const CRITICAL_FLOOR_POLLS: u32 = 2;
+
+/// The reopen bar on a node of `total` bytes.
+fn reopen_bar(total: u64, warn_ratio: f64) -> u64 {
+    (warn_ratio * HOLD_REOPEN_MARGIN * total as f64) as u64
+}
+
+/// What the hold gate asks the monitor to do at this poll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HoldAction {
+    Keep,
+    Close,
+    Open,
+    Stop,
+}
+
+/// The memory hold's hysteresis: close on SUSTAINED warn, reopen on sustained clear above a higher
+/// bar, stop only on the kernel's CRITICAL or a sustained CRITICAL floor. `closed` is set by the
+/// caller once admission really changed, so a failed POST is tried again at the next poll.
+#[derive(Debug, Default)]
+struct HoldGate {
+    closed: bool,
+    warn_streak: u32,
+    clear_streak: u32,
+    critical_streak: u32,
+}
+
+impl HoldGate {
+    /// `worst` is the worst node verdict this poll; `kernel_critical` whether any node's kernel
+    /// said CRITICAL; `clear` whether every node is kernel NORMAL above the reopen bar with no
+    /// growth verdict.
+    fn step(&mut self, worst: Watchdog, kernel_critical: bool, clear: bool) -> HoldAction {
+        if worst == Watchdog::Critical {
+            self.critical_streak += 1;
+            if kernel_critical || self.critical_streak >= CRITICAL_FLOOR_POLLS {
+                return HoldAction::Stop;
+            }
+        } else {
+            self.critical_streak = 0;
+        }
+        self.warn_streak = if worst == Watchdog::Normal {
+            0
+        } else {
+            self.warn_streak + 1
+        };
+        self.clear_streak = if clear { self.clear_streak + 1 } else { 0 };
+        if !self.closed
+            && (self.warn_streak >= HOLD_CLOSE_POLLS || worst == Watchdog::Critical)
+        {
+            HoldAction::Close
+        } else if self.closed && self.clear_streak >= HOLD_OPEN_POLLS {
+            HoldAction::Open
+        } else {
+            HoldAction::Keep
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1592,7 +1701,16 @@ fn parse_sample(out: super::ExecOutput) -> Result<NodeSample> {
     anyhow::ensure!(!out.ssh_failed(), "ssh failed: {}", out.stderr.trim());
     let sections = probe::sections(&out.stdout);
     let values = probe::parse_sysctl_values(probe::section(&sections, "sysctl")?, 2)?;
-    let reading = probe::parse_vm_stat(probe::section(&sections, "vm")?, values[0])?;
+    let vm = probe::section(&sections, "vm")?;
+    let mut reading = probe::parse_vm_stat(vm, values[0])?;
+    // The hold and the CRITICAL stop judge a SERVING node, so inactive pages count as available
+    // (`probe::vm_hold_available_bytes`); the mount and the plan keep the stricter mount figure.
+    if let Some(hold) = probe::vm_hold_available_bytes(vm)? {
+        reading.available_bytes = reading
+            .available_bytes
+            .max(hold)
+            .min(reading.total_bytes);
+    }
     let pressure = Pressure::from_level(values[1])?;
     let row = match sections.get("ps") {
         Some(text) => probe::parse_ps_row(text)?,
@@ -1800,7 +1918,7 @@ async fn monitor(
     served: &mut bool,
 ) -> RunOutcome {
     let mut meter = ProgressMeter::new(Instant::now(), ranks.len());
-    let mut admission_closed = false;
+    let mut gate = HoldGate::default();
     let mut blind_reported = vec![false; ranks.len()];
     let mut gpu_blind_reported = vec![false; ranks.len()];
     // Per node: its memory the last time the engine was idle (the busy stretch's start).
@@ -1866,6 +1984,9 @@ async fn monitor(
         let mut gpu: Vec<Option<u64>> = vec![None; ranks.len()];
         let mut stats: Vec<Option<String>> = vec![None; ranks.len()];
         let mut worst = (Watchdog::Normal, EventKind::WatchdogWarn, String::new());
+        let mut worst_hold: Option<MemoryHold> = None;
+        let mut kernel_critical = false;
+        let mut clear = true;
         let busy_now = progress.as_ref().map(|p| p.inflight > 0);
         let (warn_ratio, critical_ratio) = ctx.config.watchdog_ratios();
         for (rank, sample) in samples.into_iter().enumerate() {
@@ -1941,6 +2062,9 @@ async fn monitor(
                 reading.total_bytes,
                 (warn_ratio, critical_ratio),
             );
+            kernel_critical |= pressure == Pressure::Critical;
+            clear &= pressure == Pressure::Normal
+                && reading.available_bytes >= reopen_bar(reading.total_bytes, warn_ratio);
             let (live, caps) = {
                 let live = ranks[rank].live.lock().unwrap();
                 (live.memory, live.caps.clone())
@@ -1980,7 +2104,16 @@ async fn monitor(
                 Some(true) => growth_projection(idle, now_memory, critical_ratio),
                 _ => None,
             };
+            clear &= growth.is_none();
             if let (Some((consumed, left)), Watchdog::Normal) = (growth, worst.0) {
+                let critical_bytes = (critical_ratio * now_memory.total as f64) as u64;
+                worst_hold = Some(MemoryHold {
+                    node: node_name.clone(),
+                    cause: HoldCause::Growth,
+                    available_bytes: now_memory.available,
+                    needed_bytes: critical_bytes.saturating_add(consumed).max(left),
+                    pressure: pressure.as_str().to_string(),
+                });
                 worst = (
                     Watchdog::Warn,
                     EventKind::MemoryGrowth,
@@ -1994,6 +2127,17 @@ async fn monitor(
                 );
             }
             if verdict != Watchdog::Normal && verdict as u8 >= worst.0 as u8 {
+                worst_hold = Some(MemoryHold {
+                    node: node_name.clone(),
+                    cause: if pressure == Pressure::Normal {
+                        HoldCause::Floor
+                    } else {
+                        HoldCause::Pressure
+                    },
+                    available_bytes: now_memory.available,
+                    needed_bytes: reopen_bar(now_memory.total, warn_ratio),
+                    pressure: pressure.as_str().to_string(),
+                });
                 worst = (
                     verdict,
                     match verdict {
@@ -2122,22 +2266,29 @@ async fn monitor(
                 ),
             );
         }
-        match worst.0 {
-            Watchdog::Critical => {
+        match gate.step(worst.0, kernel_critical, clear) {
+            HoldAction::Stop => {
                 ctx.event(EventKind::WatchdogCritical, None, worst.2.clone());
                 return RunOutcome::Critical(worst.2);
             }
-            Watchdog::Warn if !admission_closed => {
+            HoldAction::Close => {
                 ctx.event(worst.1, None, worst.2.clone());
                 match set_admission(ctx, false, &worst.2).await {
                     Ok(()) => {
-                        admission_closed = true;
+                        gate.closed = true;
                         memory_short = Some(worst.2.clone());
-                        ctx.update(|s| s.status.admission_open = false);
+                        ctx.update(|s| {
+                            s.status.admission_open = false;
+                            s.status.hold = worst_hold.clone();
+                        });
                         ctx.event(
                             EventKind::AdmissionClosed,
                             None,
-                            "new requests are answered 503 until memory recovers",
+                            format!(
+                                "new requests are held until memory recovers (goose waits them \
+                                 out on /goose/admission): WARN for {HOLD_CLOSE_POLLS} polls \
+                                 in a row"
+                            ),
                         );
                     }
                     Err(e) => ctx.event(
@@ -2147,15 +2298,21 @@ async fn monitor(
                     ),
                 }
             }
-            Watchdog::Normal if admission_closed => match set_admission(ctx, true, "").await {
+            HoldAction::Open => match set_admission(ctx, true, "").await {
                 Ok(()) => {
-                    admission_closed = false;
+                    gate.closed = false;
                     memory_short = None;
-                    ctx.update(|s| s.status.admission_open = true);
+                    ctx.update(|s| {
+                        s.status.admission_open = true;
+                        s.status.hold = None;
+                    });
                     ctx.event(
                         EventKind::AdmissionOpened,
                         None,
-                        "memory recovered on every node",
+                        format!(
+                            "memory recovered on every node (kernel NORMAL, above \
+                             {HOLD_REOPEN_MARGIN} × the WARN reserve for {HOLD_OPEN_POLLS} polls)"
+                        ),
                     );
                 }
                 Err(e) => ctx.event(
@@ -2164,7 +2321,13 @@ async fn monitor(
                     format!("could not reopen admission: {e:#}"),
                 ),
             },
-            _ => {}
+            HoldAction::Keep => {
+                // While held, the card's figure follows the node live; a node that recovered past
+                // WARN but not yet past the reopen bar keeps the last named one.
+                if gate.closed && worst_hold.is_some() {
+                    ctx.update(|s| s.status.hold = worst_hold.clone());
+                }
+            }
         }
     }
 }
@@ -2350,6 +2513,7 @@ async fn supervise(
         ctx.update(|s| {
             s.status.state = RunState::Starting;
             s.status.admission_open = true;
+            s.status.hold = None;
             s.status.inflight = None;
             clear_server_load(&mut s.status);
             s.status.liveness = None;
@@ -4268,6 +4432,108 @@ mod tests {
         assert_eq!(raised(50 * GIB), Watchdog::Normal);
         assert_eq!(raised(40 * GIB), Watchdog::Warn);
         assert_eq!(raised(30 * GIB), Watchdog::Critical);
+    }
+
+    /// 2026-10-31, the live MiMo split (workhorse rank 0, 96 GiB, Metal wired ≈80 GB): at 09:18
+    /// vm_stat showed free 7,878 and inactive 562,027 pages and the kernel NORMAL, while the
+    /// supervisor's mount figure read 4.7 GiB (07:18:05Z) under the 4.8 GiB WARN reserve. The
+    /// hold's figure is ≈8.7 GiB: no WARN, no hold.
+    #[test]
+    fn tonight_s_workhorse_reading_is_not_a_memory_hold() {
+        let total = 103_079_215_104;
+        let ratios = (
+            super::super::WATCHDOG_WARN_RESERVE_RATIO,
+            super::super::WATCHDOG_CRITICAL_RESERVE_RATIO,
+        );
+        let page = 16_384u64;
+        let vm = "Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                     7878.
+Pages active:                                 508788.
+Pages inactive:                               562027.
+Pages speculative:                              1179.
+Pages throttled:                                   0.
+Pages wired down:                            5030918.
+Pages purgeable:                                1271.
+File-backed pages:                            298000.
+";
+        let mount = probe::parse_vm_stat(vm, total).unwrap().available_bytes;
+        assert_eq!(mount, (7_878 + 298_000 + 1_271) * page);
+        assert_eq!(
+            watchdog_verdict(Pressure::Normal, mount, total, ratios),
+            Watchdog::Warn,
+            "the old figure ({:.2} GiB) is what closed admission 56 times tonight",
+            mount as f64 / GIB as f64
+        );
+        let hold = probe::vm_hold_available_bytes(vm).unwrap().unwrap();
+        assert_eq!(hold, (7_878 + 1_179 + 562_027 + 1_271) * page);
+        assert!(hold > reopen_bar(total, ratios.0), "{hold}");
+        assert_eq!(
+            watchdog_verdict(Pressure::Normal, hold, total, ratios),
+            Watchdog::Normal
+        );
+    }
+
+    #[test]
+    fn the_reopen_bar_sits_above_the_warn_reserve() {
+        let total = 96 * GIB;
+        // 6.0 GiB on 96 GiB: 1.25 × the 4.8 GiB WARN reserve.
+        assert!(reopen_bar(total, 0.05).abs_diff(6 * GIB) < 16, "{}", reopen_bar(total, 0.05));
+        assert!(reopen_bar(total, 0.05) > (0.05 * total as f64) as u64);
+    }
+
+    /// One- and two-poll WARN dips (tonight's closes lasted 1.3–30 s) never close admission.
+    #[test]
+    fn a_short_warn_dip_never_holds_a_request() {
+        let mut gate = HoldGate::default();
+        for _ in 0..20 {
+            assert_eq!(gate.step(Watchdog::Warn, false, false), HoldAction::Keep);
+            assert_eq!(gate.step(Watchdog::Warn, false, false), HoldAction::Keep);
+            assert_eq!(gate.step(Watchdog::Normal, false, true), HoldAction::Keep);
+        }
+        assert!(!gate.closed);
+    }
+
+    #[test]
+    fn a_sustained_warn_holds_and_hovering_at_the_reserve_does_not_flap() {
+        let mut gate = HoldGate::default();
+        assert_eq!(gate.step(Watchdog::Warn, false, false), HoldAction::Keep);
+        assert_eq!(gate.step(Watchdog::Warn, false, false), HoldAction::Keep);
+        assert_eq!(gate.step(Watchdog::Warn, false, false), HoldAction::Close);
+        gate.closed = true;
+        // Back above WARN but under the reopen bar: Normal verdict, not clear — stays held.
+        for _ in 0..10 {
+            assert_eq!(gate.step(Watchdog::Normal, false, false), HoldAction::Keep);
+            assert_eq!(gate.step(Watchdog::Warn, false, false), HoldAction::Keep);
+        }
+        assert_eq!(gate.step(Watchdog::Normal, false, true), HoldAction::Keep);
+        assert_eq!(gate.step(Watchdog::Normal, false, true), HoldAction::Open);
+    }
+
+    #[test]
+    fn a_failed_close_is_tried_again_at_the_next_poll() {
+        let mut gate = HoldGate::default();
+        for _ in 0..2 {
+            gate.step(Watchdog::Warn, false, false);
+        }
+        assert_eq!(gate.step(Watchdog::Warn, false, false), HoldAction::Close);
+        // The POST failed: `closed` stays false.
+        assert_eq!(gate.step(Watchdog::Warn, false, false), HoldAction::Close);
+    }
+
+    /// 04:18 (02:18Z) tonight: an mflux render took the memory; kernel WARN at 7.1 GiB, then the
+    /// kernel's CRITICAL four seconds later. The kernel's own CRITICAL still stops at once.
+    #[test]
+    fn the_kernels_critical_stops_at_once_a_single_low_byte_reading_only_holds() {
+        let mut gate = HoldGate::default();
+        gate.step(Watchdog::Warn, false, false);
+        assert_eq!(gate.step(Watchdog::Critical, true, false), HoldAction::Stop);
+
+        let mut gate = HoldGate::default();
+        assert_eq!(gate.step(Watchdog::Critical, false, false), HoldAction::Close);
+        gate.closed = true;
+        assert_eq!(gate.step(Watchdog::Warn, false, false), HoldAction::Keep);
+        assert_eq!(gate.step(Watchdog::Critical, false, false), HoldAction::Keep);
+        assert_eq!(gate.step(Watchdog::Critical, false, false), HoldAction::Stop);
     }
 
     /// Runs every "peer" script on this Mac: the stop sequence's remote legs, exercised against

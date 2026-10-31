@@ -2267,6 +2267,12 @@
   "engineGlance.stage.held": {
     "defaultMessage": "Ditahan · memori rendah"
   },
+  "engineGlance.stage.heldFloor": {
+    "defaultMessage": "Ditahan · {node} {available} GB tersedia (butuh {needed})"
+  },
+  "engineGlance.stage.heldPressure": {
+    "defaultMessage": "Ditahan · {node} tekanan memori {pressure} ({available} GB tersedia)"
+  },
   "engineGlance.stage.hosting": {
     "defaultMessage": "Melayani sebuah rank"
   },

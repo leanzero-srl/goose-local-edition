@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createIntl } from 'react-intl';
+import { glanceHeadline } from '../components/engineGlance/EngineGlanceCard';
 import {
   DEFAULT_GLANCE_PREFS,
   buildEngineGlance,
@@ -213,6 +215,59 @@ describe('buildEngineGlance — the split across Macs', () => {
       served: [],
     });
     expect(g).toMatchObject({ stage: 'held', phase: 'held', busy: true });
+  });
+
+  it('a held split names the node, its available memory and what the hold waits for', () => {
+    // 2026-10-31 09:18, the live MiMo split: the workhorse at 4.7 GiB under the hold, 6.0 to reopen.
+    const status = {
+      ...FLASH_READY,
+      admissionOpen: false,
+      hold: {
+        node: 'workhorse',
+        cause: 'floor',
+        availableBytes: 4.7 * 1024 ** 3,
+        neededBytes: 6 * 1024 ** 3,
+        pressure: 'normal',
+      },
+    };
+    const g = buildEngineGlance(INITIAL_SNAPSHOT, {
+      distributed: { report: toMlxDistributedReport(status), ageMs: 0 },
+      remote: null,
+      served: [],
+    });
+    expect(g.stage).toBe('held');
+    const intl = createIntl({ locale: 'en', defaultLocale: 'en', messages: {} });
+    expect(glanceHeadline(intl, g)).toBe('Held · workhorse 4.7 GB available (needs 6.0)');
+    const pressure = buildEngineGlance(INITIAL_SNAPSHOT, {
+      distributed: {
+        report: toMlxDistributedReport({
+          ...status,
+          hold: { ...status.hold, cause: 'pressure', pressure: 'warn', availableBytes: 7.1 * 1024 ** 3 },
+        }),
+        ageMs: 0,
+      },
+      remote: null,
+      served: [],
+    });
+    expect(glanceHeadline(intl, pressure)).toBe(
+      'Held · workhorse memory pressure warn (7.1 GB available)'
+    );
+    // Open admission never carries a hold, even if a stale one is on the status.
+    const open = toMlxDistributedReport({ ...status, admissionOpen: true });
+    expect(open.hold).toBeNull();
+  });
+
+  it('a held split from a goosed that names no hold keeps the plain words', () => {
+    const g = buildEngineGlance(INITIAL_SNAPSHOT, {
+      distributed: {
+        report: { ...toMlxDistributedReport(FLASH_READY), admissionOpen: false },
+        ageMs: 0,
+      },
+      remote: null,
+      served: [],
+    });
+    const intl = createIntl({ locale: 'en', defaultLocale: 'en', messages: {} });
+    expect(glanceHeadline(intl, g)).toBe('Held · memory low');
   });
 
   it('a rank this Mac serves for another Mac', () => {
