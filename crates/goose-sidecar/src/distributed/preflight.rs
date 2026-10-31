@@ -1669,7 +1669,7 @@ pub fn what_if_mb(
 }
 
 /// For every node whose GPU ceiling binds its budget, the split planned again with that node's
-/// ceiling raised to [`what_if_mb`] — the same `plan_tensor` / `plan_pipeline` the preflight
+/// ceiling raised to [`what_if_mb`] — the same `plan_tensor` / `plan_pipeline` / `plan_mlx_pipeline` the preflight
 /// just ran, on a scratch report, so the answer is the planner's arithmetic and nothing else.
 #[allow(clippy::too_many_arguments)]
 async fn wired_what_ifs(
@@ -1712,6 +1712,7 @@ async fn wired_what_ifs(
             Runner::PipelineQwen4 => {
                 plan_pipeline(config, exec, &raised, &mut scratch, &mut then).await;
             }
+            Runner::MlxLmPipeline => plan_mlx_pipeline(config, &raised, &mut scratch, &mut then),
         }
         let layers = |p: &RankPlan| p.layer_end.saturating_sub(p.layer_start);
         out[rank] = Some(WiredWhatIf {

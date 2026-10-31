@@ -579,8 +579,8 @@ fn writes_a_file(step: &str) -> bool {
 /// Shell words that open or close a compound command: a list that holds one is not split into
 /// steps here (`if …; then …; fi` would end on `fi`).
 const COMPOUND_WORDS: [&str; 17] = [
-    "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac",
-    "{", "}", "function", "select", "time",
+    "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case", "esac", "{",
+    "}", "function", "select", "time",
 ];
 
 /// The step of a shell command whose status is the command's exit code: the last of its
@@ -679,7 +679,11 @@ pub(crate) fn exit_step(command: &str) -> Option<String> {
                             .map_or(chars.len(), |n| start + n);
                         let line: String = chars[start..end].iter().collect();
                         i = end;
-                        let line = if strip_tabs { line.trim_start_matches('\t') } else { &line };
+                        let line = if strip_tabs {
+                            line.trim_start_matches('\t')
+                        } else {
+                            &line
+                        };
                         if line == word {
                             break;
                         }
@@ -820,13 +824,25 @@ mod tests {
         let probe = "cd /w && cat > test/perf2.mjs <<'EOF'\nconst a = 1; const b = 2;\nconsole.log(a)\nEOF\nnode test/perf2.mjs";
         assert_eq!(exit_step(probe).as_deref(), Some("node test/perf2.mjs"));
         let fill = "cd /w && cat > t.mjs <<'EOF'\nx;\nEOF\nnode t.mjs; nproc; grep -m1 \"model name\" /proc/cpuinfo";
-        assert_eq!(exit_step(fill).as_deref(), Some("grep -m1 \"model name\" /proc/cpuinfo"));
+        assert_eq!(
+            exit_step(fill).as_deref(),
+            Some("grep -m1 \"model name\" /proc/cpuinfo")
+        );
         // A `;` in quotes, `$(…)` or a here-document body is not a step's end.
         assert_eq!(exit_step("echo 'a; b'").as_deref(), Some("echo 'a; b'"));
-        assert_eq!(exit_step("x=$(ls; pwd) && make").as_deref(), Some("x=$(ls; pwd) && make"));
-        assert_eq!(exit_step("python3 - <<EOF\nprint(1); print(2)\nEOF").as_deref(), Some("python3 - <<EOF"));
+        assert_eq!(
+            exit_step("x=$(ls; pwd) && make").as_deref(),
+            Some("x=$(ls; pwd) && make")
+        );
+        assert_eq!(
+            exit_step("python3 - <<EOF\nprint(1); print(2)\nEOF").as_deref(),
+            Some("python3 - <<EOF")
+        );
         // A chain stays one step; a trailing comment line is not a step.
-        assert_eq!(exit_step("make && ./run\n# done").as_deref(), Some("make && ./run"));
+        assert_eq!(
+            exit_step("make && ./run\n# done").as_deref(),
+            Some("make && ./run")
+        );
         for cannot in [
             "if true; then ls; fi",
             "for f in *; do wc $f; done",

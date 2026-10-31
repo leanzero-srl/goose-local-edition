@@ -6270,7 +6270,10 @@ mod tests {
         for noise in ["perf2.mjs", "fill.mjs"] {
             assert!(!open.contains(noise), "{noise}: {open}");
         }
-        assert!(open.contains("1 earlier failed calls were settled"), "{open}");
+        assert!(
+            open.contains("1 earlier failed calls were settled"),
+            "{open}"
+        );
         assert!(open.contains("1 failed look-ups"), "{open}");
     }
 
