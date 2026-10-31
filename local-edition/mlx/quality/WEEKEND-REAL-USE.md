@@ -11,6 +11,7 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
 3. Fix egregious problems at the root, ranked by how badly they block real use; test + mutation proof + independent check.
 
 ## Decisions
+- 2026-10-31 23:40 RELEASED 3.0.140 (tag on de92efd1bf): WR-28 / Q-529 split prompt cache uses the copy room the plan reserves in its quiet phase (wk/wr28-cache bf1f475b1b; tag mlxLmServerQuietCopy, so BOTH Studios must run 3.0.140) + WR-27 config guard test (wk/wr27-config 1b268358bb). Release fixes: cargo fmt of the Q-529 tests (98b65368a0) and the swarm_router test's TensorLaunch initializer lacked prompt_cache_quiet_limit_bytes (de92efd1bf, E0063; the branch only built goose-sidecar). Gate on the workhorse: clippy -D warnings, sidecar 281 distributed vs real mlx_lm 0.31.3, goose lib, e2e, typecheck, vitest; split sign on the workhorse (29 Mach-O byte-equal), app notary beee7546, DMG e8e11a0b. Not in it: WR-17 memory, WR-19. https://github.com/leanzero-srl/goose-local-edition/releases/tag/v3.0.140
 - 2026-10-31 21:58 RELEASED 3.0.139 (tag on 74bc574be3): WR-17 bundled MCPs (wk/wr17-mcps 643e6a8547: LeanZero Web Search +
   Documents added on a packaged start, missing-tool errors make the model say it could not do the step) + WR-18 compaction
   (a4f6d05ff5, already on main). First SPLIT release: gate + unsigned build on Gabee, Developer-ID sign + notarize on the
