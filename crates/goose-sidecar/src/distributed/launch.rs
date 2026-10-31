@@ -6931,6 +6931,99 @@ print("ok")
         );
     }
 
+    /// MiMo-V2.6-Flash on the split, sb-7.2 run 8985a86d (2026-10-31): 10 of 25 `edit` calls named
+    /// their texts `old`/`new`, which `edit` does not declare, and the declared-only reading
+    /// (Q-372) folded those headers into the value before them — goose received
+    /// `{"path": "…ledgerd.py</parameter><parameter=old>…"}` and answered "missing required fields
+    /// `before`, `after`. Arrived: `path`". The two shapes below are the run's own calls (request
+    /// log args, wire reconstructed around them). With a required parameter unwritten the body is
+    /// read again with boundary headers as siblings, and the streamer, holding at such a header,
+    /// agrees byte for byte in every chunking. A complete reading is never re-read: a written file
+    /// holding `</parameter>\n<parameter=x>` keeps its text (Q-372 stays).
+    #[test]
+    fn a_misnamed_edit_parameter_is_read_as_its_own_parameter() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r##"
+import random
+from mlx_lm.tool_parsers import qwen3_coder as q
+
+install_positional_parameters(q)
+
+EDIT = [{"type": "function", "function": {"name": "edit", "parameters": {"type": "object",
+    "properties": {"path": {"type": "string"}, "before": {"type": "string"},
+                   "after": {"type": "string"}}, "required": ["path", "before", "after"]}}}]
+WRITE = [{"type": "function", "function": {"name": "write", "parameters": {"type": "object",
+    "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+    "required": ["path", "content"]}}}]
+
+LEDGERD = "/private/tmp/gmimo/userdata/benchmark/runs/build/openai-cloud-8985a86d-1704-423c-a89d-47a38368c80e-r0/app/ledgerd.py"
+VIZ = "/private/tmp/gmimo/userdata/benchmark/runs/build/openai-cloud-8985a86d-1704-423c-a89d-47a38368c80e-r0/web/viz.js"
+OLD = ("    def _publish(self, pending):\n"
+       '        """Assign a batch number inside the transaction, broadcast after commit."""\n'
+       "        return pending\n\n    def _broadcast(self, batch, records):")
+NEW = "    def _broadcast(self, batch, records):"
+BEFORE = "  const TAU_COAST = 0.4;\n  const CAPACITY = 16384;\n  const LABEL_COUNT = 12;"
+AFTER = "  const TAU_COAST = 0.4;\n  let CAPACITY = 16384;\n  const LABEL_COUNT = 12;"
+
+# path, then old/new, all on the value's line (9d8d184a, f0d83a21, 8dcbafcc, 54a1a68a)
+OLD_NEW = (f"\n<function=edit>\n<parameter=path>\n{LEDGERD}</parameter><parameter=old>{OLD}"
+           f"</parameter><parameter=new>{NEW}\n</parameter>\n</function>\n")
+# before, then new on its line, then path (fff220e1, 1817d2e7, d3d3b6d2, dc35886a, c2bfb4f6, 48ed8f8b)
+BEFORE_NEW = (f"\n<function=edit>\n<parameter=before>\n{BEFORE}</parameter><parameter=new>{AFTER}"
+              f"\n</parameter>\n<parameter=path>\n{VIZ}\n</parameter>\n</function>\n")
+# a written file that documents the wire: complete as read, so its text stays whole
+DOC = "a value closes like this</parameter>\n<parameter=x>\nand the next one opens"
+WRITE_DOC = (f"\n<function=write>\n<parameter=content>\n{DOC}\n</parameter>\n"
+             f"<parameter=path>\n/tmp/doc.md\n</parameter>\n</function>\n")
+
+def chunkings(text):
+    yield "whole", [text]
+    yield "chars", list(text)
+    rng = random.Random(8985)
+    for seed in range(4):
+        pieces, i = [], 0
+        while i < len(text):
+            n = rng.randint(1, 7)
+            pieces.append(text[i:i + n])
+            i += n
+        yield f"random{seed}", pieces
+
+cases = (
+    ("old_new", OLD_NEW, EDIT, {"path": LEDGERD, "old": OLD, "new": NEW}),
+    ("before_new", BEFORE_NEW, EDIT, {"before": BEFORE, "new": AFTER, "path": VIZ}),
+    ("write_doc", WRITE_DOC, WRITE, {"content": DOC, "path": "/tmp/doc.md"}),
+)
+for label, text, tools, want in cases:
+    parsed = q.parse_tool_call(text, tools)
+    assert parsed["arguments"] == want, (label, parsed["arguments"])
+    expected = json.dumps(parsed["arguments"], ensure_ascii=False)
+    for how, pieces in chunkings(text):
+        stream = ToolCallStream(q._convert_param_value, q._get_arguments_config)
+        sent = "".join(stream.feed(piece, tools)[1] for piece in pieces)
+        rest, why = stream.close(q.parse_tool_call, tools)
+        assert why is None, (label, how, why)
+        assert sent + rest == expected, (label, how, sent + rest, expected)
+
+# NEGATIVE CONTROL: the declared-only reading (what the run shipped) folds the headers in.
+assert parameters_by_position(OLD_NEW.split(">", 1)[1], {"path", "before", "after"}) == [
+    ("path", f"{LEDGERD}</parameter><parameter=old>{OLD}</parameter><parameter=new>{NEW}")]
+print("ok")
+"##;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!("{}{checks}", include_str!("rank_tool_stream.py")))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "ok",
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
     /// Q-232: rank_tool_schema.py under a plain interpreter — the type each schema shape names.
     /// A nullable union names its one other type and "string" wins any union holding it; anyOf /
     /// oneOf / allOf branches and a local `$ref` are read by the same rule; a union of two other
