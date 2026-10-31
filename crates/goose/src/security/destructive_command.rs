@@ -4,27 +4,38 @@
 //! of the user's commits plus an uncommitted edit; goose ran it at once because the session was in
 //! the default `auto` mode, where every tool call is approved. This inspector asks the user,
 //! through the existing tool-approval card, before a shell command that destroys work which goose's
-//! own tool output cannot give back: uncommitted changes, untracked files, branches, stashes,
-//! remote history, or a directory tree outside the temp dir.
+//! own tool output cannot give back: uncommitted or staged changes, untracked files, branches,
+//! stashes, remote history, or a directory tree that is not disposable.
 //!
 //! It runs in every mode that runs tools (`auto`, `approve`, `smart_approve`); the only way to turn
 //! it off is the explicit config key [`DESTRUCTIVE_CONFIRM_KEY`] set to `false`.
 //!
+//! Disposable trees, which `rm -r` may delete without asking: a path inside the system temp dir,
+//! and a DIRECTORY inside the session's working dir that the repository itself declares ignored
+//! (`git check-ignore`), e.g. `node_modules`, `target`, `dist` in a project that ignores them.
+//! The repository's own ignore rules decide, not a list of names.
+//!
 //! What the parser sees: the command line as the shell would split it, quotes and escapes
 //! honoured, chains (`&&`, `||`, `;`, `|`, `&`, newlines, subshells), `$( )` and backtick
-//! substitutions, `sh -c` / `bash -c` / `eval` scripts, and the usual wrappers (`sudo`, `env`,
-//! `nice`, `timeout`, `xargs`, `command`, `exec`, `nohup`, `time`, variable assignments). What it
-//! cannot see, and does not claim to: shell aliases and functions, scripts and Makefiles the
-//! command runs (`./cleanup.sh`, `npm run clean`), git aliases, commands assembled at run time
-//! from variables, and `find -delete`. History rewrites (`rebase`, `commit --amend`) are local
-//! and kept in the reflog; they only destroy shared history when force-pushed, and the force push
-//! is what this gate stops.
+//! substitutions, here-document bodies (skipped as data; an unquoted delimiter's substitutions are
+//! still scanned), `sh -c` / `bash -o pipefail -c` / `eval` scripts, `cd` along the chain, and the
+//! usual wrappers (`sudo`, `env`, `nice`, `timeout`, `xargs`, `command`, `exec`, `nohup`, `time`,
+//! variable assignments). What it cannot see, and does not claim to: shell aliases and functions,
+//! scripts and Makefiles the command runs (`./cleanup.sh`, `npm run clean`), git aliases, commands
+//! assembled at run time from variables, and `find -delete`. History rewrites (`rebase`,
+//! `commit --amend`) are local and kept in the reflog; they only destroy shared history when
+//! force-pushed, and the force push is what this gate stops. `git reset --keep` is not gated: git
+//! aborts it when a file it would touch has local changes.
+
+use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::config::{Config, ConfigError, GooseMode};
 use crate::conversation::message::{Message, ToolRequest};
+use crate::session::SessionManager;
 use crate::tool_inspection::{InspectionAction, InspectionResult, ToolInspector};
 
 /// Config key (or env var of the same name). `false` = never ask before destructive commands.
@@ -40,24 +51,34 @@ pub struct DestructiveFinding {
     pub command: String,
     /// What it destroys, in words a user can act on.
     pub reason: String,
+    /// For a recursive `rm` whose every target resolved to an absolute path: those paths, so the
+    /// repository's ignore rules can clear it. `None` when any target is unresolvable (a variable,
+    /// a glob, `~`, unknown cwd) or the finding is not an `rm`.
+    pub rm_targets: Option<Vec<PathBuf>>,
 }
 
-/// Every destructive simple command in `line`, in order of appearance.
+/// Every destructive simple command in `line`, in order of appearance, with no known cwd.
 pub fn find_destructive(line: &str) -> Vec<DestructiveFinding> {
+    find_destructive_in(line, None)
+}
+
+/// Every destructive simple command in `line`, starting in `cwd` (the session's working dir).
+pub fn find_destructive_in(line: &str, cwd: Option<&Path>) -> Vec<DestructiveFinding> {
     let mut findings = Vec::new();
-    scan_line(line, &mut findings);
+    let mut cwd = cwd.map(Path::to_path_buf);
+    scan_line(line, &mut cwd, &mut findings);
     findings
 }
 
-fn scan_line(line: &str, findings: &mut Vec<DestructiveFinding>) {
+fn scan_line(line: &str, cwd: &mut Option<PathBuf>, findings: &mut Vec<DestructiveFinding>) {
     let mut nested = Vec::new();
     let segments = split_segments(line, &mut nested);
     for words in segments {
-        scan_segment(&words, findings);
+        scan_segment(&words, cwd, findings);
     }
     // Substitutions run too: `echo "$(git reset --hard)"` resets.
     for script in nested {
-        scan_line(&script, findings);
+        scan_line(&script, &mut cwd.clone(), findings);
     }
 }
 
@@ -65,10 +86,16 @@ fn scan_line(line: &str, findings: &mut Vec<DestructiveFinding>) {
 // Lexer: shell words grouped into simple commands.
 // ---------------------------------------------------------------------------------------------
 
+struct PendingHeredoc {
+    delimiter: String,
+    quoted: bool,
+    strip_tabs: bool,
+}
+
 /// Split a command line into simple commands (lists of words). Separators: `;` `&` `|` (so also
 /// `&&` `||`), newline, `(` `)`. Quotes and backslashes are honoured; `$( )` and backtick bodies
 /// are pushed to `nested` and stand in the word as their literal text. Redirection targets are
-/// dropped (`2>/dev/null` is not an argument).
+/// dropped (`2>/dev/null` is not an argument); here-document bodies are data, not commands.
 fn split_segments(line: &str, nested: &mut Vec<String>) -> Vec<Vec<String>> {
     let chars: Vec<char> = line.chars().collect();
     let len = chars.len();
@@ -77,6 +104,7 @@ fn split_segments(line: &str, nested: &mut Vec<String>) -> Vec<Vec<String>> {
     let mut cur = String::new();
     let mut in_word = false;
     let mut skip_next_word = false;
+    let mut heredocs: Vec<PendingHeredoc> = Vec::new();
     let mut i = 0;
 
     fn flush_word(
@@ -169,10 +197,38 @@ fn split_segments(line: &str, nested: &mut Vec<String>) -> Vec<Vec<String>> {
                 flush_word(&mut cur, &mut in_word, &mut words, &mut skip_next_word);
                 i += 1;
             }
-            '\n' | ';' | '&' | '|' | '(' | ')' => {
+            '\n' => {
                 flush_word(&mut cur, &mut in_word, &mut words, &mut skip_next_word);
                 flush_segment(&mut words, &mut segments);
                 i += 1;
+                for doc in heredocs.drain(..) {
+                    i = skip_heredoc_body(&chars, i, &doc, nested);
+                }
+            }
+            ';' | '&' | '|' | '(' | ')' => {
+                flush_word(&mut cur, &mut in_word, &mut words, &mut skip_next_word);
+                flush_segment(&mut words, &mut segments);
+                i += 1;
+            }
+            '<' if i + 2 < len && chars[i + 1] == '<' && chars[i + 2] != '<' => {
+                flush_word(&mut cur, &mut in_word, &mut words, &mut skip_next_word);
+                i += 2;
+                let strip_tabs = chars[i] == '-';
+                if strip_tabs {
+                    i += 1;
+                }
+                while i < len && matches!(chars[i], ' ' | '\t') {
+                    i += 1;
+                }
+                let (delimiter, quoted, end) = read_heredoc_delimiter(&chars, i);
+                i = end;
+                if !delimiter.is_empty() {
+                    heredocs.push(PendingHeredoc {
+                        delimiter,
+                        quoted,
+                        strip_tabs,
+                    });
+                }
             }
             '<' | '>' => {
                 // A file-descriptor number glued to the operator (`2>`) is not an argument.
@@ -206,6 +262,90 @@ fn split_segments(line: &str, nested: &mut Vec<String>) -> Vec<Vec<String>> {
     flush_word(&mut cur, &mut in_word, &mut words, &mut skip_next_word);
     flush_segment(&mut words, &mut segments);
     segments
+}
+
+/// The here-document delimiter word at `start`: (delimiter, quoted, index after it). Any quote or
+/// backslash in the word makes the body literal, as in the shell.
+fn read_heredoc_delimiter(chars: &[char], start: usize) -> (String, bool, usize) {
+    let mut i = start;
+    let mut word = String::new();
+    let mut quoted = false;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\'' | '"' => {
+                quoted = true;
+                i += 1;
+                while i < chars.len() && chars[i] != c {
+                    word.push(chars[i]);
+                    i += 1;
+                }
+                i += 1;
+            }
+            '\\' => {
+                quoted = true;
+                if i + 1 < chars.len() {
+                    word.push(chars[i + 1]);
+                }
+                i += 2;
+            }
+            ' ' | '\t' | '\n' | ';' | '&' | '|' | '(' | ')' | '<' | '>' => break,
+            _ => {
+                word.push(c);
+                i += 1;
+            }
+        }
+    }
+    (word, quoted, i.min(chars.len()))
+}
+
+/// Skip a here-document body starting at line start `start`; returns the index after the
+/// delimiter line. An unquoted body still expands `$( )` and backticks, so those are scanned.
+fn skip_heredoc_body(
+    chars: &[char],
+    start: usize,
+    doc: &PendingHeredoc,
+    nested: &mut Vec<String>,
+) -> usize {
+    let mut i = start;
+    while i < chars.len() {
+        let line_end = chars[i..]
+            .iter()
+            .position(|c| *c == '\n')
+            .map_or(chars.len(), |p| i + p);
+        let line: String = chars[i..line_end].iter().collect();
+        let candidate = if doc.strip_tabs {
+            line.trim_start_matches('\t')
+        } else {
+            line.as_str()
+        };
+        let next = (line_end + 1).min(chars.len());
+        if candidate == doc.delimiter {
+            return next;
+        }
+        if !doc.quoted {
+            let line_chars: Vec<char> = line.chars().collect();
+            let mut j = 0;
+            while j < line_chars.len() {
+                if line_chars[j] == '$' && line_chars.get(j + 1) == Some(&'(') {
+                    let (body, end) = take_paren_body(&line_chars, j + 2);
+                    nested.push(body);
+                    j = end;
+                } else if line_chars[j] == '`' {
+                    let (body, end) = take_backtick_body(&line_chars, j + 1);
+                    nested.push(body);
+                    j = end;
+                } else {
+                    j += 1;
+                }
+            }
+        }
+        i = next;
+        if line_end == chars.len() {
+            break;
+        }
+    }
+    chars.len()
 }
 
 /// Body of `$( ... )` starting just after the `(`; returns (body, index after the closing `)`).
@@ -400,49 +540,104 @@ impl Args<'_> {
                     .is_some_and(|cluster| cluster.contains(c))
         })
     }
+    fn exact(&self, flag: &str) -> usize {
+        self.flags.iter().filter(|f| **f == flag).count()
+    }
 }
 
 fn finding(words: &[String], reason: &str) -> DestructiveFinding {
     DestructiveFinding {
         command: words.join(" "),
         reason: reason.to_string(),
+        rm_targets: None,
     }
 }
 
-fn scan_segment(words: &[String], findings: &mut Vec<DestructiveFinding>) {
+/// `cd` along a chain: absolute, or relative to a known cwd; anything else makes the cwd unknown.
+fn apply_cd(rest: &[String], cwd: &mut Option<PathBuf>) {
+    let target = rest
+        .iter()
+        .find(|a| !matches!(a.as_str(), "-L" | "-P" | "-e" | "-@"));
+    *cwd = match target {
+        Some(t) => resolve(t, cwd.as_deref()),
+        None => None,
+    };
+}
+
+/// An absolute, lexically normalised path for a shell word, or `None` when the word needs the
+/// shell to expand it (variables, globs, `~`) or is relative to an unknown cwd.
+fn resolve(word: &str, cwd: Option<&Path>) -> Option<PathBuf> {
+    if word.is_empty()
+        || word == "-"
+        || word.starts_with('~')
+        || word.contains(['$', '*', '?', '[', '{', '`'])
+    {
+        return None;
+    }
+    let joined = if word.starts_with('/') {
+        PathBuf::from(word)
+    } else {
+        cwd?.join(word)
+    };
+    let mut out = PathBuf::new();
+    for comp in joined.components() {
+        match comp {
+            Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    Some(out)
+}
+
+fn scan_segment(
+    words: &[String],
+    cwd: &mut Option<PathBuf>,
+    findings: &mut Vec<DestructiveFinding>,
+) {
     let words = strip_prefix(words);
     let Some(first) = words.first() else { return };
     let name = basename(first);
     let rest = &words[1..];
     match name {
+        "cd" | "pushd" => apply_cd(rest, cwd),
         "sh" | "bash" | "zsh" | "dash" | "ksh" | "fish" => {
-            // `bash -c '<script>'`, also `-lc`, `-ec`: the script is the word after the cluster.
+            // `bash -c '<script>'`, also `-lc`, `-ec`, `-o pipefail -c`: the script is the word
+            // after the cluster that holds `c`.
             let mut idx = 0;
             while idx < rest.len() {
                 let a = rest[idx].as_str();
+                if matches!(a, "-o" | "+o" | "-O" | "+O") {
+                    idx += 2;
+                    continue;
+                }
                 if !a.starts_with("--")
                     && a.strip_prefix('-')
                         .is_some_and(|cluster| cluster.contains('c'))
                 {
                     if let Some(script) = rest.get(idx + 1) {
-                        scan_line(script, findings);
+                        scan_line(script, &mut cwd.clone(), findings);
                     }
                     return;
                 }
-                if !a.starts_with('-') {
+                if !a.starts_with('-') && !a.starts_with('+') {
                     return; // `bash script.sh`: the script's contents are not visible here
                 }
                 idx += 1;
             }
         }
-        "eval" => scan_line(&rest.join(" "), findings),
+        "eval" => scan_line(&rest.join(" "), &mut cwd.clone(), findings),
         "git" => {
             if let Some(f) = classify_git(words, rest) {
                 findings.push(f);
             }
         }
         "rm" => {
-            if let Some(f) = classify_rm(words, rest) {
+            if let Some(f) = classify_rm(words, rest, cwd.as_deref()) {
                 findings.push(f);
             }
         }
@@ -470,16 +665,11 @@ fn classify_git(words: &[String], rest: &[String]) -> Option<DestructiveFinding>
         "reset" if args.long("--hard") => {
             "discards every uncommitted change in the working tree and moves the branch; commits after the target and unsaved edits are gone"
         }
-        "checkout"
-            if args.short('f')
-                || args.long("--force")
-                || (args.double_dash && !args.after_double_dash.is_empty())
-                || args
-                    .positional
-                    .iter()
-                    .any(|p| *p == "." || p.starts_with("./") || p.starts_with(":/")) =>
-        {
-            "overwrites files with their committed version; uncommitted edits to them are gone"
+        "reset" if args.long("--merge") => {
+            "moves the branch and overwrites files changed since the target; staged changes to them are gone"
+        }
+        "checkout" if checkout_overwrites_paths(&args) => {
+            "overwrites files with another version; uncommitted edits to them are gone"
         }
         "restore"
             if !(args.short('S') || args.long("--staged"))
@@ -537,7 +727,26 @@ fn classify_git(words: &[String], rest: &[String]) -> Option<DestructiveFinding>
     Some(finding(words, reason))
 }
 
-fn classify_rm(words: &[String], rest: &[String]) -> Option<DestructiveFinding> {
+/// `git checkout` that writes files rather than switching branches: forced, `-- <paths>`, `.`,
+/// or `<tree-ish> <paths>` (two or more positionals once the value of `-b`/`-B`/`--orphan` is
+/// set aside, since `checkout -b new start-point` also has two).
+fn checkout_overwrites_paths(args: &Args<'_>) -> bool {
+    let branch_values = args.exact("-b") + args.exact("-B") + args.exact("--orphan");
+    args.short('f')
+        || args.long("--force")
+        || (args.double_dash && !args.after_double_dash.is_empty())
+        || args
+            .positional
+            .iter()
+            .any(|p| *p == "." || p.starts_with("./") || p.starts_with(":/"))
+        || args.positional.len().saturating_sub(branch_values) >= 2
+}
+
+fn classify_rm(
+    words: &[String],
+    rest: &[String],
+    cwd: Option<&Path>,
+) -> Option<DestructiveFinding> {
     let args = split_args(rest);
     let recursive = args.short('r') || args.short('R') || args.long("--recursive");
     if !recursive {
@@ -553,10 +762,17 @@ fn classify_rm(words: &[String], rest: &[String]) -> Option<DestructiveFinding> 
     if !targets.is_empty() && targets.iter().all(|t| is_temp_path(t)) {
         return None;
     }
-    Some(finding(
-        words,
-        "deletes a directory tree outside the temp dir, with no copy to restore from",
-    ))
+    let resolved: Option<Vec<PathBuf>> = if targets.is_empty() {
+        None
+    } else {
+        targets.iter().map(|t| resolve(t, cwd)).collect()
+    };
+    Some(DestructiveFinding {
+        command: words.join(" "),
+        reason: "deletes a directory tree that is not disposable, with no copy to restore from"
+            .to_string(),
+        rm_targets: resolved,
+    })
 }
 
 /// Inside (not equal to) a system temp directory, with no `..` escape.
@@ -585,6 +801,64 @@ fn is_temp_path(path: &str) -> bool {
         .any(|root| path.len() > root.len() && path.starts_with(root.as_str()))
 }
 
+/// A directory strictly inside `root` that the repository at `root` ignores. Asks git, so the
+/// project's own ignore rules decide; any failure to ask counts as NOT disposable.
+async fn is_ignored_dir_in(root: &Path, path: &Path) -> bool {
+    if path == root || !path.starts_with(root) || !path.is_dir() {
+        return false;
+    }
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    match tokio::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["check-ignore", "-q", "--"])
+        .arg(relative)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+    {
+        Ok(status) => status.success(),
+        Err(e) => {
+            tracing::warn!(error = %e, "git check-ignore could not run; rm -r stays gated");
+            false
+        }
+    }
+}
+
+/// Drop the `rm -r` findings whose every target is an ignored directory inside `root`.
+pub async fn drop_disposable(
+    findings: Vec<DestructiveFinding>,
+    root: Option<&Path>,
+) -> Vec<DestructiveFinding> {
+    let Some(root) = root else {
+        return findings;
+    };
+    let mut kept = Vec::new();
+    for f in findings {
+        let disposable = match &f.rm_targets {
+            Some(paths) => {
+                let mut all = true;
+                for p in paths {
+                    if !is_ignored_dir_in(root, p).await {
+                        all = false;
+                        break;
+                    }
+                }
+                all
+            }
+            None => false,
+        };
+        if !disposable {
+            kept.push(f);
+        }
+    }
+    kept
+}
+
 // ---------------------------------------------------------------------------------------------
 // Messages and the inspector.
 // ---------------------------------------------------------------------------------------------
@@ -600,16 +874,20 @@ pub fn approval_prompt(findings: &[DestructiveFinding]) -> String {
     s
 }
 
-/// Tool result the model gets when the user declines (replaces the generic decline text, which
-/// tells the model never to call the tool again and so would cut it off from the shell).
-pub fn declined_response(findings: &[DestructiveFinding]) -> String {
-    let what = findings
+/// What the gate found, as carried in `InspectionResult::reason` and quoted back to the model.
+pub fn findings_summary(findings: &[DestructiveFinding]) -> String {
+    findings
         .iter()
         .map(|f| format!("`{}` ({})", f.command, f.reason))
         .collect::<Vec<_>>()
-        .join("; ");
+        .join("; ")
+}
+
+/// Tool result the model gets when the user declines (replaces the generic decline text, which
+/// tells the model never to call the tool again and so would cut it off from the shell).
+pub fn declined_response(summary: &str) -> String {
     format!(
-        "The user declined this command because it would destroy work: {what}. Nothing in it was run. \
+        "The user declined this command because it would destroy work: {summary}. Nothing in it was run. \
          Do not run it again and do not reach the same result another way (another reset, checkout, \
          restore, clean, rm or force push). Leave the repository and files as they are, tell the user \
          what you wanted to do and why, and ask how they want to proceed. Other shell commands are \
@@ -634,28 +912,37 @@ fn shell_command_text(tool_call: &rmcp::model::CallToolRequestParams) -> Option<
         .find_map(|k| args.get(*k).and_then(|v| v.as_str()))
 }
 
-/// Findings for one tool request (empty for non-shell tools and harmless commands).
-pub fn findings_for_request(request: &ToolRequest) -> Vec<DestructiveFinding> {
+/// Findings for one tool request run from `cwd` (empty for non-shell tools and harmless
+/// commands), before the disposable-directory check.
+pub fn findings_for_request(request: &ToolRequest, cwd: Option<&Path>) -> Vec<DestructiveFinding> {
     let Ok(tool_call) = &request.tool_call else {
         return Vec::new();
     };
     match shell_command_text(tool_call) {
-        Some(command) => find_destructive(command),
+        Some(command) => find_destructive_in(command, cwd),
         None => Vec::new(),
     }
 }
 
-pub struct DestructiveCommandInspector;
-
-impl DestructiveCommandInspector {
-    pub fn new() -> Self {
-        Self
-    }
+pub struct DestructiveCommandInspector {
+    session_manager: Arc<SessionManager>,
 }
 
-impl Default for DestructiveCommandInspector {
-    fn default() -> Self {
-        Self::new()
+impl DestructiveCommandInspector {
+    pub fn new(session_manager: Arc<SessionManager>) -> Self {
+        Self { session_manager }
+    }
+
+    /// The session's working dir; unknown means relative `rm -r` targets cannot be cleared.
+    async fn working_dir(&self, session_id: &str) -> Option<PathBuf> {
+        match self.session_manager.get_session(session_id, false).await {
+            Ok(session) if session.working_dir.is_absolute() => Some(session.working_dir),
+            Ok(_) => None,
+            Err(e) => {
+                tracing::debug!(error = %e, "no session working dir; rm -r targets stay gated");
+                None
+            }
+        }
     }
 }
 
@@ -671,7 +958,7 @@ impl ToolInspector for DestructiveCommandInspector {
 
     async fn inspect(
         &self,
-        _session_id: &str,
+        session_id: &str,
         tool_requests: &[ToolRequest],
         _messages: &[Message],
         goose_mode: GooseMode,
@@ -680,8 +967,16 @@ impl ToolInspector for DestructiveCommandInspector {
             return Ok(Vec::new());
         }
         let mut results = Vec::new();
+        let mut root: Option<Option<PathBuf>> = None;
         for request in tool_requests {
-            let findings = findings_for_request(request);
+            if !matches!(&request.tool_call, Ok(tc) if shell_command_text(tc).is_some()) {
+                continue;
+            }
+            if root.is_none() {
+                root = Some(self.working_dir(session_id).await);
+            }
+            let cwd = root.as_ref().and_then(|r| r.as_deref());
+            let findings = drop_disposable(findings_for_request(request, cwd), cwd).await;
             if findings.is_empty() {
                 continue;
             }
@@ -694,11 +989,7 @@ impl ToolInspector for DestructiveCommandInspector {
             results.push(InspectionResult {
                 tool_request_id: request.id.clone(),
                 action: InspectionAction::RequireApproval(Some(approval_prompt(&findings))),
-                reason: findings
-                    .iter()
-                    .map(|f| f.reason.as_str())
-                    .collect::<Vec<_>>()
-                    .join("; "),
+                reason: findings_summary(&findings),
                 confidence: 1.0,
                 inspector_name: DESTRUCTIVE_INSPECTOR_NAME.to_string(),
                 finding_id: None,
@@ -769,6 +1060,9 @@ mod tests {
             "cd repo&&git reset --hard",
             "sh -c 'git reset --hard 1192c90'",
             "bash -lc \"cd /w && git reset --hard\"",
+            "bash -o pipefail -c 'git reset --hard'",
+            "bash +o histexpand -e -c 'git clean -fd'",
+            "zsh -O extglob -c 'git reset --hard'",
             "eval \"git reset --hard\"",
             "echo \"$(git reset --hard)\"",
             "echo `git clean -fd`",
@@ -779,9 +1073,13 @@ mod tests {
             "git -c core.x=y reset --hard",
             "git reset --hard 2>&1",
             "git reset --hard >/dev/null 2>&1",
+            "git reset --merge HEAD~1",
             "git checkout -- src/a.js",
             "git checkout .",
             "git checkout -f main",
+            "git checkout HEAD src/a.js",
+            "git checkout main src/a.js",
+            "git checkout HEAD~2 -- src/a.js",
             "git restore src/a.js",
             "git restore --staged --worktree a.js",
             "git restore -SW a.js",
@@ -808,6 +1106,8 @@ mod tests {
             "rm -rf /tmp/../Users/me",
             "rm -rf /tmp",
             "find . -name x | xargs rm -rf",
+            "cat <<EOF > out.txt\n$(git reset --hard)\nEOF",
+            "cat <<'EOF' > notes.md\nhello\nEOF\ngit reset --hard",
         ] {
             assert!(hit(line), "should be caught: {line}");
         }
@@ -817,6 +1117,7 @@ mod tests {
     fn harmless_look_alikes_pass() {
         for line in [
             "git reset --soft HEAD~1",
+            "git reset --keep HEAD~1",
             "git reset HEAD a.js",
             "git reset",
             "git log --hard",
@@ -829,6 +1130,9 @@ mod tests {
             "# git reset --hard\ngit status",
             "git checkout main",
             "git checkout -b feature",
+            "git checkout -b feature origin/feature",
+            "git checkout -B feature main",
+            "git checkout --orphan pages main",
             "git restore --staged a.js",
             "git clean -n -d",
             "git clean -fdn",
@@ -848,6 +1152,10 @@ mod tests {
             "rm -rf \"$TMPDIR/cache\"",
             "ls -la | grep reset",
             "cat notes.md",
+            "cat <<'EOF' > RUNBOOK.md\nTo undo: git reset --hard HEAD~1\nrm -rf build\nEOF",
+            "cat <<EOF > RUNBOOK.md\ngit push --force\nEOF\ngit status",
+            "cat <<-END\n\tgit clean -fd\n\tEND\necho done",
+            "git commit -F - <<'MSG'\nrevert: git reset --hard was wrong\nMSG",
         ] {
             assert!(
                 !hit(line),
@@ -857,10 +1165,110 @@ mod tests {
         }
     }
 
+    fn git(dir: &Path, args: &[&str]) {
+        let ok = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?}");
+    }
+
+    /// A project that ignores node_modules/, target/, dist/ and .env, with a tracked src/ and an
+    /// untracked (not ignored) notes/ dir.
+    fn project() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-q"]);
+        std::fs::write(
+            root.join(".gitignore"),
+            "node_modules/\ntarget/\ndist\n.env\n",
+        )
+        .unwrap();
+        for d in ["node_modules/x", "target/debug", "dist", "src", "notes"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        std::fs::write(root.join("src/a.js"), "a").unwrap();
+        std::fs::write(root.join("notes/todo.md"), "mine").unwrap();
+        std::fs::write(root.join(".env"), "SECRET=1").unwrap();
+        git(root, &["add", ".gitignore", "src/a.js"]);
+        git(
+            root,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "init",
+            ],
+        );
+        dir
+    }
+
+    async fn asks_in(root: &Path, line: &str) -> bool {
+        !drop_disposable(find_destructive_in(line, Some(root)), Some(root))
+            .await
+            .is_empty()
+    }
+
+    #[tokio::test]
+    async fn rm_of_ignored_build_dirs_inside_the_project_is_not_asked() {
+        let dir = project();
+        let root = dir.path();
+        for line in [
+            "rm -rf node_modules",
+            "rm -rf ./target",
+            "rm -rf dist target/debug",
+            "rm -rf node_modules/",
+        ] {
+            assert!(!asks_in(root, line).await, "should pass: {line}");
+        }
+        let cd_line = format!("cd '{}' && rm -rf node_modules dist", root.display());
+        assert!(!asks_in(root, &cd_line).await, "{cd_line}");
+    }
+
+    #[tokio::test]
+    async fn rm_of_tracked_untracked_outside_or_unresolved_still_asks() {
+        let dir = project();
+        let root = dir.path();
+        for line in [
+            "rm -rf src",
+            "rm -rf notes",
+            "rm -rf node_modules notes",
+            "rm -rf node_modules ../elsewhere",
+            "rm -rf .",
+            "rm -r .env",
+            "rm -rf $DIR",
+            "rm -rf node_*",
+            "cd .. && rm -rf node_modules",
+            "cd \"$HOME\" && rm -rf node_modules",
+        ] {
+            assert!(asks_in(root, line).await, "should ask: {line}");
+        }
+        // No known working dir: nothing can be cleared.
+        assert!(
+            !drop_disposable(find_destructive("rm -rf node_modules"), None)
+                .await
+                .is_empty()
+        );
+        // A different project's root does not clear this one's dirs.
+        let other = project();
+        let findings = find_destructive_in("rm -rf node_modules", Some(root));
+        assert!(!drop_disposable(findings, Some(other.path()))
+            .await
+            .is_empty());
+    }
+
     #[test]
     fn decline_text_names_the_command_and_keeps_the_shell_open() {
         let f = find_destructive("git reset --hard 1192c90");
-        let text = declined_response(&f);
+        let text = declined_response(&findings_summary(&f));
         assert!(text.contains("`git reset --hard 1192c90`"));
         assert!(text.contains("Nothing in it was run"));
         assert!(text.contains("Other shell commands are still allowed"));
@@ -880,7 +1288,8 @@ mod tests {
 
     #[tokio::test]
     async fn inspector_asks_in_auto_mode_and_ignores_harmless() {
-        let inspector = DestructiveCommandInspector::new();
+        let sessions = Arc::new(SessionManager::new(tempfile::tempdir().unwrap().keep()));
+        let inspector = DestructiveCommandInspector::new(sessions);
         let reqs = vec![
             shell_request("bad", "cd '/w' && git reset --hard 1192c90"),
             shell_request("ok", "cd '/w' && git reset --soft 8bcacbe"),
@@ -893,6 +1302,7 @@ mod tests {
                 &results[0].action,
                 InspectionAction::RequireApproval(Some(m)) if m.contains("git reset --hard 1192c90")
             ));
+            assert!(results[0].reason.contains("`git reset --hard 1192c90`"));
         }
         let chat = inspector
             .inspect("s", &reqs, &[], GooseMode::Chat)
@@ -910,8 +1320,8 @@ mod tests {
             metadata: None,
             tool_meta: None,
         };
-        assert!(findings_for_request(&req).is_empty());
-        assert!(!findings_for_request(&shell_request("s", "rm -rf src")).is_empty());
+        assert!(findings_for_request(&req, None).is_empty());
+        assert!(!findings_for_request(&shell_request("s", "rm -rf src"), None).is_empty());
         let prefixed = ToolRequest {
             id: "p".into(),
             tool_call: Ok(CallToolRequestParams::new("developer__shell")
@@ -919,6 +1329,6 @@ mod tests {
             metadata: None,
             tool_meta: None,
         };
-        assert!(!findings_for_request(&prefixed).is_empty());
+        assert!(!findings_for_request(&prefixed, None).is_empty());
     }
 }

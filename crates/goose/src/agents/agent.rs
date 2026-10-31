@@ -966,7 +966,9 @@ impl Agent {
         // Add security inspector (highest priority - runs first)
         tool_inspection_manager.add_inspector(Box::new(SecurityInspector::new()));
         tool_inspection_manager.add_inspector(Box::new(EgressInspector::new()));
-        tool_inspection_manager.add_inspector(Box::new(DestructiveCommandInspector::new()));
+        tool_inspection_manager.add_inspector(Box::new(DestructiveCommandInspector::new(
+            session_manager.clone(),
+        )));
 
         // Add adversary inspector (LLM-based review, enabled by ~/.config/goose/adversary.md)
         tool_inspection_manager.add_inspector(Box::new(AdversaryInspector::new(

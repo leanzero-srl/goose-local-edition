@@ -109,6 +109,49 @@ struct Outcome {
 
 /// One turn in the DEFAULT mode (auto); every approval card is answered with `answer`.
 async fn run_turn(command: &str, answer: Permission) -> Result<Outcome> {
+    let project = project()?;
+    run_turn_in(project.path().to_path_buf(), command, answer).await
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) -> Result<()> {
+    let ok = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?
+        .success();
+    anyhow::ensure!(ok, "git {args:?} failed");
+    Ok(())
+}
+
+/// A throwaway project that ignores node_modules/ and tracks src/.
+fn project() -> Result<TempDir> {
+    let dir = TempDir::new()?;
+    let root = dir.path();
+    git(root, &["init", "-q"])?;
+    std::fs::write(root.join(".gitignore"), "node_modules/\n")?;
+    std::fs::create_dir_all(root.join("node_modules/pkg"))?;
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(root.join("src/a.js"), "a")?;
+    git(root, &["add", "."])?;
+    git(
+        root,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    )?;
+    Ok(dir)
+}
+
+async fn run_turn_in(working_dir: PathBuf, command: &str, answer: Permission) -> Result<Outcome> {
     let temp_dir = TempDir::new()?;
     let data_dir = temp_dir.path().to_path_buf();
     let session_manager = Arc::new(SessionManager::new(data_dir.clone()));
@@ -122,7 +165,7 @@ async fn run_turn(command: &str, answer: Permission) -> Result<Outcome> {
     ));
     let session = session_manager
         .create_session(
-            PathBuf::default(),
+            working_dir,
             "destructive-gate".to_string(),
             SessionType::Hidden,
             GooseMode::default(),
@@ -226,6 +269,36 @@ async fn harmless_look_alike_is_not_asked_in_auto_mode() -> Result<()> {
         outcome.prompts.is_empty(),
         "auto mode must not ask for git reset --soft: {:?}",
         outcome.prompts
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn rm_of_an_ignored_build_dir_in_the_project_is_not_asked() -> Result<()> {
+    let project = project()?;
+    let outcome = run_turn_in(
+        project.path().to_path_buf(),
+        "rm -rf node_modules",
+        Permission::DenyOnce,
+    )
+    .await?;
+    assert!(outcome.prompts.is_empty(), "{:?}", outcome.prompts);
+    Ok(())
+}
+
+#[tokio::test]
+async fn rm_of_tracked_source_in_the_project_is_asked() -> Result<()> {
+    let project = project()?;
+    let outcome = run_turn_in(
+        project.path().to_path_buf(),
+        "rm -rf src",
+        Permission::DenyOnce,
+    )
+    .await?;
+    assert_eq!(outcome.prompts.len(), 1);
+    assert!(
+        project.path().join("src/a.js").exists(),
+        "declined rm must not run"
     );
     Ok(())
 }
