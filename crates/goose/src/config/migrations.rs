@@ -645,7 +645,9 @@ extensions:
             .get(yaml_key(APPLIED_MIGRATIONS_KEY))
             .and_then(|v| v.as_sequence())
             .unwrap();
-        assert_eq!(markers.len(), 1);
+        // One marker per one-time migration, each recorded once.
+        let ids: Vec<_> = markers.iter().filter_map(|m| m.as_str()).collect();
+        assert_eq!(ids, vec![CHATRECALL_DEFAULT_ON, MEMORY_DEFAULT_ON]);
     }
 
     // -----------------------------------------------------------------------
