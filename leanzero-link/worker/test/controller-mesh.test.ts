@@ -356,6 +356,33 @@ for (const backend of ["sqlite", "durable"] as const) {
       provider.nodes = provider.nodes.filter(n => n !== desktop);
       expect((await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token)).status).toBe(200);
     });
+    it("WR-7 r2: an issued-never-confirmed phone whose key expired still blocks legacy mints while its node is listed", async () => {
+      const f = await setup(store()); await f.bindHost(); const phone = await f.device();
+      const enrollment_id = crypto.randomUUID();
+      const issued = await f.post("/mesh/join-key", { enrollment_id }, phone.access_token); expect(issued.status).toBe(200);
+      const phoneNode = provider.join((await issued.json() as MeshJoinCredential).auth_key, "b"); // joined, never confirmed
+      const saved = (await f.service.registry.read(await digest(f.email)))!.mesh_enrollments![enrollment_id]!;
+      expect(saved.status).toBe("issued");
+      f.h.clock.advanceSeconds(Math.ceil((saved.expires_at - f.h.clock.now()) / 1000) + 1);
+      const legacyJoin = () => handleRequest(postJson("/v1/mesh/join-key", {}, { Authorization: "Bearer " + f.accountToken }), f.h.deps);
+      expect((await legacyJoin()).status).toBe(409);
+      phoneNode.online = false; expect((await legacyJoin()).status).toBe(409);
+      provider.unavailable = true; expect((await legacyJoin()).status).toBe(409); provider.unavailable = false;
+      provider.nodes = provider.nodes.filter(n => n !== phoneNode);
+      expect((await legacyJoin()).status).toBe(200);
+    });
+    it("WR-7 r2: a revoked phone whose node is still listed (cleanup pending) blocks legacy mints", async () => {
+      const f = await setup(store()); await f.bindHost(); const phone = await f.device();
+      const enrollment_id = crypto.randomUUID();
+      const issued = await f.post("/mesh/join-key", { enrollment_id }, phone.access_token); expect(issued.status).toBe(200);
+      const phoneNode = provider.join((await issued.json() as MeshJoinCredential).auth_key, "b");
+      expect((await f.post("/mesh/confirm", { enrollment_id, mesh_node_key: phoneNode.nodeKey }, phone.access_token)).status).toBe(200);
+      await f.service.registry.update(await digest(f.email), st => { const e = st!.mesh_enrollments![enrollment_id]!; e.status = "revoked"; e.cleanup_pending = true; return { state: st!, result: undefined }; });
+      const legacyJoin = () => handleRequest(postJson("/v1/mesh/join-key", {}, { Authorization: "Bearer " + f.accountToken }), f.h.deps);
+      expect((await legacyJoin()).status).toBe(409);
+      provider.nodes = provider.nodes.filter(n => n !== phoneNode);
+      expect((await legacyJoin()).status).toBe(200);
+    });
     it("WR-7: a pending phone enrollment with a live key still blocks legacy mints", async () => {
       const f = await setup(store()); await f.bindHost(); const phone = await f.device();
       expect((await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token)).status).toBe(200);

@@ -7,7 +7,7 @@ so do it only when nothing uses the mesh control plane. No registry change is ne
 
 1. cd ~/Projects/goose && git fetch origin && git merge --ff-only origin/wk/wr7-mesh
    (if main moved: git merge origin/wk/wr7-mesh, then re-run the worker tests below)
-2. cd leanzero-link/worker && npx tsc --noEmit && npx vitest run   (expect 303 passed)
+2. cd leanzero-link/worker && npx tsc --noEmit && npx vitest run   (expect 307 passed)
 3. launchctl kickstart -k gui/$(id -u)/com.leanzero.link-auth
 4. curl -s http://127.0.0.1:8791/v1/health    (expect "ok":true)
 5. Proof on a Studio: Providers > MLX > My Macs > Mesh > Retry connect joins while the

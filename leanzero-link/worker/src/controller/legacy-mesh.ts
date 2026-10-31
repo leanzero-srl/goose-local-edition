@@ -28,47 +28,63 @@ export function reapUnstartedLegacyMints(state: AccountState, now: number): void
  * was confirmed, even after its phone node had left the provider. That locked
  * current desktop hosts out of the mesh for good once a phone was ever paired.
  *
- * A confirmed controller is DORMANT when the provider proves it has no foothold:
- * no node (online, offline or expired) carries its binding or key, and its key
- * can no longer admit a node. A dormant phone can only come back through
- * MeshService.join with a fresh enrollment, and that path's compatible() check
- * refuses while legacy nodes or legacy key lifetimes exist (same registry CAS),
- * so the exclusion still holds. Pending/issued controller enrollments with live
- * keys still block. Any provider doubt (unreadable, other provider) keeps the
- * strict rule. Returns "enrollment_id:key_id" tokens. */
-async function dormantControllers(deps: Deps, state: AccountState | null): Promise<Set<string>> {
-  const dormant = new Set<string>();
-  const confirmed = Object.values(state?.mesh_enrollments ?? {}).filter(e => e.role === "controller" && e.status === "confirmed");
-  if (!state || confirmed.length === 0 || deps.config.meshProvider !== "headscale") return dormant;
+ * Now, from one provider read taken before the reservation CAS:
+ * 1. ANY controller enrollment (pending, issued, confirmed or revoked) whose node is
+ *    still listed by the provider (by key, node id or node key; online, offline or
+ *    expired) blocks. A phone on the mesh is a phone on the mesh, whatever the
+ *    registry status says (WR-7 r2: an issued-never-confirmed phone whose key had
+ *    expired but whose node stayed listed used to slip through).
+ * 2. A confirmed controller blocks unless DORMANT: no node carries its binding or
+ *    key, and its key can no longer admit a node.
+ * 3. A pending/issued controller blocks while its key lifetime runs, and also after
+ *    it when the provider could not be read and it holds a key.
+ * A dormant phone can only come back through MeshService.join with a fresh
+ * enrollment, whose compatible() check refuses while legacy nodes or legacy key
+ * lifetimes exist (same registry CAS), so the exclusion still holds. Any provider
+ * doubt (unreadable, other provider) keeps the strict rule. */
+interface ControllerFootprint { read: boolean; keyIds: Set<string>; nodeIds: Set<string>; nodeKeys: Set<string>; dormant: Set<string> }
+
+async function controllerFootprint(deps: Deps, state: AccountState | null): Promise<ControllerFootprint> {
+  const unread: ControllerFootprint = { read: false, keyIds: new Set(), nodeIds: new Set(), nodeKeys: new Set(), dormant: new Set() };
+  const controllers = Object.values(state?.mesh_enrollments ?? {}).filter(e => e.role === "controller");
+  if (!state || controllers.length === 0 || deps.config.meshProvider !== "headscale") return unread;
   try {
     const provider = new MeshProvider(deps);
     const { user, nodes } = await provider.nodes(state.email);
     const admitting = await provider.admittingKeys(user.id);
-    for (const e of confirmed) {
+    const f: ControllerFootprint = { read: true, keyIds: new Set(nodes.flatMap(n => n.key_id === null ? [] : [n.key_id])), nodeIds: new Set(nodes.map(n => n.id)), nodeKeys: new Set(nodes.map(n => n.node_key)), dormant: new Set() };
+    for (const e of controllers.filter(e => e.status === "confirmed")) {
       const b = e.binding;
       if (!b || e.key_id === null || b.key_id !== e.key_id || e.user_id !== user.id || admitting.has(e.key_id)) continue;
-      if (nodes.some(n => n.id === b.node_id || n.node_key === b.node_key || n.key_id === e.key_id)) continue;
-      dormant.add(e.enrollment_id + ":" + e.key_id);
+      if (listed(e, f)) continue;
+      f.dormant.add(e.enrollment_id + ":" + e.key_id);
     }
-  } catch { return new Set(); }
-  return dormant;
+    return f;
+  } catch { return unread; }
 }
 
-function blocksLegacyMint(e: MeshEnrollment, now: number, dormant: Set<string>): boolean {
-  if (e.role !== "controller" || e.status === "revoked") return false;
-  if (e.status === "confirmed") return !dormant.has(e.enrollment_id + ":" + e.key_id);
-  return e.expires_at > now;
+function listed(e: MeshEnrollment, f: ControllerFootprint): boolean {
+  if (e.key_id !== null && f.keyIds.has(e.key_id)) return true;
+  return e.binding !== null && (f.nodeIds.has(e.binding.node_id) || f.nodeKeys.has(e.binding.node_key));
+}
+
+function blocksLegacyMint(e: MeshEnrollment, now: number, f: ControllerFootprint): boolean {
+  if (e.role !== "controller") return false;
+  if (f.read && listed(e, f)) return true;
+  if (e.status === "revoked") return false;
+  if (e.status === "confirmed") return !f.dormant.has(e.enrollment_id + ":" + e.key_id);
+  return e.expires_at > now || (!f.read && e.key_id !== null);
 }
 
 export async function reserveLegacyMint(deps: Deps, email: string, issuedAt?: number): Promise<LegacyMintReservation | null> {
   if (!deps.deviceRegistry) return null;
   const registry = new Registry(deps.deviceRegistry); const key = await digest(email); const id = crypto.randomUUID();
-  const dormant = await dormantControllers(deps, await registry.read(key));
+  const footprint = await controllerFootprint(deps, await registry.read(key));
   const accountId = await registry.update(key, old => {
     const state = old ?? newAccount(email);
     if (state.legacy_revoked_before !== undefined && (issuedAt === undefined || issuedAt <= state.legacy_revoked_before)) throw new ControllerError(401, "account_credential_revoked", "Account credential was revoked by deletion");
     reapUnstartedLegacyMints(state, deps.now());
-    if (Object.values(state.mesh_enrollments ?? {}).some(e => blocksLegacyMint(e, deps.now(), dormant))) throw new ControllerError(409, "update_required", "Controller-enabled accounts require scoped host enrollment");
+    if (Object.values(state.mesh_enrollments ?? {}).some(e => blocksLegacyMint(e, deps.now(), footprint))) throw new ControllerError(409, "update_required", "Controller-enabled accounts require scoped host enrollment");
     const mints = state.legacy_mesh_mints ??= { in_flight: 0, expires_at: 0 };
     (mints.reservations ??= {})[id] = { expires_at: deps.now() + LEGACY_RESERVATION_MS, external_started: false };
     mints.in_flight += 1;
