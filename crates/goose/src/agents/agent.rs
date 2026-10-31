@@ -2270,6 +2270,8 @@ impl Agent {
             let mut stop_hook_handled_for_exit = false;
             let mut retrying_after_stop_hook_denial = false;
             let mut consecutive_stop_hook_blocks = 0u32;
+            // WR-19: a grounding finding is handed back to the model at most once per turn.
+            let mut grounding_reasked = false;
             let stop_hook_block_cap = self.stop_hook_block_cap();
             let mut can_drain_pending_steers = false;
             // The last provider call's fate: Some when it failed and nothing recovered it, carrying
@@ -3565,6 +3567,26 @@ impl Agent {
                         session_manager.add_message(&session_config.id, &notice).await?;
                         conversation.push(notice.clone());
                         yield AgentEvent::Message(notice);
+                    }
+                    // WR-19 (GOOSE_GROUNDING_REASK, default off): before a reply that ends the
+                    // turn stands, a grounding finding goes back to the model once, so it can look
+                    // at the output again and correct itself; the note above stays on screen.
+                    if exit_chat
+                        && !terminal_structured_provider_error
+                        && crate::grounding_check::reask_enabled()
+                        && self.final_output_tool.lock().await.is_none()
+                    {
+                        let messages = conversation.messages();
+                        let start = crate::claim_check::turn_start(&messages[..response_starts_at]);
+                        let grounding =
+                            crate::grounding_check::check(messages, start, response_starts_at);
+                        if crate::grounding_check::should_reask(&grounding, grounding_reasked) {
+                            grounding_reasked = true;
+                            let nudge = harness_nudge(crate::grounding_check::reask_text(&grounding));
+                            session_manager.add_message(&session_config.id, &nudge).await?;
+                            conversation.push(nudge);
+                            exit_chat = false;
+                        }
                     }
                 }
 

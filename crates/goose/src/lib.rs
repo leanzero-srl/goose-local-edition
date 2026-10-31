@@ -13,6 +13,7 @@ pub mod checks;
 pub mod claim_check;
 pub mod config;
 pub mod context_mgmt;
+pub mod grounding_check;
 pub mod conversation {
     pub use goose_providers::conversation::*;
 }

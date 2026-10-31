@@ -1344,6 +1344,7 @@ pub fn check_new_text(
     findings.extend(unsourced_years(&texts, &tools, &earlier, current_year));
     findings.extend(unsourced_counts(&texts, &tools, &earlier));
     findings.extend(announced_actions(messages, from, &texts));
+    findings.extend(crate::grounding_check::check(messages, start, from));
     findings.extend(unfinished_claim(
         messages,
         from,
