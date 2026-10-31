@@ -211,8 +211,17 @@ pub enum RankProgram {
     /// so a peer that kept such a chat nothing would reuse a different prefix and run different
     /// steps. `mlxLmServerPipelineSplit` (a requester before it) still reads, with it off: that
     /// requester's ranks keep tailless chats nothing alike.
+    ///
+    /// Tagged `mlxLmServerFetchBudget` since Q-528: `fetch_within_budget` makes every rank charge
+    /// the prompt cache's copies before it makes them (`rank_boundary.py` `fetch_within`,
+    /// `room_to_insert`): the entry a request reads is copied only where the cache fits beside it,
+    /// else moved into the row, and an insert makes room for its own snapshot first. It changes
+    /// what is evicted and which entries are inserted, so a peer that copied first would hold
+    /// other entries and reuse other prefixes. `mlxLmServerTaillessPipelineSplit` (a requester
+    /// before it) still reads, with it off.
     #[serde(
-        rename = "mlxLmServerTaillessPipelineSplit",
+        rename = "mlxLmServerFetchBudget",
+        alias = "mlxLmServerTaillessPipelineSplit",
         alias = "mlxLmServerPipelineSplit",
         alias = "mlxLmServerNamedConversation",
         alias = "mlxLmServerEveryConversation",
@@ -335,6 +344,12 @@ pub enum RankProgram {
         /// only.
         #[serde(default)]
         keep_tailless_conversations: bool,
+        /// Every rank charges the prompt cache's copies before making them (`rank_boundary.py`
+        /// `fetch_within`, `room_to_insert`, Q-528): run a005ed73's rank 1 copied the summary's
+        /// 3.35 GB entry beside a 7.53 GB cache (KV 10.9 GB vs the plan's 8.08 GB) and died of a
+        /// Metal OOM at 114.8 of 115.45 GB. With `prompt_cache_live_bound` and a prefill plan only.
+        #[serde(default)]
+        fetch_within_budget: bool,
         /// goose's sampling profile for the model (Q-159, `rank_sampling.py`): the layer rank 0
         /// resolves between a request's own fields and the checkpoint's generation_config.json.
         /// Rank 0 only — the workers sample from the arguments rank 0 shares — so it needs no new
@@ -752,6 +767,7 @@ fn mlx_lm_server_specs(
             keep_every_conversation: true,
             name_conversations: true,
             keep_tailless_conversations: true,
+            fetch_within_budget: true,
             sampling_defaults: Box::default(),
             pipeline_split: pipeline.map(|(split, _)| split.to_vec()),
             pipeline_cache_weights: pipeline.map(|(_, weights)| weights[rank]),
@@ -1472,6 +1488,7 @@ pub(crate) mod tests {
                 keep_every_conversation: true,
                 name_conversations: true,
                 keep_tailless_conversations: true,
+                fetch_within_budget: true,
                 sampling_defaults: _,
                 pipeline_split: None,
                 pipeline_cache_weights: None,
@@ -6153,6 +6170,168 @@ print("ok")
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
     }
 
+    /// Q-528 at run a005ed73's sizes through the real mlx_lm 0.31.3 LRUPromptCache (MiMo split
+    /// 18/30, 3.0.137, rank1 ...1793444543646.log, 2026-10-31): the plan's 8,084,520,960 B charge,
+    /// 15,360 B per token + 78,643,200 B of state, the chat's req-63/64/65 (prompts 175,134 /
+    /// 196,980 / 202,816, answers 21,619 / 5,633 / 8,549) and the compaction's summary req-66
+    /// (212,048), each prompt[:-1] kept (Q-522) and every end cached. Every copy (a fetch's
+    /// deepcopy, an insert's compacted snapshot) is charged at the moment it exists, beside the
+    /// cache and the live row. NEGATIVE CONTROL (copy first, trim after): the 15:14:16 cache
+    /// (7.51 GB: prompt[:-1] + end + head) and req-66's 3.33 GB copy beside it, 10.83 GB of KV,
+    /// rank 1 at the measured 114.80 GB the next eval failed beside. The shipped rule keeps every
+    /// copy inside the plan (6.86 GB peak), reads each call's whole previous turn, moves the
+    /// summary's entry into its row and keeps the summary's prefix; on a 6.0 GB plan it evicts
+    /// (the kept prefix last) and stays inside; on a roomy one it only copies.
+    #[test]
+    fn the_prompt_caches_copies_stay_inside_the_plan_at_run_a005ed73_sizes_through_real_mlx_lm() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+from mlx_lm.models.cache import LRUPromptCache
+
+p = {"kv_bytes_per_token": 15360, "sequence_state_bytes": 78643200, "batch_transient_ratio": 2.2}
+PLAN_LIMIT = 8084520960
+METAL_LIMIT = 115448725504
+NON_KV = 102930000000  # rank 1 measured: active 110,456,431,770 at 13:14:15 less 7.53 GB of KV
+STEP = 996168216  # the first chunk at 212,048: 113,802,382,962 -> 114,798,551,178
+ENTRIES = 205
+HEAD, OLD_SYSTEM = 32000, 22000
+CALLS = [(175134, 21619), (196980, 5633), (202816, 8549)]  # req-63, req-64, req-65
+SUMMARY = 212048  # req-66
+SESSION = "20261031_a005ed73"
+upstream_pop = LRUPromptCache.CacheOrder.pop
+charge = lambda w: batch_kv_charge(p, 1, w)
+peaks = []
+
+
+class Layer:
+    def __init__(self, tokens):
+        self.nbytes = charge(tokens)
+
+    def is_trimmable(self):
+        return False
+
+    def __deepcopy__(self, memo):
+        peaks.append(("copy", current[0].nbytes + live[0] + self.nbytes))
+        copied = Layer.__new__(Layer)
+        copied.nbytes = self.nbytes
+        return copied
+
+
+current, live = [None], [0]
+
+
+def replay(fixed, limit):
+    del peaks[:]
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    convs = Conversations()
+    keep_conversations(LRUPromptCache.CacheOrder, convs)
+    cache = LRUPromptCache(max_size=ENTRIES, max_bytes=limit)
+    current[0] = cache
+    beside = lambda w: limit - charge(w)
+
+    def insert(tokens, cache_type, row):
+        layers = [Layer(len(tokens))]
+        live[0] = row
+        if fixed and not room_to_insert(cache, "m", tokens, layers[0].nbytes, limit, row, convs.kept()):
+            return False
+        peaks.append(("insert", cache.nbytes + row + layers[0].nbytes))
+        convs.inserted(tokens, layers[0].nbytes)
+        cache.insert_cache("m", tokens, layers, cache_type=cache_type)
+        forget_dropped(cache._lru, convs.kept())
+        cache.trim_to(n_bytes=limit - row)
+        return True
+
+    def lookup(prompt):
+        live[0] = 0
+        if fixed:
+            found, rest, report = fetch_within(
+                cache, "m", prompt, limit, charge(len(prompt)), convs.kept(),
+                cache.fetch_nearest_cache, cache.fetch_nearest_cache,
+            )
+        else:
+            found, rest = cache.fetch_nearest_cache("m", prompt)
+            report = None
+        cache.trim_to(n_bytes=beside(len(prompt)))
+        peaks.append(("row", cache.nbytes + charge(len(prompt))))
+        return (len(prompt) - len(rest) if found is not None else 0), report
+
+    chat = list(range(SUMMARY))
+    insert(chat[:HEAD], "system", 0)
+    insert([-1 - k for k in range(OLD_SYSTEM)], "system", 0)
+    out = {"reads": [], "reports": []}
+    for n, answer in CALLS:
+        prompt = chat[:n]
+        assert convs.tailless_turn(prompt, HEAD, SESSION)
+        convs.cut(prompt, n - 1, HEAD, SESSION)
+        read, report = lookup(prompt)
+        out["reads"].append(read)
+        out["reports"].append(report)
+        insert(prompt[:-1], "assistant", charge(n))
+        for w in range(n, n + answer, 64):
+            if cache.nbytes > beside(w):
+                cache.trim_to(n_bytes=beside(w))
+        out["end_inserted"] = insert(chat[: n + answer], "assistant", 0)  # the row has left the batch
+    out["cache_before_summary"] = cache.nbytes
+    summary = chat[:SUMMARY]
+    assert convs.tailless_turn(summary, HEAD, SESSION)
+    convs.cut(summary, SUMMARY - 1, HEAD, SESSION)
+    out["summary"], out["summary_report"] = lookup(summary)
+    out["summary_peak"] = max(v for _, v in peaks[-2:])
+    insert(summary[:-1], "assistant", charge(SUMMARY))
+    out["kept_after"] = convs.newest_prefix() is not None and len(convs.newest_prefix())
+    out["peak"] = max(v for _, v in peaks)
+    out["worst"] = max(peaks, key=lambda item: item[1])
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    return out
+
+
+control = replay(False, PLAN_LIMIT)
+# The 15:14:16 cache: assistant 2 (prompt[:-1] 202,815 + end 211,365), system 2 (0.99 GB).
+assert abs(control["cache_before_summary"] - 7.53e9) < 0.05e9, control["cache_before_summary"]
+# req-66's copy beside them: 10.86 GB of KV, past the Metal limit with the first chunk.
+assert abs(control["summary_peak"] - 10.86e9) < 0.05e9, control["summary_peak"]
+# = the measured 114,798,551,178 B (13:14:19) the next eval failed beside, 0.65 GB under the limit.
+assert abs(NON_KV + control["summary_peak"] + STEP - 114798551178) < 0.1e9, control
+fixed = replay(True, PLAN_LIMIT)
+assert fixed["peak"] <= PLAN_LIMIT, fixed["worst"]
+assert NON_KV + fixed["peak"] + STEP < METAL_LIMIT - 3e9, fixed["peak"]
+# The chat's prefix is still read every call, the summary reads the whole chat but its tail,
+# and the summary's own prefix is kept afterwards.
+assert fixed["reads"][1:] == [CALLS[0][0] + CALLS[0][1], CALLS[1][0] + CALLS[1][1]], fixed["reads"]
+assert fixed["summary"] >= CALLS[2][0] - 1, fixed["summary"]
+assert fixed["kept_after"] == SUMMARY - 1, fixed["kept_after"]
+# Memory short (a plan of 6.0 GB): the cache evicts — the kept prefix last — instead of
+# outgrowing it, and the summary still reads its chat.
+short = replay(True, 6_000_000_000)
+assert short["peak"] <= 6_000_000_000, short["worst"]
+assert short["summary"] >= CALLS[2][0] - 1, short
+# A roomy plan (20 GB) copies as mlx_lm does: the chat's entries are never moved, only others
+# make way for a copy, and the kept prefix stays cached beside the row.
+roomy = replay(True, 20_000_000_000)
+plans = [r["plan"] for r in roomy["reports"] + [roomy["summary_report"]] if r is not None]
+assert set(plans) <= {"copy"} and roomy["peak"] <= 20_000_000_000, roomy
+assert roomy["summary"] == fixed["summary"], roomy
+print("ok")
+"#;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!(
+                "{}{}{checks}",
+                include_str!("rank_prefill.py"),
+                include_str!("rank_boundary.py")
+            ))
+            .output()
+            .expect("the tensor venv's python runs");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
     /// Q-502's admission through the REAL mlx_lm 0.31.3 server on a tiny qwen3_5, the wrapper's
     /// own hooks installed (rank 0): E2E #3x's 15:10:16 shape. Chat A takes two agent steps; chat
     /// B's agent call is generating when B's side call (another system prompt, no tools, no tail)
@@ -6190,11 +6369,14 @@ print("ok")
             if let RankProgram::MlxLmServer {
                 doorbell,
                 keep_every_conversation: every,
+                fetch_within_budget,
                 ..
             } = &mut spec.program
             {
                 *doorbell = false;
                 *every = keep_every_conversation;
+                // The 3.0.74–3.0.79 control copied first, as every spec before Q-528 did.
+                *fetch_within_budget = keep_every_conversation;
             }
             spec.load_lock = Some(launch_load_lock());
             spec
@@ -11147,8 +11329,24 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerTaillessPipelineSplit");
+        assert_eq!(json["program"], "mlxLmServerFetchBudget");
+        assert_eq!(json["fetch_within_budget"], true);
         assert_eq!(json["keep_tailless_conversations"], true);
+
+        // A requester before Q-528 (the tailless tag, no fetch_within_budget) copies first here:
+        // its own ranks copy first alike.
+        let mut tailless = json.clone();
+        tailless["program"] = "mlxLmServerTaillessPipelineSplit".into();
+        tailless.as_object_mut().unwrap().remove("fetch_within_budget");
+        let read: RankSpec = serde_json::from_value(tailless).unwrap();
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                fetch_within_budget: false,
+                keep_tailless_conversations: true,
+                ..
+            }
+        ));
         assert_eq!(json["name_conversations"], true);
 
         // A requester before Q-522 (the pipeline-split tag, no keep_tailless_conversations) keeps
@@ -11222,7 +11420,7 @@ print("ok")
         assert!(
             refused
                 .to_string()
-                .contains("mlxLmServerTaillessPipelineSplit"),
+                .contains("mlxLmServerFetchBudget"),
             "{refused}"
         );
         let why = link_control_refusal(&refused.to_string());
@@ -11278,7 +11476,7 @@ print("ok")
         assert!(
             refused
                 .to_string()
-                .contains("mlxLmServerTaillessPipelineSplit"),
+                .contains("mlxLmServerFetchBudget"),
             "{refused}"
         );
         let why = link_control_refusal(&refused.to_string());
@@ -12801,14 +12999,14 @@ mod pipeline_launch_tests {
         let specs = specs_for(&mimo_split(), &pipeline_config());
         let json = serde_json::to_string(&specs[1]).unwrap();
         assert!(
-            json.contains("\"mlxLmServerTaillessPipelineSplit\""),
+            json.contains("\"mlxLmServerFetchBudget\""),
             "{json}"
         );
         let back: RankSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(back, specs[1]);
 
         let tensor = serde_json::to_string(&specs[1].clone()).unwrap().replace(
-            "mlxLmServerTaillessPipelineSplit",
+            "mlxLmServerFetchBudget",
             "mlxLmServerNamedConversation",
         );
         let mut old: serde_json::Value = serde_json::from_str(&tensor).unwrap();
