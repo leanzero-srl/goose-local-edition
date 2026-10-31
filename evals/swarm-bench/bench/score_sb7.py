@@ -974,15 +974,32 @@ def _(c: Ctx):
     texts = [t for t in (p.get("amountTexts") or []) if isinstance(t, str) and t.strip()]
     if not texts:
         return g(0, "no amount cells rendered", "money is the product")
-    first_page = c.pack.payments[:50]
+    # Each cell is graded against the payment it SHOWS, never against a fixed page: §4 fixes
+    # the API default sort, not the table's default order (8985a86d rendered the newest 12
+    # correctly and a first-50-ascending join scored it 0/12). The probe's rowAmounts carries
+    # the row's id over the same rows/cells as amountTexts; a cell whose id is a pack id is
+    # joined to that payment (currency + digits + exponent), any other cell to any pack
+    # payment of its currency. The exponent rule never depends on the join.
+    pack_by_id = c.pack.index()
     by_cur: Dict[str, set] = {}
-    for row in first_page:
+    for row in c.pack.payments:
         by_cur.setdefault(row["currency"], set()).add(row["amount_minor"])
+    shown = [r for r in (p.get("rowAmounts") or [])[:12]
+             if isinstance(r, dict) and isinstance(r.get("amountText"), str)
+             and r["amountText"].strip()]
+    ids = ([r.get("id") for r in shown] if [r["amountText"] for r in shown] == texts
+           else [None] * len(texts))
     graded = []
-    for t in texts:
+    for t, pid in zip(texts, ids):
         cur = _detect_currency(t)
-        graded.append((cur, cur is not None
-                       and any(_money_ok(cur, m, t) for m in by_cur.get(cur, ()))))
+        row = pack_by_id.get(pid) if isinstance(pid, str) else None
+        if cur is None:
+            ok_cell = False
+        elif row is not None:
+            ok_cell = row["currency"] == cur and _money_ok(cur, row["amount_minor"], t)
+        else:
+            ok_cell = any(_money_ok(cur, m, t) for m in by_cur.get(cur, ()))
+        graded.append((cur, ok_cell))
     ok = sum(1 for _cur, o in graded if o) / len(graded)
     trap_parts = []
     for cur in ("JPY", "KWD"):
