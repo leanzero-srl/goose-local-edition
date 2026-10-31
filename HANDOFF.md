@@ -759,3 +759,9 @@ END: publish from the app (sb72_chain.publish_label pattern: run row -> title in
 "MiMo-V2.6-Flash MOPD 4-bit · 2-Mac split · vision, 262k, nudge" -> Publish); verify the live run page signed out;
 only then hide brun-79c4f078 (Sanity invalidated + invalidationReason, scratchpad hide-run.cjs / supersede.cjs);
 release holds (kill 81165; ssh workmule kill 80887; rm both markers), app.sh down, goose-single-guard --check.
+## Session 16 (2026-10-31 05:00 EET ->): relaunch 2 of the MiMo split sb-7.2
+LAUNCH 05:13:40 openai-cloud-8985a86d on 18/30 at 262,144 (nudge v2, thinking on), holds 81165/80887 reused, dev app
+70520 on 9461. CI runners on both Studios paused with leanzero-analytics runner_watch.py pause 7 (resume after the run:
+`runner_watch.py resume`). TRAP: go.sh must run with the app on '#/leanzero-swarm?tab=mlx&mlx=engine' (on #/benchmark it
+finds no placement card and prints NO RANKS); `mimo10/c click 'text=...'` does not do text selectors, use s16/ui.py
+(sb72_chain cdp with SP=s13/tools, PYTHONPATH=~/goose-builds/loop-state). Vigil: run-causes/20261031-050648-mimo-split-sb72-s16.
