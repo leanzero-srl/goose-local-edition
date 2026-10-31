@@ -333,6 +333,8 @@ def cut_at_head(segments, segment_types, head):
 # cache supplied carries it on its /v1/status row — how long it was, and whether the conversation
 # the cache kept at that eviction was this one or another. Recording only: nothing here changes
 # what is evicted, so every rank still evicts alike.
+import contextlib  # noqa: E402
+import copy  # noqa: E402
 import hashlib  # noqa: E402
 import threading  # noqa: E402
 from array import array  # noqa: E402
@@ -636,3 +638,221 @@ def keep_conversations(cache_order, conversations):
         return pop_keeping(self, upstream_pop, conversations.kept())
 
     cache_order.pop = pop
+
+
+# Q-528 (WR-15, run a005ed73, MiMo split 18/30 at 262,144, 3.0.137, rank1 ...1793444543646.log,
+# 2026-10-31): the rank's KV was bounded only BETWEEN copies. mlx_lm 0.31.3 deep-copies the entry a
+# request reads (`LRUPromptCache.fetch_nearest_cache`) and compacts a copy of every snapshot it
+# inserts (rank_wrapper.py `compact`), and the cache was trimmed to the plan's KV charge only AFTER
+# each copy (server.py:795-798, BoundedPromptCache.insert_cache). Since Q-522 kept the chat's
+# prompt[:-1], the cache at a call's fetch held that kept entry AND the previous call's end (MiMo's
+# SWA caches are not trimmable, so mlx_lm drops no prefix of an entry it inserts) beside the head:
+#   15:14:16 Prompt Cache: 4 sequences, 7.53 GB (assistant 2, 6.54 GB; system 2, 0.99 GB)
+# and req-66 (the compaction's summary, 212,048 tokens) copied its entry beside them:
+#   GOOSE_RANK_MEM active 110,456,431,770 -> 113,802,382,962 (+3.35 GB = 15,360 x 212,048 + 78.6 MB)
+#   -> 114,798,551,178 (the first chunk), then [METAL] Insufficient Memory at mx.eval (115.45 GB).
+# KV was 10.9 GB against the plan's 8.08 GB charge (non-KV measured 102.93 GB vs 103.84 planned:
+# the plan was right; the copies were outside it). Every earlier call's peak was the same copy
+# (13:06:20 peak 114.70 GB). Now a copy is charged BEFORE it is made, on every rank alike (the same
+# keys, the same plan figures, the same batch):
+# - a fetch leaves `limit - the batch's charge with the new row` for the cache: other entries go
+#   first (mlx_lm's order with the kept entries held back), the entry the request reads never; when
+#   the cache cannot fit beside the copy without losing a kept entry, the entry is MOVED into the
+#   row (no copy; it leaves the cache, which the row's own snapshot refills) and other entries go,
+#   the kept ones last;
+# - an insert leaves room for its own compacted copy beside the live batch: entries its key extends
+#   (superseded by it) go first when the entry is a kept cut, then others, the kept ones last; an
+#   entry nobody keeps that does not fit without evicting a kept one is not inserted at all, nor is
+#   any entry that would not fit beside the batch in an empty cache (the plan's charge is a ceiling).
+
+
+class HeldKey:
+    """A key the eviction must not take (the entry a request is reading), in `pop_keeping`'s form."""
+
+    def __init__(self, tokens):
+        self.tokens = tokens
+        self.nbytes = 0
+
+    def forget(self):
+        self.tokens = None
+
+
+def cache_items(cache):
+    return [item for lru in cache._lru._lrus.values() for item in lru]
+
+
+def drop_entry(cache, model, tokens, ordered):
+    """Take `tokens`' entry out of mlx_lm's cache byte counts and trie (and its order, unless the
+    order's own pop already took it)."""
+    if ordered:
+        cache._lru.remove(model, tokens)
+    entry = cache._trie.pop(model, tokens)
+    cache._n_bytes -= entry.nbytes
+    cache._n_bytes_by_type[entry.cache_type] -= entry.nbytes
+    return entry
+
+
+def evict_to(cache, n_bytes, kept, held_keys=(), allow_kept=False):
+    """Evict through the installed eviction order (other entries first, `kept` last) until the cache
+    holds at most `n_bytes`, never an entry in `held_keys`; without `allow_kept`, stop where only
+    kept (or held) entries are left. True when the cache fits."""
+    held = [HeldKey(key) for key in held_keys]
+    installed = type(cache._lru).pop
+    while cache.nbytes > n_bytes:
+        others = [i for i in cache_items(cache) if all(i[1] is not key for key in held_keys)]
+        if not others:
+            return False
+        if not allow_kept:
+            kept_keys = [entry.tokens for entry in kept if entry.tokens is not None]
+            if all(any(i[1] is key for key in kept_keys) for i in others):
+                return False
+        model, tokens = pop_keeping(cache._lru, installed, held) if held else installed(cache._lru)
+        drop_entry(cache, model, tokens, ordered=False)
+    forget_dropped(cache._lru, kept)
+    return True
+
+
+def entry_key(cache, prompt_cache):
+    """(model, key, nbytes) of the entry holding `prompt_cache` (by identity), or None."""
+    for model, tokens in cache_items(cache):
+        entry = cache._trie.get(model, tokens)
+        if entry.prompt_cache is prompt_cache:
+            return model, tokens, entry.nbytes
+    return None
+
+
+class Probed(Exception):
+    def __init__(self, value):
+        self.value = value
+
+
+@contextlib.contextmanager
+def deepcopy_as(handler):
+    """`copy.deepcopy` answered by `handler(obj, real, memo)` in THIS thread (the generation
+    thread) while the block runs; every other thread copies as before."""
+    real = copy.deepcopy
+    me = threading.get_ident()
+
+    def shim(obj, memo=None, _nil=[]):
+        if threading.get_ident() == me:
+            return handler(obj, real, memo)
+        return real(obj, memo)
+
+    copy.deepcopy = shim
+    try:
+        yield
+    finally:
+        copy.deepcopy = real
+
+
+def read_source(cache, model, tokens, lookup):
+    """The entry `lookup(model, tokens)` would copy for the request, found without copying it."""
+
+    def probe(obj, real, memo):
+        raise Probed(obj)
+
+    try:
+        with deepcopy_as(probe):
+            lookup(model, tokens)
+    except Probed as probed:
+        return entry_key(cache, probed.value)
+    return None
+
+
+def moved(cache, model, tokens, fetch, source):
+    """`fetch(model, tokens)` with the source entry handed to the row instead of copied, and taken
+    out of the cache."""
+    source_model, key, _ = source
+    original = cache._trie.get(source_model, key).prompt_cache
+
+    def hand_over(obj, real, memo):
+        return obj if obj is original else real(obj, memo)
+
+    with deepcopy_as(hand_over):
+        result = fetch(model, tokens)
+    if result[0] is not original:
+        # Not the entry probed: copy as mlx_lm does (never share an entry the cache keeps).
+        return copy.deepcopy(result[0]), result[1], False
+    drop_entry(cache, source_model, key, ordered=True)
+    return result[0], result[1], True
+
+
+def fetch_within(cache, model, tokens, limit, need, kept, fetch, lookup):
+    """Q-528: `fetch(model, tokens)` with the cache inside `limit - need` (the batch's charge with
+    the new row) BEFORE the request's entry is copied. Returns (cache, rest, report or None)."""
+    room = limit - need
+    before = cache.nbytes
+    if before <= room:
+        cache_, rest = fetch(model, tokens)
+        return cache_, rest, None
+    source = read_source(cache, model, tokens, lookup)
+    report = {"room": room, "cached_before": before, "tokens": len(tokens)}
+    if source is None:
+        evict_to(cache, room, kept, allow_kept=True)
+        cache_, rest = fetch(model, tokens)
+        report.update(plan="evict", cached_after=cache.nbytes)
+        return cache_, rest, report
+    report["source_bytes"] = source[2]
+    if evict_to(cache, room, kept, held_keys=(source[1],)):
+        cache_, rest = fetch(model, tokens)
+        report.update(plan="copy", cached_after=cache.nbytes)
+        return cache_, rest, report
+    evict_to(cache, room + source[2], kept, held_keys=(source[1],), allow_kept=True)
+    cache_, rest, was_moved = moved(cache, model, tokens, fetch, source)
+    forget_dropped(cache._lru, kept)
+    report.update(plan="move" if was_moved else "copy-fallback", cached_after=cache.nbytes)
+    return cache_, rest, report
+
+
+def held_bytes(prompt_cache):
+    """What an entry holds once compacted (rank_wrapper.py `compact`): a KV layer's bytes for the
+    tokens it holds, not its step-grown buffer (mlx_lm's KVCache grows 256 tokens at a time); any
+    other layer as it counts itself."""
+    total = 0
+    for layer in prompt_cache:
+        keys = getattr(layer, "keys", None)
+        offset = getattr(layer, "offset", None)
+        shape = getattr(keys, "shape", None)
+        if isinstance(offset, int) and shape is not None and len(shape) >= 3 and shape[2] > 0:
+            total += layer.nbytes * min(offset, shape[2]) // shape[2]
+        else:
+            total += layer.nbytes
+    return total
+
+
+def is_cut(kept, tokens):
+    """Whether a kept entry's cut names `tokens` (the insert becomes a kept entry)."""
+    length, digest = prefix_key(tokens)
+    return any(entry.cut_keys.get(length) == digest for entry in kept)
+
+
+def room_to_insert(cache, model, tokens, nbytes, limit, live, kept):
+    """Q-528: make room for an entry of `nbytes` beside the live batch's `live` charge before its
+    compacted copy exists. False = an entry nobody keeps that does not fit; leave it out."""
+    target = limit - live - nbytes
+    try:
+        target += cache._trie.get(model, tokens).nbytes  # an equal key is replaced
+    except KeyError:
+        pass
+    if cache.nbytes <= target:
+        return True
+    if target < 0:
+        return False  # not even an empty cache holds it beside the batch: never past the plan
+    keeps = is_cut(kept, tokens)
+    if keeps:
+        superseded = [
+            (m, key)
+            for m, key in cache_items(cache)
+            if m == model and len(key) < len(tokens) and tokens[: len(key)] == key
+        ]
+        for m, key in sorted(superseded, key=lambda item: len(item[1])):
+            if cache.nbytes <= target:
+                break
+            drop_entry(cache, m, key, ordered=True)
+        forget_dropped(cache._lru, kept)
+    if evict_to(cache, target, kept):
+        return True
+    if not keeps:
+        return False
+    evict_to(cache, target, kept, allow_kept=True)
+    return True
