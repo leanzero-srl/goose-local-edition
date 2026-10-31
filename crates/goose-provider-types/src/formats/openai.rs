@@ -8,7 +8,7 @@ use crate::formats::unparsed_tool_call::{
 use crate::images::{
     attached_image_label, convert_image, convert_media, detect_image_path, load_image_file,
     path_image_label, tool_image_label, withheld_image_placeholder, ImageFormat, ImageReport,
-    WithheldImage,
+    WithheldImage, WithholdReason,
 };
 use crate::json::{parse_tool_arguments, truncation_error_message};
 use crate::mcp_utils::extract_text_from_resource;
@@ -248,6 +248,14 @@ pub struct OpenAiFormatOptions {
     /// placeholder instead ([`withheld_image_placeholder`]), and the request reports it, so a past
     /// image in history can never make the engine refuse a later turn.
     pub text_only_engine: bool,
+    /// Why `text_only_engine` withholds the parts: the placeholders and the chat's notice name this
+    /// reason and no other (F22: an engine that reads images but refused a turn over its media
+    /// prompt cap is never described as reading text only).
+    pub withhold_reason: WithholdReason,
+    /// The media pre-pass described every image the user messages name by their path (F22): such
+    /// a path stays as the user wrote it and the file is not loaded into the turn, because the
+    /// description the pre-pass put after it is what this engine's lane can take.
+    pub image_paths_described: bool,
     /// The engine does not hear audio: an attached audio part goes as its named placeholder.
     pub withhold_audio: bool,
     /// The engine does not watch video: an attached video part goes as its named placeholder.
@@ -502,13 +510,16 @@ pub fn format_messages_reporting_images(
                 MessageContent::Text(text) => {
                     if !text.text.is_empty() {
                         if message.role == Role::User {
-                            if let Some(image_path) = detect_image_path(&text.text) {
+                            if let Some(image_path) = detect_image_path(&text.text)
+                                .filter(|_| !options.image_paths_described)
+                            {
                                 if options.text_only_engine {
                                     content_array.push(json!({"type": "text", "text": text.text}));
                                     let placeholder = withhold(
                                         images,
                                         path_image_label(image_path.as_ref()),
                                         unannounced,
+                                        options.withhold_reason,
                                     );
                                     content_array
                                         .push(json!({"type": "text", "text": placeholder}));
@@ -618,6 +629,7 @@ pub fn format_messages_reporting_images(
                                             images,
                                             tool_image_label(tool, &image.mime_type),
                                             unannounced,
+                                            options.withhold_reason,
                                         )));
                                     }
                                     RawContent::Image(image) => {
@@ -672,8 +684,12 @@ pub fn format_messages_reporting_images(
                 MessageContent::ActionRequired(_) => {}
                 MessageContent::Image(image) => {
                     if message.role == Role::User && options.text_only_engine {
-                        let placeholder =
-                            withhold(images, attached_image_label(image), unannounced);
+                        let placeholder = withhold(
+                            images,
+                            attached_image_label(image),
+                            unannounced,
+                            options.withhold_reason,
+                        );
                         content_array.push(json!({"type": "text", "text": placeholder}));
                     } else if message.role == Role::User {
                         images.sent += 1;
@@ -687,15 +703,21 @@ pub fn format_messages_reporting_images(
                     }
                 }
                 MessageContent::Media(media) => {
-                    let withheld = message.role != Role::User
-                        || options.text_only_engine
+                    let undeclared = message.role != Role::User
                         || match media.kind {
                             MediaKind::Audio => options.withhold_audio,
                             MediaKind::Video => options.withhold_video,
                         };
-                    if withheld {
+                    if undeclared || options.text_only_engine {
                         images.media_withheld += 1;
-                        content_array.push(json!({"type": "text", "text": media.placeholder()}));
+                        let placeholder = if !undeclared
+                            && options.withhold_reason == WithholdReason::OverMediaPromptCap
+                        {
+                            media.placeholder_over_prompt_cap()
+                        } else {
+                            media.placeholder()
+                        };
+                        content_array.push(json!({"type": "text", "text": placeholder}));
                     } else {
                         match media.kind {
                             MediaKind::Audio => images.audio_sent += 1,
@@ -839,9 +861,9 @@ fn attach_turn_context(messages_spec: &mut Vec<Value>, text: &str, join_tool_res
 }
 
 /// Record an image part the text-only engine is not sent, returning the placeholder it reads.
-fn withhold(images: &mut ImageReport, label: String, new: bool) -> String {
-    let placeholder = withheld_image_placeholder(&label);
-    images.withheld.push(WithheldImage { label, new });
+fn withhold(images: &mut ImageReport, label: String, new: bool, reason: WithholdReason) -> String {
+    let placeholder = withheld_image_placeholder(&label, reason);
+    images.withheld.push(WithheldImage { label, new, reason });
     placeholder
 }
 
@@ -7749,10 +7771,12 @@ mod text_only_engine_tests {
                     WithheldImage {
                         label: "attachment (image/png)".to_string(),
                         new: false,
+                        reason: WithholdReason::TextOnly,
                     },
                     WithheldImage {
                         label: "from read_image (image/png)".to_string(),
                         new: true,
+                        reason: WithholdReason::TextOnly,
                     },
                 ],
                 ..Default::default()

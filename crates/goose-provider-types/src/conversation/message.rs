@@ -256,6 +256,24 @@ pub struct MediaContent {
 }
 
 impl MediaContent {
+    /// What the model reads in this part's place when the engine takes this kind of part but
+    /// refused the request it rode in over its media prompt cap (F22): never "cannot take".
+    pub fn placeholder_over_prompt_cap(&self) -> String {
+        let what = match self.kind {
+            MediaKind::Audio => "audio",
+            MediaKind::Video => "video",
+        };
+        let name = match &self.name {
+            Some(name) => format!(": {name}"),
+            None => String::new(),
+        };
+        format!(
+            "[Attached {what}{name} ({}) - not sent: this request was too long for the engine to \
+             take the {what} with it]",
+            self.mime_type
+        )
+    }
+
     /// What a model that cannot take this part reads in its place.
     pub fn placeholder(&self) -> String {
         let what = match self.kind {
