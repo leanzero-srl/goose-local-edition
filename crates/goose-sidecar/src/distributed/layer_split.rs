@@ -1060,9 +1060,31 @@ Anonymous pages:                              770769.
             (4_151_703 + 29_203 + 742_603 + 38_700) * 16_384,
             "free + speculative + inactive + purgeable"
         );
-        let mut nodes = nodes();
-        nodes[0] = tonight;
-        let split = plan_layer_split(&omni, &nodes, warn, warn, Some(262_144)).unwrap();
+        // The mule's own vm_stat the same night (128 GiB, idle, NORMAL): its budget is its GPU
+        // ceiling either way, so only rank 0's reading decides.
+        let mule_vm = "Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                  7001239.
+Pages active:                                 532236.
+Pages inactive:                              1184498.
+Pages speculative:                              8980.
+Pages throttled:                                   0.
+Pages wired down:                             236189.
+Pages purgeable:                               14053.
+File-backed pages:                            791973.
+";
+        let mule = SplitNode {
+            name: "mule".to_string(),
+            available: super::super::probe::parse_vm_stat(mule_vm, 128 * GIB)
+                .unwrap()
+                .available_bytes,
+            total: 128 * GIB,
+            ceiling: 115_450_000_000,
+        };
+        let mut nodes = vec![tonight, mule];
+        let split = match plan_layer_split(&omni, &nodes, warn, warn, Some(262_144)) {
+            Ok(split) => split,
+            Err(e) => panic!("tonight's nodes {nodes:?} refused: {e:#}"),
+        };
         let spare: Vec<i128> = split
             .plans
             .iter()
@@ -1081,6 +1103,23 @@ Anonymous pages:                              770769.
         assert_eq!(split.layers, vec![18, 30], "{}", split.reason);
         assert_eq!(split.context, 262_144);
         assert!(split.plans.iter().all(|p| p.fits));
+
+        // The same night read WITHOUT the inactive pages (the old plan figure, 69.9 GiB): 18/30 at
+        // 262,144 does not plan; this is the refusal the MiMo lane hit at 23:46.
+        let file_cache_only = workhorse(
+            &workhorse_vm_stat(4_151_703, 742_603).replace("Pages inactive", "Pages idle"),
+        );
+        assert_eq!(
+            file_cache_only.available,
+            (4_151_703 + 392_401 + 38_700) * 16_384
+        );
+        nodes[0] = file_cache_only;
+        let old = plan_layer_split(&omni, &nodes, warn, warn, Some(262_144));
+        println!("file cache only: {:?}", old.as_ref().map(|s| &s.layers));
+        assert!(
+            old.as_ref().map_or(true, |s| s.layers != vec![18, 30]),
+            "the file-cache figure must not plan 18/30: the fixture no longer shows the bug"
+        );
 
         // Little free and little inactive: the same 18/30 at 262,144 is refused, not squeezed in.
         nodes[0] = workhorse(&workhorse_vm_stat(3_600_000, 60_000));
