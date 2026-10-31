@@ -222,6 +222,9 @@ fn push_json(out: &mut String, value: &serde_json::Value) {
 pub struct KnownNumbers {
     numbers: HashSet<String>,
     folded: String,
+    /// The text with every run of whitespace one space and its commas kept: "[5, 85]" for a list
+    /// the model writes back as "[5,85]".
+    spaced: String,
 }
 
 /// `text` with `,` dropped and every run of whitespace one space: "409,600" reads "409600".
@@ -267,7 +270,34 @@ impl KnownNumbers {
         Self {
             numbers,
             folded: fold(text),
+            spaced: text.split_whitespace().collect::<Vec<_>>().join(" "),
         }
+    }
+}
+
+impl KnownNumbers {
+    /// Whether `token` ("5,85", "15,340") is a list of numbers the conversation showed with a
+    /// space after each comma, as code and contracts write them ("[5, 85]", "[15, 340]"); or, when
+    /// it cannot be one number (a group after a comma is not three digits: "5,85"), whether each of
+    /// its numbers of two digits or more was shown. Real case (MiMo two-Mac Gauntlet, run 51bfaccd,
+    /// 2026-10-31): the summary's "clamps pitch [5,85], distance [15,340]" from SB7-CONTRACT.md's
+    /// "pitch `[5, 85]`, distance `[15, 340]`" was marked unverified twice.
+    fn list_of(&self, token: &str) -> bool {
+        let token = token.trim_end_matches('%');
+        if !token.contains(',') {
+            return false;
+        }
+        if self.spaced.contains(&token.replace(',', ", ")) {
+            return true;
+        }
+        let mut groups = token.split(',');
+        groups.next();
+        let one_number = groups.all(|group| group.split('.').next().unwrap_or_default().len() == 3);
+        !one_number
+            && token.split(',').all(|part| {
+                part.chars().filter(char::is_ascii_digit).count() < 2
+                    || self.numbers.contains(&fold(part))
+            })
     }
 }
 
@@ -335,7 +365,7 @@ pub fn mark_unverified_numbers(model_text: &str, known: &KnownNumbers) -> String
         let token = slice(model_text, start, end);
         let digits = token.chars().filter(char::is_ascii_digit).count();
         let bare = fold(token.trim_end_matches('%'));
-        if digits >= 2 && !known.numbers.contains(&bare) {
+        if digits >= 2 && !known.numbers.contains(&bare) && !known.list_of(token) {
             marks.insert(end);
             continue;
         }
@@ -487,6 +517,35 @@ mod tests {
 
     fn known(text: &str) -> KnownNumbers {
         KnownNumbers::of(text)
+    }
+
+    /// A list the model writes without the spaces the conversation had is no new number; a
+    /// thousands number the conversation never showed still is. Real case: MiMo run 51bfaccd's
+    /// summary, "clamps pitch [5,85], distance [15,340]", against SB7-CONTRACT.md's "[5, 85]" and
+    /// "[15, 340]", both marked unverified before.
+    #[test]
+    fn a_list_written_without_its_spaces_is_not_a_new_number() {
+        let contract =
+            known("Clamps: pitch `[5, 85]`, distance `[15, 340]` and 6.\npayments 12289\n");
+        assert_eq!(
+            mark_unverified_numbers("clamps pitch [5,85], distance [15,340]", &contract),
+            "clamps pitch [5,85], distance [15,340]"
+        );
+        // Not one number ("85" is not a thousands group) and each part was shown.
+        assert_eq!(
+            mark_unverified_numbers("pitch 85,15 then", &contract),
+            "pitch 85,15 then"
+        );
+        // A thousands number nobody showed, and a list with a part nobody showed, stay marked.
+        assert_eq!(
+            mark_unverified_numbers("payments 12,288 and range 5,97", &contract),
+            format!("payments 12,288{UNVERIFIED} and range 5,97{UNVERIFIED}")
+        );
+        // The real thousands number is still known.
+        assert_eq!(
+            mark_unverified_numbers("payments 12,289", &contract),
+            "payments 12,289"
+        );
     }
 
     /// GRADES4 run 2: "context ~60% of 409,600". 409,600 is the window every turn-context line

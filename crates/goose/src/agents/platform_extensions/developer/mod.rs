@@ -116,7 +116,7 @@ impl DeveloperClient {
             ));
         }
         serde_json::from_value(Value::Object(arguments))
-            .map_err(|e| format!("Failed to parse arguments: {e}"))
+            .map_err(|e| format!("{ARGUMENTS_DID_NOT_PARSE}: {e}"))
     }
 
     fn required_fields<T: JsonSchema>() -> Vec<String> {
@@ -223,6 +223,12 @@ fn spoken_list(fields: &[&str]) -> String {
     }
 }
 
+/// How a developer tool's error opens when the call's arguments did not parse: the tool ran nothing.
+/// The compaction's facts read it (`context_mgmt::facts`): such a call is settled by the next call
+/// of the same tool that succeeds, whatever its arguments (a MiMo run's leaked
+/// `app/util.py</parameter><parameter=old>…` path was listed as work still to do).
+pub const ARGUMENTS_DID_NOT_PARSE: &str = "Failed to parse arguments";
+
 fn missing_fields_message(
     tool: &str,
     required: &[String],
@@ -270,7 +276,7 @@ fn missing_fields_message(
         )
     };
     format!(
-        "Failed to parse arguments: missing required {noun} {}. Arrived: {arrived}. Nothing was changed. {retry}",
+        "{ARGUMENTS_DID_NOT_PARSE}: missing required {noun} {}. Arrived: {arrived}. Nothing was changed. {retry}",
         backticked(missing)
     )
 }

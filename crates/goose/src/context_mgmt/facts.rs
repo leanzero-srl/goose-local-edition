@@ -362,7 +362,7 @@ fn calls_of(messages: &[Message]) -> Vec<Call> {
             .or_else(|| arg("path"))
             .or_else(|| arg("file_path"))
             .unwrap_or_default();
-        let targetless = target.is_empty();
+        let mut unparsed = false;
         // A command is the same command from any folder: `cd /tmp && curl …` that failed is
         // settled by `cd . && curl …` that worked (the verifier's real run listed it as open).
         let key = format!("{} {}", call.name, without_cwd(&target));
@@ -374,6 +374,7 @@ fn calls_of(messages: &[Message]) -> Vec<Call> {
                     .and_then(|s| s.get("exit_code"))
                     .and_then(serde_json::Value::as_i64);
                 let failed = result.is_error == Some(true) || exit.is_some_and(|code| code != 0);
+                unparsed = failed && arguments_did_not_parse(result);
                 let (outcome, output) = outcome_and_output(result);
                 let outcome = if failed && !outcome.starts_with("failed") {
                     format!("failed (exit {})", exit.unwrap_or(-1))
@@ -385,6 +386,9 @@ fn calls_of(messages: &[Message]) -> Vec<Call> {
             Some(Err(e)) => (Some(true), format!("failed: {}", clip(&e.message, 160))),
             None => (None, "no result".to_string()),
         };
+        // A call whose arguments did not parse ran nothing, so its "target" may be any text the
+        // model leaked into a field: like a call with no target, the tool's next success settles it.
+        let targetless = target.is_empty() || unparsed;
         calls.push(Call {
             id: request.id.clone(),
             key,
@@ -402,6 +406,18 @@ fn calls_of(messages: &[Message]) -> Vec<Call> {
         });
     }
     calls
+}
+
+/// Whether a failed tool result is a developer tool's refusal of arguments that did not parse
+/// ([`ARGUMENTS_DID_NOT_PARSE`], with or without the shell's `Error: ` lead).
+fn arguments_did_not_parse(result: &rmcp::model::CallToolResult) -> bool {
+    use crate::agents::platform_extensions::developer::ARGUMENTS_DID_NOT_PARSE;
+    result.content.iter().filter_map(|c| c.as_text()).any(|t| {
+        let text = t.text.trim_start();
+        text.strip_prefix("Error: ")
+            .unwrap_or(text)
+            .starts_with(ARGUMENTS_DID_NOT_PARSE)
+    })
 }
 
 /// The newest [`LAST_CALLS`] tool calls, oldest first, each with its outcome.

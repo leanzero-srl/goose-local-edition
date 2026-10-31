@@ -88,7 +88,12 @@ impl AnalyzeClient {
         let value = arguments
             .map(Value::Object)
             .ok_or_else(|| "Missing arguments".to_string())?;
-        serde_json::from_value(value).map_err(|e| format!("Failed to parse arguments: {e}"))
+        serde_json::from_value(value).map_err(|e| {
+            format!(
+                "{}: {e}",
+                crate::agents::platform_extensions::developer::ARGUMENTS_DID_NOT_PARSE
+            )
+        })
     }
 
     fn resolve_path(path: &str, working_dir: Option<&Path>) -> PathBuf {

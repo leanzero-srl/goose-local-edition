@@ -1677,6 +1677,81 @@ mod tests {
         LedgerRead::Entries(lines.iter().map(|l| l.to_string()).collect())
     }
 
+    /// An edit whose arguments did not parse ran nothing: the next edit that succeeds settles it,
+    /// whatever text the model leaked into its path. Real case (MiMo two-Mac Gauntlet, run
+    /// 51bfaccd, 2026-10-31 03:10): the leaked path `app/util.py</parameter><parameter=old>…` was
+    /// listed twice under "Errors still open" and as "make `edit …` succeed" in the to-do, though
+    /// util.py had been edited since. Counter-cases: with no later edit success it stays open, and
+    /// an edit that ran and failed is still settled only by the same path.
+    #[test]
+    fn a_call_whose_arguments_did_not_parse_is_settled_by_the_tools_next_success() {
+        let unparsed = || {
+            CallToolResult::error(vec![RawContent::text(
+                "Error: Failed to parse arguments: missing required fields `before`, `after`. \
+                 Arrived: `path`. Nothing was changed. Call edit again with before and after \
+                 first, then path.",
+            )
+            .no_annotation()])
+        };
+        let ran_and_failed = || {
+            CallToolResult::error(vec![RawContent::text(
+                "Error: the before text was not found in app/notes.py",
+            )
+            .no_annotation()])
+        };
+        let leaked = "app/util.py</parameter><parameter=old>        except OSError:";
+        let mut messages = vec![
+            Message::user().with_text("build the app"),
+            call("e1", "edit", serde_json::json!({ "path": leaked })),
+            Message::user().with_tool_response("e1", Ok(unparsed())),
+            call(
+                "e2",
+                "edit",
+                serde_json::json!({"path": "app/notes.py", "before": "a", "after": "b"}),
+            ),
+            Message::user().with_tool_response("e2", Ok(ran_and_failed())),
+        ];
+        let open = |messages: &[Message]| {
+            Pillars::build(messages, &KeptSources::default(), entries(&[])).render()
+        };
+        let before = open(&messages);
+        assert!(before.contains("## Errors still open (2)\n"), "{before}");
+        assert!(
+            before.contains(leaked.split('<').next().unwrap()),
+            "{before}"
+        );
+
+        messages.push(call(
+            "e3",
+            "edit",
+            serde_json::json!({"path": "app/util.py", "before": "x", "after": "y"}),
+        ));
+        messages
+            .push(Message::user().with_tool_response("e3", Ok(text_result("Edited app/util.py"))));
+        let after = open(&messages);
+        assert!(after.contains("## Errors still open (1)\n"), "{after}");
+        assert!(
+            after.contains("(1 earlier failed calls were settled: the same call succeeded later)"),
+            "{after}"
+        );
+        let errors = after
+            .split("## Errors still open")
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .unwrap_or_default();
+        assert!(!errors.contains("parameter=old"), "{after}");
+        assert!(errors.contains("app/notes.py"), "{after}");
+        let todo = after
+            .split("## Still to do, by the tool calls")
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .unwrap_or_default();
+        assert!(
+            !todo.contains("parameter=old") && todo.contains("app/notes.py"),
+            "{after}"
+        );
+    }
+
     /// The block says the turn's calls used of its budget, and the wrap-up stage when one was
     /// reached; no budget (or a cap of 0) says nothing.
     #[test]
