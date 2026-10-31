@@ -894,3 +894,158 @@ fn replay() {
     }
     println!("REPLAY responses={responses} fired={fired}");
 }
+
+// ---- Round 3: the independent review's probes (wr19-probes.md), VERBATIM ------------------------
+// Every probe below is the reviewer's text as it ran against 1319752f4b, unchanged. Only `probe`
+// differs: it records a miss instead of printing. SHOULD per the review: R1/R2 FIRE (the real F35
+// split), every other probe SILENT (a correct answer). R3 is SILENT: 64 - 40 = 24 is right.
+
+thread_local! {
+    static PROBE_MISSES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+fn probe(name: &str, m: &[Message]) {
+    let f = findings(m);
+    println!("PROBE {name} => {} {:?}", f.len(), f.iter().map(|s| s.chars().take(160).collect::<String>()).collect::<Vec<_>>());
+    let should_fire = name.starts_with("R1_") || name.starts_with("R2");
+    if should_fire == f.is_empty() {
+        PROBE_MISSES.with(|m| m.borrow_mut().push(format!("{name}: should {} => {f:?}", if should_fire { "FIRE" } else { "SILENT" })));
+    }
+}
+fn res_embedded(id: &str, text: &str) -> Message {
+    Message::user().with_tool_response(id, Ok(CallToolResult::success(vec![Content::embedded_text("file:///doc.md", text)])))
+}
+
+#[test]
+fn zz_probes() {
+    probe("P1_sum_total", &turn("how many FW_CHECK errors over both days?",
+        vec![shell("c1", "grep -h FW_CHECK day*.log | awk '{print $1,$2,$3}'"),
+             result("c1", "2026-10-01 FW_CHECK 50\n2026-10-02 FW_CHECK 132")],
+        "Across both days, **FW_CHECK:** 182 errors in total (50 + 132)."));
+    probe("P1b_sum_paren", &turn("totals per code?",
+        vec![shell("c1", "for f in a.log b.log; do grep -o 'code=[A-Z_]*' $f | sort | uniq -c; done"),
+             result("c1", "  40 code=GSM_DROP\n  24 code=GSM_DROP")],
+        "Combined across the two files: GSM_DROP (64)."));
+    probe("P2_compact_json", &turn("what does the stats endpoint say?",
+        vec![shell("c1", "curl -s localhost:8080/stats"),
+             result("c1", r#"{"error_count":3,"warn_count":7,"ok_count":120}"#)],
+        "The endpoint reports error_count: 3, warn_count: 7 and ok_count: 120."));
+    probe("P3_redis_info", &turn("how many clients are connected?",
+        vec![shell("c1", "redis-cli INFO clients"),
+             result("c1", "# Clients\nconnected_clients:5\nblocked_clients:0\nmaxclients:10000")],
+        "Right now connected_clients: 5, blocked_clients: 0."));
+    probe("P4_const_edit", &turn("bump the retries to five please",
+        vec![shell("c1", "cat src/config.py"),
+             result("c1", "MAX_RETRIES = 3\nTIMEOUT_MS = 500\n"),
+             call("c2", "edit", serde_json::json!({"path":"src/config.py","old_str":"MAX_RETRIES = 3","new_str":"MAX_RETRIES = 5"})),
+             result("c2", "File src/config.py edited.")],
+        "Done. In src/config.py I changed MAX_RETRIES = 5 (it was 3)."));
+    probe("P5_date_reformat_mention_old", &turn("convert the dates in report.md to ISO",
+        vec![shell("c1", "sed -i '' 's/23\\.10\\.2026/2026-10-23/g; s/24\\.10\\.2026/2026-10-24/g' report.md && grep -n 2026 report.md"),
+             result("c1", "3: Shift 2026-10-23\n9: Shift 2026-10-24")],
+        "All dates in report.md now follow YYYY-MM-DD instead of DD.MM.YYYY."));
+    probe("P5b_edit_reformat", &turn("make the dates ISO",
+        vec![call("c1", "edit", serde_json::json!({"path":"r.md","old_str":"Date: 23.10.2026","new_str":"Date: 2026-10-23"})),
+             result("c1", "File r.md edited.")],
+        "I converted every DD.MM.YYYY date to YYYY-MM-DD."));
+    probe("P6_all_n_short_lines", &turn("show me the ports file",
+        vec![shell("c1", "cat ports.txt"),
+             result("c1", &(0..25).map(|i| format!("{} web{}", 8000 + i, i)).collect::<Vec<_>>().join("\n"))],
+        &format!("Here are all 25 lines:\n\n```\n{}\n```", (0..25).map(|i| format!("{} web{}", 8000 + i, i)).collect::<Vec<_>>().join("\n"))));
+    probe("P6b_all_n_table", &turn("list the files",
+        vec![shell("c1", "ls"), result("c1", &(0..25).map(|i| format!("file_{i}.rs")).collect::<Vec<_>>().join("\n"))],
+        &format!("Here are all 25 files:\n\n| # | file |\n|---|---|\n{}", (0..25).map(|i| format!("| {i} | file_{i}.rs |")).collect::<Vec<_>>().join("\n"))));
+    probe("P10_difference", &turn("compare",
+        vec![shell("c1", "x"), result("c1", "  65 KRK-008\n  59 KRK-042")],
+        "KRK-008 leads; the gap KRK-008 minus KRK-042 = 6."));
+    probe("P11_k_of_n_csv", &turn("did the checks pass?",
+        vec![shell("c1", "cat runs.csv"),
+             result("c1", "101,FW_CHECK,pass\n102,FW_CHECK,fail\n103,FW_CHECK,pass\n104,FW_CHECK,pass\n105,FW_CHECK,fail")],
+        "FW_CHECK: 3 of 5 runs passed."));
+    probe("P11b_pct", &turn("share?", vec![shell("c1","x"), result("c1"," 182 FW_CHECKSUM\n  93 LOCK_TIMEOUT")],
+        "FW_CHECKSUM: 66% of the 275."));
+    probe("P12_version", &turn("versions?", vec![shell("c1","x"), result("c1","goose-cli 1.12.0\nrapid-mlx 0.4.2")],
+        "goose-cli: 1.12.0, rapid-mlx: 0.4.2."));
+    probe("P12b_port", &turn("which port?", vec![shell("c1","env | grep PORT"), result("c1","API_PORT=8080\nDB_PORT=5432")],
+        "API_PORT = 8080, DB_PORT = 5432. I'd move it to API_PORT = 9090 to avoid the clash."));
+    probe("P13_user_number", &turn("we had GSM_DROP: 70 last month, what now?",
+        vec![shell("c1","x"), result("c1","  64 GSM_DROP")],
+        "Now GSM_DROP: 64, down from GSM_DROP: 70."));
+    let mut m = vec![Message::user().with_text("summary of earlier work: GSM_DROP had 64 for the month").agent_only()];
+    m.extend(turn("and today?", vec![shell("c1","x"), result("c1","  12 GSM_DROP")], "Today GSM_DROP: 12, versus GSM_DROP: 64 for the month."));
+    probe("P14_after_compaction", &m);
+    probe("P15_german", &turn("wie viele?", vec![shell("c1","x"), result("c1","  2026-10-01 GSM_DROP 40\n 2026-10-02 GSM_DROP 24")],
+        "Insgesamt GSM_DROP: 64 Fehler an beiden Tagen."));
+    probe("P16_code_unfenced", &turn("fix", vec![shell("c1","cat c.py"), result("c1","MAX_LEN = 60\n")],
+        "I updated the constant:\n\n    MAX_LEN = 80\n\nso long names fit."));
+
+    // ---- new round-2 probes ----
+    probe("N1_attached_file", &turn("here is last month's report:\n\nstation,code,count\nKRK-008,GSM_DROP,64\n\nhow does this month compare?",
+        vec![shell("c1","x"), result("c1","  41 GSM_DROP\n  12 LOCK_TIMEOUT")],
+        "Last month GSM_DROP: 64, this month GSM_DROP: 41."));
+    probe("N2_doc_tool_embedded", &turn("what does the runbook say about the threshold?",
+        vec![call("c1","read_doc", serde_json::json!({"path":"runbook.md"})), res_embedded("c1","Alert when GSM_DROP: 50 per day is exceeded."),
+             shell("c2","x"), result("c2","  64 GSM_DROP")],
+        "The runbook alerts at GSM_DROP: 50; today shows GSM_DROP: 64, so it is over."));
+    probe("N2b_web_search", &turn("is that normal?",
+        vec![call("c1","web_search", serde_json::json!({"query":"GSM_DROP rate"})), result("c1", r#"[{"title":"Dock telemetry","snippet":"Typical fleets see GSM_DROP: 30 per 1,000 docks"}]"#),
+             shell("c2","x"), result("c2","  64 GSM_DROP")],
+        "Vendors quote GSM_DROP: 30 per 1,000 docks; you have GSM_DROP: 64."));
+    probe("N3_sum_four_outputs", &turn("total FW_CHECK across the four logs?",
+        vec![shell("c1","grep -c a"), result("c1","12 FW_CHECK"), shell("c2","grep -c b"), result("c2","30 FW_CHECK"),
+             shell("c3","grep -c c"), result("c3","40 FW_CHECK"), shell("c4","grep -c d"), result("c4","50 FW_CHECK")],
+        "Across the four logs, FW_CHECK: 132 in total."));
+    let mut m = turn("week 1?", vec![shell("w1","x"), result("w1","  100 FW_CHECK")], "Week 1 had FW_CHECK: 100.");
+    m.extend(turn("and week 2, plus the total?", vec![shell("w2","x"), result("w2","  82 FW_CHECK")], "Week 2 had FW_CHECK: 82, so FW_CHECK: 182 over both weeks."));
+    probe("N3b_sum_with_earlier_turn", &m);
+    probe("N4_rounded_or_so", &turn("roughly?", vec![shell("c1","x"), result("c1","  182 FW_CHECK")], "FW_CHECK: 180 or so this month."));
+    probe("N4b_rounded_tilde", &turn("roughly?", vec![shell("c1","x"), result("c1","  182 FW_CHECK")], "FW_CHECK: ~180 this month."));
+    probe("N4c_rounded_about", &turn("roughly?", vec![shell("c1","x"), result("c1","  12,288 FW_CHECK")], "FW_CHECK (about 12,000) dominates."));
+    probe("N5_units_s_to_ms", &turn("latency?", vec![shell("c1","x"), result("c1","request_time: 0.064 s\nrequest_time: 0.071 s")], "request_time: 64 ms at best."));
+    probe("N5b_units_s_to_min", &turn("build time?", vec![shell("c1","x"), result("c1","build_time: 120 s")], "build_time: 2 min."));
+    probe("N5c_units_ms_to_s", &turn("latency?", vec![shell("c1","x"), result("c1","p99_latency: 64 ms")], "p99_latency: 0.064 s."));
+    probe("N6_thousands_comma", &turn("count?", vec![shell("c1","x"), result("c1","  12288 FW_CHECK")], "FW_CHECK: 12,288."));
+    probe("N6b_thousands_space_pl", &turn("ile?", vec![shell("c1","x"), result("c1","  12288 FW_CHECK")], "Łącznie FW_CHECK: 12 288 błędów."));
+    probe("N6c_thousands_nbsp", &turn("ile?", vec![shell("c1","x"), result("c1","  12288 FW_CHECK")], "Łącznie FW_CHECK: 12\u{a0}288 błędów."));
+    probe("N6d_thousands_dot_de", &turn("wie viele?", vec![shell("c1","x"), result("c1","  12288 FW_CHECK")], "Insgesamt FW_CHECK: 12.288 Fehler."));
+    probe("N7_polish", &turn("które stacje mają najwięcej błędów?", vec![shell("c1","x"), result("c1","  65 KRK-008\n  59 KRK-042\n 182 FW_CHECKSUM\n  93 LOCK_TIMEOUT\n  64 GSM_DROP")],
+        "Najwięcej błędów ma KRK-008 (65), potem KRK-042 (59). Łącznie FW_CHECKSUM: 182, LOCK_TIMEOUT: 93 i GSM_DROP: 64, razem 339."));
+    probe("N7b_polish_sum", &turn("ile razem?", vec![shell("c1","x"), result("c1","  93 LOCK_TIMEOUT\n  64 GSM_DROP")], "Razem LOCK_TIMEOUT i GSM_DROP: 157 błędów."));
+    // recall: F35's invented split must still fire, also with a word the PROPOSAL filter knows
+    probe("R1_f35_original", &turn_seven(REPLY_1929));
+    probe("R2_f35_with_instead", &turn_seven("KRK-008 — 65 errors, heavily GSM_DROP (29) instead of LOCK_TIMEOUT."));
+    probe("R3_invented_reachable_by_diff", &turn("codes?", vec![shell("c1","x"), result("c1","  64 GSM_DROP\n  40 GSM_DROP in week 1")], "GSM_DROP: 24 in week 2."));
+    // round 3, the other two words the PROPOSAL filter hid F35 behind ("set", "would")
+    probe("R2b_f35_with_set", &turn_seven("KRK-008 — 65 errors; the largest set is GSM_DROP (29)."));
+    probe("R2c_f35_with_would", &turn_seven("KRK-008 — 65 errors, which would be GSM_DROP (29) mostly."));
+    let misses = PROBE_MISSES.with(|m| m.borrow().clone());
+    assert!(misses.is_empty(), "{} probe(s) wrong:\n{}", misses.len(), misses.join("\n"));
+}
+
+/// The review's worst case (12,004 messages, 5 MB, 30 bound names). `cargo test --release -p goose
+/// grounding_check::tests::zz_cost -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn zz_cost() {
+    let mut big: Vec<Message> = Vec::new();
+    for i in 0..3000 {
+        big.push(Message::user().with_text(format!("q{i}")));
+        big.push(shell(&format!("h{i}"), "x"));
+        big.push(result(&format!("h{i}"), &format!("{}\n", (0..40).map(|j| format!("  {j} CODE_{j} line_{i}_{j} filler text here")).collect::<Vec<_>>().join("\n"))));
+        big.push(Message::assistant().with_text("ok"));
+    }
+    big.extend(turn("now?", vec![shell("c1","x"), result("c1", &(0..30).map(|j| format!("  {j} CODE_{j}")).collect::<Vec<_>>().join("\n"))],
+        &(0..30).map(|j| format!("CODE_{j}: {}", j + 1000)).collect::<Vec<_>>().join(", ")));
+    let chars: usize = big.iter().map(|m| text_parts(m).len() + tool_output_texts(m).iter().map(|t| t.len()).sum::<usize>()).sum();
+    let start = crate::claim_check::turn_start(&big);
+    for round in 0..3 {
+        let t = std::time::Instant::now();
+        let f = check_unconditionally(&big, start, big.len() - 1);
+        println!("PROBE COST round={round} messages={} chars={} elapsed_ms={} findings={}", big.len(), chars, t.elapsed().as_millis(), f.len());
+    }
+    // no names bound: the common case
+    let last = big.len() - 1;
+    big[last] = Message::assistant().with_text("Looks fine, nothing to change.");
+    let t = std::time::Instant::now();
+    let _ = check_unconditionally(&big, start, last);
+    println!("PROBE COST no_bindings elapsed_ms={}", t.elapsed().as_millis());
+}

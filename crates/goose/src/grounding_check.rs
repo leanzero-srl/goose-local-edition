@@ -86,6 +86,18 @@ fn text_parts(message: &Message) -> String {
         .join("\n")
 }
 
+/// The text a tool result part carries: plain text, or a text resource the tool embedded (a doc
+/// reader returns `Content::embedded_text`; round 3, N2).
+fn content_text(c: &rmcp::model::Content) -> Option<&str> {
+    if let Some(t) = c.as_text() {
+        return Some(t.text.as_str());
+    }
+    match c.as_resource().map(|r| &r.resource) {
+        Some(rmcp::model::ResourceContents::TextResourceContents { text, .. }) => Some(text.as_str()),
+        _ => None,
+    }
+}
+
 fn tool_output_texts(message: &Message) -> Vec<String> {
     message
         .content
@@ -95,7 +107,7 @@ fn tool_output_texts(message: &Message) -> Vec<String> {
                 Ok(result) => result
                     .content
                     .iter()
-                    .filter_map(|c| c.as_text().map(|t| t.text.as_str()))
+                    .filter_map(content_text)
                     .collect::<Vec<_>>()
                     .join("\n"),
                 Err(e) => e.message.to_string(),
@@ -143,7 +155,7 @@ fn calls(messages: &[Message]) -> Vec<Call> {
                     result
                         .content
                         .iter()
-                        .filter_map(|c| c.as_text().map(|t| t.text.as_str()))
+                        .filter_map(content_text)
                         .collect::<Vec<_>>()
                         .join("\n"),
                     result.is_error == Some(true),
@@ -231,9 +243,13 @@ fn is_name(token: &str) -> bool {
 /// "KRK-008 = 65", "LOCK_TIMEOUT — 93". A percent, a decimal, a ratio, a range or a time after the
 /// number makes it something other than a count, and is left alone.
 static BOUND_NUMBER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:\*\*|__|`)?(?:\s*:\s*|\s*=\s*|\s+[—–]\s+)(?:\*\*|__|`)?\s*(\d[\d,]*)(\.\d|\s*%|\s*/\s*\d|\s*[-–]\s*\d|:\d|[A-Za-z])?")
+    Regex::new(&format!(r"^(?:\*\*|__|`)?(?:\s*:\s*|\s*=\s*|\s+[—–]\s+)(?:\*\*|__|`)?\s*{COUNT}(\.\d|\s*%|\s*/\s*\d|\s*[-–]\s*\d|:\d|[A-Za-z])?"))
         .expect("static regex")
 });
+
+/// A count as a reply writes it: "182", "12,288", and the Polish/French "12 288" with a space, a
+/// no-break space or a narrow no-break space between the thousands (round 3, N6b/N6c: read as 12).
+const COUNT: &str = r"(\d{1,3}(?:[ \x{a0}\x{202f}]\d{3})+\b|\d[\d,]*)";
 
 /// Inline code is code: "`max_len=13`", "`MAX_LEN` = 80", "`_utc_time(34927)`" name arguments and
 /// constants, not counts.
@@ -247,7 +263,7 @@ static NUMBER_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
 /// "GSM_DROP (29)", "KRK-008 (65, 19%)": the parenthesis holds the number alone. "`to_minor` (12
 /// tests)" counts something else, and "(409 → the existing id)" is a status, not a count.
 static PAREN_NUMBER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?:\*\*|__|`)?\s*\(\s*(?:\*\*)?(\d[\d,]*)(?:\*\*)?\s*[),;]")
+    Regex::new(&format!(r"^(?:\*\*|__|`)?\s*\(\s*(?:\*\*)?{COUNT}(?:\*\*)?\s*[),;]"))
         .expect("static regex")
 });
 
@@ -259,15 +275,112 @@ static SHARE_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(\d[\d,]*)(?:\*\*)?\s+(?:out\s+)?of\s+(?:\*\*)?$").expect("static regex")
 });
 
-/// A line that proposes or plans a value rather than reporting one: "move it to API_PORT = 9090",
-/// "you could set MAX_LEN = 80".
+/// Words that make the value after them a proposal or a plan, not a report: "move it to API_PORT
+/// = 9090", "you could set MAX_LEN = 80", "I'd use DB_PORT = 5433". Read only in the few words
+/// right before the name, in the same sentence: round 2 skipped the whole line on any of these
+/// words, and "heavily GSM_DROP (29) instead of LOCK_TIMEOUT" (the real F35 split) went silent.
+/// "set" and "would" alone are not enough: "the set of KRK-008 errors", "which would be".
 static PROPOSAL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(?:move|moving|set|setting|switch|bump|raise|lower|increase|decrease|try|suggest|recommend|propose|could|should|would|consider|instead|let's|let\s+me)\b")
+    Regex::new(r"(?i)\b(?:move|moving|switch|switching|bump|bumping|raise|lower|increase|decrease|try|suggest|recommend|propose|consider|let's|let\s+me|i'd|we'd|you'd|could|should|might|(?:to|i'll|we'll|please|can|would|will)\s+(?:set|use|change|make)|setting)\b|^\s*(?:set|use|change|make)\b")
         .expect("static regex")
 });
 
+/// "API_PORT = 9090 instead": the number is what the reply would use. "GSM_DROP (29) instead of
+/// LOCK_TIMEOUT" contrasts two names and is a report.
+static INSTEAD_AFTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^[^.;!?]{0,16}?\binstead\b(\s+of\b)?").expect("static regex")
+});
+
+/// A rounded count: "180 or so", "roughly 180", "around", "approx.", "~", "≈", and the Polish,
+/// German and French words for it. Held against the output within a tenth, not exactly.
+static HEDGE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\bor\s+so\b|\broughly\b|\baround\b|\bapprox|~|≈|\babout\b|\bnearly\b|\balmost\b|\bcirca\b|\bca\.|-ish\b|\bish\b|\bsome\b|\bokoło\b|\bok\.|\bmniej\s+więcej\b|\bprawie\b|\bblisko\b|\bniemal|\betwa\b|\bungefähr\b|\brund\b|\bknapp\b|\bfast\b|\bcirka\b|\benviron\b|\bà\s+peu\s+près\b|\bpresque\b|\bquasi\b")
+        .expect("static regex")
+});
+
+/// A unit after a number: "2 min", "120 s", "64 ms", "1.5 GB". The number is a measurement and is
+/// compared with the output's measurements of that name after conversion (round 3, N5b: "2 min"
+/// over "120 s" fired).
+const UNIT: &str = r"(ns|µs|μs|us|ms|msec|milliseconds?|s|sec|secs|seconds?|sek|sekund[a-zęy]*|sekunden|min|mins|minutes?|minut[ay]?|minuten|h|hrs?|hours?|godz[a-z.]*|std|stunden?|d|days?|dni|tage?n?|b|bytes?|kb|kib|mb|mib|gb|gib|tb|tib)\b";
+static UNIT_AFTER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"(?i)^\s*{UNIT}")).expect("static regex"));
+static MEASURE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(r"(?i)(?:^|[^\d.,])(\d+(?:[.,]\d+)?)\s*{UNIT}")).expect("static regex")
+});
+
+/// The dimension of a unit and its size in that dimension's base (seconds, bytes).
+fn unit_scale(unit: &str) -> Option<(u8, f64)> {
+    let u = unit.to_lowercase();
+    let time = |f: f64| Some((0u8, f));
+    let size = |f: f64| Some((1u8, f));
+    match u.as_str() {
+        "ns" => time(1e-9),
+        "µs" | "μs" | "us" => time(1e-6),
+        "ms" | "msec" | "millisecond" | "milliseconds" => time(1e-3),
+        "s" | "sec" | "secs" | "second" | "seconds" | "sek" | "sekunden" => time(1.0),
+        "min" | "mins" | "minute" | "minutes" | "minuta" | "minut" | "minuty" | "minuten" => {
+            time(60.0)
+        }
+        "h" | "hr" | "hrs" | "hour" | "hours" | "std" | "stunde" | "stunden" => time(3600.0),
+        "d" | "day" | "days" | "dni" | "tag" | "tage" | "tagen" => time(86400.0),
+        "b" | "byte" | "bytes" => size(1.0),
+        "kb" => size(1e3),
+        "kib" => size(1024.0),
+        "mb" => size(1e6),
+        "mib" => size(1048576.0),
+        "gb" => size(1e9),
+        "gib" => size(1073741824.0),
+        "tb" => size(1e12),
+        "tib" => size(1099511627776.0),
+        _ if u.starts_with("sekund") => time(1.0),
+        _ if u.starts_with("godz") => time(3600.0),
+        _ => None,
+    }
+}
+
+/// "LOCK_TIMEOUT i GSM_DROP: 157", "KRK-008 minus KRK-042 = 6", "A + B = 9": the names joined
+/// right before the bound one, whose counts the number is worked out from.
+static JOINED_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)([A-Za-z][A-Za-z0-9]*(?:[_-][A-Za-z0-9]+)+)(?:\*\*|__|`)?(?:\s+(?:and|i|oraz|und|et|y|e|plus|minus|vs\.?|versus)\s+|\s*[+&−]\s*|\s+[-–]\s+)(?:\*\*|__|`)?$")
+        .expect("static regex")
+});
+
+fn joined_names(head: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut head = head;
+    while let Some(c) = JOINED_BEFORE.captures(head) {
+        let n = c.get(1).expect("group 1");
+        if !is_name(n.as_str()) {
+            break;
+        }
+        out.push(n.as_str().to_string());
+        head = head.get(..n.start()).unwrap_or_default();
+    }
+    out
+}
+
+/// The few words of the sentence right before a name; "… " in front when the sentence is longer,
+/// so an imperative ("Set X = 5") is read only at the sentence start.
+fn words_before(head: &str) -> String {
+    let cut = head
+        .rfind([';', '!', '?', '\n'])
+        .into_iter()
+        .chain(head.match_indices(". ").map(|(k, _)| k).last())
+        .max()
+        .map_or(0, |k| k + 1);
+    let words: Vec<&str> = head.get(cut..).unwrap_or_default().split_whitespace().collect();
+    let keep = &words[words.len().saturating_sub(6)..];
+    let lead = if keep.len() < words.len() { "… " } else { "" };
+    format!("{lead}{}", keep.join(" "))
+}
+
 fn whole(number: &str) -> Option<u64> {
-    number.replace(',', "").parse().ok()
+    number
+        .chars()
+        .filter(|c| !matches!(c, ',' | ' ' | '\u{a0}' | '\u{202f}'))
+        .collect::<String>()
+        .parse()
+        .ok()
 }
 
 /// A number standing on its own in a line, with where it sits: "  64 GSM_DROP", "GSM_DROP: 64",
@@ -360,20 +473,24 @@ fn beside_numbers(line: &str, name: &str) -> Vec<u64> {
                     !gap.is_empty() && gap.chars().all(|c| AFTER.contains(c)) && !leads_a_name
                 } else if end <= m.start() {
                     let gap = line.get(end..m.start()).unwrap_or_default();
-                    let gap = match gap.rfind(|c: char| BEFORE.contains(c)) {
-                        Some(k)
-                            if gap
-                                .get(k + 1..)
-                                .unwrap_or_default()
-                                .strip_suffix('=')
-                                .is_some_and(|key| {
-                                    !key.is_empty()
-                                        && key.chars().all(|c| c.is_ascii_alphabetic() || c == '_')
-                                }) =>
-                        {
-                            gap.get(..=k).unwrap_or_default()
+                    // "  40 code=GSM_DROP", "65 station=KRK-008": a `key=` between the count
+                    // and the name is the field's key. Round 2 looked for the key's start from
+                    // the '=' itself and never found one (P1b).
+                    let gap = match gap.strip_suffix('=') {
+                        Some(keyed) => {
+                            let k = keyed
+                                .rfind(|c: char| BEFORE.contains(c))
+                                .map_or(0, |k| k + 1);
+                            let key = keyed.get(k..).unwrap_or_default();
+                            if !key.is_empty()
+                                && key.chars().all(|c| c.is_ascii_alphabetic() || c == '_')
+                            {
+                                keyed.get(..k).unwrap_or_default()
+                            } else {
+                                gap
+                            }
                         }
-                        _ => gap,
+                        None => gap,
                     };
                     !gap.is_empty() && gap.chars().all(|c| BEFORE.contains(c))
                 } else {
@@ -391,14 +508,17 @@ pub(crate) struct Binding {
     /// "3 of 5": the total the share names.
     of: Option<u64>,
     co_names: Vec<String>,
+    /// "180 or so": held within a tenth.
+    approx: bool,
+    /// "2 min": a measurement, with its dimension and size in that dimension's base.
+    unit: Option<(u8, f64)>,
+    /// "LOCK_TIMEOUT i GSM_DROP: 157": the names the number is a sum or difference over.
+    joined: Vec<String>,
 }
 
 pub(crate) fn bindings(reply: &str) -> Vec<Binding> {
     let mut out = Vec::new();
     for line in prose_lines(reply) {
-        if PROPOSAL.is_match(line) {
-            continue;
-        }
         let line = CODE_SPAN.replace_all(line, " ");
         let line = line.as_ref();
         let names: Vec<regex::Match> = LABEL
@@ -408,13 +528,19 @@ pub(crate) fn bindings(reply: &str) -> Vec<Binding> {
         for m in &names {
             let rest = line.get(m.end()..).unwrap_or_default();
             let head = line.get(..m.start()).unwrap_or_default();
+            let mut after = "";
             let (number, of) = match PAREN_NUMBER.captures(rest) {
-                Some(c) => (c.get(1).and_then(|n| whole(n.as_str())), None),
+                Some(c) => {
+                    let n = c.get(1).expect("group 1");
+                    after = rest.get(n.end()..).unwrap_or_default();
+                    (whole(n.as_str()), None)
+                }
                 None => match BOUND_NUMBER.captures(rest).filter(|c| c.get(2).is_none()) {
                     Some(c) => {
                         let n = c.get(1).expect("group 1");
+                        after = rest.get(n.end()..).unwrap_or_default();
                         let of = OF_TOTAL
-                            .captures(rest.get(n.end()..).unwrap_or_default())
+                            .captures(after)
                             .and_then(|o| whole(&o[1]));
                         (whole(n.as_str()), of)
                     }
@@ -434,7 +560,27 @@ pub(crate) fn bindings(reply: &str) -> Vec<Binding> {
             let Some(number) = number else {
                 continue;
             };
+            let before = words_before(head);
+            let proposed = PROPOSAL.is_match(&before)
+                || INSTEAD_AFTER
+                    .captures(after)
+                    .is_some_and(|c| c.get(1).is_none());
+            if proposed {
+                continue;
+            }
+            let near_after: String = after.chars().take(24).collect();
+            let near_before: String = {
+                let w: Vec<&str> = before.split_whitespace().collect();
+                w[w.len().saturating_sub(3)..].join(" ")
+            };
+            let approx = HEDGE.is_match(&near_after) || HEDGE.is_match(&near_before);
+            let unit = UNIT_AFTER
+                .captures(after)
+                .and_then(|c| unit_scale(&c[1]));
             out.push(Binding {
+                approx,
+                unit,
+                joined: joined_names(head),
                 name: m.as_str().to_string(),
                 number,
                 of,
@@ -518,9 +664,36 @@ fn index<'a>(text: &'a str, wanted: &HashSet<&str>) -> Vec<Line<'a>> {
 fn supported(
     binding: &Binding,
     sources: &[Vec<Line>],
+    raw: &[String],
     all_numbers: &HashSet<u64>,
     this_turn: &[&str],
 ) -> bool {
+    if let Some((dimension, scale)) = binding.unit {
+        // "2 min" over "build_time: 120 s": the output's measurements of the name, converted.
+        let value = binding.number as f64 * scale;
+        let mut measured = false;
+        for line in raw.iter().flat_map(|t| t.lines()).filter(|l| holds_name(l, &binding.name)) {
+            for c in MEASURE.captures_iter(line) {
+                let Some((d, f)) = unit_scale(&c[2]) else {
+                    continue;
+                };
+                let Ok(v) = c[1].replace(',', ".").parse::<f64>() else {
+                    continue;
+                };
+                if d != dimension {
+                    continue;
+                }
+                measured = true;
+                let v = v * f;
+                // rounding: "2 min" for 125 s, "64 ms" for 0.0641 s
+                if (v - value).abs() <= value.max(v) * 0.05 {
+                    return true;
+                }
+            }
+        }
+        // A measurement held against counts alone says nothing; this check is about counts.
+        return !measured;
+    }
     if let Some(total) = binding.of {
         if binding.number <= total
             && all_numbers.contains(&binding.number)
@@ -553,17 +726,53 @@ fn supported(
     if numbers.contains(&binding.number) {
         return true;
     }
+    let near = |v: u64| {
+        let tolerance = (binding.number / 10).max(1);
+        v.abs_diff(binding.number) <= tolerance
+    };
+    if binding.approx && numbers.iter().any(|&v| near(v)) {
+        return true;
+    }
     // A sum is worked out over what the model just read: this turn's outputs, not every count the
     // session ever printed beside the name (RU-4 msg 219's "GSM_DROP (29)" is reachable from
     // enough of those).
-    for line in this_turn.iter().flat_map(|o| o.lines()) {
-        for n in beside_numbers(line, &binding.name) {
-            if !pool.contains(&n) {
-                pool.push(n);
+    // "LOCK_TIMEOUT i GSM_DROP: 157", "KRK-008 minus KRK-042 = 6": the joined names' counts too.
+    // Only names the reply joins to this one: "heavily GSM_DROP (29) instead of LOCK_TIMEOUT"
+    // would be 93 - 64 otherwise.
+    let mut total: u64 = 0;
+    let mut terms = 0usize;
+    for name in std::iter::once(&binding.name).chain(binding.joined.iter()) {
+        for line in this_turn.iter().flat_map(|o| o.lines()) {
+            for n in beside_numbers(line, name) {
+                total = total.saturating_add(n);
+                terms += 1;
+                if !pool.contains(&n) {
+                    pool.push(n);
+                }
             }
         }
     }
+    // "FW_CHECK: 132 in total" over four outputs (12, 30, 40, 50): the sum of every count this
+    // turn gives the name, however many.
+    if terms >= 2 && (total == binding.number || (binding.approx && near(total))) {
+        return true;
+    }
+    if binding.approx {
+        return reachable(&pool).into_iter().any(near);
+    }
     arithmetic(binding.number, &pool)
+}
+
+/// The sums and differences of two pool values, for a rounded number ("180 or so").
+fn reachable(pool: &[u64]) -> Vec<u64> {
+    let mut out = Vec::new();
+    for i in 0..pool.len() {
+        for j in i + 1..pool.len() {
+            out.push(pool[i].saturating_add(pool[j]));
+            out.push(pool[i].abs_diff(pool[j]));
+        }
+    }
+    out
 }
 
 /// What this turn's output says about the name, for the note: the line that counts it, or how
@@ -698,6 +907,7 @@ fn unpaired_numbers(texts: &str, this_turn: &[&str], sources: &Sources) -> Vec<S
     for b in &candidates {
         names.push(&b.name);
         names.extend(b.co_names.iter().map(String::as_str));
+        names.extend(b.joined.iter().map(String::as_str));
     }
     let shares = candidates.iter().any(|b| b.of.is_some());
     let (kept, all_numbers) = sources.gather(&names, shares);
@@ -705,7 +915,7 @@ fn unpaired_numbers(texts: &str, this_turn: &[&str], sources: &Sources) -> Vec<S
     let session: Vec<Vec<Line>> = kept.iter().map(|t| index(t, &wanted)).collect();
     let mut found: Vec<(String, u64)> = Vec::new();
     for binding in candidates {
-        if supported(&binding, &session, &all_numbers, this_turn)
+        if supported(&binding, &session, &kept, &all_numbers, this_turn)
             || found
                 .iter()
                 .any(|(n, v)| *n == binding.name && *v == binding.number)
