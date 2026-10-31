@@ -33,16 +33,18 @@ test('a universal binary is refused', () => {
 
 test('classification admits only Mach-O changes and CodeResources seals', () => {
   const f = (sha, extra = {}) => ({ kind: 'file', mode: 0o644, xattrs: {}, sha256: sha, bytes: 1, ...extra });
-  const before = { '.': { kind: 'directory', mode: 0o755, xattrs: {} }, 'Contents/MacOS/x': f('a', { machO: 0xfeedfacf }), 'Contents/Info.plist': f('p', { machO: 0 }) };
+  const before = { '.': { kind: 'directory', mode: 0o755, xattrs: {} }, 'Contents/Frameworks/E.framework/_CodeSignature/CodeResources': f('s0', { machO: 0 }), 'Contents/MacOS/x': f('a', { machO: 0xfeedfacf }), 'Contents/Info.plist': f('p', { machO: 0 }) };
   const after = structuredClone(before);
   after['Contents/MacOS/x'].sha256 = 'b';
+  after['Contents/Frameworks/E.framework/_CodeSignature/CodeResources'].sha256 = 's1';
   after['Contents/_CodeSignature'] = { kind: 'directory', mode: 0o755, xattrs: {} };
   after['Contents/_CodeSignature/CodeResources'] = f('c');
   after['Contents/Info.plist'].xattrs['com.apple.cs.CodeSignature'] = 'd';
   const c = classifyChanges(before, after, null, null);
   assert.deepEqual(c.resources, ['Contents/Info.plist']);
+  assert.deepEqual(c.seals, ['Contents/Frameworks/E.framework/_CodeSignature/CodeResources']);
   assert.deepEqual(c.machO, ['Contents/MacOS/x']);
   assert.equal(c.added.length, 2);
   const controls = classificationNegativeControls(before, after);
-  assert.deepEqual(controls.rejected, ['resourceBytes', 'extraAttribute', 'priorAttributeChanged', 'signatureAttributeOnChangedBytes', 'changedMode', 'missingPath', 'unexpectedNewFile']);
+  assert.deepEqual(controls.rejected, ['resourceBytes', 'extraAttribute', 'priorAttributeChanged', 'signatureAttributeOnChangedBytes', 'changedMode', 'missingPath', 'sealOutsideCodeSignature', 'unexpectedNewFile']);
 });

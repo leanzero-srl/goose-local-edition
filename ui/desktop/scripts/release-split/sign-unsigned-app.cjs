@@ -41,7 +41,8 @@ function requireSupportedThinMachO(file, relative) {
 const SIGNATURE_XATTR = /^com\.apple\.cs\./;
 const withoutSignatureXattrs = x => Object.fromEntries(Object.entries(x).filter(([k]) => !SIGNATURE_XATTR.test(k)));
 function classifyChanges(before, after, beforeRoot, afterRoot) {
-  const machO = [], added = [], resources = [];
+  const machO = [], added = [], resources = [], seals = [];
+  const isSeal = p => path.basename(p) === 'CodeResources' && path.basename(path.dirname(p)) === '_CodeSignature';
   for (const [p, item] of Object.entries(before)) {
     const now = after[p];
     assert(now, 'Missing after signing: ' + p);
@@ -53,18 +54,19 @@ function classifyChanges(before, after, beforeRoot, afterRoot) {
     if (sigChanged) resources.push(p);
     if (item.kind === 'symlink') assert.equal(now.target, item.target, 'Symlink target changed: ' + p);
     if (item.kind !== 'file' || now.sha256 === item.sha256) continue;
+    // an unsigned package already carries the prebuilt Electron framework's (ad-hoc) seal; signing rewrites it
+    if (isSeal(p)) { seals.push(p); continue; }
     const m0 = beforeRoot ? machOMagic(path.join(beforeRoot, p)) : item.machO, m1 = afterRoot ? machOMagic(path.join(afterRoot, p)) : now.machO;
     assert(MACHO.has(m0) && MACHO.has(m1), 'Non-Mach-O bytes changed: ' + p);
     machO.push(p);
   }
   for (const p of Object.keys(after)) {
     if (before[p]) continue;
-    const ok = (path.basename(p) === '_CodeSignature' && after[p].kind === 'directory') ||
-      (path.basename(p) === 'CodeResources' && path.basename(path.dirname(p)) === '_CodeSignature' && after[p].kind === 'file');
+    const ok = (path.basename(p) === '_CodeSignature' && after[p].kind === 'directory') || (isSeal(p) && after[p].kind === 'file');
     assert(ok, 'Unexpected new path after signing: ' + p);
     added.push(p);
   }
-  return { machO: machO.sort(), added: added.sort(), resources: resources.sort() };
+  return { machO: machO.sort(), added: added.sort(), resources: resources.sort(), seals: seals.sort() };
 }
 
 // Each mutation of the real fingerprints must be rejected by classifyChanges.
@@ -80,6 +82,7 @@ function classificationNegativeControls(before, after) {
     signatureAttributeOnChangedBytes: mutate(a => { a[resource].sha256 = '3'.repeat(64); a[resource].xattrs['com.apple.cs.CodeSignature'] = '4'.repeat(64); }),
     changedMode: mutate(a => { a[resource].mode ^= 0o100; }),
     missingPath: mutate(a => { delete a[resource]; }),
+    sealOutsideCodeSignature: mutate(a => { a['Contents/Resources/CodeResources'] = { kind: 'file', mode: 0o644, xattrs: {}, sha256: '5'.repeat(64), bytes: 1 }; }),
     unexpectedNewFile: mutate(a => { a['Contents/Resources/unexpected.txt'] = { kind: 'file', mode: 0o644, xattrs: {}, sha256: '1'.repeat(64), bytes: 1 }; }),
   };
   const rejected = [];
