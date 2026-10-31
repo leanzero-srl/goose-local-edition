@@ -4273,17 +4273,18 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(self.shared.lock().unwrap().status.memory_recovery.clone());
-            let (free, file, level) = if poll == 1 {
-                (100_000, 30_000, 2)
+            // Poll 1 is short on both figures (the hold's counts inactive + speculative too).
+            let (free, file, inactive, speculative, level) = if poll == 1 {
+                (100_000, 30_000, 10_000, 10_000, 2)
             } else {
-                (4_000_000, 900_000, 1)
+                (4_000_000, 900_000, 1_000_000, 100_000, 1)
             };
             let stdout = format!(
                 "\n@@vm\nMach Virtual Memory Statistics: (page size of 16384 bytes)\n\
                  Pages free:                                  {free}.\n\
                  Pages active:                                1000000.\n\
-                 Pages inactive:                              1000000.\n\
-                 Pages speculative:                            100000.\n\
+                 Pages inactive:                              {inactive}.\n\
+                 Pages speculative:                            {speculative}.\n\
                  Pages throttled:                                   0.\n\
                  Pages wired down:                             500000.\n\
                  Pages purgeable:                               10000.\n\
