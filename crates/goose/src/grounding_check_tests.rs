@@ -384,6 +384,401 @@ fn a_finding_is_handed_back_once_per_turn() {
     assert!(reask_text(&found).contains("x"));
 }
 
+// ---- Round 2: the reviewer's correct-answer probes, each must stay silent ----------------------
+
+fn quiet(messages: &[Message]) {
+    let found = findings(messages);
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn probe_a_correct_sum_over_two_outputs_is_not_shown() {
+    quiet(&turn(
+        "how many FW_CHECK failures across both gateways",
+        vec![
+            shell("c1", "grep -c FW_CHECK gw-a.log | xargs echo FW_CHECK"),
+            result("c1", "  50 FW_CHECK"),
+            shell("c2", "grep FW_CHECK gw-b.log | wc -l"),
+            result("c2", " 132 FW_CHECK"),
+        ],
+        "Both gateways together: FW_CHECK: 182 (50 + 132).",
+    ));
+    quiet(&turn(
+        "wie viele GSM_DROP insgesamt?",
+        vec![
+            shell("c1", "grep -o 'code=GSM_DROP' dock-a.log | uniq -c"),
+            result("c1", "  40 GSM_DROP"),
+            shell("c2", "grep -o 'code=GSM_DROP' dock-b.log | uniq -c"),
+            result("c2", "  24 GSM_DROP"),
+        ],
+        "Insgesamt gibt es GSM_DROP (64) Fehler in beiden Logs, 40 in dock-a und 24 in dock-b.",
+    ));
+    quiet(&turn(
+        "total per code",
+        vec![
+            shell("c1", "for f in a b c; do grep -c LOCK_TIMEOUT $f.log; done"),
+            result("c1", "LOCK_TIMEOUT 30\nLOCK_TIMEOUT 41\nLOCK_TIMEOUT 22"),
+        ],
+        "LOCK_TIMEOUT: 93 over the three logs.",
+    ));
+}
+
+#[test]
+fn probe_a_correct_difference_is_not_shown() {
+    quiet(&turn(
+        "did the fix help KRK-042?",
+        vec![
+            shell("c1", "grep -c KRK-042 before.log after.log"),
+            result("c1", "before.log: KRK-042 59\nafter.log: KRK-042 53"),
+        ],
+        "Yes: KRK-042 = 6 fewer errors after the fix (59 → 53).",
+    ));
+}
+
+#[test]
+fn probe_a_share_whose_two_numbers_the_output_holds_is_not_shown() {
+    quiet(&turn(
+        "how did KRK-008 do",
+        vec![
+            shell("c1", "./dockcheck KRK-008"),
+            result("c1", "docks checked: 5\ndocks failed: 3\n  12 KRK-008"),
+        ],
+        "KRK-008: 3 of 5 docks failed the check.",
+    ));
+    quiet(&turn(
+        "how did KRK-008 do",
+        vec![
+            shell("c1", "./dockcheck KRK-008"),
+            result("c1", "docks checked: 5\ndocks failed: 3\n  12 KRK-008"),
+        ],
+        "3 of 5 KRK-008 docks failed the check.",
+    ));
+}
+
+#[test]
+fn probe_a_value_with_no_space_after_the_colon_is_read() {
+    quiet(&turn(
+        "how many errors",
+        vec![
+            shell("c1", "curl -s localhost:8080/stats"),
+            result("c1", r#"{"error_count":3,"warn_count":7}"#),
+        ],
+        "error_count: 3 and warn_count: 7.",
+    ));
+    quiet(&turn(
+        "how many redis clients",
+        vec![
+            shell("c1", "redis-cli info clients"),
+            result(
+                "c1",
+                "# Clients\r\nconnected_clients:5\r\nblocked_clients:0",
+            ),
+        ],
+        "connected_clients: 5, blocked_clients: 0.",
+    ));
+}
+
+#[test]
+fn a_compact_value_supports_a_name_another_output_tallies() {
+    quiet(&turn(
+        "restart redis and check the clients",
+        vec![
+            shell("c1", "redis-cli info clients | grep connected"),
+            result("c1", "connected_clients: 5"),
+            shell("c2", "brew services restart redis && redis-cli --json info"),
+            result("c2", r#"{"connected_clients":7}"#),
+        ],
+        "After the restart connected_clients: 7.",
+    ));
+}
+
+#[test]
+fn probe_a_value_the_model_set_or_proposes_is_not_shown() {
+    quiet(&turn(
+        "raise the retries to 5",
+        vec![
+            shell("c1", "cat config.py"),
+            result("c1", "MAX_RETRIES = 3\nTIMEOUT = 30"),
+            call(
+                "c2",
+                "edit",
+                serde_json::json!({"path": "config.py", "before": "MAX_RETRIES = 3", "after": "MAX_RETRIES = 5"}),
+            ),
+            result("c2", "Edited config.py (1 lines -> 1 lines)"),
+        ],
+        "I changed MAX_RETRIES = 5 in config.py.",
+    ));
+    quiet(&turn(
+        "port 8080 is taken, what now",
+        vec![
+            shell("c1", "cat .env"),
+            result("c1", "API_PORT = 8080\nDB_PORT = 5432"),
+        ],
+        "8080 is in use by another process, so move it to API_PORT = 9090.",
+    ));
+    quiet(&turn(
+        "the slug is too short",
+        vec![
+            shell("c1", "cat slug.py"),
+            result("c1", "MAX_LEN = 60\nMIN_LEN = 3"),
+        ],
+        "Change the constant at the top of slug.py:\n\n    MAX_LEN = 80\n\nand the test passes.",
+    ));
+    quiet(&turn(
+        "the slug is too short",
+        vec![
+            shell("c1", "cat slug.py"),
+            result("c1", "MAX_LEN = 60\nMIN_LEN = 3"),
+        ],
+        "Raising `MAX_LEN` = 80 keeps the whole title.",
+    ));
+    quiet(&turn(
+        "write the limits file",
+        vec![
+            shell("c1", "cat limits.env"),
+            result("c1", "MAX_LEN = 60\nMIN_LEN = 3"),
+            call(
+                "c2",
+                "write",
+                serde_json::json!({"path": "limits.env", "content": "MAX_LEN = 80\nMIN_LEN = 3\n"}),
+            ),
+            result("c2", "Wrote limits.env"),
+        ],
+        "limits.env now has MAX_LEN: 80.",
+    ));
+}
+
+fn reformat(reply: &str) -> Vec<Message> {
+    turn(
+        "convert the dates to ISO",
+        vec![
+            call(
+                "c1",
+                "edit",
+                serde_json::json!({"path": REPORT, "before": "Generated: 31.10.2026\nPeriod: 01.10.2026 - 31.10.2026", "after": "Generated: 2026-10-31\nPeriod: 2026-10-01 - 2026-10-31"}),
+            ),
+            result("c1", "Edited (2 lines -> 2 lines)"),
+        ],
+        reply,
+    )
+}
+
+#[test]
+fn probe_a_correct_reformat_that_names_the_old_format_is_not_shown() {
+    quiet(&reformat(
+        "All dates now follow YYYY-MM-DD instead of DD.MM.YYYY.",
+    ));
+    quiet(&reformat(
+        "I converted every DD.MM.YYYY date to YYYY-MM-DD.",
+    ));
+    quiet(&reformat(
+        "All dates were converted from DD.MM.YYYY to YYYY-MM-DD.",
+    ));
+}
+
+#[test]
+fn a_reformat_that_destroyed_the_target_format_is_still_shown() {
+    let found = findings(&turn_twenty_five(
+        "All dates now follow DD.MM.YYYY instead of YYYY-MM-DD.",
+    ));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("follows DD.MM.YYYY"), "{}", found[0]);
+}
+
+#[test]
+fn probe_all_n_short_lines_shown_in_full_is_not_shown() {
+    let raw: String = (1..=25)
+        .map(|i| format!("line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    quiet(&turn(
+        "print the file",
+        vec![shell("c1", "cat notes.txt"), result("c1", &raw)],
+        &format!("Here are all 25 lines of notes.txt:\n\n{raw}"),
+    ));
+    let kv: String = (1..=25)
+        .map(|i| format!("k{i}={i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    quiet(&turn(
+        "print the env",
+        vec![shell("c1", "cat .env"), result("c1", &kv)],
+        &format!("Here are all 25 lines:\n```\n{kv}\n```"),
+    ));
+}
+
+#[test]
+fn probe_a_number_the_compaction_summary_holds_is_supported() {
+    let mut messages = vec![
+        Message::user()
+            .with_text("Summary of the earlier conversation:\n- dock log totals: 64 GSM_DROP, 93 LOCK_TIMEOUT\n- KRK-008 had 29 GSM_DROP (unverified)")
+            .agent_only(),
+        Message::assistant()
+            .with_text("The previous message contains a summary.")
+            .agent_only(),
+    ];
+    messages.extend(turn(
+        "compare with the new log",
+        vec![
+            shell("c1", "grep -o 'code=[A-Z_]*' new.log | sort | uniq -c"),
+            result("c1", "  70 GSM_DROP\n  90 LOCK_TIMEOUT"),
+        ],
+        "GSM_DROP went from 64 to 70; GSM_DROP (64) was the old total.",
+    ));
+    let from = messages.len() - 1;
+    assert!(check_unconditionally(&messages, 2, from).is_empty());
+    // The number the summary marked unverified stays unsupported.
+    let last = messages.len() - 1;
+    messages[last] = Message::assistant().with_text("KRK-008 had GSM_DROP (29) before.");
+    let found = check_unconditionally(&messages, 2, from);
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+// ---- Round 2: the checks that killed no mutant in round 1 ---------------------------------------
+
+#[test]
+fn a_format_named_without_a_compliance_claim_is_not_shown() {
+    quiet(&turn_twenty_five(
+        "I shortened the DD.MM.YYYY dates in the header to DD.MM.",
+    ));
+}
+
+#[test]
+fn a_finding_inside_fenced_code_is_not_shown() {
+    quiet(&turn_seven(
+        "The old report said:\n\n```\nKRK-008: GSM_DROP (29)\n```\n\nThe real total is GSM_DROP (64).",
+    ));
+}
+
+#[test]
+fn under_half_of_all_n_shown_is_shown_even_above_a_tenth() {
+    let raw: Vec<String> = (0..30)
+        .map(|i| format!("2026-10-01T02:47:{i:02}Z ERROR dockgw station=KRK-0{i:02}"))
+        .collect();
+    let messages = turn(
+        "print every ERROR line",
+        vec![
+            shell("c1", "grep ERROR dock.log"),
+            result("c1", &raw.join("\n")),
+        ],
+        &format!("Here are all 30 ERROR lines:\n\n{}", raw[..5].join("\n")),
+    );
+    let found = findings(&messages);
+    assert!(
+        found.iter().any(|f| f.contains("shows 5 of them")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn all_n_under_twenty_is_never_checked() {
+    let raw: Vec<String> = (0..10)
+        .map(|i| format!("2026-10-01T02:47:{i:02}Z ERROR dockgw station=KRK-0{i:02}"))
+        .collect();
+    quiet(&turn(
+        "print every ERROR line",
+        vec![
+            shell("c1", "grep ERROR dock.log"),
+            result("c1", &raw.join("\n")),
+        ],
+        &format!("Here are all 10 ERROR lines:\n\n{}", raw[0]),
+    ));
+}
+
+#[test]
+fn an_edit_that_kept_the_dates_is_not_shown() {
+    quiet(&turn(
+        "tidy the header",
+        vec![
+            call(
+                "c1",
+                "edit",
+                serde_json::json!({"path": REPORT, "before": "Generated: 31.10.2026 by ops", "after": "Generated: 31.10.2026 by the ops team"}),
+            ),
+            result("c1", "Edited (1 lines -> 1 lines)"),
+        ],
+        "All dates now follow DD.MM.YYYY.",
+    ));
+}
+
+#[test]
+fn the_check_is_on_and_the_reask_off_by_default() {
+    let _guard = env_lock::lock_env([(ENABLED_KEY, None::<&str>), (REASK_KEY, None::<&str>)]);
+    let config_file = tempfile::NamedTempFile::new().unwrap();
+    let secrets_file = tempfile::NamedTempFile::new().unwrap();
+    let config =
+        crate::config::Config::new_with_file_secrets(config_file.path(), secrets_file.path())
+            .unwrap();
+    assert!(enabled_in(&config));
+    assert!(!reask_enabled_in(&config));
+    config.set_param(ENABLED_KEY, false).unwrap();
+    config.set_param(REASK_KEY, true).unwrap();
+    assert!(!enabled_in(&config));
+    assert!(reask_enabled_in(&config));
+}
+
+#[test]
+fn the_reply_check_carries_the_grounding_findings() {
+    let _guard = env_lock::lock_env([(ENABLED_KEY, Some("true"))]);
+    let messages = turn_seven(REPLY_1929);
+    let found = crate::claim_check::check_new_text(
+        &messages,
+        messages.len() - 1,
+        std::path::Path::new("/w"),
+        &|_: &std::path::Path| true,
+        2026,
+    );
+    assert!(
+        found.iter().any(|f| f.contains("GSM_DROP as 29")),
+        "{found:?}"
+    );
+    drop(_guard);
+    let _off = env_lock::lock_env([(ENABLED_KEY, Some("false"))]);
+    let found = crate::claim_check::check_new_text(
+        &messages,
+        messages.len() - 1,
+        std::path::Path::new("/w"),
+        &|_: &std::path::Path| true,
+        2026,
+    );
+    assert!(
+        !found.iter().any(|f| f.contains("GSM_DROP as 29")),
+        "{found:?}"
+    );
+}
+
+/// The round-1 cost: a 12k-message, 5 MB session took 20.6 s in a debug build for one response.
+/// `cargo test --release -p goose grounding_check::tests::cost -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn cost_on_a_long_session() {
+    let mut messages = Vec::new();
+    let row = "2026-10-01T02:47:09Z ERROR dockgw station=KRK-008 dock=10 code=GSM_DROP attempt=1\n";
+    let output: String = row.repeat(5_000_000 / 6_000 / row.len() + 1);
+    for i in 0..6_000 {
+        messages.push(shell(&format!("c{i}"), "grep ERROR dock.log"));
+        messages.push(result(&format!("c{i}"), &output));
+    }
+    let bytes: usize =
+        messages.iter().map(|m| text_parts(m).len()).sum::<usize>() + 6_000 * output.len();
+    messages.extend(turn_seven(REPLY_1929));
+    let from = messages.len() - 1;
+    let start = from - 7;
+    let t = std::time::Instant::now();
+    let found = check_unconditionally(&messages, start, from);
+    let pairing = t.elapsed();
+    messages[from] = Message::assistant().with_text("Done, the report is written.");
+    let t = std::time::Instant::now();
+    let quiet = check_unconditionally(&messages, start, from);
+    println!(
+        "COST messages={} bytes={bytes} pairing_reply={pairing:?} (findings {}) plain_reply={:?} (findings {})",
+        messages.len(),
+        found.len(),
+        t.elapsed(),
+        quiet.len()
+    );
+}
+
 /// Replays real session exports (one JSON object per line: {"session", "message"}) through the check
 /// at every model response, printing each finding. `WR19_REPLAY=<a.jsonl>:<b.jsonl> cargo test -p
 /// goose grounding_check::tests::replay -- --ignored --nocapture`.
@@ -407,12 +802,49 @@ fn replay() {
                 _ => sessions.push((session, vec![message])),
             }
         }
-        for (session, messages) in &sessions {
-            for i in 0..messages.len() {
-                let m = &messages[i];
+        for (session, stored) in &sessions {
+            // The store holds each row's visibility AFTER every later compaction: a reply from
+            // before one sees its turn as agent-invisible. Replay each response as it was then:
+            // rows from the last compaction boundary before it (an agent-only row right after
+            // agent-invisible ones) onward are agent-visible again.
+            let boundaries: Vec<usize> = (0..stored.len())
+                .filter(|&k| {
+                    let m = &stored[k].metadata;
+                    !m.user_visible
+                        && m.agent_visible
+                        && !m.harness_nudge
+                        && k > 0
+                        && !stored[k - 1].metadata.agent_visible
+                })
+                .collect();
+            let mut epochs: std::collections::HashMap<usize, Vec<Message>> =
+                std::collections::HashMap::new();
+            for i in 0..stored.len() {
+                let m = &stored[i];
                 if m.role != Role::Assistant || text_parts(m).trim().is_empty() {
                     continue;
                 }
+                let epoch = boundaries
+                    .iter()
+                    .rev()
+                    .find(|&&k| k < i)
+                    .copied()
+                    .unwrap_or(0);
+                let messages = epochs.entry(epoch).or_insert_with(|| {
+                    stored
+                        .iter()
+                        .enumerate()
+                        .map(|(k, m)| {
+                            let mut m = m.clone();
+                            if k >= epoch && m.metadata.user_visible {
+                                m.metadata.agent_visible = true;
+                            }
+                            m
+                        })
+                        .collect()
+                });
+                let messages: &[Message] = messages;
+                let m = &messages[i];
                 let end = messages[i + 1..]
                     .iter()
                     .position(|n| n.role == Role::Assistant)
@@ -420,16 +852,35 @@ fn replay() {
                 let slice = &messages[..end];
                 let start = crate::claim_check::turn_start(&slice[..=i]);
                 responses += 1;
-                if std::env::var("WR19_DEBUG").is_ok_and(|d| d == format!("{session}:{i}")) {
+                if std::env::var("WR19_DEBUG")
+                    .is_ok_and(|d| d.split(',').any(|x| x == format!("{session}:{i}")))
+                {
                     let calls = calls(&slice[start..]);
                     let text = text_parts(m);
+                    let outs: Vec<&str> = calls.iter().map(|c| c.output.as_str()).collect();
                     println!(
-                        "DEBUG start={start} end={end} calls={} outputs_chars={} bindings={} all_shown={:?}",
+                        "DEBUG start={start} end={end} calls={} outputs_chars={} bindings={} all_shown={:?} lines_shown={} prose={}",
                         calls.len(),
                         calls.iter().map(|c| c.output.len()).sum::<usize>(),
                         bindings(&text).len(),
                         ALL_SHOWN.captures(&text).map(|c| c[0].to_string()),
+                        output_lines_shown(&text, &outs),
+                        prose_lines(&text).len(),
                     );
+                    println!(
+                        "DEBUG parts all={:?} unpaired={:?}",
+                        all_claimed_part_shown(&text, &outs),
+                        check_unconditionally(slice, start, i)
+                    );
+                    for b in bindings(&text).iter().take(12) {
+                        println!(
+                            "DEBUG binding {} {} of={:?} tallied={}",
+                            b.name,
+                            b.number,
+                            b.of,
+                            tallied_in(&outs, &b.name)
+                        );
+                    }
                 }
                 for f in check_unconditionally(slice, start, i) {
                     fired += 1;

@@ -14,10 +14,15 @@
 //! - "Here are all N lines" over a reply that shows far fewer than N. RU-4 turn 3: "Here are all
 //!   **339 ERROR lines**", then a per-station tally.
 //!
+//! A correct answer stays silent: a sum or difference of the name's own numbers, a share whose two
+//! numbers the output holds, a value this turn's calls wrote or ran, a value the reply proposes, code
+//! (fenced, indented or inline), a reformat that names the old format, and a number a compaction
+//! summary carries (round 2: the reviewer's correct-answer probes, rebuilt as tests).
+//!
 //! Tunable: `GOOSE_GROUNDING_CHECK` (default on) turns the three findings off; `GOOSE_GROUNDING_REASK`
 //! (default off) hands a finding back to the model once per turn so it can check and correct itself.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -28,18 +33,27 @@ use crate::conversation::message::{Message, MessageContent};
 pub const ENABLED_KEY: &str = "GOOSE_GROUNDING_CHECK";
 pub const REASK_KEY: &str = "GOOSE_GROUNDING_REASK";
 
-fn flag(key: &str, default: bool) -> bool {
-    crate::config::Config::global()
-        .get_param::<bool>(key)
-        .unwrap_or(default)
+pub const ENABLED_DEFAULT: bool = true;
+pub const REASK_DEFAULT: bool = false;
+
+fn flag(config: &crate::config::Config, key: &str, default: bool) -> bool {
+    config.get_param::<bool>(key).unwrap_or(default)
+}
+
+pub(crate) fn enabled_in(config: &crate::config::Config) -> bool {
+    flag(config, ENABLED_KEY, ENABLED_DEFAULT)
+}
+
+pub(crate) fn reask_enabled_in(config: &crate::config::Config) -> bool {
+    flag(config, REASK_KEY, REASK_DEFAULT)
 }
 
 pub fn enabled() -> bool {
-    flag(ENABLED_KEY, true)
+    enabled_in(crate::config::Config::global())
 }
 
 pub fn reask_enabled() -> bool {
-    flag(REASK_KEY, false)
+    reask_enabled_in(crate::config::Config::global())
 }
 
 /// The words goose hands back to the model when `GOOSE_GROUNDING_REASK` is on: the finding, and
@@ -98,6 +112,22 @@ struct Call {
 }
 
 fn calls(messages: &[Message]) -> Vec<Call> {
+    let mut responses: HashMap<&str, &rmcp::model::ErrorData> = HashMap::new();
+    let mut results: HashMap<&str, &rmcp::model::CallToolResult> = HashMap::new();
+    for message in messages {
+        for content in &message.content {
+            if let MessageContent::ToolResponse(r) = content {
+                match &r.tool_result {
+                    Ok(result) => {
+                        results.insert(r.id.as_str(), result);
+                    }
+                    Err(e) => {
+                        responses.insert(r.id.as_str(), e);
+                    }
+                }
+            }
+        }
+    }
     let mut out = Vec::new();
     for message in messages {
         for content in &message.content {
@@ -107,15 +137,8 @@ fn calls(messages: &[Message]) -> Vec<Call> {
             let Ok(call) = &request.tool_call else {
                 continue;
             };
-            let response = messages.iter().find_map(|m| {
-                m.content.iter().find_map(|c| match c {
-                    MessageContent::ToolResponse(r) if r.id == request.id => Some(r),
-                    _ => None,
-                })
-            });
-            let Some(response) = response else { continue };
-            let (output, failed) = match &response.tool_result {
-                Ok(result) => (
+            let (output, failed) = if let Some(result) = results.get(request.id.as_str()) {
+                (
                     result
                         .content
                         .iter()
@@ -123,8 +146,11 @@ fn calls(messages: &[Message]) -> Vec<Call> {
                         .collect::<Vec<_>>()
                         .join("\n"),
                     result.is_error == Some(true),
-                ),
-                Err(e) => (e.message.to_string(), true),
+                )
+            } else if let Some(e) = responses.get(request.id.as_str()) {
+                (e.message.to_string(), true)
+            } else {
+                continue;
             };
             out.push(Call {
                 arguments: call.arguments.clone().unwrap_or_default(),
@@ -136,7 +162,37 @@ fn calls(messages: &[Message]) -> Vec<Call> {
     out
 }
 
-/// What the reply says to the reader: fenced code is quoted output or code, not a claim.
+/// What a call wrote or ran, as lines a number can be read from: the edit's new text, the file's
+/// content, the shell command. "I changed MAX_RETRIES = 5" is grounded in the edit that wrote it.
+fn argument_text(call: &Call) -> String {
+    fn walk(key: &str, value: &serde_json::Value, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(s) => out.push(s.clone()),
+            serde_json::Value::Number(n) => out.push(format!("{key}: {n}")),
+            serde_json::Value::Array(items) => items.iter().for_each(|v| walk(key, v, out)),
+            serde_json::Value::Object(map) => map.iter().for_each(|(k, v)| walk(k, v, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for (k, v) in &call.arguments {
+        walk(k, v, &mut out);
+    }
+    out.join("\n")
+}
+
+/// Markdown indented code: four spaces or a tab, and not a nested list item or a table row.
+fn indented_code(line: &str) -> bool {
+    let indented = line.starts_with("    ") || line.starts_with('\t');
+    let t = line.trim_start();
+    let list_item = t.starts_with(['-', '*', '+', '|'])
+        || t.split_once(['.', ')'])
+            .is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+    indented && !list_item
+}
+
+/// What the reply says to the reader: fenced and indented code is quoted output or code, not a
+/// claim.
 fn prose_lines(text: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut fenced = false;
@@ -146,7 +202,7 @@ fn prose_lines(text: &str) -> Vec<&str> {
             fenced = !fenced;
             continue;
         }
-        if !fenced && !t.starts_with('>') {
+        if !fenced && !t.starts_with('>') && !indented_code(line) {
             out.push(line);
         }
     }
@@ -178,8 +234,9 @@ static BOUND_NUMBER: LazyLock<Regex> = LazyLock::new(|| {
         .expect("static regex")
 });
 
-static CODE_WITH_DIGIT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"`[^`]*\d[^`]*`").expect("static regex"));
+/// Inline code is code: "`max_len=13`", "`MAX_LEN` = 80", "`_utc_time(34927)`" name arguments and
+/// constants, not counts.
+static CODE_SPAN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`[^`]*`").expect("static regex"));
 
 /// Right before a name, the number that counts it: "(29 GSM_DROP + 16 LOCK_TIMEOUT", "- 64 GSM_DROP".
 static NUMBER_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
@@ -193,10 +250,18 @@ static PAREN_NUMBER: LazyLock<Regex> = LazyLock::new(|| {
         .expect("static regex")
 });
 
-/// A number standing on its own in an output line: "  64 GSM_DROP", "GSM_DROP: 64", `"x": 64`,
-/// "count=64", "64,KRK-008". Pieces of a timestamp or a date ("02:47:09", "2026-10-01") are not.
-static STANDALONE_NUMBER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?:^|[\s,;|(\[{"'=]|:\s)(\d[\d,]*(?:\.\d+)?)(?:$|[\s,;|)\]}"'])"#)
+/// "3 of 5", "3 out of 5": a share, held against the two numbers it names.
+static OF_TOTAL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:\*\*)?\s+(?:out\s+)?of\s+(?:\*\*)?(\d[\d,]*)\b").expect("static regex")
+});
+static SHARE_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(\d[\d,]*)(?:\*\*)?\s+(?:out\s+)?of\s+(?:\*\*)?$").expect("static regex")
+});
+
+/// A line that proposes or plans a value rather than reporting one: "move it to API_PORT = 9090",
+/// "you could set MAX_LEN = 80".
+static PROPOSAL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:move|moving|set|setting|switch|bump|raise|lower|increase|decrease|try|suggest|recommend|propose|could|should|would|consider|instead|let's|let\s+me)\b")
         .expect("static regex")
 });
 
@@ -204,33 +269,136 @@ fn whole(number: &str) -> Option<u64> {
     number.replace(',', "").parse().ok()
 }
 
-fn holds_name(line: &str, name: &str) -> bool {
-    LABEL.find_iter(line).any(|m| m.as_str() == name)
-}
-
-fn standalone_numbers(line: &str) -> Vec<u64> {
-    // Doubled spaces: two numbers that share one separator ("64 93") are both read.
+/// A number standing on its own in a line, with where it sits: "  64 GSM_DROP", "GSM_DROP: 64",
+/// `"x":64`, "connected_clients:5", "count=64", "64,KRK-008". Pieces of a timestamp, a date, an
+/// id, a decimal or a measurement ("02:47:09", "2026-10-01", "KRK-008", "1.5", "12ms") are not.
+/// The one reader for both questions the check asks of an output line: does it count this name
+/// (`beside`), and which numbers does it hold (`supported`).
+fn number_tokens(line: &str) -> Vec<(usize, usize, u64)> {
+    let b = line.as_bytes();
     let mut out = Vec::new();
-    let spaced = line.replace(' ', "  ");
-    for c in STANDALONE_NUMBER.captures_iter(&spaced) {
-        if let Some(n) = c.get(1).and_then(|m| whole(m.as_str())) {
-            out.push(n);
+    let mut i = 0;
+    while i < b.len() {
+        if !b[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut end = i;
+        while end < b.len()
+            && (b[end].is_ascii_digit()
+                || (b[end] == b','
+                    && end + 1 < b.len()
+                    && b[end + 1].is_ascii_digit()
+                    && end > start))
+        {
+            end += 1;
+        }
+        i = end;
+        let before_ok = match start.checked_sub(1).map(|k| b[k]) {
+            None => true,
+            Some(b':') => start < 2 || !b[start - 2].is_ascii_digit(),
+            Some(c) => c.is_ascii_whitespace() || b",;|([{\"'=*`+#".contains(&c),
+        };
+        let after = b.get(end).copied();
+        let next = b.get(end + 1).copied();
+        let after_ok = match after {
+            None => true,
+            Some(b':' | b'.') => !next.is_some_and(|n| n.is_ascii_digit()),
+            Some(c) => c.is_ascii_whitespace() || b",;|)]}\"'`*".contains(&c),
+        };
+        if before_ok && after_ok {
+            if let Some(n) = whole(line.get(start..end).unwrap_or_default()) {
+                out.push((start, end, n));
+            }
         }
     }
     out
 }
 
+fn name_matches<'a>(line: &'a str, name: &'a str) -> impl Iterator<Item = regex::Match<'a>> + 'a {
+    LABEL.find_iter(line).filter(move |m| m.as_str() == name)
+}
+
+fn holds_name(line: &str, name: &str) -> bool {
+    line.contains(name) && name_matches(line, name).next().is_some()
+}
+
+/// The line counts the name: a number right beside it, as `uniq -c`, a `key: value` dump, compact
+/// JSON, a CSV or a table prints it — "  64 GSM_DROP", "65 station=KRK-008", "GSM_DROP: 64",
+/// `"GSM_DROP":64`, "connected_clients:5", "| GSM_DROP | 64 |".
+fn beside(line: &str, name: &str) -> bool {
+    !beside_numbers(line, name).is_empty()
+}
+
+/// The numbers right beside the name on the line: the ones that count IT, not the line's others
+/// ("64 GSM_DROP, 93 LOCK_TIMEOUT" gives GSM_DROP 64 alone).
+fn beside_numbers(line: &str, name: &str) -> Vec<u64> {
+    const AFTER: &str = " \t:=,;|\"'`*";
+    const BEFORE: &str = " \t:=,;|\"'";
+    if !holds_name(line, name) {
+        return Vec::new();
+    }
+    let tokens = number_tokens(line);
+    let matches: Vec<regex::Match> = name_matches(line, name).collect();
+    tokens
+        .iter()
+        .filter(|&&(start, end, _)| {
+            matches.iter().any(|m| {
+                if start >= m.end() {
+                    // "64 GSM_DROP, 93 LOCK_TIMEOUT": a number that leads the next name counts that
+                    // name, not this one.
+                    let gap = line.get(m.end()..start).unwrap_or_default();
+                    let next = line
+                        .get(end..)
+                        .unwrap_or_default()
+                        .trim_start_matches(|c: char| BEFORE.contains(c));
+                    let leads_a_name = LABEL
+                        .find(next)
+                        .is_some_and(|n| n.start() == 0 && is_name(n.as_str()));
+                    !gap.is_empty() && gap.chars().all(|c| AFTER.contains(c)) && !leads_a_name
+                } else if end <= m.start() {
+                    let gap = line.get(end..m.start()).unwrap_or_default();
+                    let gap = match gap.rfind(|c: char| BEFORE.contains(c)) {
+                        Some(k)
+                            if gap
+                                .get(k + 1..)
+                                .unwrap_or_default()
+                                .strip_suffix('=')
+                                .is_some_and(|key| {
+                                    !key.is_empty()
+                                        && key.chars().all(|c| c.is_ascii_alphabetic() || c == '_')
+                                }) =>
+                        {
+                            gap.get(..=k).unwrap_or_default()
+                        }
+                        _ => gap,
+                    };
+                    !gap.is_empty() && gap.chars().all(|c| BEFORE.contains(c))
+                } else {
+                    false
+                }
+            })
+        })
+        .map(|&(_, _, n)| n)
+        .collect()
+}
+
 pub(crate) struct Binding {
     name: String,
     number: u64,
+    /// "3 of 5": the total the share names.
+    of: Option<u64>,
     co_names: Vec<String>,
 }
 
 pub(crate) fn bindings(reply: &str) -> Vec<Binding> {
     let mut out = Vec::new();
     for line in prose_lines(reply) {
-        // "`max_len=13`", "`_utc_time(34927)`": code with its arguments, not a count.
-        let line = CODE_WITH_DIGIT.replace_all(line, " ");
+        if PROPOSAL.is_match(line) {
+            continue;
+        }
+        let line = CODE_SPAN.replace_all(line, " ");
         let line = line.as_ref();
         let names: Vec<regex::Match> = LABEL
             .find_iter(line)
@@ -238,24 +406,37 @@ pub(crate) fn bindings(reply: &str) -> Vec<Binding> {
             .collect();
         for m in &names {
             let rest = line.get(m.end()..).unwrap_or_default();
-            let number = match PAREN_NUMBER.captures(rest) {
-                Some(c) => c.get(1),
-                None => BOUND_NUMBER
-                    .captures(rest)
-                    .filter(|c| c.get(2).is_none())
-                    .and_then(|c| c.get(1))
-                    .or_else(|| {
-                        NUMBER_BEFORE
-                            .captures(line.get(..m.start()).unwrap_or_default())
-                            .and_then(|c| c.get(1))
-                    }),
+            let head = line.get(..m.start()).unwrap_or_default();
+            let (number, of) = match PAREN_NUMBER.captures(rest) {
+                Some(c) => (c.get(1).and_then(|n| whole(n.as_str())), None),
+                None => match BOUND_NUMBER.captures(rest).filter(|c| c.get(2).is_none()) {
+                    Some(c) => {
+                        let n = c.get(1).expect("group 1");
+                        let of = OF_TOTAL
+                            .captures(rest.get(n.end()..).unwrap_or_default())
+                            .and_then(|o| whole(&o[1]));
+                        (whole(n.as_str()), of)
+                    }
+                    // "3 of 5 KRK-008 docks": the number before the name is the total.
+                    None => match NUMBER_BEFORE.captures(head).and_then(|c| c.get(1)) {
+                        Some(n) => match SHARE_BEFORE
+                            .captures(head.get(..n.start()).unwrap_or_default())
+                            .and_then(|s| whole(&s[1]))
+                        {
+                            Some(k) => (Some(k), whole(n.as_str())),
+                            None => (whole(n.as_str()), None),
+                        },
+                        None => (None, None),
+                    },
+                },
             };
-            let Some(number) = number.and_then(|n| whole(n.as_str())) else {
+            let Some(number) = number else {
                 continue;
             };
             out.push(Binding {
                 name: m.as_str().to_string(),
                 number,
+                of,
                 co_names: names
                     .iter()
                     .map(|o| o.as_str().to_string())
@@ -267,108 +448,270 @@ pub(crate) fn bindings(reply: &str) -> Vec<Binding> {
     out
 }
 
-/// What the session says about one name: the numbers on its lines, and how many lines hold it.
-fn supported(binding: &Binding, sources: &[&str]) -> bool {
+/// A sum or a difference the reply did over the numbers the outputs give a name: "FW_CHECK: 182"
+/// over "50 FW_CHECK" and "132 FW_CHECK", "KRK-042 = 6" over "59" and "53". Two or three terms
+/// of distinct values; the pool is only the numbers right beside the name, so a sum over unrelated
+/// counts (29 = 38 − 5 − 4 over a station table, 29 = 93 − 64 over "64 GSM_DROP, 93
+/// LOCK_TIMEOUT") cannot ground it.
+fn arithmetic(target: u64, pool: &[u64]) -> bool {
+    // ratio: past this many distinct values a three-term search stops meaning anything (64³/6
+    // combinations, and nearly every small number is reachable), so only pairs are tried.
+    const TRIPLE_POOL: usize = 64;
+    let t = target as i128;
+    let p: Vec<i128> = pool.iter().map(|&v| v as i128).collect();
+    for i in 0..p.len() {
+        for j in i + 1..p.len() {
+            if p[i] + p[j] == t || (p[i] - p[j]).abs() == t {
+                return true;
+            }
+            if p.len() > TRIPLE_POOL {
+                continue;
+            }
+            for k in j + 1..p.len() {
+                let (a, b, c) = (p[i], p[j], p[k]);
+                if [
+                    a + b + c,
+                    a + b - c,
+                    a - b + c,
+                    b + c - a,
+                    a - b - c,
+                    b - a - c,
+                    c - a - b,
+                ]
+                .contains(&t)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// One session line, read once: the names it holds that a binding asks about, and its numbers. A
+/// long session is tokenized once per reply, not once per binding.
+struct Line<'a> {
+    names: Vec<&'a str>,
+    numbers: Vec<u64>,
+}
+
+fn index<'a>(text: &'a str, wanted: &HashSet<&str>) -> Vec<Line<'a>> {
+    text.lines()
+        .map(|l| {
+            let mut names: Vec<&str> = LABEL
+                .find_iter(l)
+                .map(|m| m.as_str())
+                .filter(|n| wanted.contains(n))
+                .collect();
+            names.dedup();
+            Line {
+                names,
+                numbers: number_tokens(l).into_iter().map(|(_, _, n)| n).collect(),
+            }
+        })
+        .collect()
+}
+
+/// What the session says about one name: the numbers on its lines, how many lines hold it, sums
+/// and differences of those numbers, and for a share ("3 of 5") the two numbers anywhere in it.
+fn supported(
+    binding: &Binding,
+    sources: &[Vec<Line>],
+    all_numbers: &HashSet<u64>,
+    this_turn: &[&str],
+) -> bool {
+    if let Some(total) = binding.of {
+        if binding.number <= total
+            && all_numbers.contains(&binding.number)
+            && all_numbers.contains(&total)
+        {
+            return true;
+        }
+    }
     let mut numbers: HashSet<u64> = HashSet::new();
+    let mut pool: Vec<u64> = Vec::new();
     for source in sources {
-        let lines: Vec<&str> = source
-            .lines()
-            .filter(|l| holds_name(l, &binding.name))
+        let lines: Vec<&Line> = source
+            .iter()
+            .filter(|l| l.names.contains(&binding.name.as_str()))
             .collect();
         numbers.insert(lines.len() as u64);
         for line in &lines {
-            numbers.extend(standalone_numbers(line));
+            numbers.extend(line.numbers.iter().copied());
         }
-        // "KRK-008 … GSM_DROP (29)": lines holding both names, counted, and their numbers.
+        // "KRK-008 … GSM_DROP (29)": lines holding both names, counted.
         for co in &binding.co_names {
-            let both: Vec<&&str> = lines.iter().filter(|l| holds_name(l, co)).collect();
-            numbers.insert(both.len() as u64);
+            numbers.insert(
+                lines
+                    .iter()
+                    .filter(|l| l.names.contains(&co.as_str()))
+                    .count() as u64,
+            );
         }
     }
-    numbers.contains(&binding.number)
+    if numbers.contains(&binding.number) {
+        return true;
+    }
+    // A sum is worked out over what the model just read: this turn's outputs, not every count the
+    // session ever printed beside the name (RU-4 msg 219's "GSM_DROP (29)" is reachable from
+    // enough of those).
+    for line in this_turn.iter().flat_map(|o| o.lines()) {
+        for n in beside_numbers(line, &binding.name) {
+            if !pool.contains(&n) {
+                pool.push(n);
+            }
+        }
+    }
+    arithmetic(binding.number, &pool)
 }
 
 /// What this turn's output says about the name, for the note: the line that counts it, or how
 /// many records hold it.
-fn tally_line(name: &str, outputs: &[&str]) -> Option<String> {
-    let beside = beside_patterns(name)?;
+fn tally_line(name: &str, outputs: &[&str]) -> String {
     if let Some(l) = outputs
         .iter()
         .flat_map(|o| o.lines())
-        .find(|l| beside.is_match(l))
+        .find(|l| beside(l, name))
     {
         let t = l.trim();
-        return Some(if t.chars().count() > 80 {
+        return if t.chars().count() > 80 {
             format!(
                 "the output says “{}…”",
                 t.chars().take(80).collect::<String>()
             )
         } else {
             format!("the output says “{t}”")
-        });
+        };
     }
     let records = outputs
         .iter()
         .flat_map(|o| o.lines())
         .filter(|l| holds_name(l, name))
         .count();
-    Some(format!("{records} output lines hold it"))
+    format!("{records} output lines hold it")
 }
 
-fn beside_patterns(name: &str) -> Option<regex::RegexSet> {
-    let n = regex::escape(name);
-    regex::RegexSet::new([
-        format!(r#"(?:^|[\s,;|(\[{{"'])\d[\d,]*[\s:=,;|"']+(?:[A-Za-z_]+=)?{n}\b"#),
-        format!(r#"\b{n}["'`*]*[\s:=,;|"'`*]+\d[\d,]*(?:$|[\s,;|)\]}}"'])"#),
-    ])
-    .ok()
-}
-
-/// How this turn's output counts a name: a number right beside it, as `uniq -c`, a `key: value`
-/// dump, a CSV or a table prints it — "  64 GSM_DROP", "65 station=KRK-008", "GSM_DROP: 64",
-/// `"GSM_DROP": 64`, "| GSM_DROP | 64 |" — or two or more records holding it as a field value
-/// ("code=GSM_DROP", "a,KRK-008,b") for the reply to have counted. A name in code beside other
-/// words ("max_len: int = 60", "f(text, max_len)") is neither.
+/// How this turn's output counts a name: a number right beside it (`beside`), or two or more
+/// records holding it as a field value ("code=GSM_DROP", "a,KRK-008,b") for the reply to have
+/// counted. A name in code beside other words ("max_len: int = 60", "f(text, max_len)") is
+/// neither.
 fn tallied_in(outputs: &[&str], name: &str) -> bool {
     let n = regex::escape(name);
-    let Some(beside) = beside_patterns(name) else {
-        return false;
-    };
     let Ok(field) = Regex::new(&format!(r#"(?:[=,\t]["']?|\|\s*){n}\b"#)) else {
         return false;
     };
     outputs.iter().any(|o| {
-        o.lines().any(|l| beside.is_match(l))
-            || o.lines().filter(|l| field.is_match(l)).nth(1).is_some()
+        o.lines().any(|l| beside(l, name))
+            || o.lines()
+                .filter(|l| l.contains(name) && field.is_match(l))
+                .nth(1)
+                .is_some()
     })
 }
 
-fn unpaired_numbers(texts: &str, this_turn: &[&str], session: &[&str]) -> Vec<String> {
-    let mut found: Vec<(String, u64, Option<String>)> = Vec::new();
-    let mut tallied: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
-    let mut checked: HashSet<(String, u64, Vec<String>)> = HashSet::new();
+/// The texts a number may come from, gathered only when a reply binds a number to a name this
+/// turn's output tallies, and cut to the lines that hold one of those names: the check costs
+/// nothing on a reply that pairs no names, and a long session is read once per such reply, by a
+/// substring test before any regex.
+struct Sources<'a> {
+    messages: &'a [Message],
+    from: usize,
+    turn_calls: &'a [Call],
+}
+
+impl Sources<'_> {
+    fn gather(&self, names: &[&str], shares: bool) -> (Vec<String>, HashSet<u64>) {
+        let mut texts: Vec<String> = Vec::new();
+        let mut push = |t: String| texts.push(t);
+        for (i, m) in self.messages.iter().enumerate() {
+            if i < self.from && !m.is_agent_visible() {
+                continue;
+            }
+            for t in tool_output_texts(m) {
+                push(t);
+            }
+            if i >= self.from {
+                continue;
+            }
+            // The user's own words support a number; the model's earlier replies do not — round
+            // 4's "GSM_DROP (29)" at turn 7 repeated its own turn-3 invention ("29 GSM_DROP"). A
+            // compaction summary (agent-only, not a nudge) stands in for the outputs it replaced;
+            // its numbers the conversation never showed are marked "(unverified)" and dropped.
+            if m.role == Role::User && m.is_user_visible() {
+                push(text_parts(m));
+            } else if !m.is_user_visible() && !m.metadata.harness_nudge {
+                push(
+                    text_parts(m)
+                        .lines()
+                        .filter(|l| !l.contains("(unverified)"))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
+            }
+        }
+        for call in self.turn_calls {
+            push(argument_text(call));
+        }
+        let mut kept: Vec<String> = Vec::new();
+        let mut all_numbers: HashSet<u64> = HashSet::new();
+        for t in texts {
+            let lines: Vec<&str> = t
+                .lines()
+                .filter(|l| names.iter().any(|n| l.contains(n)))
+                .collect();
+            if shares {
+                for l in t.lines() {
+                    all_numbers.extend(number_tokens(l).into_iter().map(|(_, _, n)| n));
+                }
+            }
+            kept.push(lines.join("\n"));
+        }
+        (kept, all_numbers)
+    }
+}
+
+fn unpaired_numbers(texts: &str, this_turn: &[&str], sources: &Sources) -> Vec<String> {
+    let mut tallied: HashMap<String, bool> = HashMap::new();
+    let mut checked: HashSet<(String, u64, Option<u64>, Vec<String>)> = HashSet::new();
+    let mut candidates: Vec<Binding> = Vec::new();
     for binding in bindings(texts) {
         if !checked.insert((
             binding.name.clone(),
             binding.number,
+            binding.of,
             binding.co_names.clone(),
         )) {
             continue;
         }
-        let tallied_now = *tallied
+        if *tallied
             .entry(binding.name.clone())
-            .or_insert_with(|| tallied_in(this_turn, &binding.name));
-        if !tallied_now || supported(&binding, session) {
-            continue;
+            .or_insert_with(|| tallied_in(this_turn, &binding.name))
+        {
+            candidates.push(binding);
         }
-        if found
-            .iter()
-            .any(|(n, v, _)| *n == binding.name && *v == binding.number)
+    }
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    let mut names: Vec<&str> = Vec::new();
+    for b in &candidates {
+        names.push(&b.name);
+        names.extend(b.co_names.iter().map(String::as_str));
+    }
+    let shares = candidates.iter().any(|b| b.of.is_some());
+    let (kept, all_numbers) = sources.gather(&names, shares);
+    let wanted: HashSet<&str> = names.iter().copied().collect();
+    let session: Vec<Vec<Line>> = kept.iter().map(|t| index(t, &wanted)).collect();
+    let mut found: Vec<(String, u64)> = Vec::new();
+    for binding in candidates {
+        if supported(&binding, &session, &all_numbers, this_turn)
+            || found
+                .iter()
+                .any(|(n, v)| *n == binding.name && *v == binding.number)
         {
             continue;
         }
-        let line = tally_line(&binding.name, this_turn);
-        found.push((binding.name, binding.number, line));
+        found.push((binding.name, binding.number));
     }
     if found.is_empty() {
         return Vec::new();
@@ -376,10 +719,7 @@ fn unpaired_numbers(texts: &str, this_turn: &[&str], session: &[&str]) -> Vec<St
     let shown: Vec<String> = found
         .iter()
         .take(3)
-        .map(|(name, number, line)| match line {
-            Some(line) => format!("{name} as {number} ({line})"),
-            None => format!("{name} as {number}"),
-        })
+        .map(|(name, number)| format!("{name} as {number} ({})", tally_line(name, this_turn)))
         .collect();
     let more = match found.len() {
         n if n > 3 => format!(", and {} more", n - 3),
@@ -543,6 +883,44 @@ fn edits(calls: &[Call]) -> Vec<(String, String)> {
     out
 }
 
+/// Before a format the sentence converts AWAY from: "instead of DD.MM.YYYY", "from DD.MM.YYYY".
+static SOURCE_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:from|instead\s+of|rather\s+than|replac\w*|than|not|old)\s+(?:the\s+)?(?:old\s+)?(?:\*\*|__|`)?$")
+        .expect("static regex")
+});
+
+/// After a format the sentence converts away from: "every DD.MM.YYYY date to YYYY-MM-DD".
+static SOURCE_AFTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^(?:\*\*|__|`)?\s+(?:dates?|values?|entries|ones)\s+(?:to|into)\b")
+        .expect("static regex")
+});
+
+/// Before the format a sentence converts TO: "to YYYY-MM-DD", "into ISO YYYY-MM-DD".
+static TARGET_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:to|into)\s+(?:the\s+)?(?:\w+\s+)?(?:\*\*|__|`)?$").expect("static regex")
+});
+
+/// The formats a sentence claims the text is in. "now follow YYYY-MM-DD instead of DD.MM.YYYY" and
+/// "converted every DD.MM.YYYY date to YYYY-MM-DD" name the old format too; only the one converted
+/// TO is a claim about the text.
+fn target_formats<'a>(line: &str, named: Vec<regex::Captures<'a>>) -> Vec<regex::Captures<'a>> {
+    let span = |c: &regex::Captures| c.get(0).expect("whole match").range();
+    let any_target = named
+        .iter()
+        .any(|c| TARGET_BEFORE.is_match(line.get(..span(c).start).unwrap_or_default()));
+    named
+        .into_iter()
+        .filter(|c| {
+            let r = span(c);
+            let before = line.get(..r.start).unwrap_or_default();
+            let after = line.get(r.end..).unwrap_or_default();
+            let source = SOURCE_BEFORE.is_match(before) || SOURCE_AFTER.is_match(after);
+            let target = TARGET_BEFORE.is_match(before);
+            !source && (target || !any_target)
+        })
+        .collect()
+}
+
 fn format_taken_away(texts: &str, calls: &[Call]) -> Vec<String> {
     let edits = edits(calls);
     if edits.is_empty() {
@@ -555,7 +933,8 @@ fn format_taken_away(texts: &str, calls: &[Call]) -> Vec<String> {
         if !COMPLIANCE.is_match(line) || RULE_OR_PLAN.is_match(line) {
             continue;
         }
-        for c in DATE_FORMAT.captures_iter(line) {
+        let named: Vec<regex::Captures> = DATE_FORMAT.captures_iter(line).collect();
+        for c in target_formats(line, named) {
             let name = c[0].to_string();
             if !seen.insert(name.to_uppercase()) {
                 continue;
@@ -624,16 +1003,29 @@ fn shown_items(reply: &str) -> usize {
         .sum()
 }
 
-/// Reply lines that are output lines, as "all N lines" promises: a tally of them is not them.
+fn bare(line: &str) -> &str {
+    line.trim()
+        .trim_matches(|c: char| matches!(c, '`' | '*' | '-' | ' '))
+}
+
+/// Reply lines that are output lines, as "all N lines" promises: a tally of them is not them. A
+/// line is shown when it IS an output line, however short ("a=1", "line 7"), or when a longer one
+/// (twelve characters and up, where a chance match inside another line stops being likely) sits
+/// inside an output line the reply trimmed.
 fn output_lines_shown(reply: &str, outputs: &[&str]) -> usize {
+    let exact: HashSet<&str> = outputs
+        .iter()
+        .flat_map(|o| o.lines())
+        .map(bare)
+        .filter(|l| !l.is_empty())
+        .collect();
     reply
         .lines()
-        .map(|l| {
-            l.trim()
-                .trim_matches(|c: char| matches!(c, '`' | '*' | '-' | ' '))
+        .map(bare)
+        .filter(|l| !l.is_empty())
+        .filter(|l| {
+            exact.contains(l) || (l.chars().count() >= 12 && outputs.iter().any(|o| o.contains(l)))
         })
-        .filter(|l| l.chars().count() >= 12)
-        .filter(|l| outputs.iter().any(|o| o.contains(l)))
         .count()
 }
 
@@ -649,6 +1041,8 @@ fn all_claimed_part_shown(texts: &str, outputs: &[&str]) -> Vec<String> {
     } else {
         shown_items(texts)
     };
+    // ratio: under half shown is "a tally of them, not them"; under twenty lines a reply that
+    // shows a few is a short list, not a claim that hides the rest.
     if n < 20 || (shown as u64) * 2 >= n {
         return Vec::new();
     }
@@ -697,26 +1091,12 @@ pub(crate) fn check_unconditionally(
         return Vec::new();
     }
     let this_turn: Vec<&str> = turn_calls.iter().map(|c| c.output.as_str()).collect();
-    let mut session_texts: Vec<String> = Vec::new();
-    for m in messages[..from].iter().filter(|m| m.is_agent_visible()) {
-        session_texts.extend(tool_output_texts(m));
-        // The user's own words support a number; the model's earlier replies do not — round 4's
-        // "GSM_DROP (29)" at turn 7 repeated its own turn-3 invention ("29 GSM_DROP"), and a
-        // compaction summary is the model's words too.
-        if m.role == Role::User && m.is_user_visible() {
-            let t = text_parts(m);
-            if !t.is_empty() {
-                session_texts.push(t);
-            }
-        }
-    }
-    for m in &messages[from..] {
-        session_texts.extend(tool_output_texts(m));
-    }
-    let mut session: Vec<&str> = session_texts.iter().map(String::as_str).collect();
-    session.extend(this_turn.iter().copied());
-
-    let mut findings = unpaired_numbers(&texts, &this_turn, &session);
+    let sources = Sources {
+        messages,
+        from,
+        turn_calls: &turn_calls,
+    };
+    let mut findings = unpaired_numbers(&texts, &this_turn, &sources);
     findings.extend(format_taken_away(&texts, &turn_calls));
     findings.extend(all_claimed_part_shown(&texts, &this_turn));
     findings
