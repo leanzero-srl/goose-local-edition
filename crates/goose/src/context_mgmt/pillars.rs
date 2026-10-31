@@ -147,6 +147,12 @@ pub struct Pillars {
     /// The person's newest message is not in `asked`: the compaction re-sends it word for word
     /// right after the summary (kept once, not twice).
     pub resent_after: bool,
+    /// The person's newest message has no reply after it (WR-18, Gabee round 4, 2026-10-31): the
+    /// summary said "Pending Tasks: None. The report is generated." while that message — a saved
+    /// preference, sent just before the compaction — was still unanswered. goose computes it from
+    /// the conversation: the newest person's message is answered only when the newest activity
+    /// after it the person saw is a reply with text and no tool call.
+    pub unanswered: bool,
     /// P2 — the folders the work happened in, newest first (Q-394: after #3r's compaction the
     /// model knew `scripts/build_report.js` but not the folder its commands had cd'ed into, and
     /// searched the home folder for it).
@@ -248,6 +254,7 @@ impl Pillars {
         Self {
             budget: sources.budget,
             resent_after,
+            unanswered: newest_message_unanswered(messages),
             files_now: texts
                 .iter()
                 .map(|text| {
@@ -475,6 +482,18 @@ impl Pillars {
                             asked.chars
                         ));
                     }
+                }
+                if self.unanswered {
+                    out.push_str(&format!(
+                        "\n## Not answered yet\nThe person's newest message ([{}]{}) has no reply \
+                         after it: it is open work, whatever a summary says. Answer it.\n",
+                        self.asked.len() + usize::from(self.resent_after),
+                        if self.resent_after {
+                            ", re-sent word for word right after this block"
+                        } else {
+                            " above"
+                        }
+                    ));
                 }
             }
             Pillar::Files
@@ -1297,38 +1316,93 @@ fn file_line(shown: &str, file: &WrittenFile) -> String {
 /// tool result is not the person's). A `/compact` command is not kept (its note is P4). The copy
 /// of the newest message a compaction appends after its summary (visible to both) repeats the
 /// original that compaction hid from the agent, and is kept once.
+/// The words of a message the person wrote and the model reads: a user message the person saw,
+/// not a tool result, not a `/compact` command. One predicate for [`asked_of`] and
+/// [`newest_message_unanswered`].
+fn person_text(message: &Message) -> Option<String> {
+    if message.role != Role::User || !message.is_user_visible() {
+        return None;
+    }
+    if message
+        .content
+        .iter()
+        .any(|c| matches!(c, MessageContent::ToolResponse(_)))
+    {
+        return None;
+    }
+    let text: Vec<&str> = message
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            MessageContent::Text(t) if audience_includes(t.audience(), &Role::Assistant) => {
+                Some(t.text.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    let text = text.join("\n");
+    let text = text.trim();
+    if text.is_empty()
+        || parse_slash_command(text).is_some_and(|parsed| parsed.command == "compact")
+    {
+        return None;
+    }
+    Some(text.to_string())
+}
+
+/// Whether the person's newest message has no reply: after it, the newest activity the person
+/// saw is not a reply with text and no tool call — nothing at all (a compaction before the turn
+/// starts), or a tool call or its result (a compaction in the middle of the turn's work). Rows
+/// only the model sees (a kept tail's copies, goose's continuation line) are not the activity.
+/// A row goose wrote in the model's place when a turn ended without its answer: a provider error
+/// it ends the turn on, the empty-turn notice, the loop stop stamp alone. Not a reply.
+fn is_goose_notice(message: &Message) -> bool {
+    if message.metadata.provider_error.is_some() {
+        return true;
+    }
+    let text = message.as_concat_text();
+    let text = text.trim();
+    text == crate::agents::EMPTY_TURN_MESSAGE || text == crate::agents::GOOSE_STOPPED_AS_LOOP.trim()
+}
+
+fn newest_message_unanswered(messages: &[Message]) -> bool {
+    let Some(at) = messages.iter().rposition(|m| person_text(m).is_some()) else {
+        return false;
+    };
+    let mut answered = false;
+    for message in &messages[at + 1..] {
+        if !message.is_user_visible() {
+            continue;
+        }
+        let calls_a_tool = message.content.iter().any(|c| {
+            matches!(
+                c,
+                MessageContent::ToolRequest(_) | MessageContent::ToolResponse(_)
+            )
+        });
+        if calls_a_tool {
+            answered = false;
+        } else if message.role == Role::Assistant
+            && !is_goose_notice(message)
+            && message
+                .content
+                .iter()
+                .any(|c| matches!(c, MessageContent::Text(t) if !t.text.trim().is_empty()))
+        {
+            answered = true;
+        }
+    }
+    !answered
+}
+
 fn asked_of(messages: &[Message]) -> Vec<Asked> {
     let mut asked: Vec<Asked> = Vec::new();
     let mut previous_hidden_from_agent: Option<String> = None;
     for message in messages {
-        if message.role != Role::User || !message.is_user_visible() {
+        let Some(text) = person_text(message) else {
             continue;
-        }
-        if message
-            .content
-            .iter()
-            .any(|c| matches!(c, MessageContent::ToolResponse(_)))
-        {
-            continue;
-        }
-        let text: Vec<&str> = message
-            .content
-            .iter()
-            .filter_map(|c| match c {
-                MessageContent::Text(t) if audience_includes(t.audience(), &Role::Assistant) => {
-                    Some(t.text.as_str())
-                }
-                _ => None,
-            })
-            .collect();
-        let text = text.join("\n");
-        let text = text.trim();
-        if text.is_empty() {
-            continue;
-        }
-        if parse_slash_command(text).is_some_and(|parsed| parsed.command == "compact") {
-            continue;
-        }
+        };
+        let text = text.as_str();
         if message.is_agent_visible() && previous_hidden_from_agent.as_deref() == Some(text) {
             previous_hidden_from_agent = None;
             continue;
@@ -1475,13 +1549,48 @@ fn note_line(line: &str) -> Option<NoteVerdict> {
 /// `text` without its closed `<analysis>…</analysis>` sections, and whether one is left open.
 fn without_analysis(text: &str) -> (String, bool) {
     let mut text = text.to_string();
-    while let Some(start) = text.find("<analysis>") {
-        let Some(end) = text.get(start..).and_then(|rest| rest.find("</analysis>")) else {
+    let mut from = 0;
+    while let Some(start) = analysis_tag(&text, from, "<analysis") {
+        let Some(open_end) = text
+            .get(start..)
+            .and_then(|rest| rest.find('>'))
+            .map(|n| start + n + 1)
+        else {
             return (text, true);
         };
-        text.replace_range(start..start + end + "</analysis>".len(), "");
+        let Some(close) = analysis_tag(&text, open_end, "</analysis") else {
+            return (text, true);
+        };
+        let Some(close_end) = text
+            .get(close..)
+            .and_then(|rest| rest.find('>'))
+            .map(|n| close + n + 1)
+        else {
+            return (text, true);
+        };
+        text.replace_range(start..close_end, "");
+        from = start;
     }
     (text, false)
+}
+
+/// Where an `<analysis…>` tag (or `</analysis…>`, by `lead`) starts at or after `from`: the tag's
+/// name is `analysis` or begins with it (`<analysis_to_write>`, WR-18: Qwen3.5-9B opened its scratch
+/// that way and closed it with `</analysis>`, and the whole block was stored as the summary).
+fn analysis_tag(text: &str, from: usize, lead: &str) -> Option<usize> {
+    let mut at = from;
+    while let Some(n) = text.get(at..)?.find(lead) {
+        let start = at + n;
+        let next = text
+            .get(start + lead.len()..)
+            .and_then(|rest| rest.chars().next());
+        if next.is_some_and(|c| c == '>' || c == '_' || c == '-' || c == ' ' || c.is_alphanumeric())
+        {
+            return Some(start);
+        }
+        at = start + lead.len();
+    }
+    None
 }
 
 /// The verdict of a complete answer, its scratch aside.
@@ -1675,6 +1784,70 @@ mod tests {
         let mut params = CallToolRequestParams::new(tool.to_string());
         params.arguments = args.as_object().cloned();
         Message::assistant().with_tool_request(id, Ok(params))
+    }
+
+    fn kept_of(messages: &[Message]) -> String {
+        Pillars::build(
+            messages,
+            &KeptSources::default(),
+            LedgerRead::Entries(Vec::new()),
+        )
+        .render()
+    }
+
+    /// WR-18 (Gabee round 4, 2026-10-31): the summary said "Pending Tasks: None" while the
+    /// person's newest message, sent just before the compaction, had no reply. goose says so
+    /// itself: before the turn, mid-turn (a tool call is the newest activity), and not once a
+    /// reply the person saw follows. A kept tail's copy of a reply (seen by the model only) is no
+    /// reply.
+    #[test]
+    fn the_newest_message_without_a_reply_is_open_work() {
+        let reply = || Message::assistant().with_text("The report is in export/ROWEREK.md.");
+        let ask = |text: &str| Message::user().with_text(text);
+        let before_turn = vec![
+            ask("make the report"),
+            reply(),
+            ask("Remember: dates as DD.MM.YYYY"),
+        ];
+        let kept = kept_of(&before_turn);
+        assert!(kept.contains("## Not answered yet"), "{kept}");
+        assert!(kept.contains("message ([2] above)"), "{kept}");
+
+        let mut mid_turn = before_turn.clone();
+        mid_turn.push(call(
+            "t1",
+            "shell",
+            serde_json::json!({"command": "ls export"}),
+        ));
+        mid_turn.push(Message::user().with_tool_response("t1", Ok(text_result("ROWEREK.md"))));
+        assert!(kept_of(&mid_turn).contains("## Not answered yet"));
+
+        let mut failed_turn = mid_turn.clone();
+        failed_turn.push(Message::assistant().with_text(crate::agents::EMPTY_TURN_MESSAGE));
+        assert!(kept_of(&failed_turn).contains("## Not answered yet"));
+
+        let mut answered = mid_turn.clone();
+        answered.push(reply());
+        assert!(!kept_of(&answered).contains("## Not answered yet"));
+
+        let mut copy_only = mid_turn;
+        copy_only.push(reply().agent_only());
+        assert!(kept_of(&copy_only).contains("## Not answered yet"));
+    }
+
+    /// WR-18: Qwen3.5-9B opened its scratch as `<analysis_to_write>` and closed it with
+    /// `</analysis>`; the whole block was stored as the summary, every section twice.
+    #[test]
+    fn an_analysis_block_under_any_analysis_tag_is_scratch() {
+        let answer =
+            "<analysis_to_write>\n## Where we are\ndraft\n</analysis>\n\n## Where we are\nfinal";
+        assert_eq!(strip_scratch(answer), "## Where we are\nfinal");
+        assert_eq!(strip_scratch("<analysis>x</analysis>\nkept"), "kept");
+        // A word that only starts like the tag is text.
+        assert_eq!(
+            strip_scratch("see <analysis.md> and </analysis notes>"),
+            "see <analysis.md> and </analysis notes>".to_string()
+        );
     }
 
     fn chat() -> Vec<Message> {

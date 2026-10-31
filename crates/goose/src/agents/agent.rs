@@ -103,7 +103,7 @@ pub const RUNAWAY_STOP_CONTINUATION: &str = "Your last reply was stopped because
 pub const EMPTY_TURN_CONTINUATION: &str =
     "Your last reply had no text and no tool call. Continue the task now: \
      take the next step with a tool call, or give your final answer if the task is done.";
-const EMPTY_TURN_MESSAGE: &str =
+pub(crate) const EMPTY_TURN_MESSAGE: &str =
     "The model returned an empty response. Please resend your message to continue.";
 const DEFAULT_FRONTEND_INSTRUCTIONS: &str = "The following tools are provided directly by the frontend and will be executed by the frontend when called.";
 

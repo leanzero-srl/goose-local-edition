@@ -506,9 +506,54 @@ const LOOKING_COMMANDS: [&str; 22] = [
     "stat", "file", "diff", "test", "[", "[[", "type", "readlink", "realpath",
 ];
 
+/// `command` with its stream redirects made plain for splitting at `&`: `2>&1`, `>&2` and `1>&-`
+/// are dropped (they write no file), `&>` becomes `>`. WR-18: `ls <other chat's folder> 2>&1`
+/// was split at its `&` into `ls … 2>` and `1`, so it did not "only look", and its failure was
+/// listed as work still to do.
+fn without_stream_redirects(command: &str) -> String {
+    let chars: Vec<char> = command.chars().collect();
+    let mut out = String::with_capacity(command.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '>'
+            && chars.get(i + 1) == Some(&'&')
+            && !chars
+                .get(i + 2)
+                .is_some_and(|c| c.is_ascii_digit() || *c == '-')
+        {
+            // `>& file` sends both streams to a file: a write, kept as `>`.
+            out.push('>');
+            i += 2;
+            continue;
+        }
+        if chars[i] == '>' && chars.get(i + 1) == Some(&'&') {
+            // Drop the fd before `>` too (`2>&1`).
+            while out.ends_with(|c: char| c.is_ascii_digit()) {
+                out.pop();
+            }
+            i += 2;
+            while chars
+                .get(i)
+                .is_some_and(|c| c.is_ascii_digit() || *c == '-')
+            {
+                i += 1;
+            }
+            continue;
+        }
+        if chars[i] == '&' && chars.get(i + 1) == Some(&'>') {
+            i += 1;
+            continue;
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
 /// Whether every step of `command` (split at `&&`, `||`, `;` and `|`; its `cd` steps and
 /// `NAME=value` prefixes aside) is one of the [`LOOKING_COMMANDS`].
 fn only_looks(command: &str) -> bool {
+    let command = without_stream_redirects(command);
     let mut steps = 0;
     for step in command.split(['&', '|', ';']) {
         let mut words = step
@@ -598,8 +643,10 @@ const COMPOUND_WORDS: [&str; 17] = [
 /// macOS — a look-up that found nothing, listed as an open error too.
 pub(crate) fn exit_step(command: &str) -> Option<String> {
     let chars: Vec<char> = command.chars().collect();
-    let mut steps: Vec<String> = Vec::new();
+    let mut steps: Vec<(String, bool)> = Vec::new();
     let mut step = String::new();
+    // The step being read takes its input from a here-document's body.
+    let mut reads_body = false;
     let (mut single, mut double, mut backquote) = (false, false, false);
     let mut depth = 0usize;
     let mut heredocs: Vec<(String, bool)> = Vec::new();
@@ -659,12 +706,13 @@ pub(crate) fn exit_step(command: &str) -> Option<String> {
                     return None;
                 }
                 heredocs.push((word, strip_tabs));
+                reads_body = true;
                 step.extend(&chars[i..j]);
                 i = j;
                 continue;
             }
             '\n' if top => {
-                steps.push(std::mem::take(&mut step));
+                steps.push((std::mem::take(&mut step), std::mem::take(&mut reads_body)));
                 // The bodies of the here-documents this line opened: skipped, line by line,
                 // up to each one's end word.
                 for (word, strip_tabs) in std::mem::take(&mut heredocs) {
@@ -697,7 +745,7 @@ pub(crate) fn exit_step(command: &str) -> Option<String> {
                 continue;
             }
             ';' if top && chars.get(i + 1) != Some(&';') => {
-                steps.push(std::mem::take(&mut step));
+                steps.push((std::mem::take(&mut step), std::mem::take(&mut reads_body)));
                 i += 1;
                 continue;
             }
@@ -709,13 +757,23 @@ pub(crate) fn exit_step(command: &str) -> Option<String> {
     if single || double || backquote || depth != 0 {
         return None;
     }
-    steps.push(step);
-    let steps: Vec<String> = steps
+    steps.push((step, reads_body));
+    let steps: Vec<(String, bool)> = steps
         .iter()
-        .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
-        .filter(|s| !s.is_empty())
+        .map(|(s, body)| (s.split_whitespace().collect::<Vec<_>>().join(" "), *body))
+        .filter(|(s, _)| !s.is_empty())
         .collect();
-    let (last, earlier) = steps.split_last()?;
+    // A last step that reads a here-document (`python3 - <<'EOF'`) is the program in its body:
+    // its text alone would name every such program the same (WR-18: Gabee round 4's eight failed
+    // `python3 << 'EOF'` scripts, each a different program).
+    let (last, earlier) = match steps.split_last()? {
+        ((_, true), _) => return None,
+        ((last, false), earlier) => (
+            last.clone(),
+            earlier.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>(),
+        ),
+    };
+    let steps: Vec<String> = steps.into_iter().map(|(s, _)| s).collect();
     let first_word = |s: &str| s.split_whitespace().next().unwrap_or("").to_string();
     if steps.iter().any(|s| {
         s.split(['&', '|'])
@@ -739,7 +797,7 @@ pub(crate) fn exit_step(command: &str) -> Option<String> {
     if earlier.iter().any(stops_early) {
         return None;
     }
-    Some(last.clone())
+    Some(last)
 }
 
 /// The ids of the failed shell calls that only looked ([`only_looks`]): not errors still open.
@@ -835,9 +893,11 @@ mod tests {
             Some("x=$(ls; pwd) && make")
         );
         assert_eq!(
-            exit_step("python3 - <<EOF\nprint(1); print(2)\nEOF").as_deref(),
-            Some("python3 - <<EOF")
+            exit_step("python3 - <<EOF\nprint(1); print(2)\nEOF\nls x").as_deref(),
+            Some("ls x")
         );
+        // A last step that reads a body is that body's program: not told apart by its text.
+        assert_eq!(exit_step("cd /w && python3 << 'EOF'\nprint(1)\nEOF"), None);
         // A chain stays one step; a trailing comment line is not a step.
         assert_eq!(
             exit_step("make && ./run\n# done").as_deref(),
@@ -864,5 +924,9 @@ mod tests {
         assert!(!only_looks("cat > test/x.mjs <<'EOF'"));
         assert!(!only_looks("echo done >> /w/log.txt"));
         assert!(!only_looks("echo hi>/ro/file"));
+        assert!(only_looks("ls /Users/x/other-chat/work/export/ 2>&1"));
+        assert!(only_looks("grep -c x log &>/dev/null"));
+        assert!(!only_looks("ls x 2>&1 | python3 parse.py"));
+        assert!(!only_looks("ls x >& out.txt"));
     }
 }
