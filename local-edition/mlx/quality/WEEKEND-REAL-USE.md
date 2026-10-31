@@ -76,6 +76,7 @@ PURPOSE line required before every round (owner 18:40): `PURPOSE <id>: <decision
 PLANNED (not run yet; Studios are busy with the MiMo relaunch, so these wait for a free Studio):
 - PURPOSE RU-138-a: decides whether 3.0.138 really fixes WR-1/WR-2 (first run, Run it + Save as node) and WR-11 (gemma vision), or a 3.0.139 fix is needed · Studio: a generic path, any Mac reproduces it (fresh profile, small model).
 - PURPOSE RU-139-a: decides whether WR-17 (memory + bundled tools on by default, missing tool makes the model say "could not") and WR-19 grounding are merged for real use · Studio, on the 3.0.139 candidate build.
+- PURPOSE MiMo-138: does the WR-15 fix carry the MiMo split through compaction, and its real score (owner wants MiMo x2) · both Studios: the two-Mac split needs both
 - NOT planned on a MacBook: no open WR needs one. WR-5/WR-14 (NFS model load, Gabee only) are explained/minor and drive no decision now.
 | round | host · config · model · build | brief | result |
 |-------|-------------------------------|-------|--------|
