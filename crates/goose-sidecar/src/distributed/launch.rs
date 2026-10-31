@@ -219,8 +219,16 @@ pub enum RankProgram {
     /// what is evicted and which entries are inserted, so a peer that copied first would hold
     /// other entries and reuse other prefixes. `mlxLmServerTaillessPipelineSplit` (a requester
     /// before it) still reads, with it off.
+    ///
+    /// Tagged `mlxLmServerQuietCopy` since Q-529 (WR-28): `prompt_cache_quiet_limit_bytes` lets
+    /// every rank's prompt cache use the copy room the plan reserves inside the prefill workspace
+    /// while no prompt is left to read (the kept prompt[:-1] cut, decode, idle). It changes which
+    /// entries are inserted and kept, so a peer holding the strict limit there would keep other
+    /// entries and reuse other prefixes. `mlxLmServerFetchBudget` (a requester before it) still
+    /// reads, with the strict limit everywhere.
     #[serde(
-        rename = "mlxLmServerFetchBudget",
+        rename = "mlxLmServerQuietCopy",
+        alias = "mlxLmServerFetchBudget",
         alias = "mlxLmServerTaillessPipelineSplit",
         alias = "mlxLmServerPipelineSplit",
         alias = "mlxLmServerNamedConversation",
@@ -245,6 +253,12 @@ pub enum RankProgram {
         /// (`RankPlan::prompt_cache_limit_bytes`). Absent only in an older requester's spec.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt_cache_limit_bytes: Option<u64>,
+        /// Q-529 (WR-28): the bound the prompt cache holds cached + live KV inside while no row
+        /// has more than its last prompt token to read (`TensorLaunch::prompt_cache_quiet_limit_bytes`):
+        /// the plan's live KV plus the one copy it charges partly inside the prefill workspace,
+        /// which is free then. Absent in an older requester's spec: the strict limit everywhere.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt_cache_quiet_limit_bytes: Option<u64>,
         /// `--prompt-cache-size` (`RankPlan::prompt_cache_entries`), beside the limit.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt_cache_entries: Option<u64>,
@@ -461,6 +475,10 @@ impl GroupFormation {
 pub struct TensorLaunch {
     pub planned_bytes: u64,
     pub prompt_cache_limit_bytes: u64,
+    /// Q-529: the cache bound while no prompt is left to read (`RankPlan::prompt_cache_quiet_limit_bytes`
+    /// for a pipeline rank, weighted like the limit); never below `prompt_cache_limit_bytes`. A
+    /// tensor rank's plan charges a whole cached context, so its quiet bound is its limit.
+    pub prompt_cache_quiet_limit_bytes: u64,
     pub prompt_cache_entries: u64,
     /// Per rank: it bounds only this process's free buffers, nothing a peer must mirror.
     pub mlx_cache_limit_bytes: u64,
@@ -473,6 +491,7 @@ impl TensorLaunch {
         Ok(TensorLaunch {
             planned_bytes: plan.planned_bytes,
             prompt_cache_limit_bytes: plan.prompt_cache_limit_bytes(),
+            prompt_cache_quiet_limit_bytes: plan.prompt_cache_limit_bytes(),
             prompt_cache_entries: plan.prompt_cache_entries,
             mlx_cache_limit_bytes: plan.mlx_cache_limit_bytes(),
             prefill: plan.prefill.context(
@@ -644,6 +663,7 @@ impl TensorLaunch {
             .min()
             .unwrap_or(first.workspace_bytes);
         let mut limit = u64::MAX;
+        let mut quiet = u64::MAX;
         for (rank, launch) in launches.iter().enumerate() {
             let weight = full_weights[rank].min(swa_weights[rank]);
             let scaled = launch
@@ -651,7 +671,13 @@ impl TensorLaunch {
                 .checked_mul(weight)
                 .with_context(|| format!("rank {rank}'s weighted prompt cache limit overflows"))?;
             limit = limit.min(scaled);
+            let quiet_scaled = plans[rank]
+                .prompt_cache_quiet_limit_bytes()
+                .checked_mul(weight)
+                .with_context(|| format!("rank {rank}'s weighted quiet cache limit overflows"))?;
+            quiet = quiet.min(quiet_scaled);
         }
+        let quiet = quiet.max(limit);
         let entries = launches
             .iter()
             .map(|l| l.prompt_cache_entries)
@@ -662,6 +688,7 @@ impl TensorLaunch {
             launch.prefill.kv_bytes_per_token = full_multiple * kv_per_layer;
             launch.prefill.sequence_state_bytes = swa_multiple * state_per_layer;
             launch.prompt_cache_limit_bytes = limit;
+            launch.prompt_cache_quiet_limit_bytes = quiet;
             launch.prompt_cache_entries = entries;
         }
         let weights = full_weights
@@ -749,6 +776,7 @@ fn mlx_lm_server_specs(
         RankProgram::MlxLmServer {
             context_window,
             prompt_cache_limit_bytes: Some(launch.prompt_cache_limit_bytes),
+            prompt_cache_quiet_limit_bytes: Some(launch.prompt_cache_quiet_limit_bytes),
             prompt_cache_entries: Some(launch.prompt_cache_entries),
             prompt_cache_bytes: None,
             planned_bytes: launch.planned_bytes,
@@ -1443,6 +1471,7 @@ pub(crate) mod tests {
         TensorLaunch {
             planned_bytes,
             prompt_cache_limit_bytes,
+            prompt_cache_quiet_limit_bytes: prompt_cache_limit_bytes,
             prompt_cache_entries: 3,
             mlx_cache_limit_bytes: planned_bytes / 10,
             prefill: e2e_prefill(),
@@ -1470,6 +1499,7 @@ pub(crate) mod tests {
             RankProgram::MlxLmServer {
                 planned_bytes: 21,
                 prompt_cache_limit_bytes: Some(2),
+                prompt_cache_quiet_limit_bytes: Some(2),
                 prompt_cache_entries: Some(3),
                 prompt_cache_bytes: None,
                 context_window: 65_536,
@@ -3093,6 +3123,7 @@ print("GOOSE_TEST " + json.dumps(seen))
         let tensor = TensorLaunch {
             planned_bytes: 27_456_216_576,
             prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_quiet_limit_bytes: 9_431_744_512,
             prompt_cache_entries: 110,
             mlx_cache_limit_bytes: 2_745_621_658,
             // One row's 600 tokens of scores at a 1,000-token width: a 512-token chunk.
@@ -4617,6 +4648,7 @@ print("ok")
         let tensor = TensorLaunch {
             planned_bytes: 27_456_216_576,
             prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_quiet_limit_bytes: 9_431_744_512,
             prompt_cache_entries: 110,
             mlx_cache_limit_bytes: 2_745_621_658,
             prefill: e2e_prefill(),
@@ -4959,6 +4991,7 @@ os._exit(0)
         let tensor = TensorLaunch {
             planned_bytes: 27_456_216_576,
             prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_quiet_limit_bytes: 9_431_744_512,
             prompt_cache_entries: 110,
             mlx_cache_limit_bytes: 2_745_621_658,
             prefill: e2e_prefill(),
@@ -5484,6 +5517,7 @@ def render(messages, generation=True, tail=None):
         let tensor = TensorLaunch {
             planned_bytes: 27_456_216_576,
             prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_quiet_limit_bytes: 9_431_744_512,
             prompt_cache_entries: 6,
             mlx_cache_limit_bytes: 2_745_621_658,
             prefill: e2e_prefill(),
@@ -5731,6 +5765,7 @@ os._exit(0)
             let tensor = TensorLaunch {
                 planned_bytes: 27_456_216_576,
                 prompt_cache_limit_bytes: 9_431_744_512,
+                prompt_cache_quiet_limit_bytes: 9_431_744_512,
                 prompt_cache_entries: entries,
                 mlx_cache_limit_bytes: 2_745_621_658,
                 prefill: e2e_prefill(),
@@ -5898,6 +5933,7 @@ os._exit(0)
             let tensor = TensorLaunch {
                 planned_bytes: 27_456_216_576,
                 prompt_cache_limit_bytes: 9_431_744_512,
+                prompt_cache_quiet_limit_bytes: 9_431_744_512,
                 prompt_cache_entries: 64,
                 mlx_cache_limit_bytes: 2_745_621_658,
                 prefill: e2e_prefill(),
@@ -6332,6 +6368,142 @@ print("ok")
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
     }
 
+    /// Q-529 (WR-28) at run 3.0.138's sizes through the real mlx_lm 0.31.3 LRUPromptCache (MiMo
+    /// split 18/30 at 262,144, rank1 ...1793469182827.log, 2026-10-31): strict limit
+    /// 4,046,192,640 B (one live row: rank 0's workspace covers its whole copy), quiet limit
+    /// 7,949,778,944 B (`the_quiet_limit_keeps_the_chat_cut_past_half_the_context_...`), 15,360 B
+    /// per token + 78,643,200 B of state. A goose chat grows 120k -> 256k tokens, 4,000 a turn,
+    /// each prompt[:-1] cut and kept (Q-522) beside its live row, each end cached but never a
+    /// prefix of the next prompt (the template re-renders the answer: req-53 after req-52).
+    /// Every byte is charged when it exists: a prefill's row beside the cache (strict), the cut's
+    /// compacted copy beside its row (quiet), a finished row's end copy beside the buffer it was
+    /// cut from (quiet). CONTROL (strict everywhere, 3.0.138): the cut is refused from 127k and
+    /// every turn reads at most the system head from there (the live run's req-37 / req-53). FIXED: every turn to
+    /// 252k reads its whole previous prompt but its last token, by MOVING the cut into its row,
+    /// and no phase passes its bound.
+    #[test]
+    fn the_chat_cut_stays_cached_to_253k_inside_the_plan_at_run_3_0_138_sizes_through_real_mlx_lm()
+    {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+from mlx_lm.models.cache import LRUPromptCache
+
+p = {"kv_bytes_per_token": 15360, "sequence_state_bytes": 78643200, "batch_transient_ratio": 2.2}
+STRICT, QUIET = 4046192640, 7949778944
+ENTRIES, HEAD, SESSION = 205, 32000, "20261031_mimo138"
+TURNS = list(range(120000, 256001, 4000))  # a lone row inside the strict limit
+ANSWER = 1500
+upstream_pop = LRUPromptCache.CacheOrder.pop
+charge = lambda w: batch_kv_charge(p, 1, w)
+peaks = []
+
+
+class Layer:
+    def __init__(self, tokens):
+        self.nbytes = charge(tokens)
+
+    def is_trimmable(self):
+        return False
+
+    def __deepcopy__(self, memo):
+        peaks.append(("fetch-copy", STRICT, current[0].nbytes + self.nbytes))
+        copied = Layer.__new__(Layer)
+        copied.nbytes = self.nbytes
+        return copied
+
+
+current = [None]
+
+
+def replay(quiet):
+    del peaks[:]
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    convs = Conversations()
+    keep_conversations(LRUPromptCache.CacheOrder, convs)
+    cache = LRUPromptCache(max_size=ENTRIES, max_bytes=STRICT)
+    current[0] = cache
+
+    def insert(tokens, cache_type, live, left, finished):
+        layers = [Layer(len(tokens))]
+        n = layers[0].nbytes
+        limit = cache_limit_now(STRICT, quiet, left)
+        held = live + n if (finished and limit > STRICT) else live
+        if not room_to_insert(cache, "m", tokens, n, limit, held, convs.kept()):
+            return False
+        # The compacted copy exists beside the cache and whatever still holds its source.
+        peaks.append(("insert-" + cache_type, limit, cache.nbytes + max(held, live) + n))
+        convs.inserted(tokens, n)
+        cache.insert_cache("m", tokens, layers, cache_type=cache_type)
+        forget_dropped(cache._lru, convs.kept())
+        cache.trim_to(n_bytes=limit - live)
+        return True
+
+    chat = list(range(TURNS[-1] + 1))
+    insert(chat[:HEAD], "system", 0, 0, False)
+    reads, plans = [], []
+    for k, n in enumerate(TURNS):
+        prompt = chat[:n]
+        assert convs.tailless_turn(prompt, HEAD, SESSION)
+        convs.cut(prompt, n - 1, HEAD, SESSION)
+        found, rest, report = fetch_within(
+            cache, "m", prompt, STRICT, charge(n), convs.kept(),
+            cache.fetch_nearest_cache, cache.fetch_nearest_cache,
+        )
+        cache.trim_to(n_bytes=STRICT - charge(n))  # mlx_lm's own admission trim (server.py:797)
+        reads.append(n - len(rest) if found is not None else 0)
+        plans.append(report and report["plan"])
+        # The prefill: the row beside the cache, the workspace's scores apart (the plan's).
+        peaks.append(("prefill", STRICT, cache.nbytes + charge(n)))
+        # The cut, with the prompt's last token still to read.
+        insert(prompt[:-1], "assistant", charge(n), 1, False)
+        for w in range(n, n + ANSWER, 64):
+            room = cache_limit_now(STRICT, quiet, 0) - charge(w)
+            if cache.nbytes > room:
+                cache.trim_to(n_bytes=room)
+            peaks.append(("decode", quiet, cache.nbytes + charge(w)))
+        # The finished row's end: the batch has dropped it, its buffer is held until compacted.
+        end = prompt + [-1 - k] * ANSWER
+        insert(end, "assistant", 0, 0, True)
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    over = [(what, bound, v) for what, bound, v in peaks if v > bound]
+    return {"reads": reads, "plans": plans, "over": over, "peak": max(v for _, _, v in peaks)}
+
+
+previous = [0] + TURNS[:-1]
+control = replay(STRICT)
+assert not control["over"], control["over"][:3]
+# 3.0.138: warm while the cut fits beside its row (126,592 tokens), cold from there.
+assert all(r == m - 1 for r, m, n in zip(control["reads"], previous, TURNS) if 0 < m <= 124000), control["reads"]
+assert all(r <= HEAD for r, n in zip(control["reads"], TURNS) if n >= 132000), control["reads"]
+fixed = replay(QUIET)
+assert not fixed["over"], fixed["over"][:3]
+assert fixed["peak"] <= QUIET, fixed["peak"]
+warm = [(m, r) for r, m in zip(fixed["reads"], previous) if 0 < m <= 252000]
+assert all(r == m - 1 for m, r in warm), fixed["reads"]
+assert len(warm) == len([m for m in previous if 0 < m <= 252000]) and len(warm) >= 33, len(warm)
+# Beside the cut the read is a move (no copy) once the cut is wider than the strict room.
+assert {"move"} >= {pl for pl, m in zip(fixed["plans"], previous) if 130000 <= m <= 252000}, fixed["plans"]
+print("ok")
+"#;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!(
+                "{}{}{checks}",
+                include_str!("rank_prefill.py"),
+                include_str!("rank_boundary.py")
+            ))
+            .output()
+            .expect("the tensor venv's python runs");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
     /// Q-502's admission through the REAL mlx_lm 0.31.3 server on a tiny qwen3_5, the wrapper's
     /// own hooks installed (rank 0): E2E #3x's 15:10:16 shape. Chat A takes two agent steps; chat
     /// B's agent call is generating when B's side call (another system prompt, no tools, no tail)
@@ -6354,6 +6526,7 @@ print("ok")
             let tensor = TensorLaunch {
                 planned_bytes: 27_456_216_576,
                 prompt_cache_limit_bytes: 9_431_744_512,
+                prompt_cache_quiet_limit_bytes: 9_431_744_512,
                 prompt_cache_entries: 110,
                 mlx_cache_limit_bytes: 2_745_621_658,
                 prefill: e2e_prefill(),
@@ -6593,6 +6766,7 @@ os._exit(0)
             let tensor = TensorLaunch {
                 planned_bytes: 27_456_216_576,
                 prompt_cache_limit_bytes: 9_431_744_512,
+                prompt_cache_quiet_limit_bytes: 9_431_744_512,
                 prompt_cache_entries: 110,
                 mlx_cache_limit_bytes: 2_745_621_658,
                 prefill: e2e_prefill(),
@@ -6927,6 +7101,7 @@ os._exit(0)
         let tensor = TensorLaunch {
             planned_bytes: 27_456_216_576,
             prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_quiet_limit_bytes: 9_431_744_512,
             prompt_cache_entries: 6,
             mlx_cache_limit_bytes: 2_745_621_658,
             prefill: e2e_prefill(),
@@ -8191,6 +8366,7 @@ print("GOOSE_TEST " + json.dumps({"fixed": fixed, "shipped": shipped, "calls": C
         let tensor = TensorLaunch {
             planned_bytes: 27_456_216_576,
             prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_quiet_limit_bytes: 9_431_744_512,
             prompt_cache_entries: 110,
             mlx_cache_limit_bytes: 2_745_621_658,
             prefill: e2e_prefill(),
@@ -10572,6 +10748,7 @@ print("GOOSE_TEST " + json.dumps(seen))
         let tensor = TensorLaunch {
             planned_bytes: 27_456_216_576,
             prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_quiet_limit_bytes: 9_431_744_512,
             prompt_cache_entries: 110,
             mlx_cache_limit_bytes: 2_745_621_658,
             prefill: e2e_prefill(),
@@ -10885,6 +11062,7 @@ print("GOOSE_TEST " + json.dumps({"cases": cases, "hold": ToolCallStream.HOLD, "
         let tensor = TensorLaunch {
             planned_bytes: 27_456_216_576,
             prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_quiet_limit_bytes: 9_431_744_512,
             prompt_cache_entries: 110,
             mlx_cache_limit_bytes: 2_745_621_658,
             prefill: e2e_prefill(),
@@ -11422,9 +11600,28 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerFetchBudget");
+        assert_eq!(json["program"], "mlxLmServerQuietCopy");
         assert_eq!(json["fetch_within_budget"], true);
         assert_eq!(json["keep_tailless_conversations"], true);
+        assert_eq!(json["prompt_cache_quiet_limit_bytes"], 2);
+
+        // A requester before Q-529 (the fetch-budget tag, no quiet limit) holds the strict limit
+        // everywhere here: its own ranks hold it alike.
+        let mut fetch_budget = json.clone();
+        fetch_budget["program"] = "mlxLmServerFetchBudget".into();
+        fetch_budget
+            .as_object_mut()
+            .unwrap()
+            .remove("prompt_cache_quiet_limit_bytes");
+        let read: RankSpec = serde_json::from_value(fetch_budget).unwrap();
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                prompt_cache_quiet_limit_bytes: None,
+                fetch_within_budget: true,
+                ..
+            }
+        ));
 
         // A requester before Q-528 (the tailless tag, no fetch_within_budget) copies first here:
         // its own ranks copy first alike.
@@ -11514,7 +11711,7 @@ print("ok")
         }
         let refused = serde_json::from_value::<EveryConversationProgram>(json.clone()).unwrap_err();
         assert!(
-            refused.to_string().contains("mlxLmServerFetchBudget"),
+            refused.to_string().contains("mlxLmServerQuietCopy"),
             "{refused}"
         );
         let why = link_control_refusal(&refused.to_string());
@@ -11568,7 +11765,7 @@ print("ok")
         }
         let refused = serde_json::from_value::<KvDtypeProgram>(json.clone()).unwrap_err();
         assert!(
-            refused.to_string().contains("mlxLmServerFetchBudget"),
+            refused.to_string().contains("mlxLmServerQuietCopy"),
             "{refused}"
         );
         let why = link_control_refusal(&refused.to_string());
@@ -12303,6 +12500,7 @@ print("ok")
         let e2e = TensorLaunch {
             planned_bytes: 27_456_216_576,
             prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_quiet_limit_bytes: 9_431_744_512,
             prompt_cache_entries: 110,
             mlx_cache_limit_bytes: 2_745_621_658,
             prefill: e2e_prefill(),
@@ -12777,6 +12975,99 @@ mod pipeline_launch_tests {
         }
     }
 
+    /// Q-529 (WR-28) at run 3.0.138's sizes: MiMo-V2.6-Flash MOPD (vision tower on rank 0),
+    /// workhorse 76.7 GB available as rank 0, the mule 119 GB as rank 1, 262,144 tokens. The
+    /// planner fits no cached context beside the live one there (1 GB more on the mule and it
+    /// plans one, as 3.0.137's run a005ed73 did at 8.08 GB), so it charges the row's end copy
+    /// partly inside the prefill workspace — and rank 0's 2.16 GB workspace covers its whole
+    /// 2.02 GB copy, so its prompt cache charge is 0. The strict limit is then ONE live row's KV
+    /// (4,046,192,640 B, the live room + need of every RANK_FETCH_BUDGET line), so the kept chat
+    /// cut (prompt[:-1] beside its own live row) fit only to 126,592 tokens: the live run refused
+    /// it from req-37 (127,711) and req-53 (144,658) read cold. The quiet limit holds that cut
+    /// beside its row to 253,661 tokens, and on every rank stays inside what the plan charged.
+    #[test]
+    fn the_quiet_limit_keeps_the_chat_cut_past_half_the_context_inside_the_plan_at_run_3_0_138_sizes(
+    ) {
+        let mut facts = split_tests::mimo_facts();
+        facts.encoder_bytes = 1_457_188_864;
+        let mut nodes = split_tests::nodes();
+        nodes[1].available = 119_000_000_000;
+        let warn = super::super::WATCHDOG_WARN_RESERVE_RATIO;
+        let split = plan_layer_split(&facts, &nodes, warn, warn, Some(262_144)).unwrap();
+        assert_eq!(split.layers, vec![18, 30]);
+        assert_eq!(split.full_layers, vec![3, 6]);
+        assert_eq!(split.chunk, 32);
+        // The live run's GOOSE_RANK_CAPS planned figures.
+        assert_eq!(split.plans[0].planned_bytes, 68_240_465_792);
+        assert_eq!(split.plans[1].planned_bytes, 109_760_618_496);
+        assert_eq!(
+            split.plans[0].prompt_cache_bytes, 0,
+            "rank 0's workspace covers its copy"
+        );
+        let plans: Vec<&RankPlan> = split.plans.iter().collect();
+        let (launches, weights) =
+            TensorLaunch::for_pipeline_ranks(&plans, &split.layers, &split.full_layers).unwrap();
+        assert_eq!(weights[0], PipelineCacheWeights { full: 2, swa: 8 });
+        assert_eq!(weights[1], PipelineCacheWeights { full: 1, swa: 5 });
+        let strict = launches[0].prompt_cache_limit_bytes;
+        let quiet = launches[0].prompt_cache_quiet_limit_bytes;
+        assert_eq!(strict, 4_046_192_640);
+        assert_eq!(quiet, 7_949_778_944);
+        assert!(launches.iter().all(|l| (
+            l.prompt_cache_limit_bytes,
+            l.prompt_cache_quiet_limit_bytes
+        ) == (strict, quiet)));
+
+        // A chat cut of n tokens beside its own live row, in the launch's weighted unit
+        // (6 x 2,560 B per token, 120 x 655,360 B of sliding state).
+        let pair = |n: u64| 2 * (n * 15_360 + 78_643_200);
+        assert!(
+            pair(126_592) <= strict && pair(127_711) > strict,
+            "the live refusal point"
+        );
+        for n in [141_000, 200_000, 230_000, 253_661] {
+            assert!(pair(n) <= quiet, "{n} tokens: the cut fits beside its row");
+        }
+        assert!(pair(253_662) > quiet);
+
+        // Every rank's REAL KV at the quiet limit stays inside what its plan charged beside
+        // its weights (live + copy + workspace), with one token's scores at the width to spare.
+        for (rank, (plan, w)) in split.plans.iter().zip(&weights).enumerate() {
+            let weight = w.full.min(w.swa);
+            let real = quiet / weight;
+            let charged = plan.state_bytes + plan.prompt_cache_bytes + plan.workspace_bytes;
+            let one_token = 262_144 * facts.pair_bytes;
+            assert!(
+                real + one_token <= charged,
+                "rank {rank}: {real} + {one_token} > {charged}"
+            );
+        }
+
+        // The spec hands it to every rank, beside the strict limit.
+        let specs = specs_for(&split, &pipeline_config());
+        for spec in &specs {
+            let json = serde_json::to_value(spec).unwrap();
+            assert_eq!(json["program"], "mlxLmServerQuietCopy");
+            assert_eq!(json["prompt_cache_limit_bytes"], strict);
+            assert_eq!(json["prompt_cache_quiet_limit_bytes"], quiet);
+        }
+
+        // A plan that charges a whole cached context (the mule 1 GB roomier) gains nothing.
+        nodes[1].available = 120_000_000_000;
+        let roomy = plan_layer_split(&facts, &nodes, warn, warn, Some(262_144)).unwrap();
+        let plans: Vec<&RankPlan> = roomy.plans.iter().collect();
+        let (launches, _) =
+            TensorLaunch::for_pipeline_ranks(&plans, &roomy.layers, &roomy.full_layers).unwrap();
+        assert_eq!(
+            launches[0].prompt_cache_limit_bytes, 8_084_520_960,
+            "a005ed73's charge"
+        );
+        assert_eq!(
+            launches[0].prompt_cache_quiet_limit_bytes,
+            launches[0].prompt_cache_limit_bytes
+        );
+    }
+
     #[test]
     fn a_two_rank_mimo_launch_carries_the_split_the_weights_and_one_set_of_limits() {
         let split = mimo_split();
@@ -13090,13 +13381,13 @@ mod pipeline_launch_tests {
     fn the_pipeline_spec_round_trips_and_an_older_tag_reads_as_tensor() {
         let specs = specs_for(&mimo_split(), &pipeline_config());
         let json = serde_json::to_string(&specs[1]).unwrap();
-        assert!(json.contains("\"mlxLmServerFetchBudget\""), "{json}");
+        assert!(json.contains("\"mlxLmServerQuietCopy\""), "{json}");
         let back: RankSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(back, specs[1]);
 
         let tensor = serde_json::to_string(&specs[1].clone())
             .unwrap()
-            .replace("mlxLmServerFetchBudget", "mlxLmServerNamedConversation");
+            .replace("mlxLmServerQuietCopy", "mlxLmServerNamedConversation");
         let mut old: serde_json::Value = serde_json::from_str(&tensor).unwrap();
         let program = old.as_object_mut().unwrap();
         program.remove("pipeline_split");
