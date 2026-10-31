@@ -25,6 +25,7 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
 - 12:44 3.0.137 PUBLISHED (tag on d8f01a7582, lz.20): https://github.com/leanzero-srl/goose-local-edition/releases/tag/v3.0.137 ; workhorse installed + launched (About 3.0.137, chat opens, scorer sha = source). lz.21 pinned on main 0d8f179c97 -> 3.0.138 (built after MiMo frees the workhorse, before Flash). Gates meanwhile on Gabee only.
 - 13:10 all four Macs except the laptop on 3.0.137 (workmule via its own updater, after a stale ShipIt retry). MiMo Gauntlet split loading under holds (12:49). 3.0.138 integration agent: rel/3.0.138 = main(lz.21) + WR-1/2 + WR-11 + lz.22 (+ WR-4, WR-10 when checked); gates on Gabee; cut after MiMo frees the workhorse; Flash Gauntlet on 3.0.138 only.
 - 13:09 MiMo split Gauntlet LAUNCHED on installed 3.0.137: run openai-cloud-a005ed73 (run dir ~/Library/Application Support/Goose/benchmark/runs/build/...-r0), split [18,30] at 262,144 (a first plan at 12:53 gave 17/31 while node-run cargo jobs ran on the workhorse: stopped, re-planned), vendor 200, vision probe correct, holds + CI paused; vigil ~/goose-builds/quality/weekend/MIMO-137-VIGIL.md. TRAP: any cargo on the workhorse before a split load shrinks rank 0 and forces 17/31. Gabee data volume 99% full (13 GB): no gates there; 3.0.138 gate waits for the hold.
+- 18:05 agents resumed after the weekly limit (14:45-18:00 dead time). MiMo a005ed73 died at its first compaction (engine gone on 8191); holds still up; run agent diagnosing before any relaunch.
 - 11:06 MiMo 8985a86d scored; release agent waits for the Studio holds, then builds on the workhorse. Workmule Flash round runs AFTER the workmule auto-update check (tests the new release).
 
 ## Problems (one line each: id · found · evidence · fixed sha · re-test)
@@ -48,7 +49,7 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
 ## Rounds
 | round | host · config · model · build | brief | result |
 |-------|-------------------------------|-------|--------|
-| MiMo-137 | workhorse+workmule · split 18/30 · MiMo-V2.6-Flash 4-bit · 3.0.137 | Gauntlet sb-7.2 | launched 13:09:12, running |
+| MiMo-137 | workhorse+workmule · split 18/30 · MiMo-V2.6-Flash 4-bit · 3.0.137 | Gauntlet sb-7.2 | launched 13:09:12; ENDED EARLY 15:14 (incomplete-agent, 7515 s): at ~200k the compaction request got "stream ended before completion ... 0 data frames", then 127.0.0.1:8191 refused: the split engine died during the compaction prefill; cause under diagnosis by the run agent |
 | RU-2026-10-31-1 | gabee · single · Qwen3.5-9B · 3.0.136 | brief 1 code+debug | ran to end; no hang/crash/compaction; WR-10 BLOCKER, unrequested edits, false claims |
 | RU-2026-10-31-3 | gabee · single · gemma-4-e4b-8bit · 3.0.136 | brief 3 image+audio | audio understood (both voice notes); image blocked by WR-11 |
 | RU-2026-10-31-0/0b | gabee · single · Qwen3.5-9B-MLX-4bit · 3.0.136 | smoke 3 turns | after Q-522 workaround: right tools, recovered from PEP 668, 19 tests pass; 57/57/107 s per turn |
