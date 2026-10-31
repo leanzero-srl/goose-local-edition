@@ -167,3 +167,15 @@ llm_request.9.jsonl = the first request after its compaction, summary text insid
   TRAP: providers::key_connection only_a_refused_loopback... fails on this workhorse (macOS 27 accept-queue
   behaviour) on main too: not a compaction regression.
 
+- STEWARD 2026-10-31 (branch compaction-budget, graded the real MiMo two-Mac Gauntlet compaction of run 51bfaccd,
+  03:10, sessions.db msg 251: model summary true on the facts checked, all 5 sections, decisions + to-dos + next step
+  kept, the 4 contract files verbatim; next calls followed the Next step (DECISIONS.md, browser self-test), one
+  3-line BROWSER-TESTING.md re-read). FIXED: (1) the kept block opens with "## Calls used: n of M (k left in this
+  turn's budget)" + the wrap-up stage reached (`pillars::CallBudget`, mid-turn and recovery compactions; the summary
+  had undercounted its calls and `<turn-budget>` shows only past half). (2) a failed call whose arguments did not
+  parse (`developer::ARGUMENTS_DID_NOT_PARSE`, shared by every producer) is settled by the tool's next success: MiMo
+  leaked `app/util.py</parameter><parameter=old>...` into edit paths (10 of 140 calls) and the block listed 2 of them
+  twice each as open errors and to-dos. (3) "[5,85]" / "[15,340]" from the contract's "[5, 85]" / "[15, 340]" no
+  longer get "(unverified)": a comma token is known when written with a space after each comma, or, when it cannot be
+  one number, when each part was shown. PROOF: 4/4 mutations killed (~/scratch/steward/mutate.sh on gabee). OPEN
+  (engine, not compaction): the MiMo tool parser leaking `<parameter=...>` tags into arguments.

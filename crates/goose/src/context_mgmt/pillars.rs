@@ -98,9 +98,47 @@ pub enum LedgerRead {
     Unreadable(String),
 }
 
+/// The turn's model calls as the agent loop's cap counts them (`GOOSE_MAX_TURNS`, a recipe's or a
+/// session's `max_turns`), and the wrap-up stage the last call reached.
+///
+/// Why (the MiMo two-Mac Gauntlet vigil): a model's summary undercounted the calls it had spent, and
+/// neither the summary nor the kept block said how many of the budget were used; the `<turn-budget>`
+/// line shows only past half the budget, so after a compaction nothing goose wrote said it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CallBudget {
+    /// The calls of this turn the cap has counted so far.
+    pub used: u32,
+    /// The cap: the turn ends after this many calls.
+    pub max: u32,
+    /// The wrap-up stage the last call reached (`wrap_up::Stage::name`), when the nudge is on.
+    pub stage: Option<&'static str>,
+}
+
+impl CallBudget {
+    /// The block's line, `None` for no budget (a cap of 0 stops nothing).
+    pub fn line(&self) -> Option<String> {
+        if self.max == 0 {
+            return None;
+        }
+        let left = self.max.saturating_sub(self.used);
+        let mut line = format!(
+            "\n## Calls used: {} of {} ({left} left in this turn's budget)\n",
+            self.used, self.max
+        );
+        if let Some(stage) = self.stage {
+            line.push_str(&format!(
+                "The wrap-up stage reached: {stage} (goose's <wrap-up> line said what it asks).\n"
+            ));
+        }
+        Some(line)
+    }
+}
+
 /// P1–P5: the parts of a chat goose keeps itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pillars {
+    /// The turn's call budget, when the compaction happened inside a budgeted turn.
+    pub budget: Option<CallBudget>,
     /// P1 — every message the person wrote, oldest first.
     pub asked: Vec<Asked>,
     /// The person's newest message is not in `asked`: the compaction re-sends it word for word
@@ -170,6 +208,8 @@ pub struct KeptSources<'a> {
     pub preserved: Option<&'a str>,
     /// The session's folder: what the chat's tools resolve a relative path against.
     pub working_dir: Option<&'a Path>,
+    /// The turn's call budget at the compaction, `None` outside a turn.
+    pub budget: Option<CallBudget>,
 }
 
 impl Pillars {
@@ -203,6 +243,7 @@ impl Pillars {
             .collect();
         let todo = still_to_do(&failed, &files, &texts, messages);
         Self {
+            budget: sources.budget,
             resent_after,
             files_now: texts
                 .iter()
@@ -378,6 +419,9 @@ impl Pillars {
             "{KEPT_OPEN}\ngoose kept these word for word from the whole conversation — facts, not \
              a paraphrase.\n"
         );
+        if let Some(line) = self.budget.as_ref().and_then(CallBudget::line) {
+            out.push_str(&line);
+        }
         if !self.earlier.is_empty() || self.earlier_left_out > 0 {
             out.push_str(&format!(
                 "\n## The summaries earlier compactions stored ({}, oldest first; the work went on after each)\n",
@@ -1633,6 +1677,125 @@ mod tests {
         LedgerRead::Entries(lines.iter().map(|l| l.to_string()).collect())
     }
 
+    /// An edit whose arguments did not parse ran nothing: the next edit that succeeds settles it,
+    /// whatever text the model leaked into its path. Real case (MiMo two-Mac Gauntlet, run
+    /// 51bfaccd, 2026-10-31 03:10): the leaked path `app/util.py</parameter><parameter=old>…` was
+    /// listed twice under "Errors still open" and as "make `edit …` succeed" in the to-do, though
+    /// util.py had been edited since. Counter-cases: with no later edit success it stays open, and
+    /// an edit that ran and failed is still settled only by the same path.
+    #[test]
+    fn a_call_whose_arguments_did_not_parse_is_settled_by_the_tools_next_success() {
+        let unparsed = || {
+            CallToolResult::error(vec![RawContent::text(
+                "Error: Failed to parse arguments: missing required fields `before`, `after`. \
+                 Arrived: `path`. Nothing was changed. Call edit again with before and after \
+                 first, then path.",
+            )
+            .no_annotation()])
+        };
+        let ran_and_failed = || {
+            CallToolResult::error(vec![RawContent::text(
+                "Error: the before text was not found in app/notes.py",
+            )
+            .no_annotation()])
+        };
+        let leaked = "app/util.py</parameter><parameter=old>        except OSError:";
+        let mut messages = vec![
+            Message::user().with_text("build the app"),
+            call("e1", "edit", serde_json::json!({ "path": leaked })),
+            Message::user().with_tool_response("e1", Ok(unparsed())),
+            call(
+                "e2",
+                "edit",
+                serde_json::json!({"path": "app/notes.py", "before": "a", "after": "b"}),
+            ),
+            Message::user().with_tool_response("e2", Ok(ran_and_failed())),
+        ];
+        let open = |messages: &[Message]| {
+            Pillars::build(messages, &KeptSources::default(), entries(&[])).render()
+        };
+        let before = open(&messages);
+        assert!(before.contains("## Errors still open (2)\n"), "{before}");
+        assert!(
+            before.contains(leaked.split('<').next().unwrap()),
+            "{before}"
+        );
+
+        messages.push(call(
+            "e3",
+            "edit",
+            serde_json::json!({"path": "app/util.py", "before": "x", "after": "y"}),
+        ));
+        messages
+            .push(Message::user().with_tool_response("e3", Ok(text_result("Edited app/util.py"))));
+        let after = open(&messages);
+        assert!(after.contains("## Errors still open (1)\n"), "{after}");
+        assert!(
+            after.contains("(1 earlier failed calls were settled: the same call succeeded later)"),
+            "{after}"
+        );
+        let errors = after
+            .split("## Errors still open")
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .unwrap_or_default();
+        assert!(!errors.contains("parameter=old"), "{after}");
+        assert!(errors.contains("app/notes.py"), "{after}");
+        let todo = after
+            .split("## Still to do, by the tool calls")
+            .nth(1)
+            .and_then(|rest| rest.split("\n## ").next())
+            .unwrap_or_default();
+        assert!(
+            !todo.contains("parameter=old") && todo.contains("app/notes.py"),
+            "{after}"
+        );
+    }
+
+    /// The block says the turn's calls used of its budget, and the wrap-up stage when one was
+    /// reached; no budget (or a cap of 0) says nothing.
+    #[test]
+    fn the_kept_block_states_the_calls_used_of_the_budget() {
+        let with = |budget| {
+            Pillars::build(
+                &chat(),
+                &KeptSources {
+                    budget,
+                    ..Default::default()
+                },
+                entries(&[]),
+            )
+            .render()
+        };
+        let block = with(Some(CallBudget {
+            used: 118,
+            max: 150,
+            stage: Some("deliver"),
+        }));
+        assert!(block.starts_with(&format!(
+            "{KEPT_OPEN}\ngoose kept these word for word from the whole conversation — facts, not \
+             a paraphrase.\n\n## Calls used: 118 of 150 (32 left in this turn's budget)\nThe \
+             wrap-up stage reached: deliver (goose's <wrap-up> line said what it asks).\n"
+        )));
+        let early = with(Some(CallBudget {
+            used: 12,
+            max: 150,
+            stage: None,
+        }));
+        assert!(early.contains("## Calls used: 12 of 150 (138 left in this turn's budget)\n"));
+        assert!(!early.contains("wrap-up stage"));
+        for none in [
+            None,
+            Some(CallBudget {
+                used: 3,
+                max: 0,
+                stage: None,
+            }),
+        ] {
+            assert!(!with(none).contains("Calls used"));
+        }
+    }
+
     /// P1–P5 are what the calls and the person's words actually carry: each message whole, the
     /// file from its diff, the failed call with its own error, the note and pins verbatim, the
     /// ledger entry — and the `/compact` command is no message of the person's.
@@ -1646,6 +1809,7 @@ mod tests {
                 pins: &pins,
                 preserved: None,
                 working_dir: None,
+                budget: None,
             },
             entries(&["2026-09-28 12:20 [fact] 10 pass / 0 fail"]),
         );

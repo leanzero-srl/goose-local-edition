@@ -168,6 +168,7 @@ impl Agent {
         model_config: ModelConfig,
         conversation: Conversation,
         run: CompactionRun,
+        budget: Option<context_mgmt::pillars::CallBudget>,
     ) -> BoxStream<'a, CompactionStep> {
         if self.is_swarm_worker() {
             return self.run_worker_compaction(
@@ -205,7 +206,7 @@ impl Agent {
             };
 
             let prepared = self
-                .prepare_chat_compaction(session_id, &model_config, &run, &mut status)
+                .prepare_chat_compaction(session_id, &model_config, &run, budget, &mut status)
                 .await;
             let (state, chat, request) = match prepared {
                 Ok(prepared) => prepared,
@@ -390,6 +391,7 @@ impl Agent {
         session_id: &str,
         model_config: &ModelConfig,
         run: &CompactionRun,
+        budget: Option<context_mgmt::pillars::CallBudget>,
         status: &mut CompactionStatus,
     ) -> anyhow::Result<(CompactionState, ChatCompaction, SummaryRequest)> {
         let sessions = self.config.session_manager.clone();
@@ -469,6 +471,7 @@ impl Agent {
             context_limit: limit,
             working_dir: session.working_dir.clone(),
             progress: None,
+            budget,
         };
         Ok((state, chat, request))
     }
@@ -623,6 +626,7 @@ impl Agent {
                 model_config,
                 conversation,
                 CompactionRun::Manual { note },
+                None,
             );
             while let Some(step) = compaction.next().await {
                 match step {

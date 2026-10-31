@@ -189,7 +189,12 @@ impl CodeExecutionClient {
         let input: GetFunctionDetailsInput = arguments
             .map(|args| serde_json::from_value(Value::Object(args)))
             .transpose()
-            .map_err(|e| format!("Failed to parse arguments: {e}"))?
+            .map_err(|e| {
+                format!(
+                    "{}: {e}",
+                    crate::agents::platform_extensions::developer::ARGUMENTS_DID_NOT_PARSE
+                )
+            })?
             .ok_or("Missing arguments for get_function_details")?;
 
         let code_mode = self.get_code_mode(session_id).await?;
@@ -207,7 +212,12 @@ impl CodeExecutionClient {
         let input: ExecuteBashInput = arguments
             .map(|args| serde_json::from_value(Value::Object(args)))
             .transpose()
-            .map_err(|e| format!("Failed to parse arguments: {e}"))?
+            .map_err(|e| {
+                format!(
+                    "{}: {e}",
+                    crate::agents::platform_extensions::developer::ARGUMENTS_DID_NOT_PARSE
+                )
+            })?
             .ok_or("Missing arguments for execute_bash")?;
         let command = input.command;
         let code_mode = self.get_code_mode(session_id).await?;
@@ -242,7 +252,12 @@ impl CodeExecutionClient {
         let args: ExecuteWithToolGraph = arguments
             .map(|args| serde_json::from_value(Value::Object(args)))
             .transpose()
-            .map_err(|e| format!("Failed to parse arguments: {e}"))?
+            .map_err(|e| {
+                format!(
+                    "{}: {e}",
+                    crate::agents::platform_extensions::developer::ARGUMENTS_DID_NOT_PARSE
+                )
+            })?
             .ok_or("Missing arguments for execute_typescript")?;
 
         let session_id = &ctx.session_id;

@@ -457,6 +457,9 @@ pub struct ChatCompaction {
     /// The session's folder, which the kept block resolves relative paths against (Q-394).
     pub working_dir: std::path::PathBuf,
     pub progress: Option<CompactionObserver>,
+    /// The turn's call budget when the compaction happened between its calls (the kept block says
+    /// it); `None` at a reply's start and for `/compact`.
+    pub budget: Option<pillars::CallBudget>,
 }
 
 // ratio: the kept block may take a sixteenth of the window — E2E #3p's model-written summary was
@@ -900,6 +903,7 @@ async fn compact_core(
                 pins: &chat.pins,
                 preserved: preserved_text.as_deref(),
                 working_dir: Some(&chat.working_dir),
+                budget: chat.budget,
             },
             chat.ledger.clone(),
         );
@@ -3503,6 +3507,7 @@ mod tests {
             context_limit: None,
             working_dir: std::path::PathBuf::from("/Users/someone"),
             progress: None,
+            budget: None,
         }
     }
 
@@ -3884,6 +3889,7 @@ mod tests {
                 pins: &[],
                 preserved: None,
                 working_dir: Some(&inputs.working_dir),
+                budget: None,
             },
             LedgerRead::Entries(vec!["2026-09-28 12:20 [fact] 10 pass / 0 fail".to_string()]),
         );
