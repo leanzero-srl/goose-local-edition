@@ -1116,15 +1116,17 @@ if "prompt_cache_limit_bytes" in spec:
 
         def insert_cache(self, model, tokens, prompt_cache, *, cache_type="assistant"):
             limit = cache_limit()
+            quiet_now = limit > prompt_cache_limit
             if self.budgeted:
                 live = live_batch[0].prompt_cache_nbytes if live_batch else 0
                 nbytes = held_bytes(prompt_cache)
                 # Q-529: an entry a finished row left is still its row's buffer until compacted.
                 held = live
-                if limit > prompt_cache_limit and any(prompt_cache is c for c in finishing):
+                if quiet_now and any(prompt_cache is c for c in finishing):
                     held = live + nbytes
                 before = self.nbytes
-                fits = room_to_insert(self, model, tokens, nbytes, limit, held, kept_now())
+                bound = limit if quiet_now else self.max_bytes
+                fits = room_to_insert(self, model, tokens, nbytes, bound, held, kept_now())
                 if self.nbytes != before or not fits:
                     emit(
                         "RANK_INSERT_BUDGET",
@@ -1136,7 +1138,7 @@ if "prompt_cache_limit_bytes" in spec:
                             "cached_before": before,
                             "cached_after": self.nbytes,
                             "inserted": fits,
-                            "limit": limit,
+                            "limit": bound,
                         },
                     )
                 if not fits:
