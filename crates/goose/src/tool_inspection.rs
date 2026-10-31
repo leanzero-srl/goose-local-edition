@@ -231,7 +231,15 @@ pub fn apply_inspection_results_to_permissions(
                 }
             }
             InspectionAction::RequireApproval(_) => {
-                // Remove from approved, add to needs_approval if not already there
+                // A request already denied stays denied: asking would offer to run what the
+                // user's own permission refuses.
+                if permission_result
+                    .denied
+                    .iter()
+                    .any(|req| req.id == *request_id)
+                {
+                    continue;
+                }
                 permission_result
                     .approved
                     .retain(|req| req.id != *request_id);
@@ -305,5 +313,34 @@ mod tests {
         assert_eq!(updated_result.approved.len(), 0);
         assert_eq!(updated_result.denied.len(), 1);
         assert_eq!(updated_result.denied[0].id, "req_1");
+    }
+
+    #[test]
+    fn require_approval_never_resurrects_a_denied_request() {
+        let req = ToolRequest {
+            id: "req_d".to_string(),
+            tool_call: Ok(CallToolRequestParams::new("shell")
+                .with_arguments(object!({"command": "git reset --hard"}))),
+            metadata: None,
+            tool_meta: None,
+        };
+        let denied = PermissionCheckResult {
+            approved: vec![],
+            needs_approval: vec![],
+            denied: vec![req],
+        };
+        let result = apply_inspection_results_to_permissions(
+            denied,
+            &[InspectionResult {
+                tool_request_id: "req_d".to_string(),
+                action: InspectionAction::RequireApproval(Some("destroys work".to_string())),
+                reason: "destructive".to_string(),
+                confidence: 1.0,
+                inspector_name: "destructive".to_string(),
+                finding_id: None,
+            }],
+        );
+        assert_eq!(result.denied.len(), 1);
+        assert!(result.needs_approval.is_empty());
     }
 }
