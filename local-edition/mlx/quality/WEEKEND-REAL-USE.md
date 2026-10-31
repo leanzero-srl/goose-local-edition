@@ -26,6 +26,7 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
 - 13:10 all four Macs except the laptop on 3.0.137 (workmule via its own updater, after a stale ShipIt retry). MiMo Gauntlet split loading under holds (12:49). 3.0.138 integration agent: rel/3.0.138 = main(lz.21) + WR-1/2 + WR-11 + lz.22 (+ WR-4, WR-10 when checked); gates on Gabee; cut after MiMo frees the workhorse; Flash Gauntlet on 3.0.138 only.
 - 13:09 MiMo split Gauntlet LAUNCHED on installed 3.0.137: run openai-cloud-a005ed73 (run dir ~/Library/Application Support/Goose/benchmark/runs/build/...-r0), split [18,30] at 262,144 (a first plan at 12:53 gave 17/31 while node-run cargo jobs ran on the workhorse: stopped, re-planned), vendor 200, vision probe correct, holds + CI paused; vigil ~/goose-builds/quality/weekend/MIMO-137-VIGIL.md. TRAP: any cargo on the workhorse before a split load shrinks rank 0 and forces 17/31. Gabee data volume 99% full (13 GB): no gates there; 3.0.138 gate waits for the hold.
 - 18:05 agents resumed after the weekly limit (14:45-18:00 dead time). MiMo a005ed73 died at its first compaction (engine gone on 8191); holds still up; run agent diagnosing before any relaunch.
+- 18:20 coordinator: MiMo FIRST then Flash (no 4 h Flash run before MiMo is relaunched and scored). Studios meanwhile: workhorse = 3.0.138 gate + cut (CUT given), workmule = lz.22 Flash readiness replay (lz.21 agent a9702aa602d899e94); both yield to the MiMo relaunch.
 - 11:06 MiMo 8985a86d scored; release agent waits for the Studio holds, then builds on the workhorse. Workmule Flash round runs AFTER the workmule auto-update check (tests the new release).
 
 ## Problems (one line each: id · found · evidence · fixed sha · re-test)
@@ -44,12 +45,14 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
 | WR-12 | MAJOR (model) | "remember for all my code work" never proposed as a memory; a proposed memory was a wrong lesson | F21 | | |
 | WR-13 | MAJOR (model) | false "can't" claims ("I do not have a `git` tool" while shell exists; "cannot find style.css") ; turns end on "I will…"; send_note used to "reply to Aoife" | F27 F31 F23 F33 | | |
 | WR-14 | MINOR | models on NFS shown as "On disk"; gemma load 7 min 16 s; after Stop the list says "No models in the models folder yet" until Models tab opens | F26 | | |
+| WR-15 | 1 BLOCKER | MiMo split dies at the first compaction (~212k) on 3.0.137: rank-1 GPU OOM | MiMo-137 run a005ed73 | fixer a7e2fce1fe17d79ce | |
+| WR-16 | MAJOR (model) | Qwen3.5-9B retried a 170-line heredoc 6x on its own .format bug (two placeholders, one arg) blaming regex/encoding; mirrored the user's Polish greeting and answered English in Polish | Gabee RU-2026-10-31-4 msgs 893-920 | | |
 | WR-8 | harness | r1 cannot attach files (types text only, r1.mjs:455); playwright import hard-codes /Users/mihaiperdum | briefs agent 17f6fd984e | 6a405c47fb (setInputFiles per file + chip wait, ATTACH_FAIL stops; pw.mjs resolves playwright; 57 tests, mutations fail) | live check pending |
 
 ## Rounds
 | round | host · config · model · build | brief | result |
 |-------|-------------------------------|-------|--------|
-| MiMo-137 | workhorse+workmule · split 18/30 · MiMo-V2.6-Flash 4-bit · 3.0.137 | Gauntlet sb-7.2 | launched 13:09:12; ENDED EARLY 15:14 (incomplete-agent, 7515 s): at ~200k the compaction request got "stream ended before completion ... 0 data frames", then 127.0.0.1:8191 refused: the split engine died during the compaction prefill; cause under diagnosis by the run agent |
+| MiMo-137 | workhorse+workmule · split 18/30 · MiMo-V2.6-Flash 4-bit · 3.0.137 | Gauntlet sb-7.2 | launched 13:09:12; ENDED EARLY 15:14 (incomplete-agent, 7515 s): at ~200k the compaction request got "stream ended before completion ... 0 data frames", then 127.0.0.1:8191 refused: the split engine died during the compaction prefill; CAUSE OURS: rank 1 (workmule) METAL OOM at 13:14:19Z in prompt_batch.prompt width 212,048 on the compaction request (110.5->114.8 GB vs 111.9 planned / 115.45 limit); fixer a7e2fce1fe17d79ce (suspects prefix-keep e8b721c1ab overshoot + planner under-sizing ~3 GB; my angle: unchunked/unreused 212k prefill). Holds released 18:20. |
 | RU-2026-10-31-1 | gabee · single · Qwen3.5-9B · 3.0.136 | brief 1 code+debug | ran to end; no hang/crash/compaction; WR-10 BLOCKER, unrequested edits, false claims |
 | RU-2026-10-31-3 | gabee · single · gemma-4-e4b-8bit · 3.0.136 | brief 3 image+audio | audio understood (both voice notes); image blocked by WR-11 |
 | RU-2026-10-31-0/0b | gabee · single · Qwen3.5-9B-MLX-4bit · 3.0.136 | smoke 3 turns | after Q-522 workaround: right tools, recovered from PEP 668, 19 tests pass; 57/57/107 s per turn |
