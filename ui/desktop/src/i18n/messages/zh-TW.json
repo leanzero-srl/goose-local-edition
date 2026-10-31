@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "無法將此節點指向 {model}：{error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "選擇節點"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "詳細資訊"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "正在掛載"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "沒有設定已啟用的節點。"
+    "defaultMessage": "此聊天使用 Any node (Auto)，它只從你的 swarm 池作答，而池中沒有已開啟的節點。"
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "此節點沒有已儲存的 MLX 模型 — 請在 Providers 中選擇一個。"
@@ -9202,6 +9205,9 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "已儲存為節點「{name}」。"
+  },
+  "placementCard.savedNewChats": {
+    "defaultMessage": "新聊天現在從此節點開始：Any node (Auto) 沒有可以作答的節點。"
   },
   "placementCard.short": {
     "defaultMessage": "放不下：{node} 上還差 {gb}"

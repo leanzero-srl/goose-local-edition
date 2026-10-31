@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "No se pudo asignar {model} a este nodo: {error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "Elegir un nodo"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Detalles"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "Montando"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "No hay ningún nodo activo configurado."
+    "defaultMessage": "Este chat está en Any node (Auto), que solo responde desde tu pool de swarm, y ningún nodo de él está encendido."
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "No hay un modelo MLX guardado para este nodo — elige uno en Providers."
@@ -9202,6 +9205,9 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "Guardado como el nodo «{name}»."
+  },
+  "placementCard.savedNewChats": {
+    "defaultMessage": "Los chats nuevos empiezan ahora en este nodo: Any node (Auto) no tenía ningún nodo para responderlos."
   },
   "placementCard.short": {
     "defaultMessage": "No cabe: faltan {gb} en {node}"

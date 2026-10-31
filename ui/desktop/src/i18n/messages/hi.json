@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "{model} को इस नोड पर सेट नहीं किया जा सका: {error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "नोड चुनें"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "विवरण"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "माउंट हो रहा है"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "कोई सक्रिय नोड कॉन्फ़िगर नहीं है।"
+    "defaultMessage": "यह चैट Any node (Auto) पर है, जो केवल आपके swarm पूल से जवाब देता है, और उसमें कोई नोड चालू नहीं है।"
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "इस नोड के लिए कोई सहेजा MLX मॉडल नहीं — Providers में एक चुनें।"
@@ -9202,6 +9205,9 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "“{name}” नोड के रूप में सहेजा गया।"
+  },
+  "placementCard.savedNewChats": {
+    "defaultMessage": "नई चैट अब इसी नोड पर शुरू होंगी: Any node (Auto) के पास जवाब देने के लिए कोई नोड नहीं था।"
   },
   "placementCard.short": {
     "defaultMessage": "नहीं समाता: {node} पर {gb} कम"

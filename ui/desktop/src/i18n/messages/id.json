@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "Tidak dapat mengarahkan node ini ke {model}: {error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "Pilih node"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Detail"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "Memasang"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "Tidak ada node aktif yang dikonfigurasi."
+    "defaultMessage": "Chat ini ada di Any node (Auto), yang hanya menjawab dari pool swarm Anda, dan tidak ada node di dalamnya yang aktif."
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Tidak ada model MLX tersimpan untuk node ini — pilih satu di Providers."
@@ -9202,6 +9205,9 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "Disimpan sebagai node “{name}”."
+  },
+  "placementCard.savedNewChats": {
+    "defaultMessage": "Chat baru sekarang dimulai di node ini: Any node (Auto) tidak punya node untuk menjawabnya."
   },
   "placementCard.short": {
     "defaultMessage": "Tidak muat: kurang {gb} di {node}"

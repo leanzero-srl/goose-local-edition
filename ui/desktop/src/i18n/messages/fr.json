@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "Impossible d’associer {model} à ce nœud : {error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "Choisir un nœud"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Détails"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "Montage en cours"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "Aucun nœud actif n’est configuré."
+    "defaultMessage": "Ce chat est sur Any node (Auto), qui ne répond que depuis ton pool swarm, et aucun nœud de ce pool n’est activé."
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Aucun modèle MLX enregistré pour ce nœud — choisissez-en un dans Providers."
@@ -9202,6 +9205,9 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "Enregistré comme le nœud « {name} »."
+  },
+  "placementCard.savedNewChats": {
+    "defaultMessage": "Les nouveaux chats démarrent maintenant sur ce nœud : Any node (Auto) n’avait aucun nœud pour y répondre."
   },
   "placementCard.short": {
     "defaultMessage": "Ne tient pas : il manque {gb} sur {node}"
