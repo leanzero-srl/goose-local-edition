@@ -180,7 +180,17 @@ describe('New node · on your Macs', () => {
   it('tells the caller when the write moved new chats onto the new node', async () => {
     mockWrite.mockImplementation(async (config: NodesConfig) => {
       const id = config.defs![config.defs!.length - 1].id;
-      return { written: true, refusals: [], read: { config: { ...config, forNewChats: { kind: 'node', id } } } };
+      return {
+        written: true,
+        refusals: [],
+        read: { config: { ...config, forNewChats: { kind: 'node', id } } },
+      };
+    });
+    mockRead.mockResolvedValue({
+      config: { ...CONFIG, defs: [NODE_CLOUD.def], forNewChats: { kind: 'auto' } },
+      nodes: [NODE_CLOUD],
+      stored: true,
+      lmStudioHidden: 0,
     });
     const { onSaved } = renderDialog();
     await next();

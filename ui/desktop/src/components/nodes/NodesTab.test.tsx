@@ -432,10 +432,16 @@ describe('NodesTab', () => {
     mockWrite.mockImplementation(async (config: NodesConfig) => ({
       written: true,
       refusals: [],
-      read: { ...readOf([]), config: { ...config, forNewChats: { kind: 'node', id: NODE_FLASH.def.id } } },
+      read: {
+        ...readOf([]),
+        config: { ...config, forNewChats: { kind: 'node', id: NODE_FLASH.def.id } },
+      },
     }));
     store.state = readState(
-      readOf([NODE_SPLIT, NODE_FLASH, NODE_POOL, NODE_CLOUD], { ...CONFIG, forNewChats: { kind: 'auto' } })
+      readOf([NODE_SPLIT, NODE_FLASH, NODE_POOL, NODE_CLOUD], {
+        ...CONFIG,
+        forNewChats: { kind: 'auto' },
+      })
     );
     renderTab();
     const flash = screen
