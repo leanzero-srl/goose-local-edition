@@ -38,9 +38,11 @@ test('classification admits only Mach-O changes and CodeResources seals', () => 
   after['Contents/MacOS/x'].sha256 = 'b';
   after['Contents/_CodeSignature'] = { kind: 'directory', mode: 0o755, xattrs: {} };
   after['Contents/_CodeSignature/CodeResources'] = f('c');
+  after['Contents/Info.plist'].xattrs['com.apple.cs.CodeSignature'] = 'd';
   const c = classifyChanges(before, after, null, null);
+  assert.deepEqual(c.resources, ['Contents/Info.plist']);
   assert.deepEqual(c.machO, ['Contents/MacOS/x']);
   assert.equal(c.added.length, 2);
   const controls = classificationNegativeControls(before, after);
-  assert.deepEqual(controls.rejected, ['resourceBytes', 'extraAttribute', 'changedMode', 'missingPath', 'unexpectedNewFile']);
+  assert.deepEqual(controls.rejected, ['resourceBytes', 'extraAttribute', 'priorAttributeChanged', 'signatureAttributeOnChangedBytes', 'changedMode', 'missingPath', 'unexpectedNewFile']);
 });

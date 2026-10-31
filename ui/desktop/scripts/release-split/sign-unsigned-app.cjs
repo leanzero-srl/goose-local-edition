@@ -35,16 +35,22 @@ function requireSupportedThinMachO(file, relative) {
     'Unsupported Mach-O architecture for signing equivalence: ' + relative + ' (header ' + header.toString('hex') + '); thin arm64 or x86_64 required');
 }
 
-// Signing may only (a) change Mach-O bytes and (b) add _CodeSignature/CodeResources seals.
-// Every other path keeps kind, mode, xattrs and bytes. Returns the changed Mach-O list.
+// Signing may only (a) change Mach-O bytes, (b) add _CodeSignature/CodeResources seals and
+// (c) write com.apple.cs.* signature attributes on a signed non-Mach-O file (Electron's MainMenu.nib).
+// Every other path keeps kind, mode, bytes and every other xattr. Returns what changed, by class.
+const SIGNATURE_XATTR = /^com\.apple\.cs\./;
+const withoutSignatureXattrs = x => Object.fromEntries(Object.entries(x).filter(([k]) => !SIGNATURE_XATTR.test(k)));
 function classifyChanges(before, after, beforeRoot, afterRoot) {
-  const machO = [], added = [];
+  const machO = [], added = [], resources = [];
   for (const [p, item] of Object.entries(before)) {
     const now = after[p];
     assert(now, 'Missing after signing: ' + p);
     assert.equal(now.kind, item.kind, 'Kind changed: ' + p);
     assert.equal(now.mode, item.mode, 'Mode changed: ' + p);
-    assert.deepEqual(now.xattrs, item.xattrs, 'Extended attributes changed: ' + p);
+    assert.deepEqual(withoutSignatureXattrs(now.xattrs), withoutSignatureXattrs(item.xattrs), 'Extended attributes changed: ' + p);
+    const sigChanged = JSON.stringify(now.xattrs) !== JSON.stringify(item.xattrs);
+    if (sigChanged) assert(item.kind === 'file' && now.sha256 === item.sha256 && Object.keys(now.xattrs).some(k => SIGNATURE_XATTR.test(k)), 'Signature attributes changed on a non-resource: ' + p);
+    if (sigChanged) resources.push(p);
     if (item.kind === 'symlink') assert.equal(now.target, item.target, 'Symlink target changed: ' + p);
     if (item.kind !== 'file' || now.sha256 === item.sha256) continue;
     const m0 = beforeRoot ? machOMagic(path.join(beforeRoot, p)) : item.machO, m1 = afterRoot ? machOMagic(path.join(afterRoot, p)) : now.machO;
@@ -58,7 +64,7 @@ function classifyChanges(before, after, beforeRoot, afterRoot) {
     assert(ok, 'Unexpected new path after signing: ' + p);
     added.push(p);
   }
-  return { machO: machO.sort(), added: added.sort() };
+  return { machO: machO.sort(), added: added.sort(), resources: resources.sort() };
 }
 
 // Each mutation of the real fingerprints must be rejected by classifyChanges.
@@ -70,6 +76,8 @@ function classificationNegativeControls(before, after) {
   const cases = {
     resourceBytes: mutate(a => { a[resource].sha256 = '0'.repeat(64); }),
     extraAttribute: mutate(a => { a[resource].xattrs['com.example.added'] = '0'.repeat(64); }),
+    priorAttributeChanged: mutate(a => { a[resource].xattrs['com.apple.provenance'] = '2'.repeat(64); }),
+    signatureAttributeOnChangedBytes: mutate(a => { a[resource].sha256 = '3'.repeat(64); a[resource].xattrs['com.apple.cs.CodeSignature'] = '4'.repeat(64); }),
     changedMode: mutate(a => { a[resource].mode ^= 0o100; }),
     missingPath: mutate(a => { delete a[resource]; }),
     unexpectedNewFile: mutate(a => { a['Contents/Resources/unexpected.txt'] = { kind: 'file', mode: 0o644, xattrs: {}, sha256: '1'.repeat(64), bytes: 1 }; }),
@@ -197,7 +205,8 @@ async function main() {
   const signed = snapshot(app, 'after-signing.json');
   const classification = classifyChanges(before, signed, baseline, app);
   const negativeControls = classificationNegativeControls(before, signed);
-  for (const p of classification.machO) run('codesign', ['--verify', '--strict', path.join(app, p)]);
+  for (const p of [...classification.machO, ...classification.resources]) run('codesign', ['--verify', '--strict', path.join(app, p)]);
+  for (const p of classification.resources) assert.equal(codesignInfo(path.join(app, p)).team, TEAM, 'team id: ' + p);
   for (const p of classification.machO) assert.equal(codesignInfo(path.join(app, p)).team, TEAM, 'team id: ' + p);
   run('codesign', ['--verify', '--deep', '--strict', '--test-requirement', `=anchor apple generic and certificate leaf[subject.OU] = "${TEAM}"`, app]);
   const machOEquivalence = compareAllChangedMachO(classification, baseline, app);
