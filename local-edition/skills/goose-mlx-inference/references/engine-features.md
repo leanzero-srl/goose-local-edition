@@ -145,9 +145,10 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
 ## New chat, cold first token: what the cross-chat prefix cache reuses (Q-524, 2026-10-31, Gabee, Qwen3.5-9B, lz.19)
 - goose's prefix is byte-identical across new chats: measured `LCP snapped to checkpoint: shared=21860 entry_len=34055
   resumed_at=16384 remaining=5917` (engine log, two chats in two different work dirs). Tools sorted (reply_parts.rs),
-  extensions sorted, time/cwd live in the per-turn turn-context block, hints/project text at the very end. Since Q-524 the
-  project-scoped lists (skills, summon: `instructions_follow_working_dir`) render after every other extension and list the
-  shared entries before the project's own, so another PROJECT also shares the bulk.
+  extensions sorted, time/cwd live in the per-turn turn-context block, hints/project text at the very end. Since Q-524 every
+  extension's folder-specific part (project skills, project agents/recipes, project memories, the $HOME note;
+  McpClientTrait::get_project_instructions, MCP servers via the goose/projectInstructions fromByte capability)
+  renders after ALL shared text, so a chat in another PROJECT also shares the bulk.
 - Qwen3.5/3.8 templates render the TOOLS FIRST (~6k tokens), then goose's system text (~15.7k); token map tool:
   apply_chat_template + offset_mapping on a `llm_request.N.jsonl` (goose logs keep the last 10 requests only).
 - The loss is the ENGINE's: a hybrid (GatedDeltaNet) entry is reusable only at a recorded recurrent checkpoint
