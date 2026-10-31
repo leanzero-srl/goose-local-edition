@@ -552,3 +552,4 @@ wav/mp3/m4a, video): WER 0-1 % clean, 6.3 % real reading, 5.6 % Romanian, 2-3 % 
 boundaries were the main loss -> cut now picks the quietest 100 ms (6a611e3bb4). Qwen3-Omni 4bit on lz.19: not
 servable (empty/garbled audio, vision broken). Updater: works on quit and via install-now; startup-only check
 fixed (4 h re-check). Details: omni-media.md "Clip-set proof".
+- 2026-10-31 blubber audit: LONG RUNS cut to one compact block; references/long-runs.md is now the detail home (was a verbatim copy).
