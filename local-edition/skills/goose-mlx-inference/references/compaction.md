@@ -198,3 +198,22 @@ llm_request.9.jsonl = the first request after its compaction, summary text insid
   GRADER TRAP: when reading "what happened after a compaction" from sessions.db, rows sharing the compaction's
   created_timestamp (and agentVisible copies of agent-invisible originals) are the kept tail, not new calls; real
   post-compaction calls start after the fresh `<turn-context>` row with the low context figure.
+- STEWARD 2026-10-31 d (branch compaction-exit-step, merge 9bc2132ee0; the live MiMo 8985a86d's SECOND compaction,
+  10:14, 212,139 -> ~31k, summary A-: facts true where checked, 5 sections, priorities + Next step followed within 6
+  calls, no re-reads). FIXED: a failed shell call is judged by its EXIT STEP (`facts::exit_step`: the last top-level
+  step, split at `;`/newline outside quotes, `$(…)`, backquotes and here-document bodies; None for compound commands,
+  `set -e`/`exit` in an earlier step, unbalanced text): (1) a later success of that step settles it (`cat > perf2.mjs
+  <<'EOF' … EOF` + `node test/perf2.mjs` failed, the next `cd … && node test/perf2.mjs` worked: was an open error AND
+  a to-do); (2) it is a look-up when that step only looks (`node fill.mjs; nproc; grep … /proc/cpuinfo` exited 2 on
+  macOS); (3) `only_looks` no longer counts a step that redirects into a file (`echo x > f`, `cat > f <<EOF`) as a
+  look. Not settled on purpose: a different program that later worked (`python3 test/dump.py` vs an inline
+  `python3 - <<EOF`). PROOF: 5/5 mutations killed (laptop ~/scratch/steward/mutate.sh M7-M11). Gates: clippy -D
+  warnings clean; lib 2440 pass + key_connection loopback (known env); integration all pass except
+  test_claude_code_provider/test_codex_provider (live CLIs, untouched). The run itself was on eca39ae893, so its block
+  still showed the round a/b defects (4 unparsed edits open, "86 calls ran here"; and the model counted ~121 calls
+  used where 139+ ran: the round-a "Calls used" line fixes that).
+  ENGINE FINDING (not compaction code): the summary request took 30 min because it read 35,503 of 212,772 tokens from
+  cache; rank0 logged `GOOSE_RANK_PREFIX_LOST {"cached": 35503, "tokens": 202917, "while_keeping": null}` - the
+  conversation's kept prefix (assistant 2 seqs 6.33 GB -> 1 seq 3.34 GB) was dropped while req-121 generated 9,221
+  tokens, with no other chat on the engine. The first compaction of the same run read 209,398 of 215,948 (7 min).
+  Log: /private/tmp/gmimo/root/state/logs/distributed/rank0-work-s-mac-studio-1793416063838.log, 07:44:15Z.
