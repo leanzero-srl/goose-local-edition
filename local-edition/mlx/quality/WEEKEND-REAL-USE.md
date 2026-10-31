@@ -30,6 +30,7 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
 - 11:06 MiMo 8985a86d scored; release agent waits for the Studio holds, then builds on the workhorse. Workmule Flash round runs AFTER the workmule auto-update check (tests the new release).
 
 - 18:35 OWNER RULE (via coordinator): MacBooks (laptop, Gabee) are for office + episode work (Gabee also runs the episode voice): NO model inference and NO real-use rounds there. All real-use rounds run on the Studios. Round RU-2026-10-31-2 on Gabee cancelled (job cfef); Gabee engine rapid-mlx pid 37337 stopped (SIGTERM, exited in ~15 s, no respawn); only light leftovers: the app's web-search MCP child (Gabee config has Web Search/Documents/Memory enabled by the runner at 18:10).
+- 18:40 OWNER RULE REFINED (supersedes 18:35 on inference): a MacBook may run inference ONLY when the test needs that specific Mac (64 GB / M3 behaviour, a bug that only shows there); never generic rounds a Studio could run. EVERY round needs a stated purpose: before it runs, add one line under Rounds: `PURPOSE <round id>: decision/fix it drives · why this Mac`. No decision or fix driven = do not run. The Gabee Qwen3.5-9B round 2 was judged meaningless (no decision behind it).
 
 ## Problems (one line each: id · found · evidence · fixed sha · re-test)
 | id | rank | problem | found (round, evidence) | fixed sha | re-test |
@@ -55,6 +56,7 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
 | WR-8 | harness | r1 cannot attach files (types text only, r1.mjs:455); playwright import hard-codes /Users/mihaiperdum | briefs agent 17f6fd984e | 6a405c47fb (setInputFiles per file + chip wait, ATTACH_FAIL stops; pw.mjs resolves playwright; 57 tests, mutations fail) | live check pending |
 
 ## Rounds
+PURPOSE line required before every round (owner 18:40): `PURPOSE <id>: <decision/fix it drives> · <why this Mac>`.
 | round | host · config · model · build | brief | result |
 |-------|-------------------------------|-------|--------|
 | MiMo-137 | workhorse+workmule · split 18/30 · MiMo-V2.6-Flash 4-bit · 3.0.137 | Gauntlet sb-7.2 | launched 13:09:12; ENDED EARLY 15:14 (incomplete-agent, 7515 s): at ~200k the compaction request got "stream ended before completion ... 0 data frames", then 127.0.0.1:8191 refused: the split engine died during the compaction prefill; CAUSE OURS: rank 1 (workmule) METAL OOM at 13:14:19Z in prompt_batch.prompt width 212,048 on the compaction request (110.5->114.8 GB vs 111.9 planned / 115.45 limit); fixer a7e2fce1fe17d79ce (suspects prefix-keep e8b721c1ab overshoot + planner under-sizing ~3 GB; my angle: unchunked/unreused 212k prefill). Holds released 18:20. |
