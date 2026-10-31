@@ -82,9 +82,12 @@ pub struct Document {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkFolder {
     pub path: String,
-    /// Calls that ran here: a shell command that opened with `cd` to it, or a call whose `cwd`
-    /// argument named it.
+    /// Calls that worked here ([`call_place`]): a shell command that opened with `cd` to it or ran
+    /// in it, a call whose `cwd` argument named it, a call on a file under it.
     pub calls: usize,
+    /// The commands that moved here (`cd` to it, a `cwd` naming it): what makes a folder other than
+    /// the chat's one whose relative paths are not the chat's.
+    moved_here: usize,
     /// Files the `write`/`edit` calls changed under it.
     pub files: usize,
     /// The newest call that worked here, by its place among the conversation's calls.
@@ -761,7 +764,7 @@ impl Pillars {
     /// paths were that folder's.
     fn elsewhere(&self) -> Option<String> {
         let chat = self.chat_folder.as_deref()?;
-        if !self.work.iter().any(|f| f.calls > 0 && f.path != chat) {
+        if !self.work.iter().any(|f| f.moved_here > 0 && f.path != chat) {
             return None;
         }
         Some(format!(
@@ -1149,13 +1152,11 @@ fn work_folders(
         };
         let path = folder.display().to_string();
         match folders.iter_mut().find(|f| f.path == path) {
-            Some(known) => {
-                known.calls += 1;
-                known.newest = position;
-            }
+            Some(known) => known.moved_here += 1,
             None => folders.push(WorkFolder {
                 path,
-                calls: 1,
+                calls: 0,
+                moved_here: 1,
                 files: 0,
                 newest: position,
             }),
@@ -1191,6 +1192,7 @@ fn work_folders(
                         folders.push(WorkFolder {
                             path,
                             calls: 0,
+                            moved_here: 0,
                             files: 0,
                             newest: 0,
                         });
@@ -1205,8 +1207,44 @@ fn work_folders(
             folder.newest = folder.newest.max(at);
         }
     }
+    // Every call is counted in the deepest folder that holds the place it worked: its `cd`/`cwd`
+    // folder, else the file it named, else (a command with neither) the chat's folder. Why (MiMo
+    // two-Mac Gauntlet run 8985a86d, compaction at call 55, 2026-10-31): only the `cd` commands
+    // were counted, and the block said "14 calls ran here" of a folder all 55 had worked in.
+    for (position, (_, arguments)) in calls.iter().enumerate() {
+        let Some(place) = call_place(*arguments, working_dir) else {
+            continue;
+        };
+        let holder = folders
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.path == place || is_under(&place, &f.path))
+            .max_by_key(|(_, f)| f.path.len())
+            .map(|(i, _)| i);
+        if let Some(i) = holder {
+            folders[i].calls += 1;
+            folders[i].newest = folders[i].newest.max(position);
+        }
+    }
     folders.sort_by_key(|f| std::cmp::Reverse(f.newest));
     folders
+}
+
+/// Where a call worked, absolute: its folder ([`call_folder`]), else the path it named, else the
+/// chat's folder for a command run without one; `None` for a call that names no place.
+fn call_place(arguments: Option<&Arguments>, base: Option<&Path>) -> Option<String> {
+    if let Some(folder) = call_folder(arguments, base) {
+        return Some(folder.display().to_string());
+    }
+    let arguments = arguments?;
+    let named = ["path", "file_path", "source"]
+        .iter()
+        .find_map(|key| arguments.get(*key).and_then(|v| v.as_str()));
+    match named {
+        Some(path) => resolve_folder(path, base).map(|p| p.display().to_string()),
+        None if arguments.contains_key("command") => base.map(|b| b.display().to_string()),
+        None => None,
+    }
 }
 
 /// The "Still to do" list ([`Pillars::todo`]): open errors first (each a call to make succeed),
@@ -1677,6 +1715,42 @@ mod tests {
         LedgerRead::Entries(lines.iter().map(|l| l.to_string()).collect())
     }
 
+    /// Every call that worked in the chat's folder is counted there, not only the `cd` commands.
+    /// Real case (MiMo two-Mac Gauntlet run 8985a86d, compaction at call 55, 2026-10-31): "14 calls
+    /// ran here" of the one folder all 55 calls had worked in.
+    #[test]
+    fn every_call_that_worked_in_a_folder_is_counted_there() {
+        const W: &str = "/private/tmp/run/r0";
+        let mut messages = vec![Message::user().with_text("build it")];
+        messages.extend(ran("s1", &format!("cd {W} && ls")));
+        messages.extend(written("w1", &format!("{W}/app/a.py"), "x = 1\n"));
+        messages.extend(written("w2", "app/b.py", "y = 2\n"));
+        messages.push(call(
+            "r1",
+            "read",
+            serde_json::json!({"path": "SB7-CONTRACT.md"}),
+        ));
+        messages.push(Message::user().with_tool_response("r1", Ok(text_result("# contract"))));
+        messages.extend(ran("s2", "python3 -m app --check"));
+        messages.push(call("t1", "todo_write", serde_json::json!({"items": []})));
+        messages.push(Message::user().with_tool_response("t1", Ok(text_result("ok"))));
+        let block = Pillars::build(
+            &messages,
+            &KeptSources {
+                working_dir: Some(Path::new(W)),
+                ..Default::default()
+            },
+            entries(&[]),
+        )
+        .render();
+        assert!(
+            block.contains(&format!(
+                "- {W} — 5 calls ran here, 2 files written under it\n"
+            )),
+            "{block}"
+        );
+    }
+
     /// An edit whose arguments did not parse ran nothing: the next edit that succeeds settles it,
     /// whatever text the model leaked into its path. Real case (MiMo two-Mac Gauntlet, run
     /// 51bfaccd, 2026-10-31 03:10): the leaked path `app/util.py</parameter><parameter=old>…` was
@@ -1750,6 +1824,15 @@ mod tests {
             !todo.contains("parameter=old") && todo.contains("app/notes.py"),
             "{after}"
         );
+        // The settled call is one short line in the last calls, its leaked text gone everywhere.
+        assert!(
+            after.contains(
+                "- edit → its arguments did not parse (nothing ran); a later edit succeeded \
+                 (settled)\n"
+            ),
+            "{after}"
+        );
+        assert!(!after.contains("parameter=old"), "{after}");
     }
 
     /// The block says the turn's calls used of its budget, and the wrap-up stage when one was
@@ -1910,7 +1993,7 @@ mod tests {
             block.contains(&format!(
                 "## Where the work is (newest first)\nThe chat's own folder is /Users/someone, but \
                  commands worked in the folders below: a relative path a command used is relative \
-                 to the folder it worked in, not to the chat's.\n- {WORK} — 3 calls ran here, 2 \
+                 to the folder it worked in, not to the chat's.\n- {WORK} — 5 calls ran here, 2 \
                  files written under it\n- /Users/someone/goose-builds/quality/RU-3r — 1 call ran \
                  here\n"
             )),
@@ -1928,7 +2011,7 @@ mod tests {
         )));
         assert_eq!(
             kept.items(Pillar::Files)[1],
-            format!("Where the work is: {WORK} — 3 calls ran here, 2 files written under it")
+            format!("Where the work is: {WORK} — 5 calls ran here, 2 files written under it")
         );
     }
 
