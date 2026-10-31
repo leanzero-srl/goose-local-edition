@@ -153,7 +153,7 @@ fn is_content_word(word: &str) -> bool {
 }
 
 /// Words that turn the next words around, in the languages goose's users write. A grammar fact,
-/// not a judgement of the user's tone: a quote must never be cut out from under one.
+/// not a judgement of the user's tone: a label before the quote may never hold one.
 const NEGATORS: &[&str] = &[
     "not",
     "no",
@@ -188,48 +188,9 @@ const NEGATORS: &[&str] = &[
     "sin",
     "non",
 ];
-/// How many words before a quote a negator still turns it around ("never use vim", "not the
-/// build logs"), unless a clause break (a comma, a full stop) comes between.
-const NEGATION_REACH: usize = 3;
-/// The most words the judge may put before the quote as framing ("User preference:").
+/// The most words a label before the quote may have ("User preference:", "Jira titles:").
 const FRAMING_MAX_WORDS: usize = 4;
-/// The words that framing may use: a label, never a word that changes what the quote says.
-const FRAMING_WORDS: &[&str] = &[
-    "user",
-    "users",
-    "preference",
-    "preferences",
-    "prefers",
-    "rule",
-    "rules",
-    "standing",
-    "note",
-    "remember",
-    "convention",
-    "style",
-    "correction",
-    "client",
-    "project",
-    "for",
-    "this",
-    "the",
-    "a",
-    "always",
-    "from",
-    "now",
-    "on",
-    "preferința",
-    "preferinta",
-    "utilizatorului",
-    "regula",
-    "regulă",
-    "preferencja",
-    "użytkownika",
-    "zasada",
-    "regel",
-    "benutzer",
-    "präferenz",
-];
+
 /// Openers that answer the assistant, not part of the rule: dropped from the front of a quote.
 const DISCOURSE_MARKERS: &[&str] = &[
     "ok", "okay", "so", "well", "and", "also", "yes", "yeah", "right", "alright", "hmm", "więc",
@@ -266,58 +227,79 @@ fn strip_discourse(quote: &str) -> &str {
     }
 }
 
-/// [`quote_words`] with, for each word, whether a clause break comes right before it.
-fn clause_words(text: &str) -> Vec<(String, bool)> {
+/// The user's text as sentences: split after `.` `!` `?` `;` that end a word (followed by a space
+/// or the end — "DD.MM.YYYY", "report.md" and "0.5" stay whole) and at line breaks; commas never
+/// split. Each with whether it asks (ends on `?`).
+fn sentences(text: &str) -> Vec<(&str, bool)> {
     let mut out = Vec::new();
-    let mut broken = false;
-    for piece in text.split_inclusive(|c: char| c.is_whitespace() || is_clause_break(c)) {
-        let words = quote_words(piece);
-        for word in words {
-            out.push((word, broken));
-            broken = false;
+    let mut start = 0;
+    let mut chars = text.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
+        let next_is_space = chars.peek().is_none_or(|(_, n)| n.is_whitespace());
+        let ends = c == '\n' || (matches!(c, '.' | '!' | '?' | ';') && next_is_space);
+        if ends {
+            let end = at + c.len_utf8();
+            let sentence = &text[start..end];
+            if !quote_words(sentence).is_empty() {
+                out.push((sentence, c == '?'));
+            }
+            start = end;
         }
-        if piece.chars().any(is_clause_break) {
-            broken = true;
-        }
+    }
+    if !quote_words(&text[start..]).is_empty() {
+        out.push((&text[start..], false));
     }
     out
 }
 
-/// Somewhere in `text` the quote stands as the user wrote it: word for word, and not cut out from
-/// under a negation ("never" + "use vim for editing configs").
-fn stands_in(text: &str, quote: &[String]) -> bool {
-    let words = clause_words(text);
-    let plain: Vec<String> = words.iter().map(|(w, _)| w.clone()).collect();
-    (0..plain.len().saturating_sub(quote.len() - 1))
-        .filter(|&at| plain[at..at + quote.len()] == *quote)
-        .any(|at| {
-            let mut k = at;
-            for _ in 0..NEGATION_REACH {
-                if k == 0 || words[k].1 {
-                    return true;
-                }
-                k -= 1;
-                if NEGATORS.contains(&words[k].0.as_str()) {
-                    return false;
-                }
+/// The quote is one or more WHOLE sentences of `text`, from a sentence's start (openers aside) to
+/// a sentence's end, none of them a question. So a negation anywhere in the user's sentence —
+/// "Never, use tabs…", "Do not, under any circumstances in this repo, use tabs", "Pushing to
+/// main without review is not allowed." — is inside the quote, and so inside the memory.
+fn whole_sentences_in(text: &str, quote: &[String]) -> bool {
+    let sentences = sentences(text);
+    (0..sentences.len()).any(|first| {
+        let mut words = Vec::new();
+        for (k, &(sentence, asks)) in sentences[first..].iter().enumerate() {
+            if k == 0 {
+                words.extend(quote_words(strip_discourse(sentence)));
+            } else {
+                words.extend(quote_words(sentence));
             }
-            true
-        })
+            if asks || words.len() > quote.len() {
+                return false;
+            }
+            if words == quote {
+                return true;
+            }
+        }
+        false
+    })
 }
 
-/// WR-17 r4: no paraphrase. Word-by-word polarity checks over a paraphrase never converged (r3 let
-/// "Don't indent with tabs, use spaces." through under "don't indent with spaces, use tabs",
-/// "Use vim for editing configs." under "never use vim for editing configs", "Prefer spaces over
-/// tabs" under "prefer tabs over spaces"). So the memory IS the user's quote:
-/// 1. the quote, without openers that answer the assistant ("no,", "ok so"), has at least
-///    [`ASSESSMENT_QUOTE_MIN_CONTENT_WORDS`] content words and stands in one of this turn's user
-///    messages word for word, not cut out from under a negation;
-/// 2. the memory is that quote as a contiguous span, after [`quote_words`], with nothing after it
-///    and at most [`FRAMING_MAX_WORDS`] framing words from [`FRAMING_WORDS`] before it.
+/// A label before the quote: at most [`FRAMING_MAX_WORDS`] words, ending in `:`, no negator.
+fn is_label(label: &str) -> bool {
+    let words = quote_words(label);
+    !words.is_empty()
+        && words.len() <= FRAMING_MAX_WORDS
+        && !words.iter().any(|w| NEGATORS.contains(&w.as_str()))
+}
+
+/// WR-17: the memory is the user's own sentence(s). History: r1 checked only that the quote was
+/// the user's; r2/r3 checked word overlap and then negation over a paraphrase, and never
+/// converged (object swaps, short objects, order swaps, a negation outside the quote). r5 rule:
+/// 1. the quote, openers that answer the assistant aside ("no,", "ok so", "also"), has at least
+///    [`ASSESSMENT_QUOTE_MIN_CONTENT_WORDS`] content words and is one or more whole sentences of
+///    one of this turn's user messages, none a question;
+/// 2. the memory, openers aside, is the quote word for word (after [`quote_words`]), or a label
+///    ([`is_label`]) and then the quote.
 ///
-/// Measured on Gabee: "User approved the generated report…" under the real user line "put the
-/// final report in the output folder" does not contain the quote, and is discarded. The card the
-/// person approves then shows their own words.
+/// This is a quality filter, not a security boundary: every proposal is shown on an editable
+/// Save/Decline card (MemoryProposalCard) and nothing is stored until the person saves it.
+/// Accepted residual risk: reported speech ("my boss says never push to main") and conditionals
+/// ("if it's a hotfix, push to main") pass as whole sentences; the person sees them on the card.
+/// Measured on Gabee: "User approved the generated report…" under the user line "put the final
+/// report in the output folder" is not that sentence, and is discarded.
 fn memory_rests_on_users_words(quote: &str, memory: &str, user_texts: &[String]) -> bool {
     if quote.trim().chars().count() > ASSESSMENT_QUOTE_MAX_CHARS {
         return false;
@@ -327,18 +309,18 @@ fn memory_rests_on_users_words(quote: &str, memory: &str, user_texts: &[String])
     if quote.iter().filter(|w| is_content_word(w)).count() < ASSESSMENT_QUOTE_MIN_CONTENT_WORDS {
         return false;
     }
-    if !user_texts.iter().any(|text| stands_in(text, &quote)) {
+    if !user_texts
+        .iter()
+        .any(|text| whole_sentences_in(text, &quote))
+    {
         return false;
     }
-    let memory = quote_words(memory);
-    let Some(framing) = memory.len().checked_sub(quote.len()) else {
-        return false;
-    };
-    memory[framing..] == quote[..]
-        && framing <= FRAMING_MAX_WORDS
-        && memory[..framing]
-            .iter()
-            .all(|w| FRAMING_WORDS.contains(&w.as_str()))
+    if quote_words(strip_discourse(memory)) == quote {
+        return true;
+    }
+    memory
+        .split_once(':')
+        .is_some_and(|(label, rest)| is_label(label) && quote_words(strip_discourse(rest)) == quote)
 }
 
 /// The facts of one turn, as the prompt sees them: the user's messages of THIS turn and the
@@ -1643,8 +1625,8 @@ mod tests {
         };
         // Copied back from the defanged prompt, emphasis and line break gone, framed.
         let a = judge(
-            "User preference: Jira titles as 'Area: problem', under 70 characters. And dates DD.MM.YYYY ‹always>",
-            "Jira titles as 'Area: problem', under 70 characters. And dates DD.MM.YYYY ‹always>",
+            "User preference: Remember how I like things: Jira titles as 'Area: problem', under 70 characters. And dates DD.MM.YYYY ‹always>",
+            "Remember how I like things: Jira titles as 'Area: problem', under 70 characters. And dates DD.MM.YYYY ‹always>",
         )
         .expect("the user's own preference");
         assert!(a.memory.contains("Jira titles"));
@@ -1729,6 +1711,16 @@ mod tests {
                 "The build logs go in /var/tmp, not.",
             ),
             ("keep the build logs in /var/tmp", "keep the build logs in /var/tmp", "Keep the build logs in /var/tmp; the user approved the report."),
+            // r5 D1: a negation outside a cut span — after a comma, far off, or trailing.
+            ("Never, use tabs for indenting.", "use tabs for indenting", "Use tabs for indenting."),
+            ("Do not, under any circumstances in this repo, use tabs for indenting.", "use tabs for indenting", "Use tabs for indenting."),
+            ("Pushing to main without a review is not allowed.", "Pushing to main without a review", "Pushing to main without a review."),
+            ("Pushing to main without a review is forbidden, absolutely not.", "Pushing to main without a review is forbidden", "Pushing to main without a review is forbidden."),
+            // A question is not a rule.
+            ("should we use tabs for indenting?", "should we use tabs for indenting?", "Should we use tabs for indenting?"),
+            ("Thanks. Should we use tabs for indenting? Yes.", "Should we use tabs for indenting? Yes.", "Should we use tabs for indenting? Yes."),
+            // "always" is not a label word any more.
+            ("run the integration tests now", "run the integration tests now", "Always run the integration tests now"),
             // "no" running straight on is the rule's negation, not an answer.
             ("no tabs in yaml files ever", "tabs in yaml files ever", "Tabs in yaml files ever."),
         ];
@@ -1748,13 +1740,24 @@ mod tests {
             ("no, keep the build logs in /var/tmp", "no, keep the build logs in /var/tmp", "Keep the build logs in /var/tmp."),
             ("no, keep the build logs in /var/tmp", "keep the build logs in /var/tmp", "User preference: keep the build logs in /var/tmp"),
             ("ok so don't forget to run the integration tests", "don't forget to run the integration tests", "Don't forget to run the integration tests."),
-            ("please never push to main without a review", "never push to main without a review", "Never push to main without a review."),
-            ("in this repo use tabs, not spaces", "use tabs, not spaces", "Rule: use tabs, not spaces."),
+            ("please never push to main without a review", "please never push to main without a review", "Please never push to main without a review."),
+            ("in this repo use tabs, not spaces", "in this repo use tabs, not spaces", "Rule: in this repo use tabs, not spaces."),
             ("don't indent with spaces, use tabs", "don't indent with spaces, use tabs", "Do not indent with spaces, use tabs."),
             ("nie wcinaj spacjami, używaj tabulatorów", "nie wcinaj spacjami, używaj tabulatorów", "Nie wcinaj spacjami, używaj tabulatorów."),
             ("never use vim for editing configs", "never use vim for editing configs", "Never use vim for editing configs."),
             ("prefer tabs over spaces", "prefer tabs over spaces", "Prefer tabs over spaces"),
-            ("For everything we write for this client: English, but keep Portuguese law and authority names in Portuguese", "English, but keep Portuguese law and authority names in Portuguese", "Client rule: English, but keep Portuguese law and authority names in Portuguese"),
+            // RU-2's rule, the whole sentence.
+            ("For everything we write for this client: English, but keep Portuguese law and authority names in Portuguese, and put the source link right after each claim, not in a list at the end.",
+             "For everything we write for this client: English, but keep Portuguese law and authority names in Portuguese, and put the source link right after each claim, not in a list at the end.",
+             "Client rule: for everything we write for this client: English, but keep Portuguese law and authority names in Portuguese, and put the source link right after each claim, not in a list at the end."),
+            // r5 D2: the user's own opener kept in the memory, a label outside any list.
+            ("Also run clippy before every commit.", "Also run clippy before every commit.", "Also run clippy before every commit."),
+            ("Also run clippy before every commit.", "run clippy before every commit", "And run clippy before every commit."),
+            ("No, keep the build logs in /var/tmp.", "No, keep the build logs in /var/tmp.", "No, keep the build logs in /var/tmp."),
+            ("Keep Jira titles under 70 characters.", "Keep Jira titles under 70 characters.", "Jira titles: keep Jira titles under 70 characters."),
+            // A sentence among others, and two whole sentences.
+            ("Thanks. Keep Jira titles under 70 characters! Now the report.", "Keep Jira titles under 70 characters!", "Keep Jira titles under 70 characters"),
+            ("Thanks. Keep Jira titles short. Dates as DD.MM.YYYY. Now the report.", "Keep Jira titles short. Dates as DD.MM.YYYY.", "Keep Jira titles short. Dates as DD.MM.YYYY."),
         ];
         for (said, quote, memory) in cases {
             assert!(
@@ -1762,6 +1765,19 @@ mod tests {
                 "{memory:?} under {quote:?}"
             );
         }
+    }
+
+    /// WR-17 r5: a label is at most FRAMING_MAX_WORDS words.
+    #[test]
+    fn a_label_has_at_most_framing_max_words() {
+        assert_eq!(FRAMING_MAX_WORDS, 4);
+        let said = "Keep Jira titles under 70 characters.";
+        assert!(judge_one(said, said, &format!("My standing client rule: {said}")).is_some());
+        assert_eq!(
+            judge_one(said, said, &format!("My standing client rule here: {said}")),
+            None
+        );
+        assert_eq!(judge_one(said, said, &format!("Not allowed: {said}")), None);
     }
 
     /// WR-17 round 2: a true quote survives the punctuation a model changes when it copies —
@@ -1796,7 +1812,7 @@ mod tests {
     /// text holds no object — and ignored when the text does.
     #[test]
     fn a_judgement_written_in_the_reasoning_channel_is_still_read() {
-        let said = vec!["you need export WEBHOOK_SECRET=dev before npm test".to_string()];
+        let said = vec!["export WEBHOOK_SECRET=dev before npm test".to_string()];
         let json = r#"{"worth": true, "polarity": "positive", "memory": "export WEBHOOK_SECRET=dev before npm test", "quote": "export WEBHOOK_SECRET=dev before npm test", "why": "setup fact"}"#;
         let only_thinking = Message::assistant().with_thinking(json, "sig");
         assert!(parse_assessment(&reply_text(&only_thinking), &said).is_some());
