@@ -895,6 +895,82 @@ fn a_write_of_for_new_chats_writes_both_defaults() {
     );
 }
 
+/// Q-522: Run it's Save as node with no swarm pool. New chats were left on Any node (Auto), which
+/// refused every new chat; the node saved is the one thing that can answer, so the write starts
+/// new chats on it and writes the global defaults with it.
+#[test]
+fn a_node_added_while_auto_has_no_pool_becomes_where_new_chats_start() {
+    let t = test_config("GOOSE_PROVIDER: anthropic\n");
+    let engine = no_engine();
+    let mut next = read(&t.config, Ok("Mac".into())).unwrap().config;
+    assert_eq!(next.for_new_chats, NodesForNewChats::Auto);
+    next.defs.push(sonnet("sonnet"));
+    let out = write(&t.config, next, facts(&engine)).unwrap();
+    assert!(out.written, "{:?}", out.refusals);
+    assert_eq!(
+        out.read.config.for_new_chats,
+        NodesForNewChats::Node {
+            id: "sonnet".into()
+        }
+    );
+    assert_eq!(
+        crate::config::get_provider_entry(&t.config, "swarm")
+            .unwrap()
+            .model,
+        "node:sonnet"
+    );
+    // A second node changes nothing: new chats already start on a node.
+    let mut again = out.read.config.clone();
+    again.defs.push(sonnet("sonnet-2"));
+    let out = write(&t.config, again, facts(&engine)).unwrap();
+    assert_eq!(
+        out.read.config.for_new_chats,
+        NodesForNewChats::Node {
+            id: "sonnet".into()
+        }
+    );
+}
+
+#[test]
+fn new_chats_move_to_an_added_node_only_when_auto_has_nothing_and_nobody_chose() {
+    let current = NodesConfig::default();
+    let mut added = current.clone();
+    let mut pool_node = sonnet("pool-dev");
+    pool_node.origin = NodeOrigin::Pool;
+    pool_node.pool_device = Some("pool-dev".into());
+    added.defs.push(pool_node);
+    added.defs.push(sonnet("mine"));
+    let auto = NodesForNewChats::Auto;
+    let moved = new_chats_on_added_node(added.clone(), &current, &auto, true);
+    assert_eq!(
+        moved.for_new_chats,
+        NodesForNewChats::Node { id: "mine".into() },
+        "an adopted pool node is not the node the person added"
+    );
+    assert_eq!(
+        new_chats_on_added_node(added.clone(), &current, &auto, false).for_new_chats,
+        NodesForNewChats::Auto,
+        "Auto that can route stays Auto"
+    );
+    let mut chose = added.clone();
+    chose.for_new_chats = NodesForNewChats::Strategy { id: "s".into() };
+    assert_eq!(
+        new_chats_on_added_node(chose, &current, &auto, true).for_new_chats,
+        NodesForNewChats::Strategy { id: "s".into() }
+    );
+    let before = NodesForNewChats::Node { id: "old".into() };
+    assert_eq!(
+        new_chats_on_added_node(added.clone(), &current, &before, true).for_new_chats,
+        NodesForNewChats::Auto,
+        "a write back to Auto from a node is the person's choice"
+    );
+    assert_eq!(
+        new_chats_on_added_node(added.clone(), &added, &auto, true).for_new_chats,
+        NodesForNewChats::Auto,
+        "no node was added"
+    );
+}
+
 #[test]
 fn a_refused_write_writes_nothing() {
     let t = test_config(POOL_YAML);

@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "Could not point this node at {model}: {error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "Choose a node"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Details"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "Mounting"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "No enabled node is configured."
+    "defaultMessage": "This chat is on Any node (Auto), which answers only from your swarm pool, and no node in it is on."
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "No saved MLX model for this node — pick one in Providers."
@@ -9202,6 +9205,9 @@
   },
   "placementCard.savedAs": {
     "defaultMessage": "Saved as the node “{name}”."
+  },
+  "placementCard.savedNewChats": {
+    "defaultMessage": "New chats start on it now: Any node (Auto) had no node to answer them."
   },
   "placementCard.short": {
     "defaultMessage": "Does not fit: short {gb} on {node}"

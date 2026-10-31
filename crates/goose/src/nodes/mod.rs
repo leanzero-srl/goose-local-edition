@@ -957,6 +957,12 @@ fn store(
         Ok(view) => adopt(view.as_ref(), incoming, &mac).config,
         Err(_) => incoming,
     };
+    let incoming = new_chats_on_added_node(
+        incoming,
+        &current.config,
+        previous_for_new_chats,
+        crate::providers::swarm_router::auto_routes_nothing(config),
+    );
     refusals.extend(validate(&incoming));
     if let NodesForBuilds::Strategy { id } = &incoming.for_builds {
         let swarm = config.get_param::<serde_json::Value>(SWARM_KEY);
@@ -994,6 +1000,38 @@ fn store(
         refusals: Vec::new(),
         read: read(config, facts.this_mac)?,
     })
+}
+
+/// Q-522: a node added while new chats start on Any node (Auto) and Auto has nothing to route to
+/// (no pool, an empty pool, every device off, no remote route) becomes where new chats start, in
+/// the same write: Auto could only refuse every new chat, and the person just made the one node
+/// that can answer. Stated, never silent: the write's read carries the new `forNewChats`, which
+/// the desktop says beside "Saved as the node" and shows under "New chats start on", and the
+/// global defaults follow through the `forNewChats` change below. A pool node (adoption) is not
+/// a node the person added; a write that names `forNewChats` itself, or an Auto that can route,
+/// is left exactly as written.
+pub fn new_chats_on_added_node(
+    mut incoming: NodesConfig,
+    current: &NodesConfig,
+    previous_for_new_chats: &NodesForNewChats,
+    auto_routes_nothing: bool,
+) -> NodesConfig {
+    if !auto_routes_nothing
+        || *previous_for_new_chats != NodesForNewChats::Auto
+        || incoming.for_new_chats != NodesForNewChats::Auto
+    {
+        return incoming;
+    }
+    let known: HashSet<&str> = current.defs.iter().map(|d| d.id.as_str()).collect();
+    let added = incoming
+        .defs
+        .iter()
+        .find(|d| d.origin != NodeOrigin::Pool && !known.contains(d.id.as_str()))
+        .map(|d| d.id.clone());
+    if let Some(id) = added {
+        incoming.for_new_chats = NodesForNewChats::Node { id };
+    }
+    incoming
 }
 
 /// What a removal changes, before the write door validates and stores it.

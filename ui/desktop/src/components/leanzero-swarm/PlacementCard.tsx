@@ -288,6 +288,10 @@ const i18n = defineMessages({
     defaultMessage: 'Save this way as a node so chats and builds can pick it',
   },
   savedAs: { id: 'placementCard.savedAs', defaultMessage: 'Saved as the node “{name}”.' },
+  savedNewChats: {
+    id: 'placementCard.savedNewChats',
+    defaultMessage: 'New chats start on it now: Any node (Auto) had no node to answer them.',
+  },
   alreadyNode: {
     id: 'placementCard.alreadyNode',
     defaultMessage: 'Already a node: “{name}”.',
@@ -309,7 +313,14 @@ type NoticeTone = Exclude<Tone, 'secondary'>;
 /** "Save as node" on one row: in flight, saved (or already a node), or refused with goose's words. */
 type SaveState =
   | { kind: 'saving' }
-  | { kind: 'saved'; id: string; name: string; already: boolean }
+  | {
+      kind: 'saved';
+      id: string;
+      name: string;
+      already: boolean;
+      /** The write moved new chats from Any node (Auto), which had nothing, onto it (Q-522). */
+      startsNewChats?: boolean;
+    }
   | { kind: 'refused'; text: string };
 
 /**
@@ -1144,9 +1155,14 @@ function PlacementCardBody({
       const response = await putNode(def, read.config);
       // The engine card and the setup strip name the node at once, not at the next glance event.
       if (response.written) refreshGlanceNodes();
+      // goosed's write door starts new chats on the node when Auto had nothing to route to; the
+      // row says so, read from what the write stored (never inferred here).
+      const after = response.read?.config.forNewChats;
+      const startsNewChats =
+        read.config.forNewChats?.kind !== 'node' && after?.kind === 'node' && after.id === id;
       say(
         response.written
-          ? { kind: 'saved', id, name, already: false }
+          ? { kind: 'saved', id, name, already: false, startsNewChats }
           : {
               kind: 'refused',
               text: (response.refusals ?? []).map((r) => r.message).join('; ') || refused,
@@ -1444,6 +1460,11 @@ function PlacementCardBody({
             {intl.formatMessage(saved.already ? i18n.alreadyNode : i18n.savedAs, {
               name: saved.name,
             })}{' '}
+            {saved.startsNewChats && (
+              <span data-testid={`placement-saved-new-chats-${way.kind}`}>
+                {intl.formatMessage(i18n.savedNewChats)}{' '}
+              </span>
+            )}
             <a className="underline" href={`#${nodeHref(saved.id)}`}>
               {intl.formatMessage(i18n.openInNodes)}
             </a>

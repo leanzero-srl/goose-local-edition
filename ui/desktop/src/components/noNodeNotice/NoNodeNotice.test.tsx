@@ -77,6 +77,7 @@ function wrap(ui: React.ReactElement) {
         <Routes>
           <Route path="/pair" element={ui} />
           <Route path="/leanzero-swarm" element={<div data-testid="providers-view" />} />
+          <Route path="/nodes" element={<div data-testid="nodes-view" />} />
         </Routes>
       </MemoryRouter>
     </IntlProvider>
@@ -475,6 +476,41 @@ describe('GooseMessage renders the refusal as the notice', () => {
     await user.click(screen.getByTestId('no-node-retry'));
     expect(append).toHaveBeenCalledWith('Start an AI session about the memory "fleet"');
     await waitFor(() => expect(mockStatus).toHaveBeenCalled());
+  });
+
+  // Q-522: Auto with no swarm pool. The router's words (swarm_router.rs `auto_empty_refusal`, no
+  // `swarm` block) used to name `swarm.devices` and reach the chat as raw text; now they are the
+  // notice's form, and the notice leads to the Nodes page.
+  it('Auto with no pool shows the notice with Choose a node, which opens Nodes', async () => {
+    const user = userEvent.setup();
+    const userTurn = createUserMessage('hello');
+    const refusal = assistant(
+      'Ran into this error: Execution error: swarm chat: no node can serve this turn — no enabled device is configured — new chats start on Any node (Auto), which answers only from your swarm pool, and you have no swarm pool (config.yaml has no `swarm` block). Open Nodes and choose a node under “New chats start on”, or pick one for this chat from the “Any node (Auto)” chip under the message box.\n\nPlease retry if you think this is a transient or recoverable error.'
+    );
+    wrap(
+      <GooseMessage
+        sessionId="s1"
+        message={refusal}
+        messages={[userTurn, refusal]}
+        toolCallNotifications={new Map()}
+        append={vi.fn()}
+        isStreaming={false}
+      />
+    );
+    expect(screen.getByTestId('no-node-notice')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'This chat is on Any node (Auto), which answers only from your swarm pool, and no node in it is on.'
+      )
+    ).toBeInTheDocument();
+    await user.click(screen.getByTestId('no-node-choose-node'));
+    expect(screen.getByTestId('nodes-view')).toBeInTheDocument();
+  });
+
+  it('a node’s own reason offers no Choose a node', () => {
+    const own = parseNoNodeError(OWNER_TEXT)!;
+    wrap(<NoNodeNotice rows={own} live={false} retryText={null} onRetry={vi.fn()} />);
+    expect(screen.queryByTestId('no-node-choose-node')).toBeNull();
   });
 
   it('offers no Retry when the last user turn carried an image it could not resend', () => {

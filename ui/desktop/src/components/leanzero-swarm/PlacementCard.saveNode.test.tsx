@@ -181,6 +181,34 @@ describe('Run it · Save as node', () => {
     expect(within(split).queryByTestId('placement-save-node-split')).toBeNull();
   });
 
+  // Q-522: with no swarm pool, goosed's write door starts new chats on the node it stored; the row
+  // says so (read from the write's own read, never inferred), and says nothing when it did not.
+  it('says new chats start on the saved node when the write moved them off Auto', async () => {
+    mockNodesWrite.mockImplementation(async (config: NodesConfig) => {
+      const id = config.defs![config.defs!.length - 1].id;
+      return {
+        written: true,
+        refusals: [],
+        read: readOf({ ...config, forNewChats: { kind: 'node', id } }),
+      };
+    });
+    renderCard();
+    const split = await screen.findByTestId('placement-way-split');
+    await userEvent.click(within(split).getByTestId('placement-save-node-split'));
+    const saved = await within(split).findByTestId('placement-saved-split');
+    expect(within(saved).getByTestId('placement-saved-new-chats-split')).toHaveTextContent(
+      'New chats start on it now: Any node (Auto) had no node to answer them.'
+    );
+  });
+
+  it('says nothing about new chats when the write left them where they were', async () => {
+    renderCard();
+    const split = await screen.findByTestId('placement-way-split');
+    await userEvent.click(within(split).getByTestId('placement-save-node-split'));
+    const saved = await within(split).findByTestId('placement-saved-split');
+    expect(within(saved).queryByTestId('placement-saved-new-chats-split')).toBeNull();
+  });
+
   it('a node that already names the model and the way is shown, never duplicated', async () => {
     const split0 = (PLAN_27B.candidates ?? []).find(
       (c) => c.id === 'tensor:jaccl:local+workhorse'
