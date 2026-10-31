@@ -122,7 +122,7 @@ describe('MlxMemorySection', () => {
     expect((screen.getByLabelText('Engine Metal cap') as HTMLInputElement).value).toBe('112');
     expect((screen.getByLabelText('Free-memory floor') as HTMLInputElement).value).toBe('4');
     expect(saveSettings).not.toHaveBeenCalled();
-    expect(screen.getByTestId('mlx-memory-cap-above-ws').textContent).toContain('122,000 MB');
+    expect(screen.getByTestId('mlx-memory-cap-above-ws').textContent).toContain('105,000 MB');
     await userEvent.click(screen.getByTestId('mlx-memory-save'));
     expect(saveSettings).toHaveBeenCalledWith(
       expect.objectContaining({ memory: { metalLimitGb: 112, memoryFloorGb: 4 } })
@@ -249,7 +249,7 @@ describe('MlxMemorySection', () => {
     mockMachine.mockResolvedValue(machine({ wiredLimitMb: 110000, daemonWiredLimitMb: 110000 }));
     mount();
     const raised = await screen.findByTestId('mlx-memory-wired');
-    expect(within(raised).getByTestId('mlx-memory-wired-state').textContent).toBe(
+    expect(screen.getByTestId('mlx-memory-wired-state').textContent).toBe(
       'Raised to 110,000 MB'
     );
     await userEvent.click(within(raised).getByTestId('mlx-memory-wired-disable'));

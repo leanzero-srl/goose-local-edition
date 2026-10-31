@@ -74,7 +74,7 @@ Write each answer into the run's NOTES.md / parity file.
    --max-model-len, guard_margin_gb -> --memory-guard-margin-gb, max_concurrent_requests -> --max-concurrent-requests,
    auto_utilization_floor/ceiling -> --auto-utilization-floor/-ceiling, auto_headroom_fraction ->
    --auto-headroom-fraction, system_reserve_fraction -> --system-reserve-fraction; macOS wired limit via the same
-   tab's button (admin password); (c) record in parity: `memory_tunables_gate.py emit --engine-port <p>` (15 rows);
+   tab's Enable/Disable button per Mac, never a typed sysctl (reserve-gated; peers relayed; references c3); (c) record in parity: `memory_tunables_gate.py emit --engine-port <p>` (15 rows);
    (d) verify via `/v1/status` memory_budget (tunables + limit_bytes + effective_ceiling_bytes). Full text:
    references/readiness-gate.md step 5.
 6. **Benchmark only:** parity table vs the cloud entrant (context, vision, thinking sent, sampling, tool parser,
