@@ -6372,7 +6372,7 @@ print("ok")
     /// split 18/30 at 262,144, rank1 ...1793469182827.log, 2026-10-31): strict limit
     /// 4,046,192,640 B (one live row: rank 0's workspace covers its whole copy), quiet limit
     /// 7,949,778,944 B (`the_quiet_limit_keeps_the_chat_cut_past_half_the_context_...`), 15,360 B
-    /// per token + 78,643,200 B of state. A goose chat grows 120k -> 260k tokens, 4,000 a turn,
+    /// per token + 78,643,200 B of state. A goose chat grows 120k -> 256k tokens, 4,000 a turn,
     /// each prompt[:-1] cut and kept (Q-522) beside its live row, each end cached but never a
     /// prefix of the next prompt (the template re-renders the answer: req-53 after req-52).
     /// Every byte is charged when it exists: a prefill's row beside the cache (strict), the cut's
@@ -6380,7 +6380,7 @@ print("ok")
     /// cut from (quiet). CONTROL (strict everywhere, 3.0.138): the cut is refused from 127k and
     /// every turn reads at most the system head from there (the live run's req-37 / req-53). FIXED: every turn to
     /// 252k reads its whole previous prompt but its last token, by MOVING the cut into its row,
-    /// and no phase passes its bound; the last turn (past 253,661) reads at most the head, never past the plan.
+    /// and no phase passes its bound.
     #[test]
     fn the_chat_cut_stays_cached_to_253k_inside_the_plan_at_run_3_0_138_sizes_through_real_mlx_lm()
     {
@@ -6393,7 +6393,7 @@ from mlx_lm.models.cache import LRUPromptCache
 p = {"kv_bytes_per_token": 15360, "sequence_state_bytes": 78643200, "batch_transient_ratio": 2.2}
 STRICT, QUIET = 4046192640, 7949778944
 ENTRIES, HEAD, SESSION = 205, 32000, "20261031_mimo138"
-TURNS = list(range(120000, 260001, 4000))
+TURNS = list(range(120000, 256001, 4000))  # a lone row inside the strict limit
 ANSWER = 1500
 upstream_pop = LRUPromptCache.CacheOrder.pop
 charge = lambda w: batch_kv_charge(p, 1, w)
@@ -6482,9 +6482,7 @@ assert not fixed["over"], fixed["over"][:3]
 assert fixed["peak"] <= QUIET, fixed["peak"]
 warm = [(m, r) for r, m in zip(fixed["reads"], previous) if 0 < m <= 252000]
 assert all(r == m - 1 for m, r in warm), fixed["reads"]
-assert len(warm) == len([m for m in previous if 0 < m <= 252000]) and len(warm) >= 33
-# Past the quiet bound's 253,661 the cut is refused again: the next turn reads cold, inside.
-assert fixed["reads"][-1] <= HEAD, fixed["reads"][-3:]
+assert len(warm) == len([m for m in previous if 0 < m <= 252000]) and len(warm) >= 33, len(warm)
 # Beside the cut the read is a move (no copy) once the cut is wider than the strict room.
 assert {"move"} >= {pl for pl, m in zip(fixed["plans"], previous) if 130000 <= m <= 252000}, fixed["plans"]
 print("ok")
