@@ -1295,6 +1295,33 @@ fn prompt_lookup_lane_of(model_path: &Path, serves_mtp: bool) -> PromptLookupLan
     prompt_lookup::lane(false, &prompt_lookup::model_is_hybrid(model_path))
 }
 
+/// Whether remounting the RUNNING model would start it differently: its argv and env rebuilt
+/// from today's settings (profile AND model directory, so an MTP head that arrived, a vision
+/// checkpoint swapped in or an adapter dir that vanished all flip this) against what runs. Remount
+/// remounts the model that runs (MlxEngineView `remountNowOn`: `status.modelId` first), so that
+/// is the model this compares. `settings.model_id` is the pool device's model (the served-name
+/// alias pairs with it, a swarm build mounts it) and Run it never writes it, so comparing ITS argv
+/// with a different running model's claimed "Settings changed" on a first mount nobody had
+/// touched (Q-523). An argv that cannot be built (an adapter the profile names no longer
+/// validates) cannot be mounted as configured, which IS a restart-required fact.
+pub fn restart_required(
+    settings: &EngineSettings,
+    running_model: &str,
+    running_argv: &[String],
+    running_env: &[(String, String)],
+    nodes: &[NodeModel],
+) -> bool {
+    match build_serve_command(settings, running_model, nodes) {
+        Ok(desired) => {
+            desired != running_argv || build_serve_env(settings, running_model) != running_env
+        }
+        Err(e) => {
+            tracing::warn!(model = running_model, error = %format!("{e:#}"), "desired serve argv cannot be built; reporting restart required");
+            true
+        }
+    }
+}
+
 /// The lane `model_id` would take under `settings` — what the desktop shows beside the lever.
 pub fn prompt_lookup_lane(settings: &EngineSettings, model_id: &str) -> PromptLookupLane {
     let model_path = expand_tilde(&settings.models_dir).join(model_id);
@@ -3001,26 +3028,13 @@ impl MlxEngineManager {
             }
         }
         if let Some((running_model, running_argv, running_env)) = running {
-            let desired_model = settings.model_id.as_deref().unwrap_or(&running_model);
-            // The desired argv is rebuilt from the profile AND the model directory each poll,
-            // so an MTP head that arrived, a vision checkpoint swapped in, or an adapter dir
-            // that vanished all flip this. An adapter the profile names but that no longer
-            // validates cannot be mounted as configured — that IS a restart-required fact,
-            // and the remount says exactly what is missing.
-            status.restart_required = match build_serve_command(
+            status.restart_required = restart_required(
                 &settings,
-                desired_model,
+                &running_model,
+                &running_argv,
+                &running_env,
                 &self.nodes(),
-            ) {
-                Ok(desired) => {
-                    desired != running_argv
-                        || build_serve_env(&settings, desired_model) != running_env
-                }
-                Err(e) => {
-                    tracing::warn!(model = desired_model, error = %format!("{e:#}"), "desired serve argv cannot be built; reporting restart required");
-                    true
-                }
-            };
+            );
             let base_url = status.base_url.as_deref().expect("set for running state");
             let (model_info, status_body) = tokio::join!(
                 self.probe_model_info(base_url),
@@ -4732,6 +4746,44 @@ mod tests {
             build_serve_command(&settings, mounted, &[]).unwrap(),
             running_argv,
             "the mounted model's profile edit must require a restart"
+        );
+    }
+
+    /// Q-523: Run it mounted a 9B while `mlx_engine.model_id` still named a 27B (the pool
+    /// device's model, which Run it never writes). Nothing was touched, so nothing needs a
+    /// restart; an edit of the running model's profile does, another model's does not.
+    #[test]
+    fn restart_required_compares_the_running_model_not_the_configured_one() {
+        let configured = "pub/qwen-27b";
+        let running = "pub/qwen-9b";
+        let mut settings = EngineSettings {
+            model_id: Some(configured.to_string()),
+            ..Default::default()
+        };
+        let argv = build_serve_command(&settings, running, &[]).unwrap();
+        let env = build_serve_env(&settings, running);
+        assert!(
+            !restart_required(&settings, running, &argv, &env, &[]),
+            "a first mount of another model than mlx_engine.model_id claimed a restart"
+        );
+        settings.model_profiles.insert(
+            configured.to_string(),
+            ModelProfile {
+                temperature: Some(0.2),
+                ..Default::default()
+            },
+        );
+        assert!(!restart_required(&settings, running, &argv, &env, &[]));
+        settings.model_profiles.insert(
+            running.to_string(),
+            ModelProfile {
+                temperature: Some(0.9),
+                ..Default::default()
+            },
+        );
+        assert!(
+            restart_required(&settings, running, &argv, &env, &[]),
+            "the running model's profile edit must require a restart"
         );
     }
 
