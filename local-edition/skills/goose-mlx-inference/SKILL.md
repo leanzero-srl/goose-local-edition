@@ -77,6 +77,12 @@ Write each answer into the run's NOTES.md / parity file.
    tab's Enable/Disable button per Mac, never a typed sysctl (reserve-gated; peers relayed; references c3); (c) record in parity: `memory_tunables_gate.py emit --engine-port <p>` (15 rows);
    (d) verify via `/v1/status` memory_budget (tunables + limit_bytes + effective_ceiling_bytes). Full text:
    references/readiness-gate.md step 5.
+   TRAP (2026-10-31): NEVER serve a long session on lz.20. Its floor reference rose to any single "others"
+   reading: on the workmule Flash-Next replay one 40.95 GB reading (idle 19.6) cut the ceiling 111.99 -> 89.49 GB
+   and the session went cold at 167k tokens (lz.19: 371k). lz.21 takes the engine's whole process
+   (max(phys_footprint, MLX active+cache)) out of "others" and rises only on a reading held 15 s (at once only
+   while swapping). Read `memory_budget.machine`: others_instant_bytes vs others_sustained_bytes vs
+   others_ref_bytes (a spike shows as an instant reading the reference did not follow).
 6. **Benchmark only:** parity table vs the cloud entrant (context, vision, thinking sent, sampling, tool parser,
    output cap, timeouts), every row PASS before Run:
    `python3 ~/goose-builds/loop-state/local-parity/parity_check.py --port <p> --config <root>/config/config.yaml --cloud-input-modalities text,image --min-context <cloud peak; sb-7.2 = 322851>`.

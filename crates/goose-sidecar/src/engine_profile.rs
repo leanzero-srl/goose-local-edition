@@ -159,6 +159,12 @@ const PINNED_PROFILES: &[(&str, EngineMemoryProfile)] = &[
         },
     ),
     (
+        "v0.14.3-lz.21",
+        EngineMemoryProfile::Guarded {
+            floor_chunk_tokens: GUARD_FLOOR_CHUNK_TOKENS,
+        },
+    ),
+    (
         MEMORY_TUNABLES_BRANCH,
         EngineMemoryProfile::Guarded {
             floor_chunk_tokens: GUARD_FLOOR_CHUNK_TOKENS,
@@ -323,6 +329,7 @@ mod tests {
             ("v0.14.3-lz.18", false),
             ("v0.14.3-lz.19", false),
             ("v0.14.3-lz.20", true),
+            ("v0.14.3-lz.21", true),
             ("v0.14.3-lz.21-ple.1", true),
             ("v0.14.4", true),
             ("v0.13.1", false),

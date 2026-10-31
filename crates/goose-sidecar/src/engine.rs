@@ -194,6 +194,12 @@ pub fn max_concurrent_requests(settings: &EngineSettings) -> u32 {
         .unwrap_or(MAX_CONCURRENT_REQUESTS)
 }
 
+/// v0.14.3-lz.21 (fork lz/metal-tunables 2bed59db4) = lz.20 + the free-memory floor's "others" reference follows
+/// SUSTAINED readings only: the engine's whole process (max(phys_footprint, MLX active + cache), read with the page
+/// counts) is out of "others", a part rises only to a reading held 15 s (at once only while the Mac swaps out), and
+/// falls after a quiet window. lz.20 rose at once to any reading: on the mule's growing-session replay one 40.95 GB
+/// reading (idle 19.6) cut the ceiling from 111.99 to 89.49 GB and the session went cold at 167,508 tokens (lz.19:
+/// warm to 371,418). The local Flash Gauntlet must not run on lz.20.
 /// v0.14.3-lz.20 (fork lz/metal-tunables d7b59cace) = lz.19 + memory tunables: every memory number the engine plans
 /// under is a flag goose sends from Settings > Memory (`memory_tunables.rs`), the auto Metal cap follows the
 /// context it must hold (Flash-Next 360k on the mule: 103.9 -> 112.0 GB, admits 391,978 vs 294,144), the
@@ -332,7 +338,7 @@ pub fn max_concurrent_requests(settings: &EngineSettings) -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.20",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.21",
     "rapid-mlx",
 ];
 
@@ -501,6 +507,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.19",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.20",
         "rapid-mlx",
     ],
 ];
@@ -3757,7 +3769,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.20",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.21",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -3840,7 +3852,7 @@ mod tests {
             spawn_command: vec![
                 "uvx".into(),
                 "--from".into(),
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.20"
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.21"
                     .into(),
                 "rapid-mlx".into(),
             ],
@@ -3996,8 +4008,15 @@ mod tests {
             metal_limit_gb: Some(40.0),
             ..Default::default()
         });
+        // the newest launcher WITHOUT the memory flags (lz.19; lz.20+ read them)
         s.spawn_command = SUPERSEDED_ENGINE_LAUNCHERS
-            .last()
+            .iter()
+            .rev()
+            .find(|l| {
+                !crate::engine_profile::supports_memory_tunables(
+                    &l.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
+                )
+            })
             .unwrap()
             .iter()
             .map(|a| a.to_string())
@@ -4575,7 +4594,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.20",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.21",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
