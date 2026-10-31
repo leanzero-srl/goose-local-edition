@@ -5081,6 +5081,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "Modifica {name}"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "Impossibile pianificare la suddivisione con quella riserva"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "Errore di preflight"
   },
@@ -5224,6 +5227,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "Python della pipeline (facoltativo)"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "Riserva del piano (% della RAM)"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "Porta API"
@@ -5396,6 +5402,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "GB pianificati con overhead, su un budget di suddivisione di {budget} GB"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "predefinita del modello"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "Modelli con suddivisione per strati (mimo_v2): la quota della RAM di ogni Mac che il piano lascia libera. Vuoto usa la riserva propria del modello, altrimenti quella predefinita di goose; goose rifiuta un valore sotto la riserva di avviso del watchdog della memoria."
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "pianificati {gb} GB con overhead"
   },
@@ -5542,6 +5554,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "velocità non comunicata"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "budget"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "Ci sta al {pct}%"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "Nessuna suddivisione ci sta con una riserva del {current}% della RAM; una ci sta al {pct}%. Pianificare lì lascia meno memoria libera su ogni Mac, comunque sopra la soglia di avviso del watchdog della memoria."
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} GB"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "{split} strati"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "Il margine di sicurezza è la riserva: goose dimensiona il contesto per riempire il budget di ogni Mac, quindi il residuo segna circa 0 GB per scelta."
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "Nessuna riserva ci sta"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "Nessuna riserva impostabile fa stare una suddivisione: libera memoria su un Mac o suddividi un modello più piccolo."
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "nessuno strato pianificato"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "Pianifica al {pct}%"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · {count} strati"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "riserva del {pct}% della RAM"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "predefinita di goose"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "riserva propria di {model}"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "la riserva propria del modello"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "impostata da te"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "residuo"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "Suddivisione per strati"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "pesi"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "Avvia esegue il preflight, ripara il collegamento Thunderbolt quando JACCL ne ha bisogno, poi avvia ogni rank sotto supervisione."
@@ -5869,6 +5941,12 @@
   },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Impossibile leggere le impostazioni del motore."
+  },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Impossibile leggere se uno split serve questo Mac: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Lettura in corso: uno split serve questo Mac?…"
   },
   "mlxEngineView.statusRetry": {
     "defaultMessage": "Rileggi"

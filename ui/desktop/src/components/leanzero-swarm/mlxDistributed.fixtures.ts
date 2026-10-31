@@ -314,3 +314,144 @@ export const HOSTING_RANK_1: MlxDistributedStatus = {
     lastPollMs: 1790200002000,
   },
 };
+
+// ---------------------------------------------------------------------------
+// MiMo (mimo_v2) on goose's own layer split, the mlx_lm pipeline runner
+// ---------------------------------------------------------------------------
+
+/**
+ * The real MiMo plan at mimo_v2's own 5% reserve (goose-sidecar layer_split.rs, session 4,
+ * 2026-10-26): rank 0 workhorse (96 GiB, 76.70 GB available) holds layers [29, 48), rank 1 mule
+ * (128 GiB, 111.00 GB available) holds [0, 29). The derived context (60,672) fills each budget, so
+ * spare is 0.00 / 0.23 GB by design; the margin is the reserve. Byte figures are the backend's.
+ */
+export const MIMO_MODEL = 'mlx-community/MiMo-V2-Flash-4bit';
+export const MIMO_REASON =
+  'split 19/29 (rank 0 = the last layers) leaves the most memory on the tightest Mac of all 47 contiguous splits: spare 0.00 GB / 0.23 GB at context 60672 with a 256-token prefill chunk, reserve 5.0% of RAM';
+
+export const MIMO_CONFIG: MlxDistributedConfig = {
+  modelId: MIMO_MODEL,
+  backend: 'jaccl',
+  port: 8190,
+  coordinatorPort: 32323,
+  restartOnFailure: true,
+  nodes: [
+    {
+      name: 'workhorse',
+      tbIp: '192.168.0.2',
+      tbNetmask: '255.255.255.252',
+      tbInterface: 'en3',
+      tbService: 'EXO Thunderbolt 2',
+      rdmaDevice: 'rdma_en3',
+      python: '/Users/workhorse/.goose/mlx-venv/bin/python',
+      modelDir: `/Users/workhorse/.goose/models/${MIMO_MODEL}`,
+    },
+    {
+      name: 'mule',
+      ssh: 'mule',
+      tbIp: '192.168.0.1',
+      tbNetmask: '255.255.255.252',
+      tbInterface: 'en3',
+      tbService: 'EXO Thunderbolt 3',
+      rdmaDevice: 'rdma_en3',
+      python: '/Users/mule/.goose/mlx-venv/bin/python',
+      modelDir: `/Users/mule/.goose/models/${MIMO_MODEL}`,
+    },
+  ],
+};
+
+function mimoPlan(
+  layerStart: number,
+  layerEnd: number,
+  weightsBytes: number,
+  withOverheadBytes: number,
+  budgetBytes: number
+) {
+  return {
+    layerStart,
+    layerEnd,
+    weightsBytes,
+    stateBytes: 0,
+    workspaceBytes: withOverheadBytes - weightsBytes,
+    promptCacheBytes: 0,
+    plannedBytes: withOverheadBytes,
+    withOverheadBytes,
+    budgetBytes,
+    fits: withOverheadBytes <= budgetBytes,
+  };
+}
+
+const MIMO_NODES = [
+  {
+    name: 'workhorse',
+    rank: 0,
+    checks: [{ id: 'memory', verdict: 'pass', message: '76.70 GB available of 103.08 GB' }],
+    availableBytes: 76_700_000_000,
+    totalBytes: 103_079_215_104,
+    pressure: 'normal',
+    plan: mimoPlan(29, 48, 68_279_546_752, 71_545_402_240, 71_546_039_245),
+    linkSpeed: '80 Gb/s',
+  },
+  {
+    name: 'mule',
+    rank: 1,
+    host: 'mule',
+    checks: [{ id: 'memory', verdict: 'pass', message: '111.00 GB available of 137.44 GB' }],
+    availableBytes: 111_000_000_000,
+    totalBytes: 137_438_953_472,
+    pressure: 'normal',
+    plan: mimoPlan(0, 29, 100_312_603_648, 103_900_896_256, 104_128_052_327),
+    linkSpeed: '80 Gb/s',
+  },
+];
+
+export const MIMO_PREFLIGHT_OK: MlxDistributedPreflight = {
+  ok: true,
+  ranAtMs: RAN_AT_MS,
+  backend: 'jaccl',
+  runner: 'mlxLmPipeline',
+  modelType: 'mimo_v2',
+  layerSplit: [19, 29],
+  splitReason: MIMO_REASON,
+  planReserveRatio: 0.05,
+  planReserveSource: 'model',
+  contextLimit: 60672,
+  contextSource: 'derived',
+  maxContextFits: 60672,
+  checks: [
+    {
+      id: 'plan',
+      verdict: 'pass',
+      message:
+        'rank 0 workhorse layers 29-47 71.55 GB of 71.55 GB; rank 1 mule layers 0-28 103.90 GB of 104.13 GB',
+    },
+  ],
+  nodes: MIMO_NODES,
+  repairs: [],
+};
+
+/**
+ * The same pair with the reserve set to goose's shared 9.3% by hand: no split fits, and the planner
+ * names the reserve that does (7.7%) — the sentence's fragments are the ones layer_split.rs's test
+ * `the_shared_reserve_refuses_naming_the_numbers_and_the_reserve_that_fits` asserts.
+ * The need, ceiling and spare figures between them are ILLUSTRATIVE (composed, not captured); the
+ * view shows the sentence verbatim and never parses it.
+ */
+export const MIMO_REFUSAL =
+  'no layer split fits at reserve 9.3% of RAM: the best (19/29 layers, rank 0 = the last) leaves workhorse layers 29-47 need 71.55 GB against budget 67.11 GB (available 76.70 GB − 9.3% of 103.08 GB RAM, GPU ceiling 77.31 GB), spare -4.44 GB; mule layers 0-28 need 103.90 GB against budget 98.22 GB (available 111.00 GB − 9.3% of 137.44 GB RAM, GPU ceiling 103.08 GB), spare -5.68 GB. a split fits at reserve 7.7% (19/29 layers, spare 0.21 GB / 0.48 GB): set plan_reserve_ratio between 0.05 and 0.077 to plan there';
+
+export const MIMO_PREFLIGHT_REFUSED: MlxDistributedPreflight = {
+  ...MIMO_PREFLIGHT_OK,
+  ok: false,
+  ranAtMs: RAN_AT_MS + 60_000,
+  layerSplit: null,
+  splitReason: null,
+  planReserveRatio: 0.093,
+  planReserveSource: 'user',
+  fittingReserveRatio: 0.077,
+  contextLimit: null,
+  contextSource: null,
+  maxContextFits: null,
+  checks: [{ id: 'plan', verdict: 'fail', message: MIMO_REFUSAL }],
+  nodes: MIMO_NODES.map((n) => ({ ...n, plan: null })),
+};

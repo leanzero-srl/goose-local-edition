@@ -5081,6 +5081,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "Edit {name}"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "Tidak dapat merencanakan pembagian pada cadangan itu"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "Galat preflight"
   },
@@ -5224,6 +5227,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "Python pipeline (opsional)"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "Cadangan rencana (% RAM)"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "Port API"
@@ -5396,6 +5402,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "GB direncanakan dengan overhead, dari anggaran pembagian {budget} GB"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "bawaan model"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "Model dengan pembagian lapisan (mimo_v2): porsi RAM tiap Mac yang dibiarkan kosong oleh rencana. Kosong memakai cadangan milik model, jika tidak ada memakai bawaan goose; goose menolak nilai di bawah cadangan peringatan watchdog memori."
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "direncanakan {gb} GB dengan overhead"
   },
@@ -5542,6 +5554,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "kecepatan tidak dilaporkan"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "anggaran"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "Muat pada {pct}%"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "Tidak ada pembagian yang muat dengan cadangan {current}% RAM; satu muat pada {pct}%. Merencanakan di sana menyisakan lebih sedikit memori kosong di tiap Mac, tetapi masih di atas batas peringatan watchdog memori."
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} GB"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "{split} lapisan"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "Margin keamanannya adalah cadangan: goose mengatur ukuran konteks untuk mengisi anggaran tiap Mac, jadi sisa memang menunjukkan sekitar 0 GB."
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "Tidak ada cadangan yang muat"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "Tidak ada cadangan yang bisa Anda atur yang membuat pembagian muat: kosongkan memori di sebuah Mac, atau bagi model yang lebih kecil."
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "tidak ada lapisan yang direncanakan"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "Rencanakan pada {pct}%"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · {count} lapisan"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "cadangan {pct}% RAM"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "bawaan goose"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "cadangan milik {model}"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "cadangan milik model"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "diatur oleh Anda"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "sisa"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "Pembagian lapisan"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "bobot"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "Mulai menjalankan preflight, memperbaiki tautan Thunderbolt bila JACCL membutuhkannya, lalu meluncurkan setiap rank di bawah pengawasan."
@@ -5869,6 +5941,12 @@
   },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Tidak dapat membaca pengaturan mesin."
+  },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Tidak dapat membaca apakah split melayani Mac ini: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Membaca apakah split melayani Mac ini…"
   },
   "mlxEngineView.statusRetry": {
     "defaultMessage": "Baca lagi"

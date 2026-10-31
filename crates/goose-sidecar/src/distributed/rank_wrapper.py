@@ -750,6 +750,42 @@ if prefill is not None:
     upstream_split = mlx_generate.PromptProcessingBatch.split
     overruns = {"reported": False}
 
+    class PrefillPace:
+        """GOOSE_RANK_PREFILL_PACE: the seconds this rank's prompt steps took, one line per
+        `PREFILL_PACE_STEPS` steps (the width reached, tokens read — each step reads mlx_lm's
+        whole slice in chunks of `chunk` — the last chunk, seconds, MLX active/cache):
+        the 64k MiMo prompt fell from ~270 to ~80 tok/s past ~19k tokens (2026-10-27) and no rank
+        log said where the time went."""
+
+        def __init__(self):
+            self.steps = self.tokens = 0
+            self.seconds = 0.0
+
+        def step(self, width, tokens, chunk, began):
+            self.chunk = chunk
+            self.steps += 1
+            self.tokens += tokens
+            self.seconds += time.perf_counter() - began
+            if self.steps % PREFILL_PACE_STEPS == 0:
+                emit(
+                    "RANK_PREFILL_PACE",
+                    {
+                        "width": width,
+                        "tokens": self.tokens,
+                        "chunk": self.chunk,
+                        "seconds": round(self.seconds, 3),
+                        "active": mx.get_active_memory(),
+                        "cache": mx.get_cache_memory(),
+                    },
+                )
+                self.tokens = 0
+                self.seconds = 0.0
+
+    # The steps one pace line sums: an algorithm constant (16 x the 256-token chunk = one line per
+    # ~4k tokens, ~90 lines for a 350k prompt).
+    PREFILL_PACE_STEPS = 16
+    prefill_pace = PrefillPace()
+
     def prompt(self, tokens):
         # One step of the prompt batch: `tokens` holds each row's next slice (at most mlx_lm's
         # step). Its chunk is what the plan's workspace affords this many rows at the width the
@@ -766,6 +802,10 @@ if prefill is not None:
                     {"rows": rows, "width": width, "chunk": chunk, "over_bytes": over},
                 )
             self.prefill_step_size = chunk
+            began = time.perf_counter()
+            answer = upstream_prompt(self, tokens)
+            prefill_pace.step(width, max(len(t) for t in tokens), chunk, began)
+            return answer
         return upstream_prompt(self, tokens)
 
     def split(self, indices):
@@ -1737,30 +1777,54 @@ if spec.get("row_processors"):
 # on the 27B split). The dtype decides the byte count of every tensor-parallel all_sum, so only a
 # launch whose every rank runs it asks for it (`batch_kv_dtype`). KV of two different dtypes still
 # meeting in a batch (upstream casts or promotes it silently) is named: RANK_KV_DTYPE_MIXED.
+#
+# The same padding is in mlx_lm's BatchRotatingKVCache.extend (a sliding-window layer, MiMo's 39 of
+# 48): on the pipeline split it is FATAL, not slow. A rank receives the previous rank's hidden
+# states into a buffer shaped and TYPED like its own embedding (`recv_like`, bfloat16), so rank 1
+# sending float32 sent twice the bytes rank 0 posted for: session 14's collective trace, pair 2
+# (13:39Z): rank 1 `send (2, 768, 4096) float32`, rank 0 `recv_like (2, 768, 4096) bfloat16`, then
+# rank 0's next receive already a different shape (2, 512) and rank 1's Metal command buffer timed
+# out ("GPU Timeout", RANK_FATAL; session 13's -12 "Recv failed" is the same unpaired traffic).
 if spec.get("batch_kv_dtype"):
-    for name in ("extend", "merge"):
-        if not hasattr(BatchKVCache, name):
-            raise SystemExit(
-                f"goose rank wrapper: mlx_lm {mlx_lm.__version__} has no BatchKVCache.{name}; "
-                "the batch's KV dtype was written against mlx_lm 0.31.3"
-            )
-    upstream_kv_extend = BatchKVCache.extend
-    upstream_kv_merge = BatchKVCache.merge
+    for cls in (BatchKVCache, BatchRotatingKVCache):
+        for name in ("extend", "merge"):
+            if not hasattr(cls, name):
+                raise SystemExit(
+                    f"goose rank wrapper: mlx_lm {mlx_lm.__version__} has no {cls.__name__}.{name}; "
+                    "the batch's KV dtype was written against mlx_lm 0.31.3"
+                )
 
-    def kv_extend(self, other):
-        mixed = kv_dtypes((self, other))
-        if len(mixed) > 1:
-            emit("RANK_KV_DTYPE_MIXED", {"rank": group.rank(), "where": "extend", "dtypes": mixed})
-        return extend_in_its_dtype(self, other, upstream_kv_extend)
+    def dtype_keeping(cls):
+        upstream_kv_extend = cls.extend
+        upstream_kv_merge = cls.merge
 
-    def kv_merge(cls, caches):
-        mixed = kv_dtypes(caches)
-        if len(mixed) > 1:
-            emit("RANK_KV_DTYPE_MIXED", {"rank": group.rank(), "where": "merge", "dtypes": mixed})
-        return upstream_kv_merge(caches)
+        def kv_extend(self, other):
+            mixed = kv_dtypes((self, other))
+            if len(mixed) > 1:
+                emit(
+                    "RANK_KV_DTYPE_MIXED",
+                    {"rank": group.rank(), "where": "extend", "cache": cls.__name__, "dtypes": mixed},
+                )
+            return extend_in_its_dtype(self, other, upstream_kv_extend)
 
-    BatchKVCache.extend = kv_extend
-    BatchKVCache.merge = classmethod(kv_merge)
+        def kv_merge(_, caches):
+            mixed = kv_dtypes(caches)
+            if len(mixed) > 1:
+                emit(
+                    "RANK_KV_DTYPE_MIXED",
+                    {"rank": group.rank(), "where": "merge", "cache": cls.__name__, "dtypes": mixed},
+                )
+            return upstream_kv_merge(caches)
+
+        cls.extend = kv_extend
+        cls.merge = classmethod(kv_merge)
+
+    dtype_keeping(BatchKVCache)
+    dtype_keeping(BatchRotatingKVCache)
+
+# A finished prompt joins an EMPTY generation batch without a second copy of its KV
+# (rank_batch.py `adopting_extend`): the copy was the peak of a long request.
+BatchKVCache.extend = adopting_extend(BatchKVCache.extend)
 
 
 # A BaseException so mlx_lm's handle_completion (`except Exception` → 404) lets it through to
@@ -1878,8 +1942,13 @@ def do_GET(self):
                         "context_window": spec["context_window"],
                         # The single engine's shape (Rapid-MLX routes/models.py): mlx_lm.server
                         # refuses every non-text content part, so no "vision" (Q-260: goose sends
-                        # an engine that declares it reads text only a placeholder per image).
-                        "capabilities": ["text", "tools"],
+                        # an engine that declares it reads text only a placeholder per image) —
+                        # unless rank_media.py wired an omni MiMo checkpoint's vision tower.
+                        "capabilities": ["text", *globals().get("media_capabilities", []), "tools"],
+                        # The reasoning controls this engine honours: rank_thinking.py refuses a
+                        # graded reasoning_effort by name, so goose's provider sends the template
+                        # switch alone here (openai.rs declared_effort_grading).
+                        "reasoning_controls": ["enable_thinking"],
                         **(
                             {"request_extensions": list(TRANSIENT_TAIL_EXTENSIONS)}
                             if transient_tail_boundary
@@ -2024,7 +2093,7 @@ def validate_model_parameters(self):
         tokenizer = provider.tokenizer
         try:
             self.chat_template_kwargs = resolved_template_kwargs(
-                self.body, template_reasons(tokenizer.chat_template)
+                self.body, template_reasons(tokenizer.chat_template), TOOL_TURNS_THINK
             )
         except ThinkingRefused as refusal:
             raise Refused(400, str(refusal), "unsupported_parameter")
@@ -2378,5 +2447,7 @@ sys.argv = [
     str(spec["port"]),
     *prompt_cache_flags,
     *(["--prefill-step-size", str(int(prefill["step"]))] if prefill is not None else []),
+    # rank_pipeline_split.py: a split spec's ranks each run their own layer range.
+    *(["--pipeline"] if spec.get("pipeline_split") is not None else []),
 ]
 server.main()

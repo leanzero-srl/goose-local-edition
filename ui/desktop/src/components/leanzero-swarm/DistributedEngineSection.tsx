@@ -95,6 +95,8 @@ import {
   ownsTheMac,
   planForRank,
   pressureTone,
+  reserveFromPercent,
+  reservePercent,
   runStateInFlight,
   sameConfig,
   verdictTone,
@@ -111,6 +113,7 @@ import { DistributedSetup, linkNode } from './DistributedSetup';
 import { formatElapsed } from './mlxLiveStats';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { useCutGuard } from './cutGuard';
+import { MlxLayerSplit, type PlanAtControls } from './MlxLayerSplit';
 import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
 import {
   LOCAL_NETWORK_CHECK,
@@ -436,6 +439,23 @@ const i18n = defineMessages({
   useGooseRunner: {
     id: 'mlxDistributed.check.useGooseRunner',
     defaultMessage: 'Use goose’s runner',
+  },
+  planAtError: {
+    id: 'mlxDistributed.error.planAt',
+    defaultMessage: 'Could not plan the split at that reserve',
+  },
+  planReserve: {
+    id: 'mlxDistributed.field.planReserve',
+    defaultMessage: 'Plan reserve (% of RAM)',
+  },
+  planReserveDefault: {
+    id: 'mlxDistributed.planReserveDefault',
+    defaultMessage: 'model default',
+  },
+  planReserveHint: {
+    id: 'mlxDistributed.planReserveHint',
+    defaultMessage:
+      'Layer-split models (mimo_v2): the share of each Mac’s RAM the plan keeps free. Empty uses the model’s own reserve, else goose’s default; goose refuses a value below the memory watchdog’s warning reserve.',
   },
   useGooseRunnerError: {
     id: 'mlxDistributed.error.useGooseRunner',
@@ -979,10 +999,12 @@ function CheckList({ checks }: { checks: readonly MlxDistributedCheck[] }) {
 function PreflightReportView({
   report,
   room,
+  planAt,
   nodes = true,
 }: {
   report: MlxDistributedPreflight;
   room?: RoomControls;
+  planAt?: PlanAtControls;
   /** false while the run lives: each Mac is its node card then, never twice. */
   nodes?: boolean;
 }) {
@@ -1040,6 +1062,7 @@ function PreflightReportView({
           </ul>
         </div>
       )}
+      <MlxLayerSplit report={report} planAt={planAt} />
       {nodes && (
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
           {report.nodes.map((n) => (
@@ -1527,6 +1550,47 @@ function NumberInput({
   );
 }
 
+/**
+ * The plan reserve as a percent of RAM ("7.7"): its own text while typing, so "7." survives; an empty
+ * field is "the model's default" (null), never 0. Bounds are the backend's, which names them.
+ */
+function PercentInput({
+  value,
+  onChange,
+  label,
+  placeholder,
+  disabled,
+}: {
+  value: number | null | undefined;
+  onChange: (ratio: number | null) => void;
+  label: string;
+  placeholder?: string;
+  disabled: boolean;
+}) {
+  const shown = value == null ? '' : reservePercent(value);
+  const [text, setText] = useState(shown);
+  // Follow a value set elsewhere ("Plan at 7.7%"), never fight the person's own typing.
+  useEffect(() => {
+    setText((current) => (reserveFromPercent(current) === (value ?? null) ? current : shown));
+  }, [value, shown]);
+  return (
+    <input
+      inputMode="decimal"
+      value={text}
+      placeholder={placeholder}
+      disabled={disabled}
+      onChange={(e) => {
+        const next = e.target.value.replace(/[^0-9.]/g, '');
+        setText(next);
+        onChange(reserveFromPercent(next));
+      }}
+      className={cx(INPUT, 'w-full', TNUM)}
+      aria-label={label}
+      autoComplete="off"
+    />
+  );
+}
+
 function ConfigEditor({
   config,
   models,
@@ -1642,6 +1706,19 @@ function ConfigEditor({
         </div>
       </div>
       <p className={TYPE.meta}>{intl.formatMessage(i18n.slotsHint)}</p>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <label className="flex min-w-0 flex-col gap-1">
+          <span className={TYPE.meta}>{intl.formatMessage(i18n.planReserve)}</span>
+          <PercentInput
+            value={config.planReserveRatio}
+            onChange={(ratio) => onChange({ ...config, planReserveRatio: ratio })}
+            label={intl.formatMessage(i18n.planReserve)}
+            placeholder={intl.formatMessage(i18n.planReserveDefault)}
+            disabled={locked}
+          />
+        </label>
+      </div>
+      <p className={TYPE.meta}>{intl.formatMessage(i18n.planReserveHint)}</p>
       <div className="flex items-center gap-3">
         <StudioSwitch
           checked={config.restartOnFailure ?? false}
@@ -2120,6 +2197,28 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
     });
   const adoptRunner = { adopt: onAdoptRunner, disabled: busy != null || owning };
 
+  /**
+   * "Plan at 7.7%": the reserve the refusal named becomes the config's plan reserve — saved (or put
+   * into the open draft) and checked again, so the report shows the split planned there.
+   */
+  const onPlanAt = (ratio: number) =>
+    void run('save', i18n.planAtError, async () => {
+      if (!config) return;
+      const next = { ...config, planReserveRatio: ratio };
+      await touchLocalNetwork();
+      if (dirty) {
+        setDraft(next);
+        setFreshPreflight(await mlxDistributedPreflight(cleanConfig(next), repairLink));
+        return;
+      }
+      await mlxDistributedConfigUpdate(cleanConfig(next));
+      setFreshPreflight(await mlxDistributedPreflight(null, repairLink));
+    });
+  const planAt: PlanAtControls = {
+    plan: onPlanAt,
+    disabled: busy != null || owning || otherGoose != null || config == null,
+  };
+
   // The section says what IT is: the distributed engine as configured (or running), never the
   // single engine's "Single · this Mac" — that chip lives on the tab row and the tile.
   const configured = configuredModeSummary(status);
@@ -2366,7 +2465,12 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
           <span className={TYPE.zone}>{intl.formatMessage(i18n.preflightTitle)}</span>
           {preflight ? (
             <AdoptRunnerContext.Provider value={adoptRunner}>
-              <PreflightReportView report={preflight} room={room} nodes={!liveRun} />
+              <PreflightReportView
+                report={preflight}
+                room={room}
+                planAt={planAt}
+                nodes={!liveRun}
+              />
             </AdoptRunnerContext.Provider>
           ) : (
             <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.preflightNone)}</p>

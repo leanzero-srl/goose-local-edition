@@ -5081,6 +5081,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "Изменить {name}"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "Не удалось спланировать разделение с этим резервом"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "Ошибка preflight"
   },
@@ -5224,6 +5227,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "Python конвейера (необязательно)"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "Резерв плана (% RAM)"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "Порт API"
@@ -5396,6 +5402,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "ГБ по плану с накладными расходами, из бюджета разделения {budget} ГБ"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "по умолчанию для модели"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "Модели с разделением по слоям (mimo_v2): доля RAM каждого Mac, которую план оставляет свободной. Если пусто, используется собственный резерв модели, а если его нет — значение goose по умолчанию; goose отклоняет значение ниже резерва предупреждения сторожа памяти."
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "по плану {gb} ГБ с накладными расходами"
   },
@@ -5542,6 +5554,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "скорость не сообщена"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "бюджет"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "Помещается при {pct}%"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "При резерве {current}% RAM ни одно разделение не помещается; при {pct}% помещается. План с таким резервом оставляет на каждом Mac меньше свободной памяти, но всё ещё выше порога предупреждения сторожа памяти."
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} ГБ"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "слои: {split}"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "Запас прочности — это и есть резерв: goose подбирает размер контекста так, чтобы заполнить бюджет каждого Mac, поэтому остаток намеренно показывает около 0 ГБ."
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "Ни один резерв не подходит"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "Ни при каком резерве, который можно задать, разделение не помещается: освободите память на одном из Mac или разделите модель поменьше."
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "слои не запланированы"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "Планировать при {pct}%"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · слоёв: {count}"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "ранг {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "резерв {pct}% RAM"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "значение goose по умолчанию"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "собственный резерв {model}"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "собственный резерв модели"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "задано вами"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "остаток"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "Разделение по слоям"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "веса"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "Запуск выполняет preflight, восстанавливает канал Thunderbolt, когда это нужно JACCL, и затем запускает каждый ранг под надзором."
@@ -5869,6 +5941,12 @@
   },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Не удалось прочитать настройки движка."
+  },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Не удалось прочитать, обслуживает ли этот Mac разделение: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Проверяем, обслуживает ли этот Mac разделение…"
   },
   "mlxEngineView.statusRetry": {
     "defaultMessage": "Прочитать снова"

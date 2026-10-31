@@ -112,7 +112,13 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// listener, unnamed. The stop is `last_engine_stop` {reason `cancelled_by_client`, phase} and a
 /// RANK_CANCELLED_BY_CLIENT line — the tensor wrapper's shape (rank_wrapper.py `client_left`).
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "8c000705422c314b2f7acd81ae9e398db0ae9320";
+/// Tag `lz-pipeline-qwen4.15` (2026-10-26): one commit on the previous pin that vendors mlx-lm's
+/// `mimo_v2` (PR #1219) under `rapid_mlx.mlx_lm_models`, which the MiMo-V2.6 split's ranks import.
+/// Tag `lz-pipeline-qwen4.16` (2026-10-27, branch lz/pipeline-mimo-omni): one commit on 4.15 that
+/// loads mlx-vlm-layout OMNI MiMo builds (`language_model.*` + `vision_tower.*`) and reads images
+/// and video (`mimo_v2_media`: the ViT at float32 parity with the HF reference, Xiaomi's
+/// preprocessing, the marker scheme rank_media.py wires into mlx_lm.server).
+pub const PIPELINE_FORK_COMMIT: &str = "1e5d581d1256389ef1bdc8b041adbc3d11a969f2";
 /// The newest single-engine tag (`v*-lz.*`) whose fixes the pipeline fork at
 /// [`PIPELINE_FORK_COMMIT`] carries or has reviewed as not applying — the fork's
 /// `tests/pipeline_single_line_ports.json` `reviewed_through`. The pipeline line branched from the
@@ -146,7 +152,7 @@ pub const PIPELINE_FORK_COMMIT: &str = "8c000705422c314b2f7acd81ae9e398db0ae9320
 pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.20";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@8c000705422c314b2f7acd81ae9e398db0ae9320";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@1e5d581d1256389ef1bdc8b041adbc3d11a969f2";
 /// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
 /// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
 /// which nothing here imports.
@@ -212,7 +218,7 @@ impl EnvSpec {
     pub fn for_runner(runner: Runner) -> Self {
         match runner {
             Runner::MlxLmTensor => Self::tensor(),
-            Runner::PipelineQwen4 => Self::pipeline(),
+            Runner::PipelineQwen4 | Runner::MlxLmPipeline => Self::pipeline(),
         }
     }
 

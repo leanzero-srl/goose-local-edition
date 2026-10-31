@@ -1498,7 +1498,7 @@ pub struct ServerLoad {
 pub fn server_load(body: &str, runner: Runner, ranks: usize) -> Result<ServerLoad> {
     let status: ServerStatus = serde_json::from_str(body)
         .map_err(|e| anyhow!("/v1/status is not the expected shape ({e}): {body}"))?;
-    if runner == Runner::MlxLmTensor {
+    if matches!(runner, Runner::MlxLmTensor | Runner::MlxLmPipeline) {
         return Ok(ServerLoad {
             waiting: status.num_waiting,
             slots: None,
@@ -2431,6 +2431,22 @@ fn launch_specs(
             let launches = preflight.tensor_launches()?;
             launch::rank_specs(&ctx.config, &ctx.served, &launches, context, report_seconds)
         }
+        Runner::MlxLmPipeline => {
+            let (launches, weights) = preflight.mlx_pipeline_launches()?;
+            let split = preflight
+                .layer_split
+                .as_deref()
+                .ok_or_else(|| anyhow!("the preflight approved no layer split"))?;
+            launch::mlx_pipeline_rank_specs(
+                &ctx.config,
+                &ctx.served,
+                &launches,
+                &weights,
+                split,
+                context,
+                report_seconds,
+            )
+        }
         Runner::PipelineQwen4 => {
             let starts = preflight
                 .pipeline_starts
@@ -2526,7 +2542,11 @@ async fn supervise(
     let parity = sidecar_parity();
     let mut restarts: VecDeque<Instant> = VecDeque::new();
     let mut backoff = parity.backoff_initial;
-    let peers_follow_rank0 = ctx.runner == Runner::PipelineQwen4;
+    // The mlx_lm pipeline runs the tensor wrapper: every rank is stopped like a tensor rank.
+    let peers_follow_rank0 = match ctx.runner {
+        Runner::PipelineQwen4 => true,
+        Runner::MlxLmTensor | Runner::MlxLmPipeline => false,
+    };
     // One restart per memory outage: spent by a memory death's restart, re-armed once the
     // restarted pair has served a request to its end.
     let mut memory_restart_armed = true;
@@ -3626,6 +3646,12 @@ mod tests {
             max_context_fits: None,
             pipeline_starts: None,
             slots: None,
+            layer_split: None,
+            pipeline_full_layers: None,
+            split_reason: None,
+            plan_reserve_ratio: None,
+            plan_reserve_source: None,
+            fitting_reserve_ratio: None,
             checks: Vec::new(),
             nodes: vec![node_preflight(0, None), node_preflight(1, Some(3 * GIB))],
             repairs: Vec::new(),
@@ -4318,6 +4344,12 @@ mod tests {
             max_context_fits: None,
             pipeline_starts: Some(plan.starts.clone()),
             slots: Some(2),
+            layer_split: None,
+            pipeline_full_layers: None,
+            split_reason: None,
+            plan_reserve_ratio: None,
+            plan_reserve_source: None,
+            fitting_reserve_ratio: None,
             checks: Vec::new(),
             nodes: (0..2)
                 .map(|rank| preflight::NodePreflight {
@@ -5449,6 +5481,12 @@ File-backed pages:                            298000.
             max_context_fits: None,
             pipeline_starts: None,
             slots: None,
+            layer_split: None,
+            pipeline_full_layers: None,
+            split_reason: None,
+            plan_reserve_ratio: None,
+            plan_reserve_source: None,
+            fitting_reserve_ratio: None,
             checks: Vec::new(),
             nodes: vec![short],
             repairs: Vec::new(),

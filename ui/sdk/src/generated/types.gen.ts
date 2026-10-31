@@ -4831,10 +4831,34 @@ export type MlxDistributedPreflightDto = {
      */
     backend: string;
     /**
-     * "mlxLmTensor" (qwen3_5) | "pipelineQwen4" (qwen4_exp); absent when the model type has none.
+     * "mlxLmTensor" (qwen3_5) | "pipelineQwen4" (qwen4_exp) | "mlxLmPipeline" (mimo_v2);
+     * absent when the model type has none.
      */
     runner?: string | null;
     modelType?: string | null;
+    /**
+     * mlxLmPipeline only: layers per rank, rank 0 first (rank 0 holds the LAST layers). Each
+     * node's `plan` carries its range and bytes.
+     */
+    layerSplit?: Array<number> | null;
+    /**
+     * mlxLmPipeline only: why this split, in the planner's words (shown verbatim).
+     */
+    splitReason?: string | null;
+    /**
+     * mlxLmPipeline only: the plan reserve (share of each node's RAM) in force, also on a refusal.
+     */
+    planReserveRatio?: number | null;
+    /**
+     * Where `planReserveRatio` came from: "default" (goose's shared reserve) | "model" (the
+     * model's own reserve) | "user" (the config's `planReserveRatio`).
+     */
+    planReserveSource?: string | null;
+    /**
+     * mlxLmPipeline refusal only: the highest `planReserveRatio` a config may set at which a split
+     * fits (the plan check's message names it too); absent when no settable reserve fits.
+     */
+    fittingReserveRatio?: number | null;
     /**
      * The context this launch allows (goose-side bookkeeping — the chat context limit).
      */
@@ -5080,6 +5104,13 @@ export type MlxDistributedConfigDto = {
      * Must satisfy 0 < critical < warn < 1.
      */
     watchdogCriticalRatio?: number | null;
+    /**
+     * The share of each node's RAM the split's plan keeps free (budget = available − RAM × this,
+     * at most the GPU ceiling). Absent = the model's own reserve when goose has one (mimo_v2:
+     * 0.05), else goose's shared reserve (0.093). An explicit override for one config: at least
+     * the WARN reserve in force and below the shared default.
+     */
+    planReserveRatio?: number | null;
     nodes: Array<MlxDistributedNodeConfigDto>;
 };
 

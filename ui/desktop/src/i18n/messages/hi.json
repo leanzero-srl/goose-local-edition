@@ -5081,6 +5081,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "{name} संपादित करें"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "इस रिज़र्व पर विभाजन की योजना नहीं बन सकी"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "प्रीफ़्लाइट त्रुटि"
   },
@@ -5224,6 +5227,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "पाइपलाइन Python (वैकल्पिक)"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "योजना रिज़र्व (RAM का %)"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "API पोर्ट"
@@ -5396,6 +5402,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "GB ओवरहेड सहित नियोजित, {budget} GB विभाजन बजट में से"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "मॉडल डिफ़ॉल्ट"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "परत-विभाजन वाले मॉडल (mimo_v2): हर Mac की RAM का वह हिस्सा जिसे योजना खाली रखती है। खाली छोड़ने पर मॉडल का अपना रिज़र्व, नहीं तो goose का डिफ़ॉल्ट इस्तेमाल होता है; goose मेमोरी वॉचडॉग के चेतावनी रिज़र्व से कम मान अस्वीकार करता है।"
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "नियोजित {gb} GB ओवरहेड सहित"
   },
@@ -5542,6 +5554,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "गति रिपोर्ट नहीं हुई"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "बजट"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "{pct}% पर फ़िट होता है"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "RAM के {current}% रिज़र्व पर कोई विभाजन फ़िट नहीं होता; {pct}% पर एक फ़िट होता है। वहाँ योजना बनाने से हर Mac पर कम मेमोरी खाली रहती है, फिर भी मेमोरी वॉचडॉग की चेतावनी रेखा से ऊपर।"
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} GB"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "{split} परतें"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "सुरक्षा मार्जिन रिज़र्व ही है: goose कॉन्टेक्स्ट का आकार हर Mac का बजट भरने के लिए तय करता है, इसलिए शेष जानबूझकर लगभग 0 GB दिखता है।"
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "कोई रिज़र्व फ़िट नहीं होता"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "आप जो भी रिज़र्व सेट करें, उससे कोई विभाजन फ़िट नहीं होता: किसी Mac पर मेमोरी खाली करें, या कोई छोटा मॉडल विभाजित करें।"
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "कोई परत नियोजित नहीं"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "{pct}% पर योजना बनाएँ"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · {count} परतें"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "रैंक {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "RAM का {pct}% रिज़र्व"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "goose का डिफ़ॉल्ट"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "{model} का अपना रिज़र्व"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "मॉडल का अपना रिज़र्व"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "आपके द्वारा सेट"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "शेष"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "परत विभाजन"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "वेट"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "शुरू करने पर प्रीफ़्लाइट चलता है, JACCL को ज़रूरत हो तो Thunderbolt लिंक ठीक होता है, फिर हर रैंक निगरानी में लॉन्च होती है।"
@@ -5869,6 +5941,12 @@
   },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "इंजन सेटिंग पढ़ी नहीं जा सकीं।"
+  },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "यह नहीं पढ़ा जा सका कि क्या कोई स्प्लिट इस Mac को सर्व करता है: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "पढ़ा जा रहा है कि क्या कोई स्प्लिट इस Mac को सर्व करता है…"
   },
   "mlxEngineView.statusRetry": {
     "defaultMessage": "फिर से पढ़ें"

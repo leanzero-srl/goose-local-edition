@@ -71,11 +71,7 @@ def sibling_header(text, value_start, valid_names, headers=None):
     return None
 
 
-def parameters_by_position(text, valid_names):
-    """`[(KEY, VALUE)]` of a function body, in the order written: each value runs to its sibling
-    header (or the body's end) and ends at the last `</parameter>` before it; a value with no
-    `</parameter>` at all is not read (mlx_lm's regex required the close too)."""
-    headers = list(PARAMETER_HEADER.finditer(text))
+def _read_by_position(text, valid_names, headers):
     read = []
     i = 0
     while i < len(headers):
@@ -90,6 +86,55 @@ def parameters_by_position(text, valid_names):
     return read
 
 
+def boundary_names(text, valid_names, headers=None):
+    """The undeclared NAMEs whose `<parameter=NAME>` stands right after a `</parameter>` (only
+    whitespace between): where the model closed one value and opened a parameter the tool does not
+    declare (MiMo-V2.6-Flash's `old` / `new` for `edit`'s `before` / `after`, below)."""
+    if valid_names is None:
+        return set()
+    names = set()
+    for header in headers if headers is not None else PARAMETER_HEADER.finditer(text):
+        if header.group(1) not in valid_names and text[: header.start()].rstrip().endswith(
+            PARAMETER_CLOSE
+        ):
+            names.add(header.group(1))
+    return names
+
+
+def parameters_by_position(text, valid_names, required=()):
+    """`[(KEY, VALUE)]` of a function body, in the order written: each value runs to its sibling
+    header (or the body's end) and ends at the last `</parameter>` before it; a value with no
+    `</parameter>` at all is not read (mlx_lm's regex required the close too).
+
+    When that reading leaves a REQUIRED parameter unwritten, the call cannot succeed as read, and
+    an undeclared header at a value boundary is the model's own parameter, not the value's text:
+    the body is read again with those names as siblings too. Measured 2026-10-31 (MiMo split
+    sb-7.2, run 8985a86d): 10 of 25 `edit` calls wrote
+    `<parameter=path>…ledgerd.py</parameter><parameter=old>…</parameter><parameter=new>…`; the
+    declared-only reading folded `old`/`new` into `path` (or `new` into `before`) and goose
+    answered "missing required fields `before`, `after`. Arrived: `path`" — the misnaming the
+    model needed to see was hidden inside a value. A complete reading is never re-read, so a
+    written file holding `</parameter><parameter=x>` (Q-372) keeps its text."""
+    headers = list(PARAMETER_HEADER.finditer(text))
+    read = _read_by_position(text, valid_names, headers)
+    if valid_names is None or set(required) <= {key for key, _ in read}:
+        return read
+    extra = boundary_names(text, valid_names, headers)
+    if not extra:
+        return read
+    return _read_by_position(text, set(valid_names) | extra, headers)
+
+
+def required_parameters(function_name, tools):
+    """The `required` list of the tool's parameter schema, looked up as mlx_lm's
+    `_get_arguments_config` looks up its properties."""
+    for tool in tools or []:
+        function = tool.get("function") if isinstance(tool, dict) else None
+        if function and function.get("name") == function_name:
+            return list((function.get("parameters") or {}).get("required") or [])
+    return []
+
+
 def install_positional_parameters(qwen3_coder):
     """mlx_lm's `_parse_xml_function_call`, reading its parameters by position (Q-372). The name,
     the schema lookup and every value's conversion stay mlx_lm's own functions, read from the
@@ -101,7 +146,9 @@ def install_positional_parameters(qwen3_coder):
         param_config = qwen3_coder._get_arguments_config(function_name, tools)
         arguments = {}
         for name, value in parameters_by_position(
-            function_call_str[end_index + 1:], set(param_config) or None
+            function_call_str[end_index + 1:],
+            set(param_config) or None,
+            required_parameters(function_name, tools),
         ):
             arguments[name] = qwen3_coder._convert_param_value(value, name, param_config)
         return dict(name=function_name, arguments=arguments)
@@ -149,6 +196,9 @@ class ToolCallStream:
         # the search for its sibling header resumes.
         self._first_close = None
         self._header_scan = 0
+        # An undeclared header stood at a value boundary: the parser may read it as a parameter
+        # (`parameters_by_position`'s re-read), so nothing more is sent until the call ends.
+        self._held = False
 
     def feed(self, piece, tools):
         """Append generated text; returns (name when the call just opened else None, fragment)."""
@@ -329,12 +379,18 @@ class ToolCallStream:
 
     def _sibling(self):
         """The open value's sibling header (`sibling_header`), searched from where the last search
-        stopped: every header after the first `</parameter>` has one before it."""
+        stopped: every header after the first `</parameter>` has one before it. Past an undeclared
+        header at a value boundary there is none: which reading holds is the parser's at the end."""
+        if self._held:
+            return None
         valid = set(self._config) or None
         complete_end = self._header_scan
         for header in PARAMETER_HEADER.finditer(self.text, self._header_scan):
             if valid is None or header.group(1) in valid:
                 return header
+            if self.text[: header.start()].rstrip().endswith(self.PARAM_CLOSE):
+                self._held = True
+                return None
             complete_end = header.end()
         pending = self.text.rfind(self.PARAM_OPEN, complete_end)
         if pending < 0:

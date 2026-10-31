@@ -7,7 +7,7 @@
 //! peer through `ssh -tt`, whose pty makes the remote rank die with its session (measured
 //! 2026-09-24: killing the local ssh client took the remote pid within 1 s).
 //!
-//! The program is embedded here and passed base64 on the command line, so a node needs nothing
+//! The program is embedded here and passed zlib-compressed base64 on the command line, so a node needs nothing
 //! installed beyond its interpreter: `rank_env.py` (the backend env, `emit`, the memory reporter —
 //! every rank), `rank_formation.py` (a JACCL group's formation handshake, Q-136), `rank_live.py` (rank 0's live request table, Rapid-MLX's `/v1/status` shape),
 //! `rank_thinking.py` (a chat request's thinking switch, resolved as the single engine resolves it),
@@ -70,6 +70,8 @@ const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_stream_watch.py"),
     include_str!("rank_xml_guard.py"),
     include_str!("rank_admission.py"),
+    include_str!("rank_media.py"),
+    include_str!("rank_pipeline_split.py"),
     include_str!("rank_wrapper.py")
 );
 const PIPELINE_PROGRAM: &str = concat!(
@@ -80,7 +82,12 @@ const PIPELINE_PROGRAM: &str = concat!(
     include_str!("rank_thinking.py"),
     include_str!("pipeline_rank.py")
 );
-const BOOT: &str = "import base64,sys;exec(base64.b64decode(sys.argv[1]))";
+/// The program rides zlib-compressed: a peer's rank command is ONE ssh exec request, and OpenSSH
+/// drops a request past its 256 KiB packet ("Connection reset by peer", ssh exit 255 — measured
+/// 2026-10-27 against the mule: a 262,000-byte command ran, 300,000 reset). The tensor program
+/// grew to 264,416 bytes, 352,555 as base64, and every rank 1 died in startup; compressed it is
+/// 80,944 bytes (107,925 as base64).
+const BOOT: &str = "import base64,sys,zlib;exec(zlib.decompress(base64.b64decode(sys.argv[1])))";
 const TAIL_LINES: usize = 200;
 
 /// What a rank runs, with the fields only that program reads (flattened into the spec JSON).
@@ -190,8 +197,15 @@ pub enum RankProgram {
     /// that told them apart by tokens would keep an entry this Mac's cache evicts.
     /// `mlxLmServerEveryConversation` (a 3.0.80 requester) still reads, with `name_conversations`
     /// off: that requester's ranks tell conversations apart by tokens alike.
+    ///
+    /// Tagged `mlxLmServerPipelineSplit` since the mlx_lm pipeline runner (mimo_v2):
+    /// `pipeline_split` makes every rank load only its layer range (`rank_pipeline_split.py`, under
+    /// the fork's interpreter) and run `mlx_lm.server --pipeline`; a peer whose wrapper ignored it
+    /// would load the whole model as a tensor rank and the collectives would never pair up.
+    /// `mlxLmServerNamedConversation` (a requester before it) still reads, with no split: tensor.
     #[serde(
-        rename = "mlxLmServerNamedConversation",
+        rename = "mlxLmServerPipelineSplit",
+        alias = "mlxLmServerNamedConversation",
         alias = "mlxLmServerEveryConversation",
         alias = "mlxLmServerKvDtype",
         alias = "mlxLmServerStableHead",
@@ -310,6 +324,13 @@ pub enum RankProgram {
         /// tag: rank 0 is always the requester's own Mac, whose wrapper reads it.
         #[serde(default, skip_serializing_if = "SamplingDefaults::is_empty")]
         sampling_defaults: Box<SamplingDefaults>,
+        /// The mlx_lm pipeline's layers per rank, rank 0 first (rank 0 holds the LAST layers;
+        /// `layer_split::LayerSplit::layers`). `None` = a tensor rank.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pipeline_split: Option<Vec<u32>>,
+        /// With `pipeline_split`: this rank's prompt-cache byte weights (`PipelineCacheWeights`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pipeline_cache_weights: Option<PipelineCacheWeights>,
     },
     /// The fork's `pipeline_qwen4_serve.serve` under `pipeline_rank.py` (layer split): the exact
     /// `pipeline_qwen4 serve` arguments, parsed on the rank by the fork's own parser.
@@ -485,6 +506,163 @@ impl TensorLaunch {
         }
         Ok(launches)
     }
+
+    /// Every mlx_lm pipeline rank's launch figures and prompt-cache weights. `layers[r]` / `full[r]`:
+    /// the layers rank r holds and how many of them are full attention (`LayerSplit`).
+    ///
+    /// Each rank runs its own mlx_lm prompt cache (`LRUPromptCache`, evicting on the sum of its
+    /// layer caches' `nbytes`) over the same requests, and the ranks must evict alike — a rank
+    /// that reuses a different prefix runs a different number of prefill steps and the hidden
+    /// states it passes no longer pair up. A pipeline rank holds only its layers' KV, so raw bytes
+    /// differ by rank; `rank_pipeline_split.py` scales each layer kind's `nbytes` by
+    /// `lcm(that kind's layers per rank) / this rank's`, which makes every rank's sum one integer.
+    /// The limits and the prefill projection are expressed in that unit here, identical on every
+    /// rank: the prefill per-token cost is `lcm × one layer's`, the limit the smallest of
+    /// `real limit × the rank's smaller weight` (weighted ≥ that weight × real bytes, so a rank
+    /// inside the weighted limit is inside its real one), the entry count the smallest.
+    pub fn for_pipeline_ranks(
+        plans: &[&RankPlan],
+        layers: &[u32],
+        full: &[u32],
+    ) -> Result<(Vec<Self>, Vec<PipelineCacheWeights>)> {
+        if plans.is_empty() || plans.len() != layers.len() || layers.len() != full.len() {
+            bail!(
+                "the pipeline launch needs one plan, layer count and full-attention count per rank \
+                 ({} plans, {} layer counts, {} full-attention counts)",
+                plans.len(),
+                layers.len(),
+                full.len()
+            );
+        }
+        let model_layers = plans.iter().map(|p| p.layer_end).max().unwrap_or(0);
+        let covered: u32 = layers.iter().sum();
+        if covered != model_layers
+            || plans
+                .iter()
+                .zip(layers)
+                .any(|(plan, &n)| plan.layer_end.saturating_sub(plan.layer_start) != n)
+        {
+            bail!(
+                "the split {layers:?} covers {covered} layers, the plans' ranges {:?} cover \
+                 {model_layers}: every rank must load exactly its planned range",
+                plans
+                    .iter()
+                    .map(|p| (p.layer_start, p.layer_end))
+                    .collect::<Vec<_>>()
+            );
+        }
+        let mut launches = plans
+            .iter()
+            .map(|plan| Self::from_plan(plan))
+            .collect::<Result<Vec<Self>>>()?;
+        let costs = |p: &TensorPrefill| {
+            (
+                p.step,
+                p.pair_bytes,
+                p.kv_bytes_per_token,
+                p.sequence_state_bytes,
+            )
+        };
+        let first = launches[0].prefill;
+        if let Some((rank, other)) = launches
+            .iter()
+            .enumerate()
+            .find(|(_, launch)| costs(&launch.prefill) != costs(&first))
+        {
+            bail!(
+                "the pipeline ranks' prefill figures differ (rank 0: {:?}, rank {rank}: {:?}): the \
+                 hidden states pass rank to rank each step, so every rank must take the same chunk",
+                costs(&first),
+                costs(&other.prefill)
+            );
+        }
+        let mut swa = Vec::with_capacity(layers.len());
+        for (rank, (&total, &full_layers)) in layers.iter().zip(full).enumerate() {
+            if full_layers > total {
+                bail!("rank {rank} holds {total} layers but {full_layers} full-attention ones");
+            }
+            swa.push(u64::from(total - full_layers));
+        }
+        let full: Vec<u64> = full.iter().map(|&n| u64::from(n)).collect();
+        let (full_multiple, full_weights) = kind_weights("full-attention", &full)?;
+        let (swa_multiple, swa_weights) = kind_weights("sliding-window", &swa)?;
+        let widest_full = full.iter().copied().max().unwrap_or(0);
+        let widest_swa = swa.iter().copied().max().unwrap_or(0);
+        let per_layer = |total: u64, widest: u64, what: &str| -> Result<u64> {
+            if widest == 0 {
+                return Ok(0);
+            }
+            if !total.is_multiple_of(widest) {
+                bail!(
+                    "the plan's {what} ({total} B) is not {widest} layers' worth: it was not built \
+                     by the layer split planner"
+                );
+            }
+            Ok(total / widest)
+        };
+        let kv_per_layer = per_layer(first.kv_bytes_per_token, widest_full, "KV per token")?;
+        let state_per_layer = per_layer(
+            first.sequence_state_bytes,
+            widest_swa,
+            "sliding-window state",
+        )?;
+        let workspace = launches
+            .iter()
+            .map(|l| l.prefill.workspace_bytes)
+            .min()
+            .unwrap_or(first.workspace_bytes);
+        let mut limit = u64::MAX;
+        for (rank, launch) in launches.iter().enumerate() {
+            let weight = full_weights[rank].min(swa_weights[rank]);
+            let scaled = launch
+                .prompt_cache_limit_bytes
+                .checked_mul(weight)
+                .with_context(|| format!("rank {rank}'s weighted prompt cache limit overflows"))?;
+            limit = limit.min(scaled);
+        }
+        let entries = launches
+            .iter()
+            .map(|l| l.prompt_cache_entries)
+            .min()
+            .unwrap_or(0);
+        for launch in &mut launches {
+            launch.prefill.workspace_bytes = workspace;
+            launch.prefill.kv_bytes_per_token = full_multiple * kv_per_layer;
+            launch.prefill.sequence_state_bytes = swa_multiple * state_per_layer;
+            launch.prompt_cache_limit_bytes = limit;
+            launch.prompt_cache_entries = entries;
+        }
+        let weights = full_weights
+            .into_iter()
+            .zip(swa_weights)
+            .map(|(full, swa)| PipelineCacheWeights { full, swa })
+            .collect();
+        Ok((launches, weights))
+    }
+}
+
+/// One layer kind's weights per rank and their common multiple (`lcm` of the kind's layers per
+/// rank). A kind no rank holds weighs 1 with multiple 0; a kind some ranks hold and others not is
+/// refused: no weight makes a rank with none of it count the bytes the others hold.
+fn kind_weights(kind: &str, counts: &[u64]) -> Result<(u64, Vec<u64>)> {
+    if counts.iter().all(|&n| n == 0) {
+        return Ok((0, vec![1; counts.len()]));
+    }
+    if let Some(rank) = counts.iter().position(|&n| n == 0) {
+        bail!(
+            "rank {rank} holds no {kind} layer while another rank does: its prompt cache cannot \
+             count the bytes the others' do, so the ranks would evict differently"
+        );
+    }
+    fn gcd(a: u64, b: u64) -> u64 {
+        if b == 0 {
+            a
+        } else {
+            gcd(b, a % b)
+        }
+    }
+    let multiple = counts.iter().fold(1, |acc, &n| acc / gcd(acc, n) * n);
+    Ok((multiple, counts.iter().map(|&n| multiple / n).collect()))
 }
 
 /// The per-rank tensor specs. See [`base_specs`] for the backend env.
@@ -492,6 +670,45 @@ pub fn rank_specs(
     config: &DistributedConfig,
     served: &ServedNames,
     per_rank: &[TensorLaunch],
+    context_window: u64,
+    memory_report_seconds: f64,
+) -> Vec<RankSpec> {
+    mlx_lm_server_specs(
+        config,
+        served,
+        per_rank,
+        None,
+        context_window,
+        memory_report_seconds,
+    )
+}
+
+/// The per-rank mlx_lm pipeline specs: the tensor wrapper's program with the planned split
+/// (`LayerSplit::layers`) and each rank's prompt-cache weights (`TensorLaunch::for_pipeline_ranks`).
+pub fn mlx_pipeline_rank_specs(
+    config: &DistributedConfig,
+    served: &ServedNames,
+    per_rank: &[TensorLaunch],
+    weights: &[PipelineCacheWeights],
+    split: &[u32],
+    context_window: u64,
+    memory_report_seconds: f64,
+) -> Vec<RankSpec> {
+    mlx_lm_server_specs(
+        config,
+        served,
+        per_rank,
+        Some((split, weights)),
+        context_window,
+        memory_report_seconds,
+    )
+}
+
+fn mlx_lm_server_specs(
+    config: &DistributedConfig,
+    served: &ServedNames,
+    per_rank: &[TensorLaunch],
+    pipeline: Option<(&[u32], &[PipelineCacheWeights])>,
     context_window: u64,
     memory_report_seconds: f64,
 ) -> Vec<RankSpec> {
@@ -518,8 +735,19 @@ pub fn rank_specs(
             keep_every_conversation: true,
             name_conversations: true,
             sampling_defaults: Box::default(),
+            pipeline_split: pipeline.map(|(split, _)| split.to_vec()),
+            pipeline_cache_weights: pipeline.map(|(_, weights)| weights[rank]),
         }
     })
+}
+
+/// One mlx_lm pipeline rank's prompt-cache byte weights (`rank_pipeline_split.py`): each layer
+/// cache's `nbytes` times its kind's weight, `lcm(that kind's layers per rank) / this rank's`, so
+/// every rank's sum over its own layers is the same integer and the ranks evict alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PipelineCacheWeights {
+    pub full: u64,
+    pub swa: u64,
 }
 
 /// The `pipeline_qwen4 serve` arguments for one rank: this node's own model dir, the served id,
@@ -681,7 +909,20 @@ impl RankSpec {
     /// The interpreter this rank's program needs on `node`: the tensor env, or the fork's.
     pub fn interpreter<'a>(&self, node: &'a NodeConfig) -> Result<&'a str> {
         match self.program {
-            RankProgram::MlxLmServer { .. } => Ok(&node.python),
+            RankProgram::MlxLmServer {
+                pipeline_split: None,
+                ..
+            } => Ok(&node.python),
+            RankProgram::MlxLmServer {
+                pipeline_split: Some(_),
+                ..
+            } => node.pipeline_python.as_deref().with_context(|| {
+                format!(
+                    "node '{}' has no pipeline_python: the mlx_lm pipeline rank (mimo_v2) runs the \
+                     fork's interpreter, whose rapid_mlx.mlx_lm_models vendors the architecture",
+                    node.name
+                )
+            }),
             RankProgram::PipelineServe { .. } => {
                 node.pipeline_python.as_deref().with_context(|| {
                     format!(
@@ -719,7 +960,7 @@ pub fn python_args(spec: &RankSpec) -> Result<Vec<String>> {
     let mut args = vec![
         "-c".to_string(),
         BOOT.to_string(),
-        b64.encode(spec.program_source()),
+        encode_program(spec.program_source()),
         b64.encode(serde_json::to_vec(spec)?),
         RANK_MARKER.to_string(),
     ];
@@ -729,12 +970,43 @@ pub fn python_args(spec: &RankSpec) -> Result<Vec<String>> {
     Ok(args)
 }
 
-/// The peer-side command: print the shell's pid (which `exec` hands to the interpreter unchanged)
+/// A program as BOOT reads it: zlib, then base64.
+fn encode_program(source: &str) -> String {
+    use std::io::Write as _;
+    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+    z.write_all(source.as_bytes())
+        .and_then(|()| z.finish())
+        .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
+        .expect("compressing into memory cannot fail")
+}
+
+#[cfg(test)]
+fn decode_program(arg: &str) -> String {
+    use std::io::Read as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(arg)
+        .unwrap();
+    let mut out = String::new();
+    flate2::read::ZlibDecoder::new(&bytes[..])
+        .read_to_string(&mut out)
+        .unwrap();
+    out
+}
+
+/// The open-file limit a peer's rank shell raises itself to before the interpreter starts: an ssh
+/// session on the mule starts at 256, and the first two-Mac mimo load died there opening shard 3
+/// of 36 (2026-10-26, jaccl-smoke serve_rank.sh). The floor is macOS's default hard limit, for a
+/// shell that may not raise past it.
+const RANK_OPEN_FILES: u32 = 65_536; // measured: jaccl-smoke serve_rank.sh, the mimo load that passed
+const RANK_OPEN_FILES_FLOOR: u32 = 10_240; // measured: macOS kern.maxfilesperproc default
+
+/// The peer-side command: raise the open-file limit, print the shell's pid (which `exec` hands to the interpreter unchanged)
 /// so the supervisor can signal and verify THAT pid over ssh, then become the rank.
 pub fn remote_script(python: &str, args: &[String]) -> String {
     let quoted: Vec<String> = args.iter().map(|a| sh_quote(a)).collect();
     format!(
-        "echo GOOSE_RANK_PID=$$; exec {} {}",
+        "ulimit -n {RANK_OPEN_FILES} 2>/dev/null || ulimit -n {RANK_OPEN_FILES_FLOOR}; \
+         echo GOOSE_RANK_PID=$$; exec {} {}",
         sh_quote(python),
         quoted.join(" ")
     )
@@ -1105,6 +1377,7 @@ pub(crate) mod tests {
     use crate::distributed::provision::EnvSpec;
 
     const QWEN38: &str = include_str!("../../tests/fixtures/chat_templates/qwen3.8.jinja");
+    const MIMO26: &str = include_str!("../../tests/fixtures/chat_templates/mimo_v2.6.jinja");
 
     /// One launch's own load lock: a test's stand-in ranks never take this Mac's, nor each other's.
     pub(crate) fn launch_load_lock() -> String {
@@ -1181,6 +1454,8 @@ pub(crate) mod tests {
                 keep_every_conversation: true,
                 name_conversations: true,
                 sampling_defaults: _,
+                pipeline_split: None,
+                pipeline_cache_weights: None,
             }
         ));
         assert!(
@@ -1230,7 +1505,9 @@ pub(crate) mod tests {
         let args = python_args(spec).unwrap();
         let script = remote_script(&config.nodes[1].python, &args);
         assert!(script
-            .starts_with("echo GOOSE_RANK_PID=$$; exec '/tmp/jaccl-smoke/.venv/bin/python' '-c' "));
+            .starts_with(
+            "ulimit -n 65536 2>/dev/null || ulimit -n 10240; echo GOOSE_RANK_PID=$$; exec '/tmp/jaccl-smoke/.venv/bin/python' '-c' "
+        ));
         assert!(script.ends_with(&format!("'{RANK_MARKER}'")));
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(&args[3])
@@ -1285,6 +1562,20 @@ pub(crate) mod tests {
         assert_eq!(back.owner, None);
     }
 
+    #[test]
+    fn a_peer_rank_command_fits_one_ssh_exec_request() {
+        // OpenSSH reset a 300,000-byte exec request and ran a 262,000-byte one (the mule,
+        // 2026-10-27); half of that leaves the spec and the next programs room.
+        for program in [TENSOR_PROGRAM, PIPELINE_PROGRAM] {
+            let sent = encode_program(program).len();
+            assert!(
+                sent < 131_072,
+                "a rank program rides {sent} bytes on the ssh command line"
+            );
+            assert_eq!(decode_program(&encode_program(program)), program);
+        }
+    }
+
     #[tokio::test]
     async fn the_boot_line_runs_the_wrapper_it_is_given() {
         // The boot one-liner, fed a stand-in wrapper, sees the spec as argv[2] and the marker as
@@ -1295,7 +1586,7 @@ pub(crate) mod tests {
             .args([
                 "-c",
                 BOOT,
-                &b64.encode(stand_in),
+                &encode_program(stand_in),
                 &b64.encode(r#"{"rank":1}"#),
                 RANK_MARKER,
             ])
@@ -1409,8 +1700,7 @@ pub(crate) mod tests {
         }
         assert_eq!(specs[1].coordinator.as_deref(), Some("192.168.0.1:32323"));
         let args = python_args(&specs[1]).unwrap();
-        let b64 = base64::engine::general_purpose::STANDARD;
-        let program = String::from_utf8(b64.decode(&args[2]).unwrap()).unwrap();
+        let program = decode_program(&args[2]);
         assert_eq!(
             program,
             concat!(
@@ -1424,7 +1714,7 @@ pub(crate) mod tests {
         );
         let script = remote_script(specs[1].interpreter(&config.nodes[1]).unwrap(), &args);
         assert!(script.starts_with(
-            "echo GOOSE_RANK_PID=$$; exec '/Users/workhorse/.goose/distributed/fork/bin/python' '-c' "
+            "ulimit -n 65536 2>/dev/null || ulimit -n 10240; echo GOOSE_RANK_PID=$$; exec '/Users/workhorse/.goose/distributed/fork/bin/python' '-c' "
         ));
 
         let mut four = config.clone();
@@ -2117,6 +2407,15 @@ assert resolved_template_kwargs({"messages": [], "tools": tools, "tool_choice": 
     "tool_choice none: prose on tool definitions keeps the template's default"
 assert resolved_template_kwargs({"messages": [], "tools": tools, "reasoning_effort": "none"}, True) \
     == {"enable_thinking": False}
+# MiMo (rank_pipeline_split.py sets TOOL_TURNS_THINK): an agent turn keeps the template's default
+# (thinking on), a pin or effort "none" still decides, and a tool-less helper call stays off.
+assert TOOL_TURNS_THINK is False, "only the runner of a model that thinks on tool turns sets it"
+assert resolved_template_kwargs(agent, True, True) == {}, "auto + tools on MiMo: the template's own on"
+assert resolved_template_kwargs({**agent, "chat_template_kwargs": {"enable_thinking": False}}, True, True) \
+    == {"enable_thinking": False}, "goose's thinking-off helper pin wins"
+assert resolved_template_kwargs({**agent, "reasoning_effort": "none"}, True, True) == {"enable_thinking": False}
+assert resolved_template_kwargs({"messages": []}, True, True) == {"enable_thinking": False}, \
+    "a tool-less helper call (title, label) stays off"
 for asked in ({"reasoning_effort": "high"}, {"reasoning_max_tokens": 512}, {"reasoning": {"effort": "low"}}):
     try:
         resolved_template_kwargs({"messages": [], **asked}, True)
@@ -3010,6 +3309,12 @@ print("GOOSE_TEST " + json.dumps({
                 "mlx_lm.server reads text only, and says so: goose's omlx provider sends an \
                  image's placeholder, never the image (Q-260)"
             );
+            assert_eq!(
+                model["reasoning_controls"],
+                serde_json::json!(["enable_thinking"]),
+                "rank_thinking.py refuses a graded reasoning_effort, and says so: goose's openai \
+                 provider sends the template switch alone (the 2026-10-31 MiMo Gauntlet 400)"
+            );
         }
         assert_eq!(
             seen["wrong_model"],
@@ -3099,6 +3404,7 @@ cut, kinds = cut_at_boundary([system, context, think], ["system", "user", "assis
 assert cut == [system, prompt[30:]] and kinds == ["system", "assistant"], "an end already there stays"
 for outside in (0, 100, 120):
     assert cut_at_boundary([prompt], ["assistant"], outside) == ([prompt], ["assistant"]), outside
+
 
 # Q-294: the conversation prefix is the key a cut named, matched by its tokens, held by identity.
 from collections import deque
@@ -4594,6 +4900,229 @@ os._exit(0)
         );
     }
 
+    /// MiMo-V2.6 through the REAL mlx_lm 0.31.3 on the CPU: a tiny random gemma3_text whose layers
+    /// are mostly sliding-window `RotatingKVCache` (window 8, the shape of MiMo's 39 window-128
+    /// layers beside its full-attention ones), MiMo's own chat template, thinking ON (its prompt
+    /// ends on a bare `<|im_start|>assistant\n`, no think token), and goose's `openai` provider's
+    /// shape: an append-only agent chat with tools and NO transient tail (every benchmark entrant).
+    /// A ring past its window cannot be trimmed, so reuse must come from an entry that is a strict
+    /// prefix: each step reads the previous request's whole prompt but its last token, the usage
+    /// counter equals what the cache really restores (asked of the LRU itself before the request),
+    /// and the rings restored far past their window give the cold read's next logits. Answers the
+    /// 2026-10-27 question "cached_tokens 3 of 15,597": that was a one-shot prompt, cold by
+    /// construction (3 = mlx_lm's system segment); reuse needs a conversation that extends one.
+    #[test]
+    fn a_thinking_mimo_chat_without_a_tail_reads_its_conversation_through_real_mlx_lm() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let config = two_mac_config();
+        let tensor = TensorLaunch {
+            planned_bytes: 27_456_216_576,
+            prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_entries: 110,
+            mlx_cache_limit_bytes: 2_745_621_658,
+            prefill: e2e_prefill(),
+        };
+        let mut spec = rank_specs(
+            &config,
+            &ServedNames::only("node-alias"),
+            &[tensor, tensor],
+            141_568,
+            2.0,
+        )
+        .remove(0);
+        if let RankProgram::MlxLmServer { doorbell, .. } = &mut spec.program {
+            *doorbell = false;
+        }
+        spec.load_lock = Some(launch_load_lock());
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("import faulthandler  # noqa")
+            .expect("the wrapper's body starts after the group check");
+        let end = wrapper
+            .find("server.main()")
+            .expect("the wrapper ends in mlx_lm's main");
+        let checks = r#"
+import argparse
+import http.server
+import tempfile
+import urllib.error
+import urllib.request
+
+sys.excepthook = lambda *failure: (traceback.print_exception(*failure), sys.stderr.flush(), os._exit(1))
+mx.set_default_device(mx.cpu)
+mx.metal.is_available = lambda: False
+for name in ("MLX_RANK", "MLX_IBV_DEVICES", "MLX_JACCL_COORDINATOR", "MLX_HOSTFILE"):
+    os.environ.pop(name, None)
+
+from mlx_lm.models import gemma3_text
+from mlx_lm.models.cache import RotatingKVCache, make_prompt_cache
+from mlx_lm.utils import save_config, save_model
+from tokenizers import Tokenizer, decoders, models, pre_tokenizers
+from transformers import PreTrainedTokenizerFast
+
+alphabet = sorted(pre_tokenizers.ByteLevel.alphabet())
+core = Tokenizer(models.BPE(vocab={c: i for i, c in enumerate(alphabet)}, merges=[]))
+core.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=False)
+core.decoder = decoders.ByteLevel()
+hf = PreTrainedTokenizerFast(tokenizer_object=core, eos_token="<|im_end|>")
+hf.add_special_tokens({"additional_special_tokens": ["<|im_start|>", "<think>", "</think>"]})
+hf.chat_template = MIMO26
+
+model_dir = tempfile.mkdtemp()
+mx.random.seed(1027)
+WINDOW = 8
+config = {"model_type": "gemma3_text", "hidden_size": 64, "intermediate_size": 128,
+          "num_hidden_layers": 4, "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 32,
+          "query_pre_attn_scalar": 32, "vocab_size": len(hf), "sliding_window": WINDOW,
+          "sliding_window_pattern": 4}
+tiny = gemma3_text.Model(gemma3_text.ModelArgs.from_dict(config))
+mx.eval(tiny.parameters())
+save_model(model_dir, tiny)
+save_config(config, os.path.join(model_dir, "config.json"))
+hf.save_pretrained(model_dir)
+
+class Parsed(Exception):
+    pass
+
+real_parse_args = argparse.ArgumentParser.parse_args
+
+def parse_and_stop(self, args=None, namespace=None):
+    raise Parsed(real_parse_args(self, args, namespace))
+
+argparse.ArgumentParser.parse_args = parse_and_stop
+try:
+    server.main()
+    raise SystemExit("mlx_lm's main() never parsed its argv")
+except Parsed as parsed:
+    cli = parsed.args[0]
+argparse.ArgumentParser.parse_args = real_parse_args
+cli.model = model_dir
+
+provider = server.ModelProvider(cli)
+provider._model_map[served] = model_dir
+cache = server.LRUPromptCache(cli.prompt_cache_size)
+responses = server.ResponseGenerator(provider, cache)
+httpd = http.server.ThreadingHTTPServer(
+    ("127.0.0.1", 0),
+    lambda *args, **kwargs: server.APIHandler(responses, *args, system_fingerprint="test", **kwargs),
+)
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+def call(body):
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/v1/chat/completions"
+    with urllib.request.urlopen(urllib.request.Request(url, data=json.dumps(body).encode()), timeout=600) as reply:
+        return json.loads(reply.read())
+
+TOOLS = [{"type": "function", "function": {"name": "shell", "description": "Run a shell command",
+          "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}}]
+THINKING = {"enable_thinking": True}
+
+def render(messages, generation=True):
+    messages = json.loads(json.dumps(messages))
+    server.process_message_content(messages)
+    return provider.tokenizer.apply_chat_template(messages, tools=TOOLS,
+        add_generation_prompt=generation, tokenize=True, **THINKING)
+
+def chat(system, steps):
+    """goose's append-only agent chat: request k = the question plus k tool steps, no tail."""
+    messages = [{"role": "system", "content": system},
+                {"role": "user", "content": "Write the users script and run it."}]
+    seen, sent = [], []
+    for k in range(steps + 1):
+        sent.append(json.loads(json.dumps(messages)))
+        if provider.tokenizer is None:
+            restorable.append(0)  # nothing loaded, nothing cached: the first request loads the model
+        else:
+            prompt = render(messages)
+            _, rest = cache.fetch_nearest_cache(provider.model_key, prompt)
+            restorable.append(len(prompt) - len(rest))
+        reply = call({"model": served, "messages": messages, "tools": TOOLS, "max_tokens": 3,
+                      "temperature": 0.0, "chat_template_kwargs": THINKING})
+        seen.append([reply["usage"]["prompt_tokens"], reply["usage"]["prompt_tokens_details"]["cached_tokens"]])
+        messages.append({"role": "assistant", "content": "", "reasoning_content": f"Step {k} next.",
+                         "tool_calls": [{"id": f"call-{k}", "type": "function", "function": {
+                             "name": "shell", "arguments": json.dumps({"command": f"node step{k}.js"})}}]})
+        messages.append({"role": "tool", "tool_call_id": f"call-{k}", "content": f"step {k} ok\n" * 20})
+    return seen, sent
+
+goose = "You are goose, a general-purpose agent. " * 12
+restorable = []
+cut, cut_sent = chat("A. " + goose, 3)
+prompts = [len(render(m)) for m in cut_sent]
+first = render(cut_sent[0])
+tail_free = provider.tokenizer.decode(first[-12:]).endswith("<|im_start|>assistant\n") \
+    and provider.tokenizer.rfind_think_start(first, start=len(first) - 11) < 0
+
+last = render(cut_sent[-1])
+restored, rest = cache.fetch_nearest_cache(provider.model_key, last)
+rings = [layer for layer in restored if isinstance(layer, RotatingKVCache)]
+warm = provider.model(mx.array([rest]), cache=restored)[0, -1]
+cold = provider.model(mx.array([last]), cache=make_prompt_cache(provider.model))[0, -1]
+
+print("GOOSE_TEST " + json.dumps({
+    "cut": cut, "restorable": restorable, "prompts": prompts, "tail_free": bool(tail_free),
+    "restored": len(last) - len(rest), "ring_offsets": [int(r.offset) for r in rings],
+    "warm_equals_cold": bool(mx.allclose(warm, cold, atol=1e-4).item())
+        and int(mx.argmax(warm).item()) == int(mx.argmax(cold).item()),
+}), flush=True)
+os._exit(0)
+"#;
+        let program = format!(
+            "{}\
+             class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
+             group = _Group()\n{}QWEN38 = {qwen}\nMIMO26 = {mimo}\n{checks}",
+            tensor_modules(),
+            &wrapper[start..end],
+            qwen = serde_json::to_string(QWEN38).unwrap(),
+            mimo = serde_json::to_string(MIMO26).unwrap(),
+        );
+        let seen = run_against_real_packages(&python, &program, &spec);
+        let pairs = |key: &str| -> Vec<(u64, u64)> {
+            serde_json::from_value(seen[key].clone()).unwrap_or_else(|e| panic!("{key}: {e}"))
+        };
+        let prompts: Vec<u64> = serde_json::from_value(seen["prompts"].clone()).unwrap();
+        let restorable: Vec<u64> = serde_json::from_value(seen["restorable"].clone()).unwrap();
+        let cut = pairs("cut");
+        assert_eq!(
+            seen["tail_free"], true,
+            "MiMo thinking on ends on a bare assistant turn: {seen}"
+        );
+        assert_eq!(
+            cut.iter().map(|(prompt, _)| *prompt).collect::<Vec<_>>(),
+            prompts,
+            "the rank served the prompt the messages render to"
+        );
+        assert_eq!(
+            cut.iter().map(|(_, cached)| *cached).collect::<Vec<_>>(),
+            restorable,
+            "cached_tokens is what the prompt cache really restores: {seen}"
+        );
+        assert!(cut[0].1 < 8, "the question arrives cold: {cut:?}");
+        for step in 1..cut.len() {
+            assert_eq!(
+                cut[step].1,
+                prompts[step - 1] - 1,
+                "step {step} reads the previous request's whole prompt but its last token: {cut:?}"
+            );
+        }
+        let offsets: Vec<u64> = serde_json::from_value(seen["ring_offsets"].clone()).unwrap();
+        assert!(
+            !offsets.is_empty() && offsets.iter().all(|o| *o > 8 * 20),
+            "the restored sliding-window rings sit far past their 8-token window: {seen}"
+        );
+        assert_eq!(
+            seen["restored"].as_u64(),
+            Some(prompts[prompts.len() - 1] - 1),
+            "the newest entry is the last request's prompt but its last token: {seen}"
+        );
+        assert_eq!(
+            seen["warm_equals_cold"], true,
+            "a hit restored past the window answers as a cold read: {seen}"
+        );
+    }
+
     /// Q-347 through the REAL mlx_lm 0.31.3 `LRUPromptCache`, at E2E #3p's measured sizes (the 27B
     /// over 2 ranks: 32,768 B of KV per token + 76,972,032 B of state, the 11,830,886,400 B plan of
     /// #3p's RANK_ADMISSION lines). The chat's stable head is 40,361 tokens — the 27B's own template
@@ -5824,6 +6353,58 @@ os._exit(0)
         );
     }
 
+    /// Session 14 (2026-10-28), the pipeline split's 2-row crash: mlx_lm 0.31.3's
+    /// BatchRotatingKVCache.extend pads a row holding no KV with `mx.array([])` (float32), as
+    /// BatchKVCache.extend did before Q-447, and MiMo's 39 sliding-window layers use it. Rank 1 then
+    /// sent float32 hidden states into rank 0's bfloat16 `recv_like` buffer (the collective trace:
+    /// `send (2, 768, 4096) float32` against `recv_like (2, 768, 4096) bfloat16`), the transfers
+    /// stopped pairing and rank 1's GPU timed out. Through real mlx_lm: the rank wrapper's
+    /// `batch_kv_dtype` block keeps both batch caches in the KV's dtype.
+    #[test]
+    fn a_sliding_window_batch_keeps_its_kv_dtype_when_an_empty_row_joins() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper.find("if spec.get(\"batch_kv_dtype\"):").unwrap();
+        let end = wrapper
+            .find("    dtype_keeping(BatchRotatingKVCache)\n")
+            .unwrap()
+            + "    dtype_keeping(BatchRotatingKVCache)\n".len();
+        let check = format!(
+            "{batch}\n\
+             import mlx_lm\n\
+             spec = {{'batch_kv_dtype': True}}\n\
+             class G:\n\
+             \x20   def rank(self): return 0\n\
+             group = G()\n\
+             mixed = []\n\
+             def emit(tag, body): mixed.append(body)\n\
+             {block}\n\
+             for cls in (BatchKVCache, BatchRotatingKVCache):\n\
+             \x20   a = cls(8, [0]) if cls is BatchRotatingKVCache else cls([0])\n\
+             \x20   k = mx.ones((1, 2, 3, 4), dtype=mx.bfloat16)\n\
+             \x20   a.update_and_fetch(k, k)\n\
+             \x20   b = cls(8, [0]) if cls is BatchRotatingKVCache else cls([0])\n\
+             \x20   b.extend(a)\n\
+             \x20   assert b.keys.dtype == mx.bfloat16 and b.keys.shape[0] == 2, (cls.__name__, b.keys.dtype)\n\
+             assert mixed == [], mixed\n\
+             print('ok')\n",
+            batch = include_str!("rank_batch.py"),
+            block = &wrapper[start..end],
+        );
+        let out = std::process::Command::new(&python)
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
     /// Q-447 through the REAL mlx_lm 0.31.3 server on a tiny qwen3_5 in bfloat16 (the 27B's
     /// compute dtype). E2E #3u's first chat request (rank0 ...1790625429786, 19:57:18Z: the
     /// 42,642-token agent request, read cold) joined the prompt batch of a 206-token helper after
@@ -6335,6 +6916,99 @@ for label, text in (("content_last", LAST), ("content_first", FIRST)):
         assert json.loads(sent + rest)["content"] == CONTENT, (label, how)
         assert streamed_before_first_close > len(CONTENT[:CONTENT.index("</parameter>")]) // 2, (
             label, how, "the value streamed while it was written", streamed_before_first_close)
+print("ok")
+"##;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!("{}{checks}", include_str!("rank_tool_stream.py")))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "ok",
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// MiMo-V2.6-Flash on the split, sb-7.2 run 8985a86d (2026-10-31): 10 of 25 `edit` calls named
+    /// their texts `old`/`new`, which `edit` does not declare, and the declared-only reading
+    /// (Q-372) folded those headers into the value before them — goose received
+    /// `{"path": "…ledgerd.py</parameter><parameter=old>…"}` and answered "missing required fields
+    /// `before`, `after`. Arrived: `path`". The two shapes below are the run's own calls (request
+    /// log args, wire reconstructed around them). With a required parameter unwritten the body is
+    /// read again with boundary headers as siblings, and the streamer, holding at such a header,
+    /// agrees byte for byte in every chunking. A complete reading is never re-read: a written file
+    /// holding `</parameter>\n<parameter=x>` keeps its text (Q-372 stays).
+    #[test]
+    fn a_misnamed_edit_parameter_is_read_as_its_own_parameter() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r##"
+import random
+from mlx_lm.tool_parsers import qwen3_coder as q
+
+install_positional_parameters(q)
+
+EDIT = [{"type": "function", "function": {"name": "edit", "parameters": {"type": "object",
+    "properties": {"path": {"type": "string"}, "before": {"type": "string"},
+                   "after": {"type": "string"}}, "required": ["path", "before", "after"]}}}]
+WRITE = [{"type": "function", "function": {"name": "write", "parameters": {"type": "object",
+    "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+    "required": ["path", "content"]}}}]
+
+LEDGERD = "/private/tmp/gmimo/userdata/benchmark/runs/build/openai-cloud-8985a86d-1704-423c-a89d-47a38368c80e-r0/app/ledgerd.py"
+VIZ = "/private/tmp/gmimo/userdata/benchmark/runs/build/openai-cloud-8985a86d-1704-423c-a89d-47a38368c80e-r0/web/viz.js"
+OLD = ("    def _publish(self, pending):\n"
+       '        """Assign a batch number inside the transaction, broadcast after commit."""\n'
+       "        return pending\n\n    def _broadcast(self, batch, records):")
+NEW = "    def _broadcast(self, batch, records):"
+BEFORE = "  const TAU_COAST = 0.4;\n  const CAPACITY = 16384;\n  const LABEL_COUNT = 12;"
+AFTER = "  const TAU_COAST = 0.4;\n  let CAPACITY = 16384;\n  const LABEL_COUNT = 12;"
+
+# path, then old/new, all on the value's line (9d8d184a, f0d83a21, 8dcbafcc, 54a1a68a)
+OLD_NEW = (f"\n<function=edit>\n<parameter=path>\n{LEDGERD}</parameter><parameter=old>{OLD}"
+           f"</parameter><parameter=new>{NEW}\n</parameter>\n</function>\n")
+# before, then new on its line, then path (fff220e1, 1817d2e7, d3d3b6d2, dc35886a, c2bfb4f6, 48ed8f8b)
+BEFORE_NEW = (f"\n<function=edit>\n<parameter=before>\n{BEFORE}</parameter><parameter=new>{AFTER}"
+              f"\n</parameter>\n<parameter=path>\n{VIZ}\n</parameter>\n</function>\n")
+# a written file that documents the wire: complete as read, so its text stays whole
+DOC = "a value closes like this</parameter>\n<parameter=x>\nand the next one opens"
+WRITE_DOC = (f"\n<function=write>\n<parameter=content>\n{DOC}\n</parameter>\n"
+             f"<parameter=path>\n/tmp/doc.md\n</parameter>\n</function>\n")
+
+def chunkings(text):
+    yield "whole", [text]
+    yield "chars", list(text)
+    rng = random.Random(8985)
+    for seed in range(4):
+        pieces, i = [], 0
+        while i < len(text):
+            n = rng.randint(1, 7)
+            pieces.append(text[i:i + n])
+            i += n
+        yield f"random{seed}", pieces
+
+cases = (
+    ("old_new", OLD_NEW, EDIT, {"path": LEDGERD, "old": OLD, "new": NEW}),
+    ("before_new", BEFORE_NEW, EDIT, {"before": BEFORE, "new": AFTER, "path": VIZ}),
+    ("write_doc", WRITE_DOC, WRITE, {"content": DOC, "path": "/tmp/doc.md"}),
+)
+for label, text, tools, want in cases:
+    parsed = q.parse_tool_call(text, tools)
+    assert parsed["arguments"] == want, (label, parsed["arguments"])
+    expected = json.dumps(parsed["arguments"], ensure_ascii=False)
+    for how, pieces in chunkings(text):
+        stream = ToolCallStream(q._convert_param_value, q._get_arguments_config)
+        sent = "".join(stream.feed(piece, tools)[1] for piece in pieces)
+        rest, why = stream.close(q.parse_tool_call, tools)
+        assert why is None, (label, how, why)
+        assert sent + rest == expected, (label, how, sent + rest, expected)
+
+# NEGATIVE CONTROL: the declared-only reading (what the run shipped) folds the headers in.
+assert parameters_by_position(OLD_NEW.split(">", 1)[1], {"path", "before", "after"}) == [
+    ("path", f"{LEDGERD}</parameter><parameter=old>{OLD}</parameter><parameter=new>{NEW}")]
 print("ok")
 "##;
         let out = std::process::Command::new(&python)
@@ -10197,8 +10871,7 @@ print("ok")
             2.0,
         );
         let args = python_args(&specs[1]).unwrap();
-        let b64 = base64::engine::general_purpose::STANDARD;
-        let program = String::from_utf8(b64.decode(&args[2]).unwrap()).unwrap();
+        let program = decode_program(&args[2]);
         assert_eq!(
             program,
             concat!(
@@ -10222,11 +10895,17 @@ print("ok")
                 include_str!("rank_stream_watch.py"),
                 include_str!("rank_xml_guard.py"),
                 include_str!("rank_admission.py"),
+                include_str!("rank_media.py"),
+                include_str!("rank_pipeline_split.py"),
                 include_str!("rank_wrapper.py")
             )
         );
-        let spec: serde_json::Value =
-            serde_json::from_slice(&b64.decode(&args[3]).unwrap()).unwrap();
+        let spec: serde_json::Value = serde_json::from_slice(
+            &base64::engine::general_purpose::STANDARD
+                .decode(&args[3])
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(spec["context_window"], 262_144);
     }
 
@@ -10245,7 +10924,7 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerNamedConversation");
+        assert_eq!(json["program"], "mlxLmServerPipelineSplit");
         assert_eq!(json["name_conversations"], true);
         assert_eq!(json["keep_every_conversation"], true);
         assert_eq!(json["batch_kv_dtype"], true);
@@ -10299,7 +10978,7 @@ print("ok")
         }
         let refused = serde_json::from_value::<EveryConversationProgram>(json.clone()).unwrap_err();
         assert!(
-            refused.to_string().contains("mlxLmServerNamedConversation"),
+            refused.to_string().contains("mlxLmServerPipelineSplit"),
             "{refused}"
         );
         let why = link_control_refusal(&refused.to_string());
@@ -10353,7 +11032,7 @@ print("ok")
         }
         let refused = serde_json::from_value::<KvDtypeProgram>(json.clone()).unwrap_err();
         assert!(
-            refused.to_string().contains("mlxLmServerNamedConversation"),
+            refused.to_string().contains("mlxLmServerPipelineSplit"),
             "{refused}"
         );
         let why = link_control_refusal(&refused.to_string());
@@ -10934,6 +11613,10 @@ print("ok")
              \x20   def extend(self, other): pass\n\
              \x20   @classmethod\n\
              \x20   def merge(cls, caches): pass\n\
+             class BatchRotatingKVCache:\n\
+             \x20   def extend(self, other): pass\n\
+             \x20   @classmethod\n\
+             \x20   def merge(cls, caches): pass\n\
              class PromptTrieResult: pass\n\
              class PromptTrie:\n\
              \x20   def __init__(self): self._trie = {}\n\
@@ -11487,5 +12170,449 @@ threading.Event().wait()
         assert_eq!(live.memory.unwrap().peak, 20);
         assert!(!live.tail_text().contains("GOOSE_RANK_MEM"));
         assert!(live.tail_text().contains("Traceback"));
+    }
+}
+
+#[cfg(test)]
+mod pipeline_launch_tests {
+    use super::*;
+    use crate::distributed::config::tests::two_mac_config;
+    use crate::distributed::layer_split::{plan_layer_split, tests as split_tests, LayerSplit};
+
+    fn mimo_split() -> LayerSplit {
+        let warn = super::super::WATCHDOG_WARN_RESERVE_RATIO;
+        plan_layer_split(
+            &split_tests::mimo_facts(),
+            &split_tests::nodes(),
+            warn,
+            warn,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn pipeline_config() -> DistributedConfig {
+        let mut config = two_mac_config();
+        config.nodes[0].pipeline_python = Some("/fork/rank0/bin/python".to_string());
+        config.nodes[1].pipeline_python = Some("/fork/rank1/bin/python".to_string());
+        config
+    }
+
+    fn specs_for(split: &LayerSplit, config: &DistributedConfig) -> Vec<RankSpec> {
+        let plans: Vec<&RankPlan> = split.plans.iter().collect();
+        let (launches, weights) =
+            TensorLaunch::for_pipeline_ranks(&plans, &split.layers, &split.full_layers).unwrap();
+        mlx_pipeline_rank_specs(
+            config,
+            &ServedNames::only("mimo"),
+            &launches,
+            &weights,
+            &split.layers,
+            split.context,
+            2.0,
+        )
+    }
+
+    fn program_fields(
+        spec: &RankSpec,
+    ) -> (
+        Option<Vec<u32>>,
+        Option<PipelineCacheWeights>,
+        u64,
+        u64,
+        TensorPrefill,
+    ) {
+        match &spec.program {
+            RankProgram::MlxLmServer {
+                pipeline_split,
+                pipeline_cache_weights,
+                prompt_cache_limit_bytes,
+                prompt_cache_entries,
+                prefill,
+                ..
+            } => (
+                pipeline_split.clone(),
+                *pipeline_cache_weights,
+                prompt_cache_limit_bytes.unwrap(),
+                prompt_cache_entries.unwrap(),
+                prefill.unwrap(),
+            ),
+            other => panic!("not an mlx_lm server program: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_two_rank_mimo_launch_carries_the_split_the_weights_and_one_set_of_limits() {
+        let split = mimo_split();
+        assert_eq!(split.layers, vec![19, 29]);
+        // Rank 0 = the last 19 layers: 4 full + 15 sliding; rank 1: 5 full + 24 sliding.
+        assert_eq!(split.full_layers, vec![4, 5]);
+        let config = pipeline_config();
+        let specs = specs_for(&split, &config);
+        let (split0, weights0, limit0, entries0, prefill0) = program_fields(&specs[0]);
+        let (split1, weights1, limit1, entries1, prefill1) = program_fields(&specs[1]);
+        assert_eq!(split0, Some(vec![19, 29]));
+        assert_eq!(split1, Some(vec![19, 29]));
+        assert_eq!(weights0, Some(PipelineCacheWeights { full: 5, swa: 8 }));
+        assert_eq!(weights1, Some(PipelineCacheWeights { full: 4, swa: 5 }));
+        assert_eq!((limit0, entries0, prefill0), (limit1, entries1, prefill1));
+
+        // Every rank's weighted total for the same cached tokens is one number.
+        let facts = split_tests::mimo_facts();
+        let weighted = |w: PipelineCacheWeights, full: u64, swa: u64, tokens: u64| {
+            w.full * full * tokens * facts.full_kv_bytes_per_token
+                + w.swa * swa * facts.swa_state_bytes
+        };
+        for tokens in [256, 32_768, split.context] {
+            assert_eq!(
+                weighted(weights0.unwrap(), 4, 15, tokens),
+                weighted(weights1.unwrap(), 5, 24, tokens)
+            );
+        }
+        assert_eq!(
+            prefill0.kv_bytes_per_token,
+            20 * facts.full_kv_bytes_per_token
+        );
+        assert_eq!(prefill0.sequence_state_bytes, 120 * facts.swa_state_bytes);
+        // The weighted limit keeps every rank inside its real one.
+        for (rank, (plan, w)) in split
+            .plans
+            .iter()
+            .zip([weights0.unwrap(), weights1.unwrap()])
+            .enumerate()
+        {
+            assert!(
+                limit0 / w.full.min(w.swa) <= plan.prompt_cache_limit_bytes(),
+                "rank {rank}"
+            );
+        }
+
+        for (rank, spec) in specs.iter().enumerate() {
+            let node = &config.nodes[rank];
+            assert_eq!(
+                spec.interpreter(node).unwrap(),
+                node.pipeline_python.as_deref().unwrap()
+            );
+            let args = python_args(spec).unwrap();
+            let script = remote_script(spec.interpreter(node).unwrap(), &args);
+            assert!(script.contains("ulimit -n 65536"), "{script}");
+        }
+        let program = specs[0].program_source();
+        assert!(program.contains("import rapid_mlx.mlx_lm_models"));
+        assert!(program.contains("pipeline_class.pipeline = pipeline_with_split"));
+        assert!(program.contains("RANK_PIPELINE_BARRIER"));
+        assert!(program.contains("RANK_PIPELINE_LOAD_TURN"));
+        assert!(program
+            .contains(r#"*(["--pipeline"] if spec.get("pipeline_split") is not None else [])"#));
+    }
+
+    #[test]
+    fn a_prompt_joining_an_empty_generation_batch_adopts_its_kv() {
+        let source = include_str!("rank_batch.py");
+        let start = source.find("def adopting_extend").unwrap();
+        let check = format!(
+            "{}\n\
+             class Shape:\n\
+             \x20   def __init__(self, n): self.shape = (n,)\n\
+             class Cache:\n\
+             \x20   def __init__(self, keys, rows): self.keys = keys; self.values = keys; self.offset = Shape(rows); self.left_padding = rows; self._idx = 7\n\
+             calls = []\n\
+             extend = adopting_extend(lambda a, b: calls.append((a, b)))\n\
+             empty, row = Cache(None, 0), Cache(object(), 1)\n\
+             extend(empty, row)\n\
+             assert empty.keys is row.keys and empty._idx == 7 and not calls\n\
+             extend(empty, Cache(object(), 1))\n\
+             assert len(calls) == 1\n\
+             extend(Cache(None, 0), Cache(None, 1))\n\
+             assert len(calls) == 2\n\
+             print('ok')\n",
+            &source[start..]
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn a_pipeline_rank_evaluates_and_evicts_its_weights_shard_by_shard() {
+        let source = include_str!("rank_pipeline_split.py");
+        let start = source.find("def evict_file_cache").unwrap();
+        let end = source.find("def pipeline_load_turn").unwrap();
+        let check = format!(
+            "{}\n\
+             import tempfile, os\n\
+             wm = {{'a.w': 'm-2.safetensors', 'b.w': 'm-1.safetensors', 'c.w': 'm-2.safetensors'}}\n\
+             g = shard_groups(['a.w', 'b.w', 'c.w', 'extra'], wm)\n\
+             assert g == [('m-1.safetensors', ['b.w']), ('m-2.safetensors', ['a.w', 'c.w']), (None, ['extra'])], g\n\
+             with tempfile.NamedTemporaryFile(delete=False) as f: f.write(b'x' * 65536)\n\
+             assert evict_file_cache(f.name) == 65536\n\
+             os.unlink(f.name)\n\
+             print('ok')\n",
+            &source[start..end]
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(source.contains("RANK_PIPELINE_FILE_CACHE"));
+    }
+
+    /// 2026-10-28: the first omni load answered its readiness request "maximum recursion depth
+    /// exceeded": the media wrapper was set THROUGH mlx_lm's TokenizerWrapper, which forwards it
+    /// to the HF tokenizer its own apply_chat_template calls. And the server passes no
+    /// `tokenize`, so a wrapper reading HF's default never expanded a single image.
+    #[test]
+    fn the_media_template_wrapper_sits_on_the_wrapper_and_honours_its_tokenize_default() {
+        let source = include_str!("rank_media.py");
+        let start = source.find("def wrap_chat_template").unwrap();
+        let end = source.find("def media_wanted").unwrap();
+        let check = format!(
+            "{}\n\
+             class HF:\n\
+             \x20   def apply_chat_template(self, m, tokenize=False, **k):\n\
+             \x20       return [1, 2] if tokenize else 'text'\n\
+             class Wrapper:\n\
+             \x20   def __init__(self): object.__setattr__(self, '_tokenizer', HF())\n\
+             \x20   def apply_chat_template(self, m, tokenize=True, **k):\n\
+             \x20       return self._tokenizer.apply_chat_template(m, tokenize=tokenize, **k)\n\
+             \x20   def __getattr__(self, a): return getattr(self._tokenizer, a)\n\
+             \x20   def __setattr__(self, a, v): setattr(self._tokenizer, a, v)\n\
+             seen = []\n\
+             t = wrap_chat_template(Wrapper(), lambda out, tok: seen.append(tok) or out)\n\
+             assert t.apply_chat_template([], add_generation_prompt=True) == [1, 2]\n\
+             assert t.apply_chat_template([], tokenize=False) == 'text'\n\
+             assert seen == [True, False], seen\n\
+             print('ok')\n",
+            &source[start..end]
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// 2026-10-28 (session 13): rank 0's media queue prepared every request it took without
+    /// waiting twice — its own get_nowait wrapped Queue.get_nowait, which is `self.get(block=False)`,
+    /// i.e. the already-wrapped get.
+    #[test]
+    fn the_media_queue_prepares_each_request_once() {
+        let source = include_str!("rank_media.py");
+        let start = source.find("    class MediaRequests(MediaQueue):").unwrap();
+        let end = source.find("    original_rg_init").unwrap();
+        let class: String = source[start..end]
+            .lines()
+            .map(|l| l.strip_prefix("    ").unwrap_or(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let check = format!(
+            "from queue import Queue as MediaQueue\n\
+             prepared = []\n\
+             def media_prepare(item):\n\
+             \x20   prepared.append(item)\n\
+             \x20   return item\n\
+             {class}\n\
+             q = MediaRequests()\n\
+             q.put('a'); q.put('b')\n\
+             assert q.get_nowait() == 'a' and q.get(timeout=1) == 'b'\n\
+             assert prepared == ['a', 'b'], prepared\n\
+             print('ok')\n"
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// 2026-10-28: the MOPD omni build indexes `language_model.model.*`; mlx_lm's sharded_load
+    /// looked parameters up as `model.*` and refused it on both ranks.
+    #[test]
+    fn a_pipeline_rank_finds_an_omni_checkpoints_language_model_weights_in_its_index() {
+        let source = include_str!("rank_pipeline_split.py");
+        let start = source.find("def evict_file_cache").unwrap();
+        let end = source.find("def pipeline_load_turn").unwrap();
+        let check = format!(
+            "import json, io\n{}\n\
+             wm = {{'language_model.model.layers.0.w': 'a.safetensors', \
+             'language_model.lm_head.weight': 'b.safetensors', 'vision_tower.x': 'c.safetensors', \
+             'model.embed.w': 'd.safetensors'}}\n\
+             m = checkpoint_weight_map(wm)\n\
+             assert m['model.layers.0.w'] == 'a.safetensors' and m['lm_head.weight'] == 'b.safetensors', m\n\
+             assert m['model.embed.w'] == 'd.safetensors' and m['vision_tower.x'] == 'c.safetensors'\n\
+             d = CheckpointIndexJson().load(io.StringIO(json.dumps({{'metadata': {{}}, 'weight_map': wm}})))\n\
+             assert d['weight_map']['model.layers.0.w'] == 'a.safetensors'\n\
+             assert CheckpointIndexJson().dumps([1]) == '[1]'\n\
+             print('ok')\n",
+            &source[start..end]
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Session 14 (2026-10-28): after the 256k Gauntlet's first image request the two pipeline
+    /// ranks sampled different tokens (uid 70 from token 9-16, uid 71 from token 2), so their
+    /// prompt caches held different answers, the next request's cached prefix was shorter on
+    /// rank 1, and rank 1 sent a prefill chunk rank 0 never posted for (GPU timeout). Every rank
+    /// now samples rank 0's token: two ranks whose own samplers disagree both return rank 0's.
+    #[test]
+    fn every_pipeline_rank_samples_rank_zeros_token() {
+        let source = include_str!("rank_pipeline_split.py");
+        let start = source.find("def rank0_sampler").unwrap();
+        let end = source.find("def pipeline_load_turn").unwrap();
+        let check = format!(
+            "{}\n\
+             contributions = {{}}\n\
+             def run(rank, own):\n\
+             \x20   def all_sum(x):\n\
+             \x20       contributions[rank] = x\n\
+             \x20       return 'SUM'\n\
+             \x20   out = rank0_sampler(lambda lp: own, rank, all_sum, lambda t: 0)('lp')\n\
+             \x20   return out\n\
+             assert run(0, 7) == 'SUM' and run(1, 9) == 'SUM'\n\
+             assert contributions == {{0: 7, 1: 0}}, contributions\n\
+             print('ok')\n",
+            &source[start..end]
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(source.contains("pipeline_server._make_sampler = make_rank0_sampler"));
+    }
+
+    #[test]
+    fn the_pipeline_ranks_load_one_at_a_time_rank_zero_last() {
+        let source = include_str!("rank_pipeline_split.py");
+        let start = source.find("def pipeline_load_turn").unwrap();
+        let end = source[start..].find("\n\n\n").unwrap() + start;
+        // Each rank's collectives in order: `before` barriers, its load, mlx_lm's own barrier,
+        // `after` barriers. Barrier k completes when every rank reached it, so a rank's load
+        // starts once barrier `before - 1` completed: the loads must come strictly one after
+        // another, the last rank first, and every rank must join the same number of barriers.
+        let check = format!(
+            "{}\n\
+             for size in (2, 3, 4):\n\
+             \x20   turns = [pipeline_load_turn(r, size) for r in range(size)]\n\
+             \x20   assert all(b + 1 + a == size for b, a in turns), turns\n\
+             \x20   order = sorted(range(size), key=lambda r: turns[r][0])\n\
+             \x20   assert order == list(range(size - 1, -1, -1)), order\n\
+             \x20   assert sorted(b for b, _ in turns) == list(range(size)), turns\n\
+             print('ok')\n",
+            &source[start..end]
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &check])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            "ok",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn the_pipeline_spec_round_trips_and_an_older_tag_reads_as_tensor() {
+        let specs = specs_for(&mimo_split(), &pipeline_config());
+        let json = serde_json::to_string(&specs[1]).unwrap();
+        assert!(json.contains("\"mlxLmServerPipelineSplit\""), "{json}");
+        let back: RankSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, specs[1]);
+
+        let tensor = serde_json::to_string(&specs[1].clone())
+            .unwrap()
+            .replace("mlxLmServerPipelineSplit", "mlxLmServerNamedConversation");
+        let mut old: serde_json::Value = serde_json::from_str(&tensor).unwrap();
+        let program = old.as_object_mut().unwrap();
+        program.remove("pipeline_split");
+        program.remove("pipeline_cache_weights");
+        let old: RankSpec = serde_json::from_value(old).unwrap();
+        assert!(matches!(
+            old.program,
+            RankProgram::MlxLmServer {
+                pipeline_split: None,
+                pipeline_cache_weights: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn the_pipeline_launch_refuses_what_cannot_evict_or_load_alike() {
+        let split = mimo_split();
+        let mut config = pipeline_config();
+        let specs = specs_for(&split, &config);
+        config.nodes[1].pipeline_python = None;
+        let err = specs[1]
+            .interpreter(&config.nodes[1])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("pipeline_python"), "{err}");
+
+        let plans: Vec<&RankPlan> = split.plans.iter().collect();
+        let err = TensorLaunch::for_pipeline_ranks(&plans, &split.layers, &[0, 5])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("rank 0 holds no full-attention layer"),
+            "{err}"
+        );
+
+        let err = TensorLaunch::for_pipeline_ranks(&plans, &[19, 28], &split.full_layers)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("covers 47 layers"), "{err}");
+
+        let mut other = split.plans[1].clone();
+        let mut prefill = other.prefill.unwrap();
+        prefill.step /= 2;
+        other.prefill = Some(prefill);
+        let err = TensorLaunch::for_pipeline_ranks(
+            &[&split.plans[0], &other],
+            &split.layers,
+            &split.full_layers,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("prefill figures differ"), "{err}");
     }
 }

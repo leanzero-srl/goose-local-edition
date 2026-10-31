@@ -35,7 +35,7 @@ use goose_sidecar::distributed::link_control;
 use goose_sidecar::distributed::preflight::loaded_files;
 use goose_sidecar::distributed::probe::{self, Pressure};
 use goose_sidecar::distributed::provision::{self, EnvSpec};
-use goose_sidecar::distributed::Runner;
+use goose_sidecar::distributed::{Runner, RUNNERS};
 use goose_sidecar::{MemoryReading, GIB};
 use leanzero_link::netpath::{self, InterfaceFact, LinkKind, LinkPath};
 
@@ -626,12 +626,16 @@ pub(super) fn compose(
         };
         let gid = probe::ipv4_gid(&fact.ipv4.to_string());
         let gid_note = match device.gids.iter().find(|(_, g)| *g == gid) {
-            Some((1, _)) => format!("GID[1] = {gid}"),
+            Some((i, _)) if (0..*i).all(|j| device.gids.iter().any(|(k, _)| *k == j)) => {
+                format!("GID[{i}] = {gid}")
+            }
             Some((i, _)) => format!(
-                "{gid} sits at GID[{i}], not GID[1] — the next JACCL start would fail `RTR errno 96`; \
-                 preflight's link repair re-seats it"
+                "{gid} sits at GID[{i}] over an empty index — the next JACCL start would fail \
+                 `RTR errno 96`; preflight's link repair re-seats it"
             ),
-            None => format!("no IPv4-mapped GID {gid} yet — preflight's link repair re-applies the address"),
+            None => format!(
+                "no IPv4-mapped GID {gid} yet — preflight's link repair re-applies the address"
+            ),
         };
         if !device.active {
             c.gap(
@@ -914,7 +918,10 @@ pub(super) fn compose(
                     c.found(Some(rank), "modelDir", dir, n.detail.clone());
                 }
             }
-            if model.runner == Runner::PipelineQwen4.as_str() {
+            if RUNNERS
+                .iter()
+                .any(|(_, r)| r.uses_pipeline_env() && model.runner == r.as_str())
+            {
                 for rank in 0..size {
                     if let Some(p) = ok[rank] {
                         let spec = EnvSpec::pipeline();
@@ -939,7 +946,10 @@ pub(super) fn compose(
             None,
             "modelId",
             if models.is_empty() {
-                "no splittable model (qwen3_5 tensor, qwen4_exp pipeline) is on this Mac".to_string()
+                format!(
+                    "no splittable model ({}) is on this Mac",
+                    Runner::wired_summary()
+                )
             } else {
                 format!(
                     "none of this Mac's {} splittable models is on every node with the same files — \
@@ -1051,6 +1061,7 @@ pub(super) fn compose(
             hang_ratio_only: false,
             watchdog_warn_ratio: None,
             watchdog_critical_ratio: None,
+            plan_reserve_ratio: None,
             nodes,
         },
         backend_reason,

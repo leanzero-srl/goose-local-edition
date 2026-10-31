@@ -3,6 +3,7 @@ import type {
   MlxDistributedConfigDto,
   MlxDistributedDiscoveryDto,
   MlxDistributedNodeConfigDto,
+  MlxDistributedPreflightDto,
   MlxDistributedProvisionDto,
   MlxDistributedRankPlanDto,
   MlxDistributedRunnerEnvDto,
@@ -434,6 +435,7 @@ export function cleanConfig(config: MlxDistributedConfigDto): MlxDistributedConf
   };
   if (next.context == null) delete next.context;
   if (next.slots == null) delete next.slots;
+  if (next.planReserveRatio == null) delete next.planReserveRatio;
   return next;
 }
 
@@ -596,4 +598,116 @@ export function withGooseRunner(
 /** The Macs a runner rebuild runs on, each once, in the order the backend lists them. */
 export function runnerUpdateMacs(update: MlxDistributedProvisionDto): string[] {
   return [...new Set(update.nodes.map((n) => n.name))];
+}
+
+// ---------------------------------------------------------------------------
+// goose's own layer split (the mlx_lm pipeline runner, mimo_v2)
+// ---------------------------------------------------------------------------
+
+/** The runner whose split goose plans itself, by layer bytes, at a plan reserve. */
+export const MLX_LM_PIPELINE = 'mlxLmPipeline';
+
+/** Bytes in the backend's GB (10^9): the planner's sentences say GB, so its figures do too. */
+export function gbDecimal(bytes: number): string {
+  return (bytes / 1e9).toFixed(2);
+}
+
+/** A reserve ratio as the percent the backend writes ("5.0"). */
+export function reservePercent(ratio: number): string {
+  return (ratio * 100).toFixed(1);
+}
+
+/** Where the reserve in force came from, as the backend names it. */
+export type ReserveSource = 'default' | 'model' | 'user';
+
+export function reserveSource(value: string | null | undefined): ReserveSource | null {
+  return value === 'default' || value === 'model' || value === 'user' ? value : null;
+}
+
+/** One rank of goose's layer split, every figure the backend's (spare = budget − planned). */
+export interface SplitRow {
+  name: string;
+  rank: number;
+  /** Inclusive layer range; null when the rank has no plan (a refusal). */
+  first: number | null;
+  last: number | null;
+  count: number | null;
+  weightsBytes: number | null;
+  budgetBytes: number | null;
+  plannedBytes: number | null;
+  spareBytes: number | null;
+  fits: boolean | null;
+}
+
+export interface LayerSplitView {
+  /** Layers per rank, rank 0 first (rank 0 holds the LAST layers); null on a refusal. */
+  layers: number[] | null;
+  reason: string | null;
+  reserveRatio: number | null;
+  source: ReserveSource | null;
+  /** On a refusal: the highest settable reserve at which a split fits. */
+  fittingReserveRatio: number | null;
+  /** The plan check refused. */
+  refused: boolean;
+  /** The plan check's own words on a refusal (verbatim, never rebuilt here). */
+  refusal: string | null;
+  rows: SplitRow[];
+}
+
+/** The layer split goose planned for the mlx_lm pipeline, or null for every other runner. */
+export function layerSplitView(
+  report: Pick<
+    MlxDistributedPreflightDto,
+    | 'runner'
+    | 'layerSplit'
+    | 'splitReason'
+    | 'planReserveRatio'
+    | 'planReserveSource'
+    | 'fittingReserveRatio'
+    | 'checks'
+    | 'nodes'
+  >
+): LayerSplitView | null {
+  if (report.runner !== MLX_LM_PIPELINE) return null;
+  const planCheck = report.checks.find((c) => c.id === 'plan') ?? null;
+  const refused = planCheck?.verdict === 'fail';
+  return {
+    layers: report.layerSplit ?? null,
+    reason: report.splitReason ?? null,
+    reserveRatio: report.planReserveRatio ?? null,
+    source: reserveSource(report.planReserveSource),
+    fittingReserveRatio:
+      typeof report.fittingReserveRatio === 'number' ? report.fittingReserveRatio : null,
+    refused,
+    refusal: refused ? (planCheck?.message ?? null) : null,
+    rows: [...report.nodes]
+      .sort((a, b) => a.rank - b.rank)
+      .map((n) => {
+        const p = n.plan ?? null;
+        return {
+          name: n.name,
+          rank: n.rank,
+          first: p ? p.layerStart : null,
+          last: p ? p.layerEnd - 1 : null,
+          count: p ? p.layerEnd - p.layerStart : null,
+          weightsBytes: p ? p.weightsBytes : null,
+          budgetBytes: p ? p.budgetBytes : null,
+          plannedBytes: p ? p.withOverheadBytes : null,
+          spareBytes: p ? p.budgetBytes - p.withOverheadBytes : null,
+          fits: p ? p.fits : null,
+        };
+      }),
+  };
+}
+
+/**
+ * The plan reserve a typed percent sets: null for an empty field (goose's default for the model),
+ * else the ratio. Bounds are the backend's to enforce; it names them when it refuses.
+ */
+export function reserveFromPercent(text: string): number | null {
+  const trimmed = text.trim();
+  if (trimmed === '') return null;
+  const pct = Number(trimmed);
+  if (!Number.isFinite(pct)) return null;
+  return Math.round(pct * 10) / 1000;
 }

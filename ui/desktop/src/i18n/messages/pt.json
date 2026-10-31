@@ -5081,6 +5081,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "Editar {name}"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "Não foi possível planejar a divisão com essa reserva"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "Erro de preflight"
   },
@@ -5224,6 +5227,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "Python do pipeline (opcional)"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "Reserva do plano (% da RAM)"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "Porta da API"
@@ -5396,6 +5402,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "GB planejados com sobrecarga, de um orçamento da divisão de {budget} GB"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "padrão do modelo"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "Modelos com divisão por camadas (mimo_v2): a parte da RAM de cada Mac que o plano mantém livre. Vazio usa a reserva própria do modelo ou, senão, o padrão do goose; o goose recusa um valor abaixo da reserva de aviso do watchdog de memória."
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "planejado {gb} GB com sobrecarga"
   },
@@ -5542,6 +5554,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "velocidade não informada"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "orçamento"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "Cabe em {pct}%"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "Nenhuma divisão cabe com uma reserva de {current}% da RAM; uma cabe em {pct}%. Planejar ali mantém menos memória livre em cada Mac, ainda acima da linha de aviso do watchdog de memória."
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} GB"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "{split} camadas"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "A margem de segurança é a reserva: o goose dimensiona o contexto para preencher o orçamento de cada Mac, então a sobra mostra cerca de 0 GB de propósito."
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "Nenhuma reserva cabe"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "Nenhuma reserva que você possa definir faz uma divisão caber: libere memória em um Mac ou divida um modelo menor."
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "nenhuma camada planejada"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "Planejar em {pct}%"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · {count} camadas"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "reserva de {pct}% da RAM"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "padrão do goose"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "reserva própria de {model}"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "a reserva própria do modelo"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "definida por você"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "sobra"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "Divisão por camadas"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "pesos"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "Iniciar executa o preflight, repara o link Thunderbolt quando o JACCL precisa e depois inicia cada rank sob supervisão."
@@ -5869,6 +5941,12 @@
   },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Não foi possível ler as configurações do motor."
+  },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Não foi possível ler se uma divisão serve este Mac: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Lendo se uma divisão serve este Mac…"
   },
   "mlxEngineView.statusRetry": {
     "defaultMessage": "Ler novamente"

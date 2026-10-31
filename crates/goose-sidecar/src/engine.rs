@@ -1225,6 +1225,11 @@ pub fn memory_tunable_flags(
     Ok(memory.engine_flags(context, physical_bytes, supports))
 }
 
+/// The one checkpoint family whose engine flag (`--qwen4-rope-scaling`) serves a rope-scaling
+/// override on the single engine. A flag gate, not a split runner: which model_type splits how
+/// lives only in `distributed::config::RUNNERS` (its test refuses a quoted model_type comparison elsewhere).
+const ROPE_SCALING_MODEL_TYPE: &str = "qwen4_exp";
+
 /// The engine flag that serves rope scaling `spec` for the checkpoint at `model_path`
 /// ([`ModelProfile::rope_scaling`]). Validates the spec the way the engine's
 /// `parse_rope_scaling_override` reads it, so a typo fails the mount, not the first long turn.
@@ -1243,7 +1248,7 @@ pub fn rope_scaling_flags(model_path: &Path, spec: &str) -> Result<Vec<String>> 
     );
     let facts = crate::placement::model::read_model_facts(model_path)?;
     anyhow::ensure!(
-        facts.model_type == "qwen4_exp",
+        facts.model_type == ROPE_SCALING_MODEL_TYPE,
         "rope_scaling is served for qwen4_exp checkpoints only ({} is {})",
         model_path.display(),
         facts.model_type

@@ -198,6 +198,27 @@ pub struct PreflightReport {
     /// has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slots: Option<u32>,
+    /// mlx_lm pipeline only: layers per rank, rank 0 first (rank 0 holds the LAST layers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer_split: Option<Vec<u32>>,
+    /// mlx_lm pipeline only: full-attention layers per rank, rank 0 first (`LayerSplit::full_layers`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_full_layers: Option<Vec<u32>>,
+    /// mlx_lm pipeline only: why this split (the planner's max-min-spare sentence).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub split_reason: Option<String>,
+    /// mlx_lm pipeline only: the plan reserve (share of RAM) the split was planned at, also on
+    /// a refusal (the reserve that refused).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_reserve_ratio: Option<f64>,
+    /// Where `plan_reserve_ratio` came from: the shared default, the model's own entry
+    /// (`config::MODEL_PLAN_RESERVES`) or the config's override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_reserve_source: Option<super::config::ReserveSource>,
+    /// mlx_lm pipeline refusal only: the highest reserve a config may set at which a split fits
+    /// (the refusal's sentence names it too); `None` when no settable reserve fits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fitting_reserve_ratio: Option<f64>,
     /// Cluster-wide checks (runner, cross-node model/version agreement, the plan).
     pub checks: Vec<Check>,
     pub nodes: Vec<NodePreflight>,
@@ -268,6 +289,31 @@ impl PreflightReport {
             .collect::<Option<Vec<_>>>()
             .context("the preflight produced no per-rank plan")?;
         super::launch::TensorLaunch::for_ranks(&plans)
+    }
+
+    /// The mlx_lm pipeline ranks' launch figures and prompt-cache weights, from the plans and the
+    /// split the preflight approved (`TensorLaunch::for_pipeline_ranks`).
+    pub fn mlx_pipeline_launches(
+        &self,
+    ) -> Result<(
+        Vec<super::launch::TensorLaunch>,
+        Vec<super::launch::PipelineCacheWeights>,
+    )> {
+        let plans = self
+            .nodes
+            .iter()
+            .map(|n| n.plan.as_ref())
+            .collect::<Option<Vec<_>>>()
+            .context("the preflight produced no per-rank plan")?;
+        let layers = self
+            .layer_split
+            .as_deref()
+            .context("the preflight approved no layer split")?;
+        let full = self
+            .pipeline_full_layers
+            .as_deref()
+            .context("the preflight carries no full-attention layers per rank: run it again")?;
+        super::launch::TensorLaunch::for_pipeline_ranks(&plans, layers, full)
     }
 }
 
@@ -468,12 +514,14 @@ pub(crate) fn node_probe_script(
         sh_quote(&node.python),
         sh_quote(&load_lock_probe())
     ));
-    if runner == Some(Runner::PipelineQwen4) {
+    if matches!(runner, Some(Runner::PipelineQwen4 | Runner::MlxLmPipeline)) {
         if let Some(python) = &node.pipeline_python {
-            add(format!(
-                "echo; echo @@pipeline; {} -m {PIPELINE_MODULE} --help 2>&1 | /usr/bin/head -3",
-                sh_quote(python)
-            ));
+            if runner == Some(Runner::PipelineQwen4) {
+                add(format!(
+                    "echo; echo @@pipeline; {} -m {PIPELINE_MODULE} --help 2>&1 | /usr/bin/head -3",
+                    sh_quote(python)
+                ));
+            }
             add(format!(
                 "echo; echo @@pipelineenv; {} -c {} 2>&1 | /usr/bin/tail -1",
                 sh_quote(python),
@@ -557,8 +605,9 @@ pub(crate) fn repair_licence(node: &NodeConfig, services_text: &str) -> Result<(
     Ok(())
 }
 
-/// JACCL's link state on a node: the TB IPv4 present and its IPv4-mapped GID at index 1 (the
-/// soak: a restored IPv4 at GID index 2 made the next start fail `RTR ... errno 96`).
+/// JACCL's link state on a node: the TB IPv4 present and its IPv4-mapped GID in the table with
+/// no empty index below it (the soak: a restored IPv4 at GID[2] over an empty GID[1] made the
+/// next start fail `RTR ... errno 96`).
 fn link_checks(
     node: &NodeConfig,
     backend: Backend,
@@ -594,19 +643,26 @@ fn link_checks(
                 let table = probe::parse_gid_table(text);
                 let want = probe::ipv4_gid(&node.tb_ip);
                 let at = table.iter().find(|(_, g)| *g == want).map(|(i, _)| *i);
+                // Two measurements bound this. The 2026-09-24 soak's post-restore table was
+                // GID[0] fe80, (no GID[1]), GID[2] ::ffff:v4, and the next start failed `RTR ...
+                // errno 96`. On 2026-10-26 workhorse <-> workmule carried GID[0] ULA, GID[1] fe80,
+                // GID[2] ::ffff:v4 on both ends and JACCL all_sum ran (8.95 GB/s at 1 GiB). So
+                // the index alone does not decide it; a hole below the IPv4 GID is what failed.
                 match at {
-                    Some(1) => checks.push(Check::pass(
-                        "rdmaGid",
-                        format!("{} GID[1] = {want}", node.rdma_device),
-                    )),
+                    Some(index) if (0..index).all(|i| table.iter().any(|(j, _)| *j == i)) => checks
+                        .push(Check::pass(
+                            "rdmaGid",
+                            format!("{} GID[{index}] = {want}", node.rdma_device),
+                        )),
                     Some(index) => {
                         needs_repair = true;
                         checks.push(Check::fail(
                             "rdmaGid",
                             format!(
-                                "{} carries {want} at GID[{index}], not GID[1] — the next JACCL \
-                                 start fails `Changing queue pair to RTR failed with errno 96` \
-                                 (STEP1b); repair: toggle '{}' off/on and re-apply the manual IP",
+                                "{} carries {want} at GID[{index}] with an empty GID index below \
+                                 it — the next JACCL start fails `Changing queue pair to RTR \
+                                 failed with errno 96` (STEP1b); repair: toggle '{}' off/on and \
+                                 re-apply the manual IP",
                                 node.rdma_device, node.tb_service
                             ),
                         ));
@@ -979,6 +1035,28 @@ fn read_answer(
         ));
     }
 
+    if runner == Some(Runner::MlxLmPipeline) && node.pipeline_python.is_none() {
+        answer.checks.push(Check::fail(
+            "pipeline",
+            "no pipeline_python: the mlx_lm pipeline rank (mimo_v2) runs the Rapid-MLX fork's \
+             interpreter (its vendored mlx_lm architectures)",
+        ));
+    }
+    // The layer split's ranks import the fork env too (its vendored mimo_v2 and media code), so
+    // the one runner-env rule judges it: a goose-managed env on an earlier pin FAILs and Run
+    // rebuilds it. Without this a pin bump never reached the mlx_lm pipeline (2026-10-28: the
+    // MOPD omni load ran the 07126f051 env against the 1e5d581d1 pin and died on its layout).
+    if runner == Some(Runner::MlxLmPipeline) {
+        if let Some(python) = &node.pipeline_python {
+            answer.checks.extend(runner_env_check(
+                "pipelinePython",
+                python,
+                &EnvSpec::pipeline(),
+                sections.get("pipelineenv").map(|t| last_line(t)),
+                home,
+            ));
+        }
+    }
     if runner == Some(Runner::PipelineQwen4) {
         answer.checks.extend(pipeline_runner_checks(
             node,
@@ -1247,6 +1325,12 @@ pub async fn run_preflight(
         max_context_fits: None,
         pipeline_starts: None,
         slots: None,
+        layer_split: None,
+        pipeline_full_layers: None,
+        split_reason: None,
+        plan_reserve_ratio: None,
+        plan_reserve_source: None,
+        fitting_reserve_ratio: None,
         checks: Vec::new(),
         nodes: Vec::new(),
         repairs: Vec::new(),
@@ -1431,6 +1515,9 @@ pub async fn run_preflight(
             Runner::PipelineQwen4 => {
                 pipeline_ratios =
                     plan_pipeline(config, &exec, &budgets, &mut report, &mut plans).await;
+            }
+            Runner::MlxLmPipeline => {
+                plan_mlx_pipeline(config, &budgets, &mut report, &mut plans);
             }
         }
     } else if runner.is_some() {
@@ -1782,6 +1869,70 @@ fn plan_tensor(
             facts.act_bytes,
         ),
     ));
+}
+
+/// goose's own layer split for the mlx_lm pipeline (`layer_split::plan_layer_split`) at the
+/// config's plan reserve; a refusal names the numbers and the reserve at which a split fits.
+fn plan_mlx_pipeline(
+    config: &DistributedConfig,
+    budgets: &[NodeFigures],
+    report: &mut PreflightReport,
+    plans: &mut [Option<RankPlan>],
+) {
+    use super::layer_split::{plan_layer_split, read_layer_split_facts, SplitNode};
+    let facts = match read_layer_split_facts(Path::new(&config.nodes[0].model_dir)) {
+        Ok(facts) => facts,
+        Err(e) => {
+            report.checks.push(Check::fail("plan", format!("{e:#}")));
+            return;
+        }
+    };
+    let nodes: Vec<SplitNode> = config
+        .nodes
+        .iter()
+        .zip(budgets)
+        .map(|(node, figures)| SplitNode {
+            name: node.name.clone(),
+            available: figures.available,
+            total: figures.total,
+            ceiling: config.planned_ceiling(&node.name, figures.ceiling),
+        })
+        .collect();
+    let (warn, _) = config.watchdog_ratios();
+    report.context_source = Some(
+        if config.context.is_some() {
+            "requested"
+        } else {
+            "derived"
+        }
+        .to_string(),
+    );
+    let (reserve, source) = config.plan_reserve(report.model_type.as_deref());
+    report.plan_reserve_ratio = Some(reserve);
+    report.plan_reserve_source = Some(source);
+    match plan_layer_split(&facts, &nodes, reserve, warn, config.context) {
+        Ok(split) => {
+            report.context_limit = Some(split.context);
+            report.max_context_fits = Some(split.context);
+            report.pipeline_starts = Some(split.plans.iter().map(|p| p.layer_start).collect());
+            report.layer_split = Some(split.layers.clone());
+            report.pipeline_full_layers = Some(split.full_layers.clone());
+            report.split_reason = Some(split.reason.clone());
+            report.plan_reserve_ratio = Some(split.reserve_ratio);
+            report
+                .checks
+                .push(Check::pass("plan", split.reason.clone()));
+            for (rank, plan) in split.plans.into_iter().enumerate() {
+                plans[rank] = Some(plan);
+            }
+        }
+        Err(e) => {
+            report.fitting_reserve_ratio = e
+                .downcast_ref::<super::layer_split::SplitRefusal>()
+                .and_then(|r| r.fitting_reserve_ratio);
+            report.checks.push(Check::fail("plan", format!("{e:#}")));
+        }
+    }
 }
 
 /// One pipeline rank's plan line: its layers and the fork's bytes against the fork's budget, with
@@ -2259,7 +2410,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_gid_at_index_two_fails_with_the_documented_repair() {
+    fn an_ipv4_gid_over_a_hole_fails_and_a_contiguous_one_passes() {
         let node = two_mac_config().nodes.remove(1);
         let mut sections = BTreeMap::new();
         sections.insert(
@@ -2275,6 +2426,18 @@ pub(crate) mod tests {
         let gid = checks.iter().find(|c| c.id == "rdmaGid").unwrap();
         assert_eq!(gid.verdict, CheckVerdict::Fail);
         assert!(gid.message.contains("GID[2]") && gid.message.contains("errno 96"));
+        // The workhorse <-> workmule table of 2026-10-26, on which JACCL ran.
+        let mut contiguous = sections.clone();
+        contiguous.insert(
+            "gid".to_string(),
+            "GID[  0]:\t\tfc7c:27f7:1fb:454d::1\nGID[  1]:\t\tfe80::1\nGID[  2]:\t\t::ffff:192.168.0.2\n"
+                .to_string(),
+        );
+        let (checks, needs_repair) = link_checks(&node, Backend::Jaccl, &contiguous);
+        assert!(!needs_repair);
+        let gid = checks.iter().find(|c| c.id == "rdmaGid").unwrap();
+        assert_eq!(gid.verdict, CheckVerdict::Pass);
+        assert!(gid.message.contains("GID[2] = ::ffff:192.168.0.2"));
         // Ring does not read the GID table at all.
         let (checks, needs_repair) = link_checks(&node, Backend::Ring, &sections);
         assert!(!needs_repair && checks.iter().all(|c| c.id != "rdmaGid"));
@@ -2284,6 +2447,58 @@ pub(crate) mod tests {
         let mut node = two_mac_config().nodes.remove(0);
         node.pipeline_python = Some(python.to_string());
         node
+    }
+
+    /// 2026-10-28: the MiMo layer split (mlx_lm pipeline) started on a fork env built at
+    /// 07126f051 while goose pinned 1e5d581d1; nothing proved that env, so Run never rebuilt it and
+    /// both ranks died on the omni checkpoint's layout. The layer split is now judged by the same
+    /// runner-env rule as the qwen4_exp pipeline.
+    #[test]
+    fn the_layer_split_proves_its_fork_env_and_a_stale_one_fails_for_run_to_rebuild() {
+        let home = "/Users/me";
+        let spec = EnvSpec::pipeline();
+        let mut config = two_mac_config();
+        config.nodes[0].pipeline_python = Some(spec.python(home));
+        let script = node_probe_script(&config, Some(Runner::MlxLmPipeline), 0);
+        assert!(script.contains("@@pipelineenv"), "{script}");
+        assert!(!script.contains("@@pipeline;"), "{script}");
+
+        let probed = |env_line: &str| ExecOutput {
+            status: Some(0),
+            stdout: format!("@@self\n7\n@@home\n{home}\n@@pipelineenv\n{env_line}\n@@end\n"),
+            stderr: String::new(),
+        };
+        let stale = read_answer(
+            &config,
+            Some(Runner::MlxLmPipeline),
+            0,
+            Ok(probed(
+                "0.32.2 0.31.3 07126f05117ac14dc5048371dc010f8196688a19",
+            )),
+            None,
+        );
+        let fork = stale
+            .checks
+            .iter()
+            .find(|c| {
+                c.id == "runnerEnv" && c.env.as_ref().is_some_and(|e| e.field == "pipelinePython")
+            })
+            .expect("the layer split's fork env is judged");
+        assert_eq!(fork.verdict, CheckVerdict::Fail);
+        assert!(fork.env.as_ref().unwrap().managed);
+
+        let pinned = read_answer(
+            &config,
+            Some(Runner::MlxLmPipeline),
+            0,
+            Ok(probed(&spec.expect)),
+            None,
+        );
+        assert!(!pinned
+            .checks
+            .iter()
+            .any(|c| c.id == "runnerEnv"
+                && c.env.as_ref().is_some_and(|e| e.field == "pipelinePython")));
     }
 
     #[test]
@@ -2818,6 +3033,12 @@ pub(crate) mod tests {
             max_context_fits: None,
             pipeline_starts: None,
             slots: None,
+            layer_split: None,
+            pipeline_full_layers: None,
+            split_reason: None,
+            plan_reserve_ratio: None,
+            plan_reserve_source: None,
+            fitting_reserve_ratio: None,
             checks: Vec::new(),
             nodes: Vec::new(),
             repairs: Vec::new(),

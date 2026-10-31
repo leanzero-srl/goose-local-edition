@@ -207,6 +207,41 @@ impl DeveloperClient {
     }
 }
 
+/// The names other editing tools give `edit`'s two texts. MiMo-V2.6-Flash on the two-Mac split
+/// wrote `old`/`new` in 10 of 25 `edit` calls of sb-7.2 run 8985a86d (2026-10-31); every one
+/// failed and cost a turn to resend under the declared names.
+const EDIT_FIELD_ALIASES: [(&str, &[&str]); 2] = [
+    ("before", &["old", "old_str", "old_string"]),
+    ("after", &["new", "new_str", "new_string"]),
+];
+
+/// `edit`'s arguments with an aliased text under its declared name, and what was renamed. A
+/// declared field that arrived is never replaced, and an alias is read only when it is the one
+/// alias present for its field.
+fn resolve_edit_aliases(arguments: Option<JsonObject>) -> (Option<JsonObject>, Vec<String>) {
+    let Some(mut arguments) = arguments else {
+        return (None, Vec::new());
+    };
+    let mut renamed = Vec::new();
+    for (field, aliases) in EDIT_FIELD_ALIASES {
+        if arguments.get(field).is_some_and(|value| !value.is_null()) {
+            continue;
+        }
+        let present: Vec<&str> = aliases
+            .iter()
+            .copied()
+            .filter(|alias| arguments.contains_key(*alias))
+            .collect();
+        if let [alias] = present[..] {
+            if let Some(value) = arguments.remove(alias) {
+                arguments.insert(field.to_string(), value);
+                renamed.push(format!("`{alias}` as `{field}`"));
+            }
+        }
+    }
+    (Some(arguments), renamed)
+}
+
 fn backticked(fields: &[&str]) -> String {
     fields
         .iter()
@@ -328,13 +363,28 @@ impl McpClientTrait for DeveloperClient {
                 ))
                 .with_priority(0.0)])),
             },
-            "edit" => match Self::parse_args::<FileEditParams>(name, arguments) {
-                Ok(params) => Ok(self.edit_tools.file_edit_with_cwd(params, working_dir)),
-                Err(error) => Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Error: {error}"
-                ))
-                .with_priority(0.0)])),
-            },
+            "edit" => {
+                let (arguments, renamed) = resolve_edit_aliases(arguments);
+                match Self::parse_args::<FileEditParams>(name, arguments) {
+                    Ok(params) => {
+                        let mut result = self.edit_tools.file_edit_with_cwd(params, working_dir);
+                        if !renamed.is_empty() {
+                            result.content.push(
+                                Content::text(format!(
+                                    "Note: read {}; edit's fields are path, before and after.",
+                                    renamed.join(" and ")
+                                ))
+                                .with_priority(0.0),
+                            );
+                        }
+                        Ok(result)
+                    }
+                    Err(error) => Ok(CallToolResult::error(vec![Content::text(format!(
+                        "Error: {error}"
+                    ))
+                    .with_priority(0.0)])),
+                }
+            }
             "tree" => match Self::parse_args::<TreeParams>(name, arguments) {
                 Ok(params) => Ok(self.tree_tool.tree_with_cwd(params, working_dir)),
                 Err(error) => Ok(CallToolResult::error(vec![Content::text(format!(
@@ -442,6 +492,91 @@ mod tests {
         assert_eq!(
             fs::read_to_string(cwd.join("notes.txt")).unwrap(),
             "updated line"
+        );
+    }
+
+    /// sb-7.2 run 8985a86d: MiMo-V2.6-Flash sent `edit` as `path` + `old` + `new` (and as
+    /// `before` + `new`); each failed with "missing required fields" and cost a turn.
+    #[tokio::test]
+    async fn edit_reads_old_and_new_as_before_and_after_and_says_so() {
+        let temp = tempfile::tempdir().unwrap();
+        let client = DeveloperClient::new(test_context(temp.path().join("sessions"))).unwrap();
+        let cwd = temp.path().join("workspace");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::write(cwd.join("viz.js"), "  const CAPACITY = 16384;\n").unwrap();
+        let ctx = ToolCallContext::new("session".to_owned(), Some(cwd.clone()), None);
+
+        let edit = client
+            .call_tool(
+                &ctx,
+                "edit",
+                Some(object!({
+                    "path": "viz.js",
+                    "old": "  const CAPACITY = 16384;",
+                    "new": "  let CAPACITY = 16384;"
+                })),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(edit.is_error, Some(false), "{}", first_text(&edit));
+        assert_eq!(
+            fs::read_to_string(cwd.join("viz.js")).unwrap(),
+            "  let CAPACITY = 16384;\n"
+        );
+        let said: Vec<&str> = edit
+            .content
+            .iter()
+            .filter_map(|content| match &content.raw {
+                RawContent::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            said.contains(
+                &"Note: read `old` as `before` and `new` as `after`; edit's fields are path, before and after."
+            ),
+            "{said:?}"
+        );
+
+        let mixed = client
+            .call_tool(
+                &ctx,
+                "edit",
+                Some(object!({
+                    "path": "viz.js",
+                    "before": "let",
+                    "new": "var"
+                })),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(mixed.is_error, Some(false), "{}", first_text(&mixed));
+        assert_eq!(
+            fs::read_to_string(cwd.join("viz.js")).unwrap(),
+            "  var CAPACITY = 16384;\n"
+        );
+
+        let ambiguous = client
+            .call_tool(
+                &ctx,
+                "edit",
+                Some(object!({
+                    "path": "viz.js",
+                    "before": "var",
+                    "new": "let",
+                    "new_str": "const"
+                })),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ambiguous.is_error, Some(true));
+        assert!(first_text(&ambiguous).contains("missing required field `after`"));
+        assert_eq!(
+            fs::read_to_string(cwd.join("viz.js")).unwrap(),
+            "  var CAPACITY = 16384;\n"
         );
     }
 

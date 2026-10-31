@@ -11555,13 +11555,54 @@
             "string",
             "null"
           ],
-          "description": "\"mlxLmTensor\" (qwen3_5) | \"pipelineQwen4\" (qwen4_exp); absent when the model type has none."
+          "description": "\"mlxLmTensor\" (qwen3_5) | \"pipelineQwen4\" (qwen4_exp) | \"mlxLmPipeline\" (mimo_v2);\nabsent when the model type has none."
         },
         "modelType": {
           "type": [
             "string",
             "null"
           ]
+        },
+        "layerSplit": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "description": "mlxLmPipeline only: layers per rank, rank 0 first (rank 0 holds the LAST layers). Each\nnode's `plan` carries its range and bytes."
+        },
+        "splitReason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "mlxLmPipeline only: why this split, in the planner's words (shown verbatim)."
+        },
+        "planReserveRatio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "mlxLmPipeline only: the plan reserve (share of each node's RAM) in force, also on a refusal."
+        },
+        "planReserveSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Where `planReserveRatio` came from: \"default\" (goose's shared reserve) | \"model\" (the\nmodel's own reserve) | \"user\" (the config's `planReserveRatio`)."
+        },
+        "fittingReserveRatio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "mlxLmPipeline refusal only: the highest `planReserveRatio` a config may set at which a split\nfits (the plan check's message names it too); absent when no settable reserve fits."
         },
         "contextLimit": {
           "type": [
@@ -12060,6 +12101,14 @@
           ],
           "format": "double",
           "description": "The CRITICAL reserve (available below it → verified stop, never restarted). Absent = 0.02.\nMust satisfy 0 < critical < warn < 1."
+        },
+        "planReserveRatio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "The share of each node's RAM the split's plan keeps free (budget = available − RAM × this,\nat most the GPU ceiling). Absent = the model's own reserve when goose has one (mimo_v2:\n0.05), else goose's shared reserve (0.093). An explicit override for one config: at least\nthe WARN reserve in force and below the shared default."
         },
         "nodes": {
           "type": "array",

@@ -5081,6 +5081,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "{name} を編集"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "そのリザーブでは分割を計画できませんでした"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "プリフライトのエラー"
   },
@@ -5224,6 +5227,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "パイプラインの Python（任意）"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "計画のリザーブ（RAM の %）"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "API ポート"
@@ -5396,6 +5402,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "GB（オーバーヘッド込みの計画）/ 分割の予算 {budget} GB"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "モデルの既定値"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "レイヤー分割モデル（mimo_v2）：計画が各 Mac の RAM のうち空けておく割合です。空欄ではモデル固有のリザーブ、なければ goose の既定値を使います。メモリ監視のウォッチドッグの警告リザーブを下回る値は goose が拒否します。"
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "計画 {gb} GB（オーバーヘッド込み）"
   },
@@ -5542,6 +5554,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "速度未報告"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "予算"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "{pct}% で収まる"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "RAM の {current}% のリザーブでは収まる分割がありません。{pct}% なら収まります。そこで計画すると各 Mac の空きメモリは減りますが、メモリ監視のウォッチドッグの警告ラインは上回ったままです。"
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} GB"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "{split} レイヤー"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "安全マージンはリザーブそのものです。goose は各 Mac の予算を満たすようにコンテキストを決めるため、余剰は意図的に約 0 GB と表示されます。"
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "収まるリザーブなし"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "設定できるどのリザーブでも分割は収まりません。Mac のメモリを空けるか、より小さいモデルを分割してください。"
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "計画されたレイヤーなし"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "{pct}% で計画"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · {count} 層"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "ランク {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "リザーブ RAM の {pct}%"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "goose の既定値"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "{model} 固有のリザーブ"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "モデル固有のリザーブ"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "ユーザー設定"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "余剰"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "レイヤー分割"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "重み"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "起動するとプリフライトを実行し、JACCL が必要とする場合は Thunderbolt リンクを修復してから、各ランクを監視下で起動します。"
@@ -5869,6 +5941,12 @@
   },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "エンジン設定を読み取れませんでした。"
+  },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "分割がこの Mac で提供中か読み取れませんでした: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "分割がこの Mac で提供中か読み取っています…"
   },
   "mlxEngineView.statusRetry": {
     "defaultMessage": "再読み込み"

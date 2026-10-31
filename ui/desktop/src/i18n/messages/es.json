@@ -5081,6 +5081,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "Editar {name}"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "No se pudo planificar la división con esa reserva"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "Error de preflight"
   },
@@ -5224,6 +5227,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "Python del pipeline (opcional)"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "Reserva del plan (% de la RAM)"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "Puerto de la API"
@@ -5396,6 +5402,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "GB planificados con sobrecarga, de un presupuesto de la división de {budget} GB"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "predeterminada del modelo"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "Modelos con división por capas (mimo_v2): la parte de la RAM de cada Mac que el plan deja libre. Vacío usa la reserva propia del modelo o, si no, la predeterminada de goose; goose rechaza un valor por debajo de la reserva de aviso del watchdog de memoria."
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "planificado {gb} GB con sobrecarga"
   },
@@ -5542,6 +5554,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "velocidad no informada"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "presupuesto"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "Cabe al {pct} %"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "Ninguna división cabe con una reserva del {current} % de la RAM; una cabe al {pct} %. Planificar ahí deja menos memoria libre en cada Mac, aún por encima de la línea de aviso del watchdog de memoria."
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} GB"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "{split} capas"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "El margen de seguridad es la reserva: goose dimensiona el contexto para llenar el presupuesto de cada Mac, así que lo sobrante marca unos 0 GB a propósito."
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "Ninguna reserva cabe"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "Ninguna reserva que puedas fijar hace que quepa una división: libera memoria en un Mac o divide un modelo más pequeño."
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "no hay capas planificadas"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "Planificar al {pct} %"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · {count} capas"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "reserva del {pct} % de la RAM"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "predeterminada de goose"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "reserva propia de {model}"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "la reserva propia del modelo"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "fijada por ti"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "sobrante"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "División por capas"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "pesos"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "Iniciar ejecuta el preflight, repara el enlace Thunderbolt cuando JACCL lo necesita y luego lanza cada rank bajo supervisión."
@@ -5869,6 +5941,12 @@
   },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "No se pudo leer la configuración del motor."
+  },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "No se pudo leer si una división sirve este Mac: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Leyendo si una división sirve este Mac…"
   },
   "mlxEngineView.statusRetry": {
     "defaultMessage": "Leer de nuevo"

@@ -34,25 +34,116 @@ pub enum Runner {
     MlxLmTensor,
     /// The fork's `rapid_mlx.distributed.pipeline_qwen4` (contiguous layer ranges per rank).
     PipelineQwen4,
+    /// `mlx_lm.server --pipeline` on every rank under goose's rank wrapper, each rank holding the
+    /// contiguous layer range goose's planner derived from the checkpoint's per-layer bytes
+    /// (`plan::plan_layer_split`; rank 0 = the LAST layers). The fork's env carries the model
+    /// code: `import rapid_mlx.mlx_lm_models` makes `mlx_lm.models.<model_type>` resolvable.
+    MlxLmPipeline,
+}
+
+/// THE one table of which checkpoint `model_type` splits under which runner. Every other place
+/// asks [`Runner`] (`for_model_type`, `placement_kind`, `layout_words`, `uses_pipeline_env`); a
+/// test (`no_other_file_maps_a_model_type_to_a_runner`) fails the build on a second copy.
+pub const RUNNERS: &[(&str, Runner)] = &[
+    ("qwen3_5", Runner::MlxLmTensor),
+    ("qwen4_exp", Runner::PipelineQwen4),
+    ("mimo_v2", Runner::MlxLmPipeline),
+];
+
+/// Per-model plan reserves, used when the config sets no `plan_reserve_ratio`: a model whose
+/// split measured fine inside the shared reserve plans at its own thinner one instead of being
+/// refused. Floored at the watchdog WARN reserve in force (`DistributedConfig::plan_reserve`).
+/// The shared default (`AVAILABLE_MARGIN_RATIO`) is never lowered for every model.
+pub const MODEL_PLAN_RESERVES: &[(&str, f64)] = &[
+    // ratio: of each node's RAM; mimo_v2's 19/29 run served at 68.7 / 100.7 GB footprints with a ~1 GB swap peak and no watchdog trip (2026-10-26), the owner budgets ~80 GB workhorse / ~110 GB mule; the shared 9.3% refuses it, 7.7% is the highest that fits.
+    ("mimo_v2", 0.05),
+];
+
+/// Where the plan reserve in force came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReserveSource {
+    /// The shared `AVAILABLE_MARGIN_RATIO` every runner plans with.
+    Default,
+    /// The model's own entry in [`MODEL_PLAN_RESERVES`].
+    Model,
+    /// The config's `plan_reserve_ratio`.
+    User,
+}
+
+impl ReserveSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReserveSource::Default => "default",
+            ReserveSource::Model => "model",
+            ReserveSource::User => "user",
+        }
+    }
 }
 
 impl Runner {
     pub fn for_model_type(model_type: &str) -> Result<Self> {
-        match model_type {
-            "qwen3_5" => Ok(Runner::MlxLmTensor),
-            "qwen4_exp" => Ok(Runner::PipelineQwen4),
-            other => bail!(
-                "no distributed runner for model_type '{other}': qwen3_5 splits tensor-parallel \
-                 under mlx_lm.server, qwen4_exp splits by layer range under the fork's \
-                 pipeline_qwen4; nothing else is wired"
+        match RUNNERS.iter().find(|(t, _)| *t == model_type) {
+            Some((_, runner)) => Ok(*runner),
+            None => bail!(
+                "no distributed runner for model_type '{model_type}': {}; nothing else is wired",
+                Self::wired_summary()
             ),
         }
+    }
+
+    /// Every wired model_type with how it splits, from [`RUNNERS`]
+    /// ("qwen3_5 tensor-parallel, qwen4_exp by layer range (fork pipeline), …").
+    pub fn wired_summary() -> String {
+        RUNNERS
+            .iter()
+            .map(|(t, r)| format!("{t} {}", r.layout_words()))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
             Runner::MlxLmTensor => "mlxLmTensor",
             Runner::PipelineQwen4 => "pipelineQwen4",
+            Runner::MlxLmPipeline => "mlxLmPipeline",
+        }
+    }
+
+    /// How the placement store and planner key this runner's splits.
+    pub fn placement_kind(self) -> crate::placement::store::PlacementKind {
+        match self {
+            Runner::MlxLmTensor => crate::placement::store::PlacementKind::Tensor,
+            Runner::PipelineQwen4 | Runner::MlxLmPipeline => {
+                crate::placement::store::PlacementKind::Pipeline
+            }
+        }
+    }
+
+    /// How the split divides the model, in words.
+    pub fn layout_words(self) -> &'static str {
+        match self {
+            Runner::MlxLmTensor => "tensor-parallel",
+            Runner::PipelineQwen4 => "by layer range (the fork's pipeline_qwen4)",
+            Runner::MlxLmPipeline => "by layer range (mlx_lm pipeline, goose's split)",
+        }
+    }
+
+    /// The ranks run the fork's interpreter (`NodeConfig::pipeline_python`): the qwen4_exp
+    /// pipeline is the fork's program; the mlx_lm pipeline imports the fork's vendored model code.
+    pub fn uses_pipeline_env(self) -> bool {
+        match self {
+            Runner::MlxLmTensor => false,
+            Runner::PipelineQwen4 | Runner::MlxLmPipeline => true,
+        }
+    }
+
+    /// Each rank runs `mlx_lm.server` under goose's rank wrapper (`TENSOR_PROGRAM`): the wrapper's
+    /// serving loop, its `/v1/status` shape and its phases, whichever way the layers are split.
+    pub fn runs_rank_wrapper(self) -> bool {
+        match self {
+            Runner::MlxLmTensor | Runner::MlxLmPipeline => true,
+            Runner::PipelineQwen4 => false,
         }
     }
 }
@@ -144,11 +235,47 @@ pub struct DistributedConfig {
     /// `None` = `WATCHDOG_CRITICAL_RESERVE_RATIO`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watchdog_critical_ratio: Option<f64>,
+    /// The plan's reserve as a fraction of each node's RAM: budget = min(available − RAM × this,
+    /// GPU ceiling). `None` = the shared `AVAILABLE_MARGIN_RATIO` every runner plans with. An
+    /// explicit per-config override for a split that measured fine inside the shared reserve
+    /// (mimo_v2, 2026-10-26: the manual 19/29 run served at 68.7 / 100.7 GB footprints, swap
+    /// peak ~1 GB, no watchdog trip, where the shared reserve leaves 67.11 + 98.22 GB for 168.6 GB
+    /// of weights). Validated: at least the WARN reserve in force (below it the watchdog closes
+    /// admission on a plan that fits) and below the shared default (it only ever loosens).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_reserve_ratio: Option<f64>,
+    /// GB the layer split's plan leaves free under each Mac's GPU ceiling: the ceiling the budget
+    /// is capped at is the measured one less this. `None` = the measured ceiling. Not an owner
+    /// rule (corrected 2026-10-28): the 8 GB used in the 2026-10-27 MiMo runs was a test margin,
+    /// and stacked on the reserve (`plan_reserve_ratio` / the shared one) it counted the same
+    /// safety twice; the 256k MiMo split runs with 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_headroom_gb: Option<f64>,
+    /// Per-node `gpu_headroom_gb` by node name, over the config-wide one. Why (2026-10-27): the
+    /// workhorse is also the NFS server of the model and a desktop; at 8 GB under its ceiling
+    /// rank 0's 71 GB plan (19 layers) still pushed it to swap +6 GB and memory pressure WARN
+    /// during its load, twice, where 18 layers (65.8 GB) loaded clean.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_gpu_headroom_gb: Option<std::collections::BTreeMap<String, f64>>,
     /// Rank order: `nodes[0]` is this Mac.
     pub nodes: Vec<NodeConfig>,
 }
 
 impl DistributedConfig {
+    /// A node's GPU ceiling less its headroom: `node_gpu_headroom_gb[node]`, else
+    /// `gpu_headroom_gb`, else none.
+    pub fn planned_ceiling(&self, node: &str, ceiling: u64) -> u64 {
+        let headroom = self
+            .node_gpu_headroom_gb
+            .as_ref()
+            .and_then(|by_node| by_node.get(node).copied())
+            .or(self.gpu_headroom_gb)
+            .unwrap_or(0.0)
+            .max(0.0)
+            * 1e9;
+        ceiling.saturating_sub(headroom as u64)
+    }
+
     pub fn validate(&self) -> Result<()> {
         ensure!(!self.model_id.trim().is_empty(), "model_id is empty");
         ensure!(
@@ -215,6 +342,15 @@ impl DistributedConfig {
             0.0 < critical && critical < warn && warn < 1.0,
             "watchdog ratios must satisfy 0 < critical ({critical}) < warn ({warn}) < 1"
         );
+        if let Some(reserve) = self.plan_reserve_ratio {
+            ensure!(
+                reserve >= warn && reserve < super::AVAILABLE_MARGIN_RATIO,
+                "plan_reserve_ratio {reserve} must be at least the watchdog WARN reserve ({warn}: \
+                 below it the watchdog closes admission on a plan that fits) and below the shared \
+                 reserve ({}); remove it to plan with the shared reserve",
+                super::AVAILABLE_MARGIN_RATIO
+            );
+        }
         let mut names: Vec<&str> = self.nodes.iter().map(|n| n.name.as_str()).collect();
         names.sort_unstable();
         names.dedup();
@@ -230,6 +366,27 @@ impl DistributedConfig {
             self.watchdog_critical_ratio
                 .unwrap_or(super::WATCHDOG_CRITICAL_RESERVE_RATIO),
         )
+    }
+
+    /// The plan reserve in force for a checkpoint of `model_type`, with where it came from: the
+    /// config's override, else the model's entry in [`MODEL_PLAN_RESERVES`] (never below the WARN
+    /// reserve in force), else the shared `AVAILABLE_MARGIN_RATIO`.
+    pub fn plan_reserve(&self, model_type: Option<&str>) -> (f64, ReserveSource) {
+        if let Some(reserve) = self.plan_reserve_ratio {
+            return (reserve, ReserveSource::User);
+        }
+        let model = model_type
+            .and_then(|t| MODEL_PLAN_RESERVES.iter().find(|(m, _)| *m == t))
+            .map(|(_, r)| *r);
+        match model {
+            Some(reserve) => (
+                reserve
+                    .max(self.watchdog_ratios().0)
+                    .min(super::AVAILABLE_MARGIN_RATIO),
+                ReserveSource::Model,
+            ),
+            None => (super::AVAILABLE_MARGIN_RATIO, ReserveSource::Default),
+        }
     }
 
     /// The slot count in force for a pipeline run.
@@ -262,6 +419,9 @@ pub(crate) mod tests {
             hang_ratio_only: false,
             watchdog_warn_ratio: None,
             watchdog_critical_ratio: None,
+            plan_reserve_ratio: None,
+            gpu_headroom_gb: None,
+            node_gpu_headroom_gb: None,
             nodes: vec![
                 NodeConfig {
                     name: "MacBook Pro".to_string(),
@@ -355,7 +515,50 @@ pub(crate) mod tests {
             Runner::for_model_type("qwen4_exp").unwrap(),
             Runner::PipelineQwen4
         );
+        assert_eq!(
+            Runner::for_model_type("mimo_v2").unwrap(),
+            Runner::MlxLmPipeline
+        );
         let err = Runner::for_model_type("qwen3_moe").unwrap_err().to_string();
         assert!(err.contains("qwen3_moe"), "{err}");
+        for (model_type, _) in RUNNERS {
+            assert!(err.contains(model_type), "{err}");
+        }
+    }
+
+    /// The runner rule lives in [`RUNNERS`] only: no other non-test source maps a model_type
+    /// string to a runner, or compares a model_type with a literal. A second copy is how the
+    /// arch list drifted into prose and placement code before.
+    #[test]
+    fn no_other_file_maps_a_model_type_to_a_runner() {
+        let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut offenders = Vec::new();
+        let mut stack = vec![crates.join("goose-sidecar/src"), crates.join("goose/src")];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()) != Some("rs")
+                    || path.ends_with("distributed/config.rs")
+                {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                // Production code only: everything before the file's test module.
+                let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+                for (n, line) in code.lines().enumerate() {
+                    let mapped = RUNNERS
+                        .iter()
+                        .any(|(t, _)| line.contains(&format!("\"{t}\" =>")));
+                    if mapped || line.contains("model_type == \"") {
+                        offenders.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
+                    }
+                }
+            }
+        }
+        assert!(offenders.is_empty(), "{offenders:#?}");
     }
 }

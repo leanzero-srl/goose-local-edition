@@ -5081,6 +5081,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "編輯 {name}"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "無法依該預留比例規劃分割"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "預檢錯誤"
   },
@@ -5224,6 +5227,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "管線 Python（選用）"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "計畫預留（RAM 的 %）"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "API 連接埠"
@@ -5396,6 +5402,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "GB 含開銷的計畫用量，分割預算 {budget} GB"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "模型預設值"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "依層分割的模型（mimo_v2）：計畫在每台 Mac 上保持空閒的 RAM 比例。留空則使用模型自己的預留，否則使用 goose 的預設值；低於記憶體看門狗警告預留的值會被 goose 拒絕。"
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "計畫 {gb} GB（含開銷）"
   },
@@ -5542,6 +5554,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "未回報速度"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "預算"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "{pct}% 時可容納"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "預留 RAM 的 {current}% 時沒有可容納的分割；{pct}% 時可以。依該值規劃會讓每台 Mac 保持的空閒記憶體更少，但仍高於記憶體看門狗的警告線。"
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} GB"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "{split} 層"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "安全餘裕就是預留：goose 會依填滿每台 Mac 的預算來決定上下文大小，因此餘量依設計顯示約 0 GB。"
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "沒有可容納的預留"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "你可設定的任何預留都無法讓分割容納：請在某台 Mac 上釋放記憶體，或分割較小的模型。"
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "未規劃任何層"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "依 {pct}% 規劃"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · {count} 層"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "預留 RAM 的 {pct}%"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "goose 預設值"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "{model} 自己的預留"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "模型自己的預留"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "由你設定"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "餘量"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "依層分割"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "權重"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "啟動會先執行預檢，在 JACCL 需要時修復 Thunderbolt 連結，然後在監督下啟動每個 rank。"
@@ -5869,6 +5941,12 @@
   },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "無法讀取引擎設定。"
+  },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "無法讀取是否有拆分在為此 Mac 提供服務：{error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "正在讀取是否有拆分在為此 Mac 提供服務…"
   },
   "mlxEngineView.statusRetry": {
     "defaultMessage": "重新讀取"

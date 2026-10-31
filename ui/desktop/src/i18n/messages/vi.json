@@ -5081,6 +5081,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "Sửa {name}"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "Không thể lập kế hoạch bản chia với mức dự trữ đó"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "Lỗi preflight"
   },
@@ -5224,6 +5227,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "Python của pipeline (tùy chọn)"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "Dự trữ của kế hoạch (% RAM)"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "Cổng API"
@@ -5396,6 +5402,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "GB dự kiến kèm chi phí phụ, trên ngân sách bản chia {budget} GB"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "mặc định của mô hình"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "Mô hình chia theo lớp (mimo_v2): phần RAM của mỗi máy Mac mà kế hoạch để trống. Để trống sẽ dùng mức dự trữ riêng của mô hình, nếu không có thì dùng mặc định của goose; goose từ chối giá trị thấp hơn mức dự trữ cảnh báo của watchdog bộ nhớ."
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "dự kiến {gb} GB kèm chi phí phụ"
   },
@@ -5542,6 +5554,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "chưa báo cáo tốc độ"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "ngân sách"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "Vừa ở {pct}%"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "Không có bản chia nào vừa với mức dự trữ {current}% RAM; có một bản vừa ở {pct}%. Lập kế hoạch ở mức đó để trống ít bộ nhớ hơn trên mỗi máy Mac, nhưng vẫn trên ngưỡng cảnh báo của watchdog bộ nhớ."
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} GB"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "{split} lớp"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "Biên an toàn chính là mức dự trữ: goose định cỡ ngữ cảnh để lấp đầy ngân sách của mỗi máy Mac, nên phần dư cố ý hiển thị khoảng 0 GB."
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "Không mức dự trữ nào vừa"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "Không mức dự trữ nào bạn có thể đặt giúp bản chia vừa: hãy giải phóng bộ nhớ trên một máy Mac, hoặc chia một mô hình nhỏ hơn."
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "chưa lập kế hoạch lớp nào"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "Lập kế hoạch ở {pct}%"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · {count} lớp"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "dự trữ {pct}% RAM"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "mặc định của goose"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "mức dự trữ riêng của {model}"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "mức dự trữ riêng của mô hình"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "do bạn đặt"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "dư"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "Chia theo lớp"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "trọng số"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "Khởi động sẽ chạy preflight, sửa liên kết Thunderbolt khi JACCL cần, rồi khởi chạy từng rank dưới sự giám sát."
@@ -5869,6 +5941,12 @@
   },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Không đọc được cài đặt động cơ."
+  },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Không đọc được liệu có bản chia nào phục vụ Mac này không: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Đang đọc xem có bản chia nào phục vụ Mac này không…"
   },
   "mlxEngineView.statusRetry": {
     "defaultMessage": "Đọc lại"

@@ -70,6 +70,10 @@ fn config_from_dto(dto: MlxDistributedConfigDto) -> anyhow::Result<DistributedCo
         hang_ratio_only: dto.hang_ratio_only,
         watchdog_warn_ratio: dto.watchdog_warn_ratio,
         watchdog_critical_ratio: dto.watchdog_critical_ratio,
+        plan_reserve_ratio: dto.plan_reserve_ratio,
+        // Config-file only (no DTO field yet): `resolve_config` carries the persisted value.
+        gpu_headroom_gb: None,
+        node_gpu_headroom_gb: None,
         nodes: dto
             .nodes
             .into_iter()
@@ -103,6 +107,7 @@ pub(super) fn config_to_dto(config: DistributedConfig) -> MlxDistributedConfigDt
         hang_ratio_only: config.hang_ratio_only,
         watchdog_warn_ratio: config.watchdog_warn_ratio,
         watchdog_critical_ratio: config.watchdog_critical_ratio,
+        plan_reserve_ratio: config.plan_reserve_ratio,
         nodes: config
             .nodes
             .into_iter()
@@ -195,6 +200,11 @@ fn preflight_to_dto(report: PreflightReport) -> MlxDistributedPreflightDto {
         backend: report.backend.as_str().to_string(),
         runner: report.runner.map(|r| r.as_str().to_string()),
         model_type: report.model_type,
+        layer_split: report.layer_split,
+        split_reason: report.split_reason,
+        plan_reserve_ratio: report.plan_reserve_ratio,
+        plan_reserve_source: report.plan_reserve_source.map(|s| s.as_str().to_string()),
+        fitting_reserve_ratio: report.fitting_reserve_ratio,
         context_limit: report.context_limit,
         context_source: report.context_source,
         max_context_fits: report.max_context_fits,
@@ -412,7 +422,14 @@ fn resolve_config(
     dto: Option<MlxDistributedConfigDto>,
 ) -> Result<DistributedConfig, agent_client_protocol::Error> {
     let config = match dto {
-        Some(dto) => config_from_dto(dto).invalid_params_err()?,
+        Some(dto) => {
+            let mut config = config_from_dto(dto).invalid_params_err()?;
+            if let Some(persisted) = persisted_config()? {
+                config.gpu_headroom_gb = persisted.gpu_headroom_gb;
+                config.node_gpu_headroom_gb = persisted.node_gpu_headroom_gb;
+            }
+            config
+        }
         None => persisted_config()?.ok_or_else(|| {
             agent_client_protocol::Error::invalid_params().data(
                 "no distributed config: send `config`, or save one with distributedConfigUpdate",
@@ -567,9 +584,10 @@ fn split_way(
     config: &DistributedConfig,
     runner: Option<distributed::Runner>,
 ) -> Option<MlxPlacementKeyDto> {
-    let kind = match runner? {
-        distributed::Runner::MlxLmTensor => MlxPlacementKindDto::Tensor,
-        distributed::Runner::PipelineQwen4 => MlxPlacementKindDto::Pipeline,
+    let kind = match runner?.placement_kind() {
+        goose_sidecar::placement::store::PlacementKind::Single => MlxPlacementKindDto::Single,
+        goose_sidecar::placement::store::PlacementKind::Tensor => MlxPlacementKindDto::Tensor,
+        goose_sidecar::placement::store::PlacementKind::Pipeline => MlxPlacementKindDto::Pipeline,
     };
     Some(MlxPlacementKeyDto {
         kind,
@@ -610,7 +628,7 @@ fn record_split_load(
     config: DistributedConfig,
 ) {
     use goose_sidecar::distributed::supervisor::RunState;
-    use goose_sidecar::placement::store::{PlacementKey, PlacementKind};
+    use goose_sidecar::placement::store::PlacementKey;
     tokio::spawn(async move {
         let manager = distributed::global_manager();
         let mut marks = super::nodes_loader::rows::PhaseMarks::default();
@@ -645,9 +663,12 @@ fn record_split_load(
             }
         };
         let phases = marks.times(std::time::Instant::now());
-        let kind = match manager.status().runner {
-            Some(distributed::Runner::MlxLmTensor) => PlacementKind::Tensor,
-            Some(distributed::Runner::PipelineQwen4) => PlacementKind::Pipeline,
+        let kind = match manager
+            .status()
+            .runner
+            .map(distributed::Runner::placement_kind)
+        {
+            Some(kind) => kind,
             None => {
                 tracing::warn!(model = %config.model_id, "a split's load ended, but it reports no runner to key it by; not recorded");
                 return;
@@ -1183,6 +1204,7 @@ mod tests {
             hang_ratio_only: false,
             watchdog_warn_ratio: None,
             watchdog_critical_ratio: None,
+            plan_reserve_ratio: None,
             nodes: vec![
                 MlxDistributedNodeConfigDto {
                     name: "MacBook Pro".to_string(),

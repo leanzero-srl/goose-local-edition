@@ -102,6 +102,21 @@ describe('measuredRunsOf — the tile reads the way the engine runs, from goose�
     expect(split.kind === 'unread' && split.detail).toContain('runner "somethingNew"');
   });
 
+  it('goose’s layer split (runner mlxLmPipeline) reads its pipeline runs; none yet is an honest empty', () => {
+    const MIMO = 'mlx-community/MiMo-V2.6-Flash-RL-mxfp4-q8';
+    const layerSplit = { ...FLASH_SERVING, runner: 'mlxLmPipeline', modelId: MIMO };
+    rememberPlacementPlans([measuredPlan(MIMO, [{ key: SPLIT }])]);
+    expect(measuredRunsOf(latestPlacementPlans(), engineWayOf(layerSplit, null, null))).toEqual({
+      kind: 'read',
+      writing: null,
+      reading: null,
+    });
+    rememberPlacementPlans([measuredPlan(MIMO, [{ key: SPLIT, decode: [34.8, 34.8, 35.3, 3] }])]);
+    expect(
+      measuredRunsOf(latestPlacementPlans(), engineWayOf(layerSplit, null, null))
+    ).toMatchObject({ kind: 'read', writing: { median: 34.8, runs: 3 } });
+  });
+
   it('writing is read from any goal’s plan; reading only from the chat goal’s', () => {
     rememberPlacementPlans([{ ...plan, goal: 'longDocuments' }]);
     expect(measuredRunsOf(latestPlacementPlans(), engineWayOf(null, null, MODEL))).toMatchObject({

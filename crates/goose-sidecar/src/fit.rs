@@ -129,8 +129,23 @@ impl NodeMemoryFacts {
 
 /// The budget: `min(available − RAM × AVAILABLE_MARGIN_RATIO, GPU ceiling)`.
 pub fn budget_bytes(available_bytes: u64, total_bytes: u64, ceiling_bytes: u64) -> u64 {
+    budget_bytes_with_reserve(
+        available_bytes,
+        total_bytes,
+        ceiling_bytes,
+        AVAILABLE_MARGIN_RATIO,
+    )
+}
+
+/// The same rule with the reserve a config chose (`DistributedConfig::plan_reserve_ratio`).
+pub fn budget_bytes_with_reserve(
+    available_bytes: u64,
+    total_bytes: u64,
+    ceiling_bytes: u64,
+    reserve_ratio: f64,
+) -> u64 {
     available_bytes
-        .saturating_sub((total_bytes as f64 * AVAILABLE_MARGIN_RATIO) as u64)
+        .saturating_sub((total_bytes as f64 * reserve_ratio) as u64)
         .min(ceiling_bytes)
 }
 

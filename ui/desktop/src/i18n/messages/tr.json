@@ -5081,6 +5081,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "{name} düzenle"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "Bu rezervle bölme planlanamadı"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "Preflight hatası"
   },
@@ -5224,6 +5227,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "Pipeline Python'u (isteğe bağlı)"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "Plan rezervi (RAM'in %'si)"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "API bağlantı noktası"
@@ -5396,6 +5402,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "GB ek yükle planlandı, {budget} GB bölme bütçesinden"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "model varsayılanı"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "Katman bölmeli modeller (mimo_v2): planın her Mac'in RAM'inde boş bıraktığı pay. Boş bırakılırsa modelin kendi rezervi, yoksa goose varsayılanı kullanılır; goose, bellek watchdog'unun uyarı rezervinin altındaki bir değeri reddeder."
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "planlanan {gb} GB (ek yük dahil)"
   },
@@ -5542,6 +5554,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "hız bildirilmedi"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "bütçe"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "%{pct} ile sığıyor"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "RAM'in %{current}'i rezervle hiçbir bölme sığmıyor; %{pct} ile biri sığıyor. Orada planlamak her Mac'te daha az belleği boş bırakır, yine de bellek watchdog'unun uyarı çizgisinin üzerinde kalır."
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} GB"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "{split} katman"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "Güvenlik payı rezervin kendisidir: goose bağlamı her Mac'in bütçesini dolduracak şekilde boyutlandırır, bu yüzden artan bilerek yaklaşık 0 GB gösterir."
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "Hiçbir rezerv sığmıyor"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "Ayarlayabileceğiniz hiçbir rezerv bir bölmeyi sığdırmıyor: bir Mac'te bellek boşaltın veya daha küçük bir modeli bölün."
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "planlanan katman yok"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "%{pct} ile planla"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · {count} katman"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "RAM'in %{pct}'i rezerv"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "goose varsayılanı"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "{model} modelinin kendi rezervi"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "modelin kendi rezervi"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "sizin ayarınız"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "artan"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "Katman bölmesi"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "ağırlıklar"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "Başlat, preflight'ı çalıştırır, JACCL gerektirdiğinde Thunderbolt bağlantısını onarır ve ardından her rank'ı denetim altında başlatır."
@@ -5869,6 +5941,12 @@
   },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Motor ayarları okunamadı."
+  },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Bu Mac’e bir bölmenin hizmet verip vermediği okunamadı: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Bu Mac’e bir bölme hizmet veriyor mu, okunuyor…"
   },
   "mlxEngineView.statusRetry": {
     "defaultMessage": "Yeniden oku"

@@ -38,6 +38,7 @@ pub mod compaction;
 pub mod config;
 pub mod exec;
 pub mod launch;
+pub mod layer_split;
 pub mod link_control;
 pub mod link_host;
 pub mod local_network;
@@ -53,7 +54,7 @@ pub mod sampling;
 pub mod supervisor;
 
 pub use compaction::{CompactionOutcome, CompactionRefusal, CompactionReport};
-pub use config::{Backend, DistributedConfig, NodeConfig, Runner};
+pub use config::{Backend, DistributedConfig, NodeConfig, ReserveSource, Runner, RUNNERS};
 pub use exec::{ExecOutput, NodeExec, SystemExec};
 pub use plan::RankPlan;
 pub use preflight::{Check, CheckVerdict, NodePreflight, PreflightReport, RunnerEnv};

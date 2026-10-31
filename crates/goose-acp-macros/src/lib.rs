@@ -80,6 +80,10 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     // Generate the dispatch arms using matches_method for routing.
+    // Each arm awaits a boxed future. Without the box, the one poll function of
+    // handle_custom_request carries every handler's future side by side: a debug
+    // build measured a 1.8 MB stack frame (2026-10-26), and the 2 MiB tokio worker
+    // stack overflowed on the first provider-config request from the desktop.
     let arms: Vec<_> = routes
         .iter()
         .map(|route| {
@@ -90,20 +94,26 @@ pub fn custom_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 Some(_) => {
                     quote! {
                         if <#req_type as agent_client_protocol::JsonRpcMessage>::matches_method(method) {
-                            let req = serde_json::from_value(params)
-                                .map_err(|e| agent_client_protocol::Error::invalid_params().data(e.to_string()))?;
-                            let result = self.#fn_ident(req).await?;
-                            return serde_json::to_value(&result)
-                                .map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()));
+                            return Box::pin(async move {
+                                let req = serde_json::from_value(params)
+                                    .map_err(|e| agent_client_protocol::Error::invalid_params().data(e.to_string()))?;
+                                let result = self.#fn_ident(req).await?;
+                                serde_json::to_value(&result)
+                                    .map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))
+                            })
+                            .await;
                         }
                     }
                 }
                 None => {
                     quote! {
                         if <#req_type as agent_client_protocol::JsonRpcMessage>::matches_method(method) {
-                            let result = self.#fn_ident().await?;
-                            return serde_json::to_value(&result)
-                                .map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()));
+                            return Box::pin(async move {
+                                let result = self.#fn_ident().await?;
+                                serde_json::to_value(&result)
+                                    .map_err(|e| agent_client_protocol::Error::internal_error().data(e.to_string()))
+                            })
+                            .await;
                         }
                     }
                 }

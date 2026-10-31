@@ -121,7 +121,7 @@ pub(crate) struct ServingWay {
 /// `Err` says why none does.
 #[cfg(unix)]
 pub(crate) async fn serving_way() -> Result<ServingWay, String> {
-    use goose_sidecar::placement::store::{PlacementKey, PlacementKind};
+    use goose_sidecar::placement::store::PlacementKey;
 
     let dist = goose_sidecar::distributed::global_manager().status();
     if let Some(route) = super::mlx_remote::read().live() {
@@ -140,10 +140,7 @@ pub(crate) async fn serving_way() -> Result<ServingWay, String> {
                 "the split owns this Mac but names no setup, model or runner yet".to_string(),
             );
         };
-        let kind = match runner {
-            goose_sidecar::distributed::Runner::MlxLmTensor => PlacementKind::Tensor,
-            goose_sidecar::distributed::Runner::PipelineQwen4 => PlacementKind::Pipeline,
-        };
+        let kind = runner.placement_kind();
         let key = PlacementKey {
             kind,
             nodes: config

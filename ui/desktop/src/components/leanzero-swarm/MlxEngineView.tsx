@@ -172,6 +172,14 @@ const i18n = defineMessages({
     defaultMessage: 'Serving across Macs',
   },
   servingRemote: { id: 'mlxEngineView.servingRemote', defaultMessage: 'Serving on {peer}' },
+  splitUnreadPending: {
+    id: 'mlxEngineView.splitUnreadPending',
+    defaultMessage: 'Reading whether a split serves this Mac…',
+  },
+  splitUnreadFailed: {
+    id: 'mlxEngineView.splitUnreadFailed',
+    defaultMessage: 'Could not read whether a split serves this Mac: {error}',
+  },
   engineDetails: { id: 'mlxEngineView.engineDetails', defaultMessage: 'Engine details' },
   thisMacEngine: { id: 'mlxEngineView.thisMacEngine', defaultMessage: 'This Mac’s engine' },
   thisMacEngineStopped: {
@@ -878,6 +886,8 @@ interface EngineSectionProps {
   mountWatch: MountWatch | null;
   /** The distributed engine (this Mac only); while it owns the Mac the single engine cannot mount. */
   distributed: MlxDistributedStatus | null;
+  /** Why the split's status could not be read; null while it reads or after it read. */
+  distributedError: string | null;
   /** goose offers the split (the `mlxDistributed` capability). */
   distributedCapability: boolean;
   /** The split's own controls, folded under Run it's split row. */
@@ -934,6 +944,7 @@ function EngineSection(props: EngineSectionProps) {
     serving,
     mountWatch,
     distributed,
+    distributedError,
     distributedCapability,
     splitDetails,
     saveRunningPending,
@@ -957,6 +968,15 @@ function EngineSection(props: EngineSectionProps) {
 
   const state = status?.state ?? null;
   const running = state === 'running';
+  // While the split's status is unread (its first read in flight, or a read failed) the single
+  // engine's "Stopped" is not this Mac's state: the split may own the Mac and serve. The hero says
+  // the split is unread instead of "Stopped · no model mounted" beside a serving split.
+  const splitUnread =
+    distributedCapability &&
+    distributed == null &&
+    !remote &&
+    state !== 'running' &&
+    state !== 'mounting';
   const mountedModelId = status?.modelId ?? null;
   const strayPort = state === 'stopped' ? status?.strayListenerPort : undefined;
   // Starting and stopping belong to Run it; the one thing left here is reclaiming an engine a
@@ -1164,7 +1184,7 @@ function EngineSection(props: EngineSectionProps) {
         className={cx('flex flex-col gap-4 p-4 lg:flex-row', SURFACE.card)}
       >
         <MlxStateTile
-          state={state}
+          state={splitUnread ? null : state}
           stoppedBy={status?.stoppedBy ?? null}
           unreachable={statusError != null && status == null}
           live={live}
@@ -1215,6 +1235,18 @@ function EngineSection(props: EngineSectionProps) {
             ) : mountedModelId && (running || state === 'mounting') ? (
               <span className={cx('break-all font-mono text-lz-h2 text-lz-ink')}>
                 {mountedModelId}
+              </span>
+            ) : splitUnread ? (
+              <span
+                data-testid="mlx-split-unread"
+                className={cx(
+                  'break-words text-lz-body',
+                  distributedError ? cx(WEIGHT.semibold, TONE_TEXT.err) : 'text-lz-ink-2'
+                )}
+              >
+                {distributedError
+                  ? intl.formatMessage(i18n.splitUnreadFailed, { error: distributedError })
+                  : intl.formatMessage(i18n.splitUnreadPending)}
               </span>
             ) : (
               <span className={cx('text-lz-h2 text-lz-ink-2')}>no model mounted</span>
@@ -3267,6 +3299,7 @@ function MlxEngineViewBody({ tab: routedTab, onTabChange, onOpenNodes }: MlxEngi
           serving={serving}
           mountWatch={mountWatch}
           distributed={distributed.status}
+          distributedError={distributed.error}
           distributedCapability={mlxDistributed}
           splitDetails={splitDetails}
           saveRunningPending={saveRunningPending}

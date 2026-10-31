@@ -5081,6 +5081,9 @@
   "mlxDistributed.editNode": {
     "defaultMessage": "Sunting {name}"
   },
+  "mlxDistributed.error.planAt": {
+    "defaultMessage": "Tidak dapat merancang pembahagian pada rizab itu"
+  },
   "mlxDistributed.error.preflight": {
     "defaultMessage": "Ralat preflight"
   },
@@ -5224,6 +5227,9 @@
   },
   "mlxDistributed.field.pipelinePython": {
     "defaultMessage": "Python pipeline (pilihan)"
+  },
+  "mlxDistributed.field.planReserve": {
+    "defaultMessage": "Rizab rancangan (% RAM)"
   },
   "mlxDistributed.field.port": {
     "defaultMessage": "Port API"
@@ -5396,6 +5402,12 @@
   "mlxDistributed.planLine": {
     "defaultMessage": "GB dirancang dengan overhed, daripada bajet pembahagian {budget} GB"
   },
+  "mlxDistributed.planReserveDefault": {
+    "defaultMessage": "lalai model"
+  },
+  "mlxDistributed.planReserveHint": {
+    "defaultMessage": "Model dengan pembahagian lapisan (mimo_v2): bahagian RAM setiap Mac yang dibiarkan kosong oleh rancangan. Kosong menggunakan rizab model itu sendiri, jika tiada, lalai goose; goose menolak nilai di bawah rizab amaran watchdog memori."
+  },
   "mlxDistributed.planned": {
     "defaultMessage": "dirancang {gb} GB dengan overhed"
   },
@@ -5542,6 +5554,66 @@
   },
   "mlxDistributed.speedUnknown": {
     "defaultMessage": "kelajuan tidak dilaporkan"
+  },
+  "mlxDistributed.split.budget": {
+    "defaultMessage": "bajet"
+  },
+  "mlxDistributed.split.fitsAtLabel": {
+    "defaultMessage": "Muat pada {pct}%"
+  },
+  "mlxDistributed.split.fitsAtText": {
+    "defaultMessage": "Tiada pembahagian yang muat pada rizab {current}% RAM; satu muat pada {pct}%. Merancang di situ meninggalkan kurang memori kosong pada setiap Mac, masih di atas garis amaran watchdog memori."
+  },
+  "mlxDistributed.split.gb": {
+    "defaultMessage": "{value} GB"
+  },
+  "mlxDistributed.split.layers": {
+    "defaultMessage": "{split} lapisan"
+  },
+  "mlxDistributed.split.margin": {
+    "defaultMessage": "Margin keselamatan ialah rizab: goose menetapkan saiz konteks untuk memenuhi bajet setiap Mac, jadi lebihan sengaja menunjukkan kira-kira 0 GB."
+  },
+  "mlxDistributed.split.noFitLabel": {
+    "defaultMessage": "Tiada rizab yang muat"
+  },
+  "mlxDistributed.split.noFitText": {
+    "defaultMessage": "Tiada rizab yang boleh anda tetapkan menjadikan pembahagian muat: kosongkan memori pada sebuah Mac, atau bahagikan model yang lebih kecil."
+  },
+  "mlxDistributed.split.noRange": {
+    "defaultMessage": "tiada lapisan dirancang"
+  },
+  "mlxDistributed.split.planAt": {
+    "defaultMessage": "Rancang pada {pct}%"
+  },
+  "mlxDistributed.split.range": {
+    "defaultMessage": "L{first}–{last} · {count} lapisan"
+  },
+  "mlxDistributed.split.rank": {
+    "defaultMessage": "rank {rank}"
+  },
+  "mlxDistributed.split.reserve": {
+    "defaultMessage": "rizab {pct}% RAM"
+  },
+  "mlxDistributed.split.sourceDefault": {
+    "defaultMessage": "lalai goose"
+  },
+  "mlxDistributed.split.sourceModel": {
+    "defaultMessage": "rizab {model} sendiri"
+  },
+  "mlxDistributed.split.sourceModelUnnamed": {
+    "defaultMessage": "rizab model itu sendiri"
+  },
+  "mlxDistributed.split.sourceUser": {
+    "defaultMessage": "ditetapkan oleh anda"
+  },
+  "mlxDistributed.split.spare": {
+    "defaultMessage": "lebihan"
+  },
+  "mlxDistributed.split.title": {
+    "defaultMessage": "Pembahagian lapisan"
+  },
+  "mlxDistributed.split.weights": {
+    "defaultMessage": "pemberat"
   },
   "mlxDistributed.startHint": {
     "defaultMessage": "Mula menjalankan preflight, membaiki pautan Thunderbolt apabila JACCL memerlukannya, kemudian melancarkan setiap rank di bawah penyeliaan."
@@ -5869,6 +5941,12 @@
   },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Tidak dapat membaca tetapan enjin."
+  },
+  "mlxEngineView.splitUnreadFailed": {
+    "defaultMessage": "Tidak dapat membaca sama ada split melayan Mac ini: {error}"
+  },
+  "mlxEngineView.splitUnreadPending": {
+    "defaultMessage": "Membaca sama ada split melayan Mac ini…"
   },
   "mlxEngineView.statusRetry": {
     "defaultMessage": "Baca semula"

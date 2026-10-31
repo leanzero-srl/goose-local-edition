@@ -633,6 +633,7 @@ pub async fn spawn_link_rank(
 /// rank spec (its serde names the unknown program tag). Said as what to do, not as a parse error.
 pub fn older_peer_refusal(error: &str) -> Option<&'static str> {
     [
+        "mlxLmServerPipelineSplit",
         "mlxLmServerNamedConversation",
         "mlxLmServerEveryConversation",
         "mlxLmServerKvDtype",

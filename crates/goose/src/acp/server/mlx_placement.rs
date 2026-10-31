@@ -11,6 +11,7 @@ use super::*;
 mod imp {
     use super::*;
     use goose_sidecar::distributed::exec::ExecOutput;
+    use goose_sidecar::distributed::layer_split::read_layer_split_facts;
     use goose_sidecar::distributed::link_control::{
         self, DiscoverRequest, ExecAnswer, LinkCallError, LinkOp,
     };
@@ -28,11 +29,12 @@ mod imp {
     use goose_sidecar::placement::chip::{self, ChipIdentity};
     use goose_sidecar::placement::model::{read_model_facts, ModelFacts};
     use goose_sidecar::placement::planner::{
-        self, ClusterInput, Goal, NodeInput, NodeMemory, PipelineFitInput, PlanInput, SwitchFrees,
+        self, layer_split_fit, ClusterInput, Goal, NodeInput, NodeMemory, PipelineFitInput,
+        PlanInput, SwitchFrees, LAYER_SPLIT_PLANNER,
     };
     use goose_sidecar::placement::predict::Calibration;
     use goose_sidecar::placement::store::{
-        context_bucket, PlacementKey, PlacementKind, RecordSource, SpeedRecord,
+        context_bucket, PlacementKey, RecordSource, SpeedRecord,
     };
     use leanzero_link::state::MlxOp;
     use leanzero_link::wire::NodeStatus;
@@ -569,6 +571,7 @@ mod imp {
             .sum::<f64>()
             .max(1.0);
         Some(Ok(PipelineFitInput {
+            planner: "the fork's planner (pipeline_qwen4 plan)".to_string(),
             fits,
             context: fits.then_some(plan.context),
             stages,
@@ -698,10 +701,7 @@ mod imp {
                 (dist.config.clone(), dist.model_id.clone(), dist.runner)
             {
                 let key = PlacementKey {
-                    kind: match runner {
-                        Runner::MlxLmTensor => PlacementKind::Tensor,
-                        Runner::PipelineQwen4 => PlacementKind::Pipeline,
-                    },
+                    kind: runner.placement_kind(),
                     nodes: config
                         .nodes
                         .iter()
@@ -832,8 +832,17 @@ mod imp {
             .then(|| dplan::read_tensor_facts(&dir).map_err(|e| format!("{e:#}")));
         let pipeline = match (&ctx.config, runner) {
             (Some(config), Some(Runner::PipelineQwen4)) if nodes.len() >= 2 => {
-                fork_plan(config, &dir, &peer_dirs, &nodes, context).await
+                fork_plan(config, &dir, &peer_dirs, &nodes, context)
+                    .await
+                    .map(|plan| plan.map_err(|e| format!("the fork's planner: {e}")))
             }
+            (Some(config), Some(Runner::MlxLmPipeline)) if nodes.len() >= 2 => Some(
+                read_layer_split_facts(&dir)
+                    .map_err(|e| format!("{LAYER_SPLIT_PLANNER}: {e:#}"))
+                    .and_then(|split_facts| {
+                        layer_split_fit(&split_facts, config, &facts.model_type, &nodes, context)
+                    }),
+            ),
             _ => None,
         };
         let cluster = match &ctx.config {
@@ -1118,9 +1127,8 @@ mod imp {
                 status.model_id.as_deref().unwrap_or("none")
             )));
         }
-        let kind = match status.runner {
-            Some(Runner::MlxLmTensor) => PlacementKind::Tensor,
-            Some(Runner::PipelineQwen4) => PlacementKind::Pipeline,
+        let kind = match status.runner.map(Runner::placement_kind) {
+            Some(kind) => kind,
             None => {
                 return Err(refuse(
                     "the distributed engine reports no runner".to_string(),
