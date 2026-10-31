@@ -325,14 +325,14 @@ const CONTRAST_WORDS: &[&str] = &[
 ];
 
 /// Politeness and time tails a memory may drop from the end of the user's sentence ("…, please",
-/// "… from now on"), as words.
+/// "… from now on"), as words. Never a tail that makes the rule temporary ("for now", "na razie",
+/// "deocamdată", "vorerst"): dropping it would store a one-off as a standing rule (r6b).
 const DROPPABLE_TAILS: &[&str] = &[
     "please",
     "thanks",
     "thank you",
     "from now on",
     "going forward",
-    "for now",
     "proszę",
     "dzięki",
     "dziękuję",
@@ -2140,6 +2140,22 @@ mod tests {
                 "Use spaces in all config files unless told otherwise.",
                 "Use spaces in all config files unless told otherwise.",
                 "Use spaces in all config files.".into(),
+            ),
+            // r6b: a tail that makes the rule temporary is never dropped.
+            (
+                "use the staging database for deploys for now",
+                "use the staging database for deploys for now",
+                "use the staging database for deploys".into(),
+            ),
+            (
+                "use the staging database for deploys for now",
+                "use the staging database for deploys",
+                "Use the staging database for deploys.".into(),
+            ),
+            (
+                "Używaj bazy staging na razie.",
+                "Używaj bazy staging na razie.",
+                "Używaj bazy staging.".into(),
             ),
             // A lead-in with a negator never frees the clause after its colon.
             (
