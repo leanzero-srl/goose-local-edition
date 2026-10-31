@@ -117,10 +117,57 @@ export function planBundledMcpCorrections(
   return corrections;
 }
 
+export interface BundledMcpAddition {
+  name: string;
+  config: ExtensionConfig;
+}
+
+/**
+ * The bundled servers this app has never written into this config: a first run, or an upgrade
+ * from a release that shipped them without adding them. Added enabled, because nothing else
+ * ever adds them and a chat without them fails every search (WR-17b, Gabee round 4 on 3.0.137:
+ * "Tool 'web-search' not found", then a wrong answer from memory). The record is the line
+ * between "never added" and "the user removed it": a server the app has written before (its
+ * name is in the record) and that is gone from the config was removed on purpose and stays
+ * gone; a disabled one is still configured, so it is never touched here. Web search needs no
+ * key: without SERPER_API_KEY it searches in the bundled browser. A development run adds
+ * nothing, for the same reason it corrects nothing.
+ */
+export function planBundledMcpAdditions(
+  entries: readonly BundledMcp[],
+  extensions: readonly FixedExtensionEntry[],
+  record: BundledMcpRecord
+): BundledMcpAddition[] {
+  const additions: BundledMcpAddition[] = [];
+  for (const entry of entries) {
+    if (!entry.packaged) continue;
+    if (record[entry.name] !== undefined) continue;
+    const configured = extensions.some(
+      (extension) => extension.name === entry.name || isOwnBundledServer(entry, extension)
+    );
+    if (configured) continue;
+    additions.push({
+      name: entry.name,
+      config: {
+        type: 'stdio',
+        name: entry.name,
+        description: entry.description,
+        cmd: entry.cmd,
+        args: entry.args,
+        envs: entry.envs,
+        env_keys: [],
+        timeout: entry.timeout,
+      },
+    });
+  }
+  return additions;
+}
+
 /**
  * Point every configured bundled server at this app's own bundle, keeping the user's enabled
- * flag, env keys (their Serper key, folders) and timeout. Each correction is logged once, with
- * before and after; a start with nothing to correct writes and logs nothing.
+ * flag, env keys (their Serper key, folders) and timeout, and add the ones this config has never
+ * had (planBundledMcpAdditions). Each correction and addition is logged once; a start with
+ * nothing to do writes and logs nothing.
  */
 export async function reconcileBundledMcps(deps: {
   entries: readonly BundledMcp[];
@@ -131,8 +178,19 @@ export async function reconcileBundledMcps(deps: {
   log: (line: string) => void;
 }): Promise<BundledMcpCorrection[]> {
   const corrections = planBundledMcpCorrections(deps.entries, deps.extensions, deps.record);
-  if (corrections.length === 0) return corrections;
+  const additions = planBundledMcpAdditions(deps.entries, deps.extensions, deps.record);
+  if (corrections.length === 0 && additions.length === 0) return corrections;
   const record = { ...deps.record };
+  for (const addition of additions) {
+    await deps.add(addition.config, true);
+    const entry = deps.entries.find((item) => item.name === addition.name);
+    if (entry) record[addition.name] = written(entry);
+    deps.log(
+      `[bundled-mcps] added "${addition.name}" from this app's bundle, enabled (not in this config yet): ${JSON.stringify(
+        entry ? { cmd: entry.cmd, args: entry.args } : {}
+      )}`
+    );
+  }
   for (const correction of corrections) {
     await deps.add(correction.config, correction.enabled);
     const entry = deps.entries.find((item) => item.name === correction.name);
