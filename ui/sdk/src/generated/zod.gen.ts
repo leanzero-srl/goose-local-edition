@@ -4627,6 +4627,17 @@ export const zMlxEngineDownloadResumeRequest_unstable = z.object({
 export const zMlxEngineDistributedStatusRequest_unstable = z.record(z.unknown());
 
 /**
+ * The distributed engine's memory hold, as the engine card names it.
+ */
+export const zMlxDistributedHoldDto = z.object({
+    node: z.string(),
+    cause: z.string(),
+    availableBytes: z.number().int().gte(0),
+    neededBytes: z.number().int().gte(0),
+    pressure: z.string()
+});
+
+/**
  * The supervisor's liveness measure: progress intervals sampled so far, their running median,
  * the hang bound (10 × median; absent until 3 samples exist) and how long progress has been silent.
  */
@@ -5159,6 +5170,10 @@ export const zMlxDistributedStatusDto = z.object({
         z.null()
     ]).optional(),
     admissionOpen: z.boolean(),
+    hold: z.union([
+        zMlxDistributedHoldDto,
+        z.null()
+    ]).optional(),
     inflight: z.union([
         z.number().int().gte(0),
         z.null()

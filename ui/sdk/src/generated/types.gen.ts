@@ -4610,6 +4610,11 @@ export type MlxDistributedStatusDto = {
      */
     admissionOpen: boolean;
     /**
+     * While `admissionOpen` is false for memory: the node that holds it, what it has available
+     * and what admission reopens at.
+     */
+    hold?: MlxDistributedHoldDto | null;
+    /**
      * Requests the engine has accepted and not finished; absent when not measured.
      */
     inflight?: number | null;
@@ -4685,6 +4690,33 @@ export type MlxDistributedStatusDto = {
      * preflight judges them again); empty otherwise.
      */
     makingRoom?: Array<string>;
+};
+
+/**
+ * The distributed engine's memory hold, as the engine card names it.
+ */
+export type MlxDistributedHoldDto = {
+    /**
+     * The node whose memory holds admission (its configured name).
+     */
+    node: string;
+    /**
+     * "floor" (available under the WARN reserve) | "pressure" (the kernel's own level) |
+     * "growth" (the engine grew by what is left above CRITICAL).
+     */
+    cause: string;
+    /**
+     * The hold's available figure on that node: free + speculative + inactive + purgeable.
+     */
+    availableBytes: number;
+    /**
+     * What admission reopens at on that node.
+     */
+    neededBytes: number;
+    /**
+     * The node's kernel memory-pressure level: "normal" | "warn" | "critical".
+     */
+    pressure: string;
 };
 
 /**
