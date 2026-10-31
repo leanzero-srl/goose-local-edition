@@ -258,12 +258,14 @@ pub fn unmatched_names(tools: &[Tool], deferred: &[Tool], names: &[String]) -> V
                     let closest = crate::agents::tool_similarity::closest_tools(tools, name, &[]);
                     if closest.is_empty() {
                         format!(
-                            "'{name}' is not a tool, and no tool's name or summary is close to it."
+                            "'{name}' is not a tool, and no tool's name or summary is close to it. {}",
+                            crate::agents::tool_similarity::CANNOT_DO_THE_STEP
                         )
                     } else {
                         format!(
-                            "'{name}' is not a tool. The closest tools by name and purpose:\n{}",
-                            crate::agents::tool_similarity::describe(&closest)
+                            "'{name}' is not a tool. The closest tools by name and purpose:\n{}\n{}",
+                            crate::agents::tool_similarity::describe(&closest),
+                            crate::agents::tool_similarity::CANNOT_DO_THE_STEP
                         )
                     }
                 }
@@ -517,6 +519,9 @@ mod tests {
             "{}",
             said[0]
         );
+        assert!(said[0].contains("you could not do it"), "{}", said[0]);
+        let none = unmatched_names(&tools, &deferred, &["xyzzyqq".to_string()]);
+        assert!(none[0].contains("you could not do it"), "{}", none[0]);
     }
 
     #[test]
