@@ -774,7 +774,8 @@ Pages occupied by compressor:                 649325.
 
     /// The workhorse's own vm_stat, read 2026-10-31 09:25 with rank 0 of the live MiMo split wired
     /// (5.03M wired pages): the mount figure says 6.4 GiB, the hold figure 9.4 GiB.
-    const VM_STAT_WORKHORSE_SERVING: &str = "Mach Virtual Memory Statistics: (page size of 16384 bytes)
+    const VM_STAT_WORKHORSE_SERVING: &str =
+        "Mach Virtual Memory Statistics: (page size of 16384 bytes)
 Pages free:                                    62093.
 Pages active:                                 508788.
 Pages inactive:                               551229.

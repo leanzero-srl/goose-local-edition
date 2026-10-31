@@ -761,9 +761,7 @@ impl HoldGate {
             self.warn_streak + 1
         };
         self.clear_streak = if clear { self.clear_streak + 1 } else { 0 };
-        if !self.closed
-            && (self.warn_streak >= HOLD_CLOSE_POLLS || worst == Watchdog::Critical)
-        {
+        if !self.closed && (self.warn_streak >= HOLD_CLOSE_POLLS || worst == Watchdog::Critical) {
             HoldAction::Close
         } else if self.closed && self.clear_streak >= HOLD_OPEN_POLLS {
             HoldAction::Open
@@ -1706,10 +1704,7 @@ fn parse_sample(out: super::ExecOutput) -> Result<NodeSample> {
     // The hold and the CRITICAL stop judge a SERVING node, so inactive pages count as available
     // (`probe::vm_hold_available_bytes`); the mount and the plan keep the stricter mount figure.
     if let Some(hold) = probe::vm_hold_available_bytes(vm)? {
-        reading.available_bytes = reading
-            .available_bytes
-            .max(hold)
-            .min(reading.total_bytes);
+        reading.available_bytes = reading.available_bytes.max(hold).min(reading.total_bytes);
     }
     let pressure = Pressure::from_level(values[1])?;
     let row = match sections.get("ps") {
@@ -4499,7 +4494,11 @@ File-backed pages:                            298000.
     fn the_reopen_bar_sits_above_the_warn_reserve() {
         let total = 96 * GIB;
         // 6.0 GiB on 96 GiB: 1.25 × the 4.8 GiB WARN reserve.
-        assert!(reopen_bar(total, 0.05).abs_diff(6 * GIB) < 16, "{}", reopen_bar(total, 0.05));
+        assert!(
+            reopen_bar(total, 0.05).abs_diff(6 * GIB) < 16,
+            "{}",
+            reopen_bar(total, 0.05)
+        );
         assert!(reopen_bar(total, 0.05) > (0.05 * total as f64) as u64);
     }
 
@@ -4551,11 +4550,20 @@ File-backed pages:                            298000.
         assert_eq!(gate.step(Watchdog::Critical, true, false), HoldAction::Stop);
 
         let mut gate = HoldGate::default();
-        assert_eq!(gate.step(Watchdog::Critical, false, false), HoldAction::Close);
+        assert_eq!(
+            gate.step(Watchdog::Critical, false, false),
+            HoldAction::Close
+        );
         gate.closed = true;
         assert_eq!(gate.step(Watchdog::Warn, false, false), HoldAction::Keep);
-        assert_eq!(gate.step(Watchdog::Critical, false, false), HoldAction::Keep);
-        assert_eq!(gate.step(Watchdog::Critical, false, false), HoldAction::Stop);
+        assert_eq!(
+            gate.step(Watchdog::Critical, false, false),
+            HoldAction::Keep
+        );
+        assert_eq!(
+            gate.step(Watchdog::Critical, false, false),
+            HoldAction::Stop
+        );
     }
 
     /// Runs every "peer" script on this Mac: the stop sequence's remote legs, exercised against
