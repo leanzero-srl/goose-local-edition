@@ -279,8 +279,16 @@ pub fn describe(suggested: &[&Tool]) -> String {
         .join("\n")
 }
 
+/// What the model is told to do when no offered tool does the step. Why (WR-17b, Gabee round 4 on
+/// 3.0.137, turn 17 "check it, don't guess"): web search was not configured, `web-search` came
+/// back "not found" with the tool list, and the model answered from memory as if it had checked
+/// ("No dedicated bulk create endpoint", wrong) instead of saying it could not search.
+pub const CANNOT_DO_THE_STEP: &str = "If no tool here does this step, do not answer as if it \
+     had run: tell the user plainly that you could not do it (for example, that you could not \
+     search the web or read that file) and why, then go on with what you can do.";
+
 /// The error for a call to a tool that does not exist: the closest tools by name and purpose first,
-/// then every offered tool, closest first.
+/// then what to do when none of them does the step, then every offered tool, closest first.
 pub fn not_found_message(tools: &[Tool], called: &str, arguments: Option<&JsonObject>) -> String {
     let argument_names: Vec<&str> = arguments
         .map(|args| args.keys().map(String::as_str).collect())
@@ -308,7 +316,7 @@ pub fn not_found_message(tools: &[Tool], called: &str, arguments: Option<&JsonOb
         )
     };
     format!(
-        "{head}\nAll {} available tools, closest first: [{all}]",
+        "{head}\n{CANNOT_DO_THE_STEP}\nAll {} available tools, closest first: [{all}]",
         tools.len()
     )
 }
@@ -402,6 +410,19 @@ mod tests {
         let got = names(&closest_tools(&tools, "web-search", &["query", "depth"]));
         assert!(!got.is_empty());
         assert!(got.iter().all(|n| n.contains("web-search")), "{got:?}");
+    }
+
+    #[test]
+    fn a_missing_tool_tells_the_model_to_say_it_could_not_do_the_step() {
+        let tools = offered();
+        for called in ["web-search", "websearch", "xyzzy"] {
+            let msg = not_found_message(&tools, called, None);
+            let (lead, _) = msg.split_once("available tools, closest first").unwrap();
+            assert!(lead.contains("do not answer as if it had run"), "{msg}");
+            assert!(lead.contains("you could not do it"), "{msg}");
+        }
+        let msg = not_found_message(&[], "web-search", None);
+        assert!(msg.contains("you could not do it"), "{msg}");
     }
 
     #[test]

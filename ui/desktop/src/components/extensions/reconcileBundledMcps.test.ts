@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  planBundledMcpAdditions,
   planBundledMcpCorrections,
   reconcileBundledMcps,
   type BundledMcp,
@@ -196,5 +197,83 @@ describe('the installed app points its bundled MCP servers at its own bundle', (
     expect(
       planBundledMcpCorrections([{ ...webSearch, packaged: false }], [savedWebSearch], {})
     ).toEqual([]);
+  });
+});
+
+// WR-17b (Gabee round 4, 3.0.137, 2026-10-31): config.yaml had neither bundled server, nothing
+// added them, and every search in the chat ended "Tool 'web-search' not found".
+describe('the installed app adds its bundled MCP servers the config has never had', () => {
+  it('a first run or an upgrade with neither server configured adds both, enabled, and records them', async () => {
+    const add = vi.fn().mockResolvedValue(undefined);
+    const saveRecord = vi.fn().mockResolvedValue(undefined);
+    const log = vi.fn();
+    await reconcileBundledMcps({
+      entries: [webSearch, documents],
+      extensions: [userFetch],
+      record: {},
+      add,
+      saveRecord,
+      log,
+    });
+    expect(add).toHaveBeenCalledTimes(2);
+    expect(add.mock.calls.map(([config, enabled]) => [config.name, enabled])).toEqual([
+      ['LeanZero Web Search', true],
+      ['LeanZero Documents', true],
+    ]);
+    expect(add.mock.calls[0][0]).toMatchObject({
+      type: 'stdio',
+      cmd: `${APP}/bin/node`,
+      args: [`${APP}/bundled-mcps/leanzero-web-search/dist/index.js`],
+      envs: bundleEnvs,
+      env_keys: [],
+      timeout: 300,
+      description: webSearch.description,
+    });
+    expect(add.mock.calls[0][0]).not.toHaveProperty('enabled');
+    expect(saveRecord).toHaveBeenCalledWith(recordOf(webSearch, documents));
+    expect(log.mock.calls[0][0]).toContain('added "LeanZero Web Search"');
+  });
+
+  it('the start after the addition adds nothing again', async () => {
+    const added: FixedExtensionEntry = {
+      type: 'stdio',
+      name: webSearch.name,
+      description: webSearch.description,
+      cmd: webSearch.cmd,
+      args: webSearch.args,
+      env_keys: Object.keys(bundleEnvs),
+      timeout: 300,
+      enabled: true,
+    };
+    const add = vi.fn();
+    const saveRecord = vi.fn();
+    await reconcileBundledMcps({
+      entries: [webSearch],
+      extensions: [added],
+      record: recordOf(webSearch),
+      add,
+      saveRecord,
+      log: vi.fn(),
+    });
+    expect(add).not.toHaveBeenCalled();
+    expect(saveRecord).not.toHaveBeenCalled();
+  });
+
+  it('a server the user removed (the app wrote it before) is not added back', () => {
+    expect(planBundledMcpAdditions([webSearch, documents], [], recordOf(webSearch))).toEqual([
+      expect.objectContaining({ name: 'LeanZero Documents' }),
+    ]);
+  });
+
+  it('a disabled server stays disabled and is not added twice', () => {
+    const disabled = { ...savedDocuments, enabled: false };
+    expect(planBundledMcpAdditions([documents], [disabled], {})).toEqual([]);
+    expect(planBundledMcpCorrections([documents], [disabled], {})[0].enabled).toBe(false);
+  });
+
+  it('the bundle running under another name counts as configured; a development run adds nothing', () => {
+    const renamed = { ...savedDocuments, name: 'My documents' };
+    expect(planBundledMcpAdditions([documents], [renamed], {})).toEqual([]);
+    expect(planBundledMcpAdditions([{ ...webSearch, packaged: false }], [], {})).toEqual([]);
   });
 });
