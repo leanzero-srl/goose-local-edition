@@ -9854,6 +9854,15 @@
     },
     "MlxEngineMemoryMachineRequest_unstable": {
       "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A Link peer to run this on (its app shows the prompt); absent = this Mac."
+        }
+      },
       "description": "This Mac's memory facts for the Memory tab, readable while no engine runs. Local only: the\nGPU wired limit can only be changed at the Mac whose password prompt appears.",
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/memoryMachine"
@@ -9925,6 +9934,32 @@
         "launcher": {
           "type": "string",
           "description": "The configured launcher, for the \"needs lz.20\" line."
+        },
+        "minReserveGib": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "What a raised wired limit must leave to macOS (`GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB`)."
+        },
+        "othersBytes": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "RAM in use outside the file cache right now: physical − available (includes a running\nengine; the panel prefers the engine's own `othersBytes` while one runs)."
+        },
+        "maxWiredLimitMb": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "The highest limit that leaves the reserve."
+        },
+        "suggestedWiredLimitMb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "physical − (others + reserve), rounded down to 1,000 MB; absent when that is under 8,192.",
+          "minimum": 0
         }
       },
       "required": [
@@ -9947,6 +9982,20 @@
         "persist": {
           "type": "boolean",
           "default": false
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A Link peer to run this on (its app shows the prompt); absent = this Mac."
+        },
+        "requestedBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Set by the relaying Mac (never by a client): the name the peer's prompt shows."
         }
       },
       "required": [
@@ -9986,9 +10035,45 @@
     },
     "MlxEngineWiredLimitRemoveDaemonRequest_unstable": {
       "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A Link peer to run this on (its app shows the prompt); absent = this Mac."
+        },
+        "requestedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "description": "Remove the boot-time LaunchDaemon (the live limit stays until reboot).",
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/wiredLimitRemoveDaemon"
+    },
+    "MlxEngineWiredLimitDisableRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A Link peer to run this on (its app shows the prompt); absent = this Mac."
+        },
+        "requestedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "description": "\"Disable\": the macOS default (`iogpu.wired_limit_mb=0`) and the boot LaunchDaemon removed when\none is installed, behind one administrator prompt.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/wiredLimitDisable"
     },
     "MlxEngineSettingsUpdateRequest_unstable": {
       "type": "object",
@@ -11663,6 +11748,17 @@
             "$ref": "#/$defs/MlxDistributedAppMemoryDto"
           },
           "description": "The node's biggest apps by resident memory (helpers folded into their app; goose left out),\nlargest first — what the owner could close when compaction is off or not enough."
+        },
+        "wiredWhatIf": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedWiredWhatIfDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What raising this node's wired limit would buy, planned with the split's own planner;\npresent only when its GPU ceiling bounds its budget."
         }
       },
       "required": [
@@ -11757,6 +11853,75 @@
         "name",
         "rssBytes"
       ]
+    },
+    "MlxDistributedWiredWhatIfDto": {
+      "type": "object",
+      "properties": {
+        "mb": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "keepBytes": {
+          "type": "integer",
+          "description": "What macOS and the other apps keep at `mb`.",
+          "minimum": 0
+        },
+        "beyondSuggestion": {
+          "type": "boolean",
+          "description": "`mb` is above the suggestion (others + reserve): the most the reserve allows instead."
+        },
+        "maxContextNow": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "maxContextThen": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "layersNow": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "layersThen": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "budgetNowBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budgetThenBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "fallbackCommand": {
+          "type": "string",
+          "description": "The exact command a person at that Mac can run instead."
+        }
+      },
+      "required": [
+        "mb",
+        "keepBytes",
+        "beyondSuggestion",
+        "budgetNowBytes",
+        "fallbackCommand"
+      ],
+      "description": "One node's wired-limit what-if: the split planned again with this node's GPU ceiling at\n`mb` MiB and every other figure as measured."
     },
     "MlxDistributedEventDto": {
       "type": "object",
@@ -22479,6 +22644,15 @@
                   ],
                   "description": "Params for _goose/unstable/mlxEngine/wiredLimitRemoveDaemon",
                   "title": "MlxEngineWiredLimitRemoveDaemonRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineWiredLimitDisableRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/wiredLimitDisable",
+                  "title": "MlxEngineWiredLimitDisableRequest_unstable"
                 },
                 {
                   "allOf": [

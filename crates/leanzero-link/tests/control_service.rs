@@ -1781,6 +1781,70 @@ async fn mlx_proxy_dispatches_to_control_and_returns_its_payload_even_when_busy(
     handle.shutdown();
 }
 
+/// A wired-limit raise sent to a fake peer reaches that peer's control as its own op with the
+/// value, the persist choice and the requester the prompt names; the peer's "cancelled" answer
+/// comes back verbatim as a 400, and a peer that did not opt in never runs it.
+#[tokio::test]
+async fn a_wired_limit_raise_routes_to_the_peers_control_and_its_answer_comes_back() {
+    let source = FakeStateSource::new("workmule");
+    let answer = serde_json::json!({"wiredLimitMb": 110000, "command": "/usr/sbin/sysctl iogpu.wired_limit_mb=110000"});
+    let control = FakeMlxControl::returning(answer.clone());
+    let handle = spawn_node_mlx(source.clone(), mesh_v6(), Some(control.clone())).await;
+    let base = base_url(&handle);
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({"mb": 110000, "persist": true, "requestedBy": "MacBook Pro"});
+    let resp = post_mlx(&client, &base, TOKEN, "wiredLimitApply", body.clone()).await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.json::<serde_json::Value>().await.unwrap(), answer);
+    {
+        let recorded = control.recorded.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].0, MlxOp::WiredLimitApply);
+        assert_eq!(recorded[0].1, body);
+    }
+    let resp = post_mlx(
+        &client,
+        &base,
+        TOKEN,
+        "wiredLimitDisable",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        control.recorded.lock().unwrap()[1].0,
+        MlxOp::WiredLimitDisable
+    );
+    handle.shutdown();
+
+    let cancelled = FakeMlxControl::failing(MlxControlError::BadRequest(
+        "the administrator prompt was cancelled; nothing changed".to_string(),
+    ));
+    let handle = spawn_node_mlx(source.clone(), mesh_v6(), Some(cancelled)).await;
+    let resp = post_mlx(
+        &client,
+        &base_url(&handle),
+        TOKEN,
+        "wiredLimitApply",
+        body.clone(),
+    )
+    .await;
+    assert_eq!(resp.status(), 400);
+    assert!(resp.text().await.unwrap().contains("prompt was cancelled"));
+    handle.shutdown();
+
+    let untouched = FakeMlxControl::returning(answer);
+    let handle = spawn_node_mlx_allowing(source, mesh_v6(), Some(untouched.clone()), false).await;
+    let resp = post_mlx(&client, &base_url(&handle), TOKEN, "wiredLimitApply", body).await;
+    assert_eq!(resp.status(), 403);
+    assert_eq!(
+        untouched.call_count(),
+        0,
+        "a peer that did not opt in never prompts"
+    );
+    handle.shutdown();
+}
+
 #[tokio::test]
 async fn mlx_proxy_501_when_no_control_injected() {
     let source = FakeStateSource::new("node-a");

@@ -656,6 +656,11 @@
       "responseType": "MlxEngineWiredLimitResponse_unstable"
     },
     {
+      "method": "_goose/unstable/mlxEngine/wiredLimitDisable",
+      "requestType": "MlxEngineWiredLimitDisableRequest_unstable",
+      "responseType": "MlxEngineWiredLimitResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/mlxEngine/settingsUpdate",
       "requestType": "MlxEngineSettingsUpdateRequest_unstable",
       "responseType": "MlxEngineSettingsResponse_unstable"

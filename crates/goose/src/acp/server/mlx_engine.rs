@@ -2001,6 +2001,30 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
+    #[test]
+    fn a_wired_limit_request_from_a_peer_always_names_a_requester() {
+        let named = from_peer(
+            MlxEngineWiredLimitApplyRequest {
+                mb: 110_000,
+                persist: false,
+                node_id: None,
+                requested_by: Some("MacBook Pro".to_string()),
+            },
+            |r| &mut r.requested_by,
+        );
+        assert_eq!(named.requested_by.as_deref(), Some("MacBook Pro"));
+        for missing in [None, Some(" ".to_string())] {
+            let req = from_peer(
+                MlxEngineWiredLimitDisableRequest {
+                    node_id: None,
+                    requested_by: missing,
+                },
+                |r| &mut r.requested_by,
+            );
+            assert_eq!(req.requested_by.as_deref(), Some(REMOTE_REQUESTER));
+        }
+    }
+
     struct LaunchFixture {
         _dir: tempfile::TempDir,
         config: Config,

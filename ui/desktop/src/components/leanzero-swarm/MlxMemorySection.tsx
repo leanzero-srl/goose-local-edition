@@ -1,23 +1,3 @@
-  const target = isSelf ? undefined : nodeId;
-  const reachable = isSelf || nodeId != null;
-  const readMachine = useCallback(() => {
-    if (!reachable) return;
-    mlxEngineMemoryMachine(target)
-      .then((m) => {
-        setMachine(m);
-        setMachineError(null);
-      })
-      .catch((e) => setMachineError(mlxErrorMessage(e, intl.formatMessage(i18n.readFailed))));
-  }, [intl, reachable, target]);
-
-  useEffect(() => {
-    setMachine(null);
-    if (!reachable) return;
-    readMachine();
-    const timer = window.setInterval(readMachine, target ? 15000 : 5000);
-    return () => window.clearInterval(timer);
-  }, [reachable, target, readMachine]);
-
 // The Memory tab: every memory number the engine and macOS use on the picked Mac, editable, with
 // its unit, valid range, engine flag and live effect. Presets only fill the fields; nothing is
 // saved until Save, and the engine restarts only on Apply (never while it serves requests).
@@ -1061,25 +1041,25 @@ export function MlxMemorySection(props: MlxMemorySectionProps) {
 
   useEffect(() => setDrafts(saved), [saved]);
 
+  const target = isSelf ? undefined : nodeId;
+  const reachable = isSelf || nodeId != null;
   const readMachine = useCallback(() => {
-    if (!isSelf) return;
-    mlxEngineMemoryMachine()
+    if (!reachable) return;
+    mlxEngineMemoryMachine(target)
       .then((m) => {
         setMachine(m);
         setMachineError(null);
       })
       .catch((e) => setMachineError(mlxErrorMessage(e, intl.formatMessage(i18n.readFailed))));
-  }, [intl, isSelf]);
+  }, [intl, reachable, target]);
 
   useEffect(() => {
-    if (!isSelf) {
-      setMachine(null);
-      return;
-    }
+    setMachine(null);
+    if (!reachable) return;
     readMachine();
-    const timer = window.setInterval(readMachine, 5000);
+    const timer = window.setInterval(readMachine, target ? 15000 : 5000);
     return () => window.clearInterval(timer);
-  }, [isSelf, readMachine]);
+  }, [reachable, target, readMachine]);
 
   const budget = status?.memoryBudget ?? null;
   const physicalBytes =

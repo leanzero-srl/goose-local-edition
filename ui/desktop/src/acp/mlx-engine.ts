@@ -366,11 +366,12 @@ export interface MlxMemoryMachine {
   defaultFloorGb: number;
   tunablesSupported: boolean;
   launcher: string;
-  /** What a raised wired limit must leave to macOS (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB). */
-  minReserveGib: number;
+  /** What a raised wired limit must leave to macOS (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB); absent
+   * from a peer whose goose predates it. */
+  minReserveGib?: number;
   /** physical − available right now (includes a running engine). */
-  othersBytes: number;
-  maxWiredLimitMb: number;
+  othersBytes?: number;
+  maxWiredLimitMb?: number;
   suggestedWiredLimitMb?: number;
 }
 

@@ -262,6 +262,7 @@ import type {
   MlxEngineStopOtherEngineResponse_unstable,
   MlxEngineUnmountRequest_unstable,
   MlxEngineWiredLimitApplyRequest_unstable,
+  MlxEngineWiredLimitDisableRequest_unstable,
   MlxEngineWiredLimitRemoveDaemonRequest_unstable,
   MlxEngineWiredLimitResponse_unstable,
   ModelFieldsListRequest_unstable,
@@ -1935,6 +1936,18 @@ export class GooseExtClient {
   ): Promise<MlxEngineWiredLimitResponse_unstable> {
     const raw = await this.conn.extMethod(
       "_goose/unstable/mlxEngine/wiredLimitRemoveDaemon",
+      params,
+    );
+    return zMlxEngineWiredLimitResponse_unstable.parse(
+      raw,
+    ) as MlxEngineWiredLimitResponse_unstable;
+  }
+
+  async mlxEngineWiredLimitDisable_unstable(
+    params: MlxEngineWiredLimitDisableRequest_unstable,
+  ): Promise<MlxEngineWiredLimitResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/wiredLimitDisable",
       params,
     );
     return zMlxEngineWiredLimitResponse_unstable.parse(

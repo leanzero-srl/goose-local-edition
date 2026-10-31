@@ -2205,6 +2205,29 @@ pub(crate) mod tests {
     use crate::distributed::config::tests::two_mac_config;
 
     #[test]
+    fn the_what_if_raises_to_the_suggestion_else_to_the_reserve_and_only_when_the_ceiling_binds() {
+        const MIB: u64 = 1024 * 1024;
+        let gib = |g: u64| g * 1024 * MIB;
+        // workmule tonight: 128 GiB, the 115.45 GB default ceiling, 10 GB in use outside the GPU.
+        let ceiling = 115_448_725_504;
+        assert_eq!(
+            what_if_mb(gib(128), gib(128) - 10_000_000_000, ceiling, 16),
+            Some((114_688, true)),
+            "the suggestion (105,000 MB) is under the default, so the most the reserve allows"
+        );
+        // Little in use: the suggestion itself clears the ceiling.
+        assert_eq!(
+            what_if_mb(gib(128), gib(128) - 2_000_000_000, 100_000 * MIB, 16),
+            Some((112_000, false))
+        );
+        // Already at the reserve's maximum: nothing to raise.
+        assert_eq!(what_if_mb(gib(128), gib(120), 114_688 * MIB, 16), None);
+        assert!(ceiling_binds(ceiling, ceiling));
+        assert!(ceiling_binds(ceiling - 1024, ceiling));
+        assert!(!ceiling_binds(ceiling - gib(1), ceiling));
+    }
+
+    #[test]
     fn the_repair_is_licensed_only_on_the_configured_thunderbolt_service() {
         let node = two_mac_config().nodes.remove(1);
         let services = "(1) Ethernet\n(Hardware Port: Ethernet, Device: en0)\n\n(3) EXO Thunderbolt 2\n(Hardware Port: Thunderbolt 2, Device: en3)\n";
