@@ -83,6 +83,19 @@ def admits(
     return charge + kept + other_kept_bytes <= limit_bytes
 
 
+def cache_limit_now(limit, quiet_limit, left):
+    """Q-529 (WR-28): the bound the prompt cache holds cached + live KV inside now. While a row
+    still has more than its last prompt token to read, a prefill chunk's scores fill the plan's
+    workspace: the strict `limit` (RankPlan::prompt_cache_limit_bytes). Otherwise the workspace
+    is free and the copy the plan charged partly inside it may live there: `quiet_limit`
+    (RankPlan::prompt_cache_quiet_limit_bytes) — the kept prompt[:-1] cut beside its own live
+    row (Q-522), during decode, and while idle. Run 3.0.138 (MiMo 18/30 at 262,144): strict
+    4,046,192,640 B = one live row, so the cut was refused from 127,711 tokens; quiet
+    7,949,778,944 B holds it beside its row to 253,661. Every rank reads the same batch, so every
+    rank takes the same bound."""
+    return quiet_limit if left <= 1 else limit
+
+
 def kept_prefix_bytes(prefill, width):
     """The cache room a batch at `width` must leave (Q-182): one row's KV and state at that width —
     the entry the widest row's conversation leaves and its next request extends. The plan charges

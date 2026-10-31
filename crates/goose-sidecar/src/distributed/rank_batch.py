@@ -30,6 +30,20 @@ def batch_shape(batch):
     return rows, width
 
 
+def prompt_left(batch):
+    """The most prompt tokens any row of a BatchGenerator still has to read (a queued row: its
+    whole prompt; a generating row: none). Q-529: at 1 or fewer no step of this batch computes a
+    prefill chunk's scores again before the next admission (mlx_lm reads a prompt's last token
+    alone, as the step that moves its row to generation), so the prompt cache may use the copy
+    room the plan keeps inside the prefill workspace (rank_prefill.py `cache_limit_now`)."""
+    if batch is None:
+        return 0
+    left = max((sum(map(len, row[0])) for row in batch._currently_processing), default=0)
+    for row in batch._unprocessed_sequences:
+        left = max(left, sum(map(len, row[1])))
+    return left
+
+
 # Q-447: mlx_lm 0.31.3's BatchKVCache.extend pads a side that holds no KV yet with
 # `mx.array([])` — FLOAT32 — and concatenates it with the other side's bfloat16 KV, so the whole
 # batch's KV becomes float32. That happens whenever a request whose prompt is read cold joins a

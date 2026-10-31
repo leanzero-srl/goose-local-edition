@@ -556,6 +556,8 @@ def compact(prompt_cache):
 live_batch = []
 # The bounded prompt cache mlx_lm's `run` built (one per process).
 prompt_caches = []
+# The prompt caches of the rows that finished at the last step (Q-529, TrackedBatchGenerator.next).
+finishing = []
 
 # Q-114, measured: mlx_lm 0.31.3's `ArraysCache.advance` decrements a batch cache's
 # `left_padding` (every batch cache carries one — `_make_cache` sets it even for one row) and
@@ -641,8 +643,16 @@ class TrackedBatchGenerator(server.BatchGenerator):
         # Generation grows every row one token a step, past what the last admission charged: the
         # cache yields before the batch outgrows the plan's KV charge. Every rank holds the same
         # batch and the same cache, so every rank evicts alike.
+        # Q-529: the rows that finished this step hand mlx_lm their entries UNEVALUATED (a lazy
+        # contiguous of the batch buffer), so until the insert compacts one its row's buffer is
+        # still held beside the copy while the batch no longer counts it.
+        finishing[:] = [
+            r.prompt_cache
+            for r in responses[1]
+            if r.finish_reason is not None and getattr(r, "prompt_cache", None) is not None
+        ]
         if prefill is not None and prompt_caches:
-            room = prompt_cache_limit - self.prompt_cache_nbytes
+            room = cache_limit() - self.prompt_cache_nbytes
             if prompt_caches[0].nbytes > room:
                 prompt_caches[0].trim_to(n_bytes=room)
         return responses
@@ -1056,6 +1066,21 @@ if "prompt_cache_limit_bytes" in spec:
     # outgrows the plan's charge between an admission and its trim. It changes what is evicted
     # (and an entry nobody keeps may be left out), so it rides its own ask (`fetch_within_budget`).
     fetch_within_budget = live_bound and prefill is not None and bool(spec.get("fetch_within_budget"))
+    # Q-529 (WR-28, rank_prefill.py `cache_limit_now`): while no row has more than its last prompt
+    # token to read, the cache may use the copy room the plan keeps inside the prefill workspace.
+    # It changes which entries are inserted and kept, so it rides its own ask (tag
+    # mlxLmServerQuietCopy), and only with the copies charged before they are made.
+    prompt_cache_quiet_limit = (
+        max(prompt_cache_limit, int(spec.get("prompt_cache_quiet_limit_bytes") or 0))
+        if fetch_within_budget
+        else prompt_cache_limit
+    )
+
+    def cache_limit():
+        if prompt_cache_quiet_limit == prompt_cache_limit:
+            return prompt_cache_limit
+        batch = live_batch[0] if live_batch else None
+        return cache_limit_now(prompt_cache_limit, prompt_cache_quiet_limit, prompt_left(batch))
 
     class BoundedPromptCache(LookupPromptCache):
         def __init__(self, max_size):
@@ -1090,13 +1115,16 @@ if "prompt_cache_limit_bytes" in spec:
             return cache, rest
 
         def insert_cache(self, model, tokens, prompt_cache, *, cache_type="assistant"):
+            limit = cache_limit()
             if self.budgeted:
                 live = live_batch[0].prompt_cache_nbytes if live_batch else 0
                 nbytes = held_bytes(prompt_cache)
+                # Q-529: an entry a finished row left is still its row's buffer until compacted.
+                held = live
+                if limit > prompt_cache_limit and any(prompt_cache is c for c in finishing):
+                    held = live + nbytes
                 before = self.nbytes
-                fits = room_to_insert(
-                    self, model, tokens, nbytes, self.max_bytes, live, kept_now()
-                )
+                fits = room_to_insert(self, model, tokens, nbytes, limit, held, kept_now())
                 if self.nbytes != before or not fits:
                     emit(
                         "RANK_INSERT_BUDGET",
@@ -1104,9 +1132,11 @@ if "prompt_cache_limit_bytes" in spec:
                             "tokens": len(tokens),
                             "nbytes": nbytes,
                             "live": live,
+                            "held": held,
                             "cached_before": before,
                             "cached_after": self.nbytes,
                             "inserted": fits,
+                            "limit": limit,
                         },
                     )
                 if not fits:
@@ -1116,7 +1146,7 @@ if "prompt_cache_limit_bytes" in spec:
             super().insert_cache(model, tokens, prompt_cache, cache_type=cache_type)
             cache_inserted(self)
             if live_bound and live_batch:
-                self.trim_to(n_bytes=prompt_cache_limit - live_batch[0].prompt_cache_nbytes)
+                self.trim_to(n_bytes=limit - live_batch[0].prompt_cache_nbytes)
 
     server.LRUPromptCache = BoundedPromptCache
 else:
