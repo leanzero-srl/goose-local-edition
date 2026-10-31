@@ -152,62 +152,8 @@ fn is_content_word(word: &str) -> bool {
         || word.chars().any(|c| c.is_ascii_digit())
 }
 
-/// The same word, or one is the other plus an ending ("prefer"/"prefers", "title"/"titles").
-fn same_word(a: &str, b: &str) -> bool {
-    let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
-    short == long
-        || (short.chars().count() >= ASSESSMENT_CONTENT_WORD_MIN_CHARS && long.starts_with(short))
-}
-
-fn contains_run(haystack: &[String], needle: &[String]) -> bool {
-    !needle.is_empty()
-        && haystack
-            .windows(needle.len())
-            .any(|window| window == needle)
-}
-
-/// WR-17: the memory rests on the user's own words, checked in code three ways.
-/// 1. The quote is in one of this turn's user messages, word for word (as [`quote_words`] reads
-///    them), and carries at least [`ASSESSMENT_QUOTE_MIN_CONTENT_WORDS`] content words; a quote
-///    the judge copied back from the defanged prompt is restored first.
-/// 2. The memory says what the quote says: at least half of the quote's content words (and never
-///    fewer than the minimum) are in the memory. A real user line quoted under an unrelated
-///    memory — "put the final report in the output folder" under "User approved the generated
-///    report…", measured on Gabee — shares one word and is discarded.
-/// 3. The memory says nothing the user did not: at least half of its content words are the user's
-///    words this turn. "approved", "further", "additions", "corrections" were the assistant's.
-fn memory_rests_on_users_words(quote: &str, memory: &str, user_texts: &[String]) -> bool {
-    if quote.trim().chars().count() > ASSESSMENT_QUOTE_MAX_CHARS {
-        return false;
-    }
-    let quote = quote_words(&undefang(quote));
-    let quote_content: Vec<&String> = quote.iter().filter(|w| is_content_word(w)).collect();
-    if quote_content.len() < ASSESSMENT_QUOTE_MIN_CONTENT_WORDS {
-        return false;
-    }
-    let users: Vec<Vec<String>> = user_texts.iter().map(|t| quote_words(t)).collect();
-    if !users.iter().any(|words| contains_run(words, &quote)) {
-        return false;
-    }
-    let memory = quote_words(memory);
-    let in_memory = quote_content
-        .iter()
-        .filter(|q| memory.iter().any(|m| same_word(q, m)))
-        .count();
-    if in_memory < ASSESSMENT_QUOTE_MIN_CONTENT_WORDS || in_memory * 2 < quote_content.len() {
-        return false;
-    }
-    let memory_content: Vec<&String> = memory.iter().filter(|w| is_content_word(w)).collect();
-    let said = memory_content
-        .iter()
-        .filter(|m| users.iter().flatten().any(|u| same_word(m, u)))
-        .count();
-    said * 2 >= memory_content.len() && polarity_kept(&quote, &memory)
-}
-
-/// Words that turn the next word around, in the languages goose's users write. A grammar fact, not
-/// a judgement of the user's tone: the check only asks whether the memory negates what the quote
-/// negates.
+/// Words that turn the next words around, in the languages goose's users write. A grammar fact,
+/// not a judgement of the user's tone: a quote must never be cut out from under one.
 const NEGATORS: &[&str] = &[
     "not",
     "no",
@@ -242,39 +188,157 @@ const NEGATORS: &[&str] = &[
     "sin",
     "non",
 ];
-/// How far after a negator its word may sit: "never push", "not the tabs", "without a review".
+/// How many words before a quote a negator still turns it around ("never use vim", "not the
+/// build logs"), unless a clause break (a comma, a full stop) comes between.
 const NEGATION_REACH: usize = 3;
+/// The most words the judge may put before the quote as framing ("User preference:").
+const FRAMING_MAX_WORDS: usize = 4;
+/// The words that framing may use: a label, never a word that changes what the quote says.
+const FRAMING_WORDS: &[&str] = &[
+    "user",
+    "users",
+    "preference",
+    "preferences",
+    "prefers",
+    "rule",
+    "rules",
+    "standing",
+    "note",
+    "remember",
+    "convention",
+    "style",
+    "correction",
+    "client",
+    "project",
+    "for",
+    "this",
+    "the",
+    "a",
+    "always",
+    "from",
+    "now",
+    "on",
+    "preferința",
+    "preferinta",
+    "utilizatorului",
+    "regula",
+    "regulă",
+    "preferencja",
+    "użytkownika",
+    "zasada",
+    "regel",
+    "benutzer",
+    "präferenz",
+];
+/// Openers that answer the assistant, not part of the rule: dropped from the front of a quote.
+const DISCOURSE_MARKERS: &[&str] = &[
+    "ok", "okay", "so", "well", "and", "also", "yes", "yeah", "right", "alright", "hmm", "więc",
+    "dobrze", "tak", "deci", "bine", "da", "gut", "ja", "então", "alors", "bueno", "pues",
+];
+/// Openers that are a "no" to the assistant when a comma or a full stop follows ("no, keep the
+/// logs in /var/tmp"), and a negation of the rule when they run straight on ("no tabs").
+const ANSWERING_NO: &[&str] = &["no", "nope", "nie", "nu", "nein", "não", "nao", "non"];
 
-/// The content words a negator turns around: for each negator, the first content word after it,
-/// within [`NEGATION_REACH`].
-fn negated_words(words: &[String]) -> Vec<&String> {
-    let is_negator = |w: &str| NEGATORS.contains(&w);
-    words
-        .iter()
-        .enumerate()
-        .filter(|(_, w)| is_negator(w))
-        .filter_map(|(at, _)| {
-            words[at + 1..]
-                .iter()
-                .take(NEGATION_REACH)
-                .find(|w| !is_negator(w) && is_content_word(w))
-        })
-        .collect()
+fn is_clause_break(c: char) -> bool {
+    matches!(
+        c,
+        ',' | '.' | ';' | ':' | '!' | '?' | '\n' | '—' | '–' | '…' | '(' | ')' | '[' | ']'
+    )
 }
 
-/// WR-17 r3: word overlap is blind to negation — "Always push to main without a review" shares
-/// every content word but one with "never push to main without a review", "Push straight to main"
-/// all of them with "don't push straight to main", "Use spaces, not tabs" all of them with "use
-/// tabs, not spaces". So what the quote negates, the memory negates too, and a word the memory
-/// negates that the quote has is one the quote negates.
-fn polarity_kept(quote: &[String], memory: &[String]) -> bool {
-    let (in_quote, in_memory) = (negated_words(quote), negated_words(memory));
-    in_quote
-        .iter()
-        .all(|q| in_memory.iter().any(|m| same_word(q, m)))
-        && in_memory.iter().all(|m| {
-            !quote.iter().any(|q| same_word(q, m)) || in_quote.iter().any(|q| same_word(q, m))
+/// The quote without the openers that answer the assistant.
+fn strip_discourse(quote: &str) -> &str {
+    let mut rest = quote.trim_start();
+    loop {
+        let word_end = rest
+            .char_indices()
+            .find(|(_, c)| !c.is_alphanumeric())
+            .map_or(rest.len(), |(at, _)| at);
+        let word = rest[..word_end].to_lowercase();
+        let after = &rest[word_end..];
+        let broken = after.chars().next().is_some_and(is_clause_break);
+        let opener = DISCOURSE_MARKERS.contains(&word.as_str())
+            || (broken && ANSWERING_NO.contains(&word.as_str()));
+        if word.is_empty() || !opener || after.trim().is_empty() {
+            return rest;
+        }
+        rest = after.trim_start_matches(|c: char| !c.is_alphanumeric());
+    }
+}
+
+/// [`quote_words`] with, for each word, whether a clause break comes right before it.
+fn clause_words(text: &str) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    let mut broken = false;
+    for piece in text.split_inclusive(|c: char| c.is_whitespace() || is_clause_break(c)) {
+        let words = quote_words(piece);
+        for word in words {
+            out.push((word, broken));
+            broken = false;
+        }
+        if piece.chars().any(is_clause_break) {
+            broken = true;
+        }
+    }
+    out
+}
+
+/// Somewhere in `text` the quote stands as the user wrote it: word for word, and not cut out from
+/// under a negation ("never" + "use vim for editing configs").
+fn stands_in(text: &str, quote: &[String]) -> bool {
+    let words = clause_words(text);
+    let plain: Vec<String> = words.iter().map(|(w, _)| w.clone()).collect();
+    (0..plain.len().saturating_sub(quote.len() - 1))
+        .filter(|&at| plain[at..at + quote.len()] == *quote)
+        .any(|at| {
+            let mut k = at;
+            for _ in 0..NEGATION_REACH {
+                if k == 0 || words[k].1 {
+                    return true;
+                }
+                k -= 1;
+                if NEGATORS.contains(&words[k].0.as_str()) {
+                    return false;
+                }
+            }
+            true
         })
+}
+
+/// WR-17 r4: no paraphrase. Word-by-word polarity checks over a paraphrase never converged (r3 let
+/// "Don't indent with tabs, use spaces." through under "don't indent with spaces, use tabs",
+/// "Use vim for editing configs." under "never use vim for editing configs", "Prefer spaces over
+/// tabs" under "prefer tabs over spaces"). So the memory IS the user's quote:
+/// 1. the quote, without openers that answer the assistant ("no,", "ok so"), has at least
+///    [`ASSESSMENT_QUOTE_MIN_CONTENT_WORDS`] content words and stands in one of this turn's user
+///    messages word for word, not cut out from under a negation;
+/// 2. the memory is that quote as a contiguous span, after [`quote_words`], with nothing after it
+///    and at most [`FRAMING_MAX_WORDS`] framing words from [`FRAMING_WORDS`] before it.
+///
+/// Measured on Gabee: "User approved the generated report…" under the real user line "put the
+/// final report in the output folder" does not contain the quote, and is discarded. The card the
+/// person approves then shows their own words.
+fn memory_rests_on_users_words(quote: &str, memory: &str, user_texts: &[String]) -> bool {
+    if quote.trim().chars().count() > ASSESSMENT_QUOTE_MAX_CHARS {
+        return false;
+    }
+    let restored = undefang(quote);
+    let quote = quote_words(strip_discourse(&restored));
+    if quote.iter().filter(|w| is_content_word(w)).count() < ASSESSMENT_QUOTE_MIN_CONTENT_WORDS {
+        return false;
+    }
+    if !user_texts.iter().any(|text| stands_in(text, &quote)) {
+        return false;
+    }
+    let memory = quote_words(memory);
+    let Some(framing) = memory.len().checked_sub(quote.len()) else {
+        return false;
+    };
+    memory[framing..] == quote[..]
+        && framing <= FRAMING_MAX_WORDS
+        && memory[..framing]
+            .iter()
+            .all(|w| FRAMING_WORDS.contains(&w.as_str()))
 }
 
 /// The facts of one turn, as the prompt sees them: the user's messages of THIS turn and the
@@ -409,8 +473,9 @@ pub fn assessment_system_prompt() -> String {
      source: what the assistant said, offered or concluded is not something the user said, \
      preferred or approved. Never write what the user felt or approved unless the user said it. \
      Put in \"quote\" the user's exact words (copied verbatim from inside the USER fence, at \
-     least three words) that state the memory, and write the memory in the user's own terms; if no \
-     user words state it, worth is false.\n\
+     least three words) that state the memory. The memory IS that quote, word for word — at most a \
+     short label before it, such as \"User preference:\" — never a paraphrase; if no user words \
+     state it, worth is false.\n\
      Answer with ONLY a JSON object, no prose: {\"worth\": true|false, \"polarity\": \
      \"positive\"|\"negative\", \"memory\": \"one specific sentence, <=350 chars, first words are \
      the headline\", \"quote\": \"the user's exact words, <=300 chars\", \"why\": \"<=200 \
@@ -1419,19 +1484,15 @@ mod tests {
     #[test]
     fn the_largest_kept_judgement_fits_its_envelope() {
         let widest = |n: usize| char::MAX.to_string().repeat(n);
-        // The longest quote the parser keeps, in words the user typed: ten-character words of a
-        // four-byte letter; the memory restates it and fills its clamp with the widest character.
+        // The longest quote the parser keeps, in words the user typed (ten-character words of a
+        // four-byte letter), framed; the envelope counts every field at its clamp, widest.
         let word = '\u{20000}'.to_string().repeat(9);
         let quote = format!("{word} ").repeat(ASSESSMENT_QUOTE_MAX_CHARS / 10);
         let quote = quote.trim().to_string();
-        let memory = format!(
-            "{quote} {}",
-            widest(ASSESSMENT_MEMORY_MAX_CHARS - quote.chars().count() - 1)
-        );
         let raw = serde_json::json!({
             "worth": true,
             "polarity": "negative",
-            "memory": memory,
+            "memory": format!("User preference: {quote}"),
             "quote": quote,
             "why": widest(ASSESSMENT_WHY_MAX_CHARS),
         })
@@ -1473,25 +1534,24 @@ mod tests {
 
     #[test]
     fn a_well_formed_judgement_is_parsed_and_an_overlong_memory_discarded() {
-        let said = vec!["never push to main without a review".to_string()];
+        let long = "m".repeat(ASSESSMENT_MEMORY_MAX_CHARS);
+        let said = vec![format!("never push to main {long}")];
         let raw = format!(
-            "```json\n{{\"worth\": true, \"polarity\": \"NEGATIVE\", \"memory\": \"never push to main {}\", \"quote\": \"never push to main\", \"why\": \"{}\"}}\n```",
-            "m".repeat(1000),
-            "w".repeat(1000)
+            "```json\n{{\"worth\": true, \"polarity\": \"NEGATIVE\", \"memory\": \"never push to main {long}\", \"quote\": \"never push to main {long}\", \"why\": \"w\"}}\n```"
         );
         assert_eq!(
             parse_assessment(&raw, &said),
             None,
             "a memory longer than the card is discarded"
         );
+        let said = vec!["never push to main without a review".to_string()];
         let raw = format!(
-            "```json\n{{\"worth\": true, \"polarity\": \"NEGATIVE\", \"memory\": \"never push to main {}\", \"quote\": \"never push to main\", \"why\": \"{}\"}}\n```",
-            "m".repeat(ASSESSMENT_MEMORY_MAX_CHARS - "never push to main ".len()),
+            "```json\n{{\"worth\": true, \"polarity\": \"NEGATIVE\", \"memory\": \"Never push to main without a review.\", \"quote\": \"never push to main without a review\", \"why\": \"{}\"}}\n```",
             "w".repeat(1000)
         );
         let a = parse_assessment(&raw, &said).unwrap();
         assert_eq!(a.polarity, Polarity::Negative);
-        assert_eq!(a.memory.chars().count(), ASSESSMENT_MEMORY_MAX_CHARS);
+        assert_eq!(a.memory, "Never push to main without a review.");
         assert_eq!(a.why.chars().count(), ASSESSMENT_WHY_MAX_CHARS);
     }
 
@@ -1501,8 +1561,8 @@ mod tests {
     fn anything_out_of_shape_is_discarded_not_defaulted() {
         let said = vec!["ok run the integration tests first".to_string()];
         let parse = |raw: &str| parse_assessment(raw, &said);
-        let q = r#""quote": "run the integration tests""#;
-        let m = r#""memory": "run the integration tests first""#;
+        let q = r#""quote": "run the integration tests first""#;
+        let m = r#""memory": "Run the integration tests first.""#;
         assert!(parse(&format!(
             r#"{{"worth": true, "polarity": "mixed", {m}, {q}}}"#
         ))
@@ -1573,28 +1633,42 @@ mod tests {
             Message::assistant().with_text("Got it, I'll apply your formatting preferences."),
         ];
         let facts = turn_facts(&messages);
-        let raw = serde_json::json!({
-            "worth": true, "polarity": "positive",
-            "memory": "Jira titles as 'Area: problem' under 70 chars; dates DD.MM.YYYY.",
-            "quote": "Jira titles as 'Area: problem', under 70 characters. And dates DD.MM.YYYY ‹always>",
-            "why": "the user asked to remember it",
-        })
-        .to_string();
-        let a = parse_assessment(&raw, &facts.user_texts).expect("the user's own preference");
-        assert!(a.memory.starts_with("Jira titles"));
+        let judge = |memory: &str, quote: &str| {
+            let raw = serde_json::json!({
+                "worth": true, "polarity": "positive", "memory": memory, "quote": quote,
+                "why": "the user asked to remember it",
+            })
+            .to_string();
+            parse_assessment(&raw, &facts.user_texts)
+        };
+        // Copied back from the defanged prompt, emphasis and line break gone, framed.
+        let a = judge(
+            "User preference: Jira titles as 'Area: problem', under 70 characters. And dates DD.MM.YYYY ‹always>",
+            "Jira titles as 'Area: problem', under 70 characters. And dates DD.MM.YYYY ‹always>",
+        )
+        .expect("the user's own preference");
+        assert!(a.memory.contains("Jira titles"));
         // The control the WR-17 check named: the plain first sentence, quoted as typed.
-        let plain = serde_json::json!({
-            "worth": true, "polarity": "positive",
-            "memory": "Jira titles as 'Area: problem', under 70 characters.",
-            "quote": "Remember how I like things: Jira titles as 'Area: problem', under 70 characters",
-        })
-        .to_string();
-        assert!(parse_assessment(&plain, &facts.user_texts).is_some());
+        let plain =
+            "Remember how I like things: Jira titles as 'Area: problem', under 70 characters";
+        assert!(judge(plain, plain).is_some());
+        // A paraphrase of it is not the user's words.
+        assert_eq!(
+            judge(
+                "Jira titles as 'Area: problem' under 70 chars; dates DD.MM.YYYY.",
+                plain
+            ),
+            None
+        );
         // The same quote against a turn where only the ASSISTANT said it: discarded.
         let echoed = vec![
             Message::user().with_text("thanks, looks good"),
             Message::assistant().with_text(said),
         ];
+        let raw = serde_json::json!({
+            "worth": true, "polarity": "positive", "memory": plain, "quote": plain,
+        })
+        .to_string();
         assert_eq!(
             parse_assessment(&raw, &turn_facts(&echoed).user_texts),
             None
@@ -1617,108 +1691,70 @@ mod tests {
         assert_eq!(turn_facts(&messages).user_texts, vec![rule.to_string()]);
     }
 
-    /// WR-17 round 2: each half of "the memory rests on the quote" on its own. A memory built from
-    /// the user's words but not from the quote is discarded; so is a memory that restates the
-    /// quote and then adds what the user never said.
-    #[test]
-    fn the_memory_must_say_the_quote_and_nothing_the_user_did_not() {
-        let said = vec![
-            "keep the build logs in /var/tmp, and never push to main without a review".to_string(),
-        ];
-        let judge = |memory: &str, quote: &str| {
-            let raw = serde_json::json!({
-                "worth": true, "polarity": "positive", "memory": memory, "quote": quote,
-            })
-            .to_string();
-            parse_assessment(&raw, &said)
-        };
-        assert!(judge(
-            "Never push to main without a review.",
-            "never push to main without a review"
-        )
-        .is_some());
-        assert_eq!(
-            judge(
-                "Never push to main without a review.",
-                "keep the build logs in /var/tmp"
-            ),
-            None
-        );
-        assert_eq!(
-            judge(
-                "Keep the build logs in /var/tmp; the user approved the generated report and asked for further additions.",
-                "keep the build logs in /var/tmp",
-            ),
-            None
-        );
+    fn judge_one(said: &str, quote: &str, memory: &str) -> Option<Assessment> {
+        let raw = serde_json::json!({
+            "worth": true, "polarity": "positive", "memory": memory, "quote": quote,
+        })
+        .to_string();
+        parse_assessment(&raw, &[said.to_string()])
     }
 
-    /// WR-17 r3: a memory that turns the user's negation around is never proposed; the same
-    /// memories with the user's polarity are.
+    /// WR-17 r2-r4: every flip the checks of rounds 2, 3 and 4 found is never proposed, whatever
+    /// the judge quotes — the memory is the user's span or nothing.
     #[test]
-    fn a_memory_that_flips_the_users_negation_is_never_proposed() {
-        let judge = |said: &str, quote: &str, memory: &str| {
-            let raw = serde_json::json!({
-                "worth": true, "polarity": "negative", "memory": memory, "quote": quote,
-            })
-            .to_string();
-            parse_assessment(&raw, &[said.to_string()])
-        };
-        let review = "please never push to main without a review";
-        let straight = "and don't push straight to main, ever";
-        let tabs = "in this repo use tabs, not spaces";
-        let plain_tabs = "in this repo we use tabs for indenting";
-        for (said, quote, flipped) in [
-            (
-                review,
-                "never push to main without a review",
-                "Always push to main without a review.",
-            ),
-            (
-                straight,
-                "don't push straight to main",
-                "Push straight to main.",
-            ),
-            (
-                straight,
-                "don’t push straight to main",
-                "Push straight to main.",
-            ),
-            (tabs, "use tabs, not spaces", "Use spaces, not tabs."),
-            // A negation the user never said.
-            (
-                plain_tabs,
-                "we use tabs for indenting",
-                "Never use tabs for indenting.",
-            ),
-        ] {
+    fn every_measured_flip_is_never_proposed() {
+        let cases: &[(&str, &str, &str)] = &[
+            // r2: real user words under an unrelated memory (Gabee).
+            ("ok, put the final report in the output folder", "put the final report in the output folder", "User approved the generated report and asked for further additions or corrections."),
+            ("ok, put the final report in the output folder", "put the final", "User approved the generated report."),
+            // r3: negation flips.
+            ("please never push to main without a review", "never push to main without a review", "Always push to main without a review."),
+            ("and don't push straight to main, ever", "don't push straight to main", "Push straight to main."),
+            ("and don't push straight to main, ever", "don’t push straight to main", "Push straight to main."),
+            ("in this repo use tabs, not spaces", "use tabs, not spaces", "Use spaces, not tabs."),
+            ("in this repo we use tabs for indenting", "we use tabs for indenting", "Never use tabs for indenting."),
+            // r4: objects swapped under one negated verb, a short object, order with no negator.
+            ("don't indent with spaces, use tabs", "don't indent with spaces, use tabs", "Don't indent with tabs, use spaces."),
+            ("nie wcinaj spacjami, używaj tabulatorów", "nie wcinaj spacjami, używaj tabulatorów", "Nie wcinaj tabulatorami, używaj spacji."),
+            ("never use vim for editing configs", "never use vim for editing configs", "Use vim for editing configs."),
+            ("never use vim for editing configs", "use vim for editing configs", "Use vim for editing configs."),
+            ("prefer tabs over spaces", "prefer tabs over spaces", "Prefer spaces over tabs"),
+            // A negation framed on, and a label that is not one.
+            ("prefer tabs over spaces", "prefer tabs over spaces", "Never prefer tabs over spaces"),
+            ("prefer tabs over spaces", "prefer tabs over spaces", "Stop: prefer tabs over spaces"),
+            // Something said after the quote.
+            ("keep the build logs in /var/tmp", "keep the build logs in /var/tmp", "Keep the build logs in /var/tmp; the user approved the report."),
+            // "no" running straight on is the rule's negation, not an answer.
+            ("no tabs in yaml files ever", "tabs in yaml files ever", "Tabs in yaml files ever."),
+        ];
+        for (said, quote, memory) in cases {
             assert_eq!(
-                judge(said, quote, flipped),
+                judge_one(said, quote, memory),
                 None,
-                "{flipped:?} under {quote:?}"
+                "{memory:?} under {quote:?}"
             );
         }
-        for (said, quote, kept) in [
-            (
-                review,
-                "never push to main without a review",
-                "Never push to main without a review.",
-            ),
-            (
-                straight,
-                "don't push straight to main",
-                "Do not push straight to main.",
-            ),
-            (tabs, "use tabs, not spaces", "Use tabs, not spaces."),
-            (
-                tabs,
-                "use tabs, not spaces",
-                "Indent with tabs, never spaces, in this repo.",
-            ),
-        ] {
+    }
+
+    /// WR-17 r4: the true controls, the two r3 lost among them, stored as the user said them.
+    #[test]
+    fn true_memories_in_the_users_words_are_proposed() {
+        let cases: &[(&str, &str, &str)] = &[
+            ("no, keep the build logs in /var/tmp", "no, keep the build logs in /var/tmp", "Keep the build logs in /var/tmp."),
+            ("no, keep the build logs in /var/tmp", "keep the build logs in /var/tmp", "User preference: keep the build logs in /var/tmp"),
+            ("ok so don't forget to run the integration tests", "don't forget to run the integration tests", "Don't forget to run the integration tests."),
+            ("please never push to main without a review", "never push to main without a review", "Never push to main without a review."),
+            ("in this repo use tabs, not spaces", "use tabs, not spaces", "Rule: use tabs, not spaces."),
+            ("don't indent with spaces, use tabs", "don't indent with spaces, use tabs", "Do not indent with spaces, use tabs."),
+            ("nie wcinaj spacjami, używaj tabulatorów", "nie wcinaj spacjami, używaj tabulatorów", "Nie wcinaj spacjami, używaj tabulatorów."),
+            ("never use vim for editing configs", "never use vim for editing configs", "Never use vim for editing configs."),
+            ("prefer tabs over spaces", "prefer tabs over spaces", "Prefer tabs over spaces"),
+            ("For everything we write for this client: English, but keep Portuguese law and authority names in Portuguese", "English, but keep Portuguese law and authority names in Portuguese", "Client rule: English, but keep Portuguese law and authority names in Portuguese"),
+        ];
+        for (said, quote, memory) in cases {
             assert!(
-                judge(said, quote, kept).is_some(),
-                "{kept:?} under {quote:?}"
+                judge_one(said, quote, memory).is_some(),
+                "{memory:?} under {quote:?}"
             );
         }
     }
@@ -1730,23 +1766,21 @@ mod tests {
         let said = vec![
             "Don't touch the café-sync job, it's owned by \"Ops\" — ask Zoë first.".to_string(),
         ];
-        let memory = "Don't touch the café-sync job; it's owned by Ops, ask Zoë first.";
         for quote in [
-            "Don’t touch the café-sync job, it’s owned by “Ops”",
-            "Don't touch the café—sync job it's owned by „Ops“",
-            "Don't touch the cafe\u{301}-sync job, it's owned by «Ops»",
-            "it's owned by \"Ops\" - ask Zoë first",
+            "Don’t touch the café-sync job, it’s owned by “Ops” - ask Zoë first",
+            "Don't touch the café—sync job it's owned by „Ops“ – ask Zoë first.",
+            "Don't touch the cafe\u{301}-sync job, it's owned by «Ops», ask Zoe\u{308} first",
         ] {
             let raw = serde_json::json!({
-                "worth": true, "polarity": "negative", "memory": memory, "quote": quote,
+                "worth": true, "polarity": "negative", "memory": quote, "quote": quote,
             })
             .to_string();
             assert!(parse_assessment(&raw, &said).is_some(), "quote {quote:?}");
         }
         // Words are still words: a quote that changes one is not the user's.
+        let changed = "Don't touch the café-sync job, it's owned by Dev";
         let raw = serde_json::json!({
-            "worth": true, "polarity": "negative", "memory": memory,
-            "quote": "Don't touch the café-sync job, it's owned by Dev",
+            "worth": true, "polarity": "negative", "memory": changed, "quote": changed,
         })
         .to_string();
         assert_eq!(parse_assessment(&raw, &said), None);
@@ -1763,7 +1797,7 @@ mod tests {
         assert!(parse_assessment(&reply_text(&only_thinking), &said).is_some());
         let text_wins = Message::assistant()
             .with_thinking(
-                r#"{"worth": true, "polarity": "negative", "memory": "draft", "quote": "export WEBHOOK_SECRET=dev before npm test"}"#,
+                r#"{"worth": true, "polarity": "negative", "memory": "export WEBHOOK_SECRET=dev before npm test", "quote": "export WEBHOOK_SECRET=dev before npm test"}"#,
                 "sig",
             )
             .with_text(json);

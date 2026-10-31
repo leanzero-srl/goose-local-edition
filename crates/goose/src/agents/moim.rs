@@ -717,6 +717,46 @@ mod tests {
         assert_eq!(text_at(&msgs[2], 1), "Bye");
     }
 
+    /// WR-17 r4: a swarm worker's block, rebuilt for every request, carries the memory cue while
+    /// memory is loaded — and not without it.
+    #[tokio::test]
+    async fn the_swarm_block_carries_the_memory_cue_while_memory_is_loaded() {
+        use crate::agents::extension_manager::MEMORY_TURN_CUE;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let em = ExtensionManager::new_without_provider(temp_dir.path().to_path_buf());
+        let session = em
+            .get_context()
+            .session_manager
+            .create_session(
+                PathBuf::from("/test/dir"),
+                "test".to_string(),
+                crate::session::SessionType::User,
+                crate::config::GooseMode::Auto,
+            )
+            .await
+            .unwrap();
+        let conv = || {
+            Conversation::new_unvalidated(vec![
+                Message::user().with_text("keep the build logs in /var/tmp"),
+                Message::assistant().with_text("ok"),
+                Message::user().with_text("now build it"),
+            ])
+        };
+        let block_of = |c: &Conversation| text_at(&c.messages()[2], 0).to_string();
+
+        let without = inject_moim(&session.id, conv(), &em, 0, 100, CHAT, None).await;
+        assert!(is_moim(&without.messages()[2].content[0]));
+        assert!(!block_of(&without).contains(MEMORY_TURN_CUE));
+
+        em.add_mock_builtin_for_test("memory").await;
+        let with = inject_moim(&session.id, conv(), &em, 0, 100, CHAT, None).await;
+        assert!(
+            block_of(&with).contains(MEMORY_TURN_CUE),
+            "{}",
+            block_of(&with)
+        );
+    }
+
     #[tokio::test]
     async fn test_moim_injection_no_assistant() {
         let temp_dir = tempfile::tempdir().unwrap();

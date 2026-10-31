@@ -2215,6 +2215,12 @@ mod tests {
     use tokio::sync::mpsc;
 
     impl ExtensionManager {
+        /// A builtin named `name` with a client that serves nothing — for other modules' tests.
+        pub(crate) async fn add_mock_builtin_for_test(&self, name: &str) {
+            self.add_mock_extension(name.to_string(), Arc::new(MockClient {}))
+                .await;
+        }
+
         async fn add_mock_extension(&self, name: String, client: McpClientBox) {
             self.add_mock_extension_with_tools(name, client, vec![])
                 .await;
