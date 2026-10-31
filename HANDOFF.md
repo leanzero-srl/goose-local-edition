@@ -765,3 +765,5 @@ LAUNCH 05:13:40 openai-cloud-8985a86d on 18/30 at 262,144 (nudge v2, thinking on
 `runner_watch.py resume`). TRAP: go.sh must run with the app on '#/leanzero-swarm?tab=mlx&mlx=engine' (on #/benchmark it
 finds no placement card and prints NO RANKS); `mimo10/c click 'text=...'` does not do text selectors, use s16/ui.py
 (sb72_chain cdp with SP=s13/tools, PYTHONPATH=~/goose-builds/loop-state). Vigil: run-causes/20261031-050648-mimo-split-sb72-s16.
+RESULT 8985a86d: 0.48, NOT published by owner decision (board keeps 0.6605, nothing hidden). Criticals: b_money_rendered 0.0
+(exponent/JPY/KWD cells), j_workflow_journey 0.714 (approve not causal). Details + cleanup: run NOTES.md. Run tree kept.
