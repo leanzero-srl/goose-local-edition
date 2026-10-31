@@ -69,6 +69,7 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
 | WR-25 | MINOR (goose) | after the mid-turn compaction in t11 the user message "read it back to me so I know it came out right" is stored again as a new user-visible row (#2504, first #2482) with the turn's 6 tool calls re-inserted; check whether the chat shows it twice | 20261031_6 rows 2482/2504 | | |
 | WR-26 | MINOR (goose UI) | Run it card shows "262,144 context" while the running engine has --max-model-len 131072 (set in Engine > Memory) | Gabee setup 18:08 | | |
 | WR-8 | harness | r1 cannot attach files (types text only, r1.mjs:455); playwright import hard-codes /Users/mihaiperdum | briefs agent 17f6fd984e | 6a405c47fb (setInputFiles per file + chip wait, ATTACH_FAIL stops; pw.mjs resolves playwright; 57 tests, mutations fail) | live check pending |
+| WR-27 | MAJOR (goose) | after the 3.0.138 install the workhorse config.yaml had LOST its mlx_distributed block and the ~/.goose/models/EigenLabs link, so the MiMo split planned 17/31 instead of 18/30 | mimo-run 19:57 (restored by hand) | | |
 
 ## Rounds
 PURPOSE line required before every round (owner 18:40): `PURPOSE <id>: <decision/fix it drives> · <why this Mac>`.
