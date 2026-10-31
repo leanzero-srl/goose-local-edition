@@ -1986,6 +1986,8 @@ async fn monitor(
         let mut stats: Vec<Option<String>> = vec![None; ranks.len()];
         let mut worst = (Watchdog::Normal, EventKind::WatchdogWarn, String::new());
         let mut worst_hold: Option<MemoryHold> = None;
+        // A node above WARN but under the reopen bar: what a hold still waits for there.
+        let mut short_of_reopen: Option<MemoryHold> = None;
         let mut kernel_critical = false;
         let mut clear = true;
         let busy_now = progress.as_ref().map(|p| p.inflight > 0);
@@ -2064,8 +2066,22 @@ async fn monitor(
                 (warn_ratio, critical_ratio),
             );
             kernel_critical |= pressure == Pressure::Critical;
-            clear &= pressure == Pressure::Normal
-                && reading.available_bytes >= reopen_bar(reading.total_bytes, warn_ratio);
+            let bar = reopen_bar(reading.total_bytes, warn_ratio);
+            let node_clear = pressure == Pressure::Normal && reading.available_bytes >= bar;
+            clear &= node_clear;
+            if !node_clear && short_of_reopen.is_none() {
+                short_of_reopen = Some(MemoryHold {
+                    node: node_name.clone(),
+                    cause: if pressure == Pressure::Normal {
+                        HoldCause::Floor
+                    } else {
+                        HoldCause::Pressure
+                    },
+                    available_bytes: reading.available_bytes,
+                    needed_bytes: bar,
+                    pressure: pressure.as_str().to_string(),
+                });
+            }
             let (live, caps) = {
                 let live = ranks[rank].live.lock().unwrap();
                 (live.memory, live.caps.clone())
@@ -2273,7 +2289,12 @@ async fn monitor(
                 return RunOutcome::Critical(worst.2);
             }
             HoldAction::Close => {
-                ctx.event(worst.1, None, worst.2.clone());
+                // A first CRITICAL byte reading holds; only a sustained one (or the kernel's) stops.
+                let kind = match worst.0 {
+                    Watchdog::Critical => EventKind::WatchdogWarn,
+                    _ => worst.1,
+                };
+                ctx.event(kind, None, worst.2.clone());
                 match set_admission(ctx, false, &worst.2).await {
                     Ok(()) => {
                         gate.closed = true;
@@ -2323,10 +2344,10 @@ async fn monitor(
                 ),
             },
             HoldAction::Keep => {
-                // While held, the card's figure follows the node live; a node that recovered past
-                // WARN but not yet past the reopen bar keeps the last named one.
-                if gate.closed && worst_hold.is_some() {
-                    ctx.update(|s| s.status.hold = worst_hold.clone());
+                // While held, the card's figure follows the node live, including a node back above
+                // WARN that is not yet above the reopen bar.
+                if let (true, Some(hold)) = (gate.closed, worst_hold.or(short_of_reopen)) {
+                    ctx.update(|s| s.status.hold = Some(hold));
                 }
             }
         }
