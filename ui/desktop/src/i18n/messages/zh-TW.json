@@ -2267,6 +2267,12 @@
   "engineGlance.stage.held": {
     "defaultMessage": "已暫停 · 記憶體不足"
   },
+  "engineGlance.stage.heldFloor": {
+    "defaultMessage": "已暫停 · {node} 可用 {available} GB（需要 {needed}）"
+  },
+  "engineGlance.stage.heldPressure": {
+    "defaultMessage": "已暫停 · {node} 記憶體壓力 {pressure}（可用 {available} GB）"
+  },
   "engineGlance.stage.hosting": {
     "defaultMessage": "正在提供一個分片"
   },

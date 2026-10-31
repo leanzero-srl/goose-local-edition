@@ -2267,6 +2267,12 @@
   "engineGlance.stage.held": {
     "defaultMessage": "Tạm giữ · thiếu bộ nhớ"
   },
+  "engineGlance.stage.heldFloor": {
+    "defaultMessage": "Tạm giữ · {node} còn {available} GB (cần {needed})"
+  },
+  "engineGlance.stage.heldPressure": {
+    "defaultMessage": "Tạm giữ · {node} áp lực bộ nhớ {pressure} (còn {available} GB)"
+  },
   "engineGlance.stage.hosting": {
     "defaultMessage": "Đang phục vụ một rank"
   },

@@ -2267,6 +2267,12 @@
   "engineGlance.stage.held": {
     "defaultMessage": "Angehalten · wenig Speicher"
   },
+  "engineGlance.stage.heldFloor": {
+    "defaultMessage": "Angehalten · {node} {available} GB verfügbar (benötigt {needed})"
+  },
+  "engineGlance.stage.heldPressure": {
+    "defaultMessage": "Angehalten · {node} Speicherdruck {pressure} ({available} GB verfügbar)"
+  },
   "engineGlance.stage.hosting": {
     "defaultMessage": "Bedient einen Rang"
   },

@@ -2267,6 +2267,12 @@
   "engineGlance.stage.held": {
     "defaultMessage": "रोका गया · मेमोरी कम"
   },
+  "engineGlance.stage.heldFloor": {
+    "defaultMessage": "रोका गया · {node} {available} GB उपलब्ध (ज़रूरत {needed})"
+  },
+  "engineGlance.stage.heldPressure": {
+    "defaultMessage": "रोका गया · {node} मेमोरी दबाव {pressure} ({available} GB उपलब्ध)"
+  },
   "engineGlance.stage.hosting": {
     "defaultMessage": "एक रैंक परोस रहा है"
   },

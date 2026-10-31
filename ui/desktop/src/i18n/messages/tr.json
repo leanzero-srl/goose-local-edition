@@ -2267,6 +2267,12 @@
   "engineGlance.stage.held": {
     "defaultMessage": "Bekletiliyor · bellek düşük"
   },
+  "engineGlance.stage.heldFloor": {
+    "defaultMessage": "Bekletildi · {node} {available} GB kullanılabilir (gereken {needed})"
+  },
+  "engineGlance.stage.heldPressure": {
+    "defaultMessage": "Bekletildi · {node} bellek baskısı {pressure} ({available} GB kullanılabilir)"
+  },
   "engineGlance.stage.hosting": {
     "defaultMessage": "Bir rank sunuyor"
   },

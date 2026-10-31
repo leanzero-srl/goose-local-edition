@@ -57,6 +57,11 @@ export interface MlxDistributedReport {
   nodeNames: string[];
   nodes: MlxDistributedReportNode[];
   admissionOpen: boolean;
+  /**
+   * While admission is held for memory: the node that holds it, its available memory and what the
+   * hold waits for (GB, the node rows' unit). null = not held, or an older goosed that names none.
+   */
+  hold?: MlxDistributedHold | null;
   inflight: number | null;
   restarts: number;
   lastError: string | null;
@@ -64,6 +69,15 @@ export interface MlxDistributedReport {
   lastAlarm: { kind: string; node: string | null; message: string } | null;
   /** Set while this Mac serves a rank of another Mac's engine (then `mode` is 'single'). */
   hosting: MlxDistributedReportHosting | null;
+}
+
+export interface MlxDistributedHold {
+  node: string;
+  /** 'floor' | 'pressure' | 'growth' */
+  cause: string;
+  availableGb: number;
+  neededGb: number;
+  pressure: string;
 }
 
 export function toMlxDistributedReport(status: MlxDistributedStatusDto): MlxDistributedReport {
@@ -97,6 +111,16 @@ export function toMlxDistributedReport(status: MlxDistributedStatusDto): MlxDist
       };
     }),
     admissionOpen: status.admissionOpen,
+    hold:
+      !status.admissionOpen && status.hold
+        ? {
+            node: status.hold.node,
+            cause: status.hold.cause,
+            availableGb: gib(status.hold.availableBytes),
+            neededGb: gib(status.hold.neededBytes),
+            pressure: status.hold.pressure,
+          }
+        : null,
     inflight: status.inflight ?? null,
     restarts: status.restarts,
     lastError: status.lastError ?? null,
@@ -153,6 +177,15 @@ function isReportNode(v: unknown): boolean {
     strOrNull(n.memoryError) &&
     isLoad(n.load) &&
     isStr(n.startWord)
+  );
+}
+
+function isHold(v: unknown): boolean {
+  if (v === null || v === undefined) return true;
+  if (typeof v !== 'object') return false;
+  const h = v as Record<string, unknown>;
+  return (
+    isStr(h.node) && isStr(h.cause) && isNum(h.availableGb) && isNum(h.neededGb) && isStr(h.pressure)
   );
 }
 
@@ -228,6 +261,7 @@ export function isMlxDistributedReport(value: unknown): value is MlxDistributedR
     Array.isArray(r.nodes) &&
     r.nodes.every(isReportNode) &&
     typeof r.admissionOpen === 'boolean' &&
+    isHold(r.hold) &&
     numOrNull(r.inflight) &&
     isNum(r.restarts) &&
     strOrNull(r.lastError) &&

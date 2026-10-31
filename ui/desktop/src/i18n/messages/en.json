@@ -2267,6 +2267,12 @@
   "engineGlance.stage.held": {
     "defaultMessage": "Held · memory low"
   },
+  "engineGlance.stage.heldFloor": {
+    "defaultMessage": "Held · {node} {available} GB available (needs {needed})"
+  },
+  "engineGlance.stage.heldPressure": {
+    "defaultMessage": "Held · {node} memory pressure {pressure} ({available} GB available)"
+  },
   "engineGlance.stage.hosting": {
     "defaultMessage": "Serving a rank"
   },

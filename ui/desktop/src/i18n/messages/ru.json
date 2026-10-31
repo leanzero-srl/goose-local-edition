@@ -2267,6 +2267,12 @@
   "engineGlance.stage.held": {
     "defaultMessage": "Удержано · мало памяти"
   },
+  "engineGlance.stage.heldFloor": {
+    "defaultMessage": "Удержано · {node}: доступно {available} ГБ (нужно {needed})"
+  },
+  "engineGlance.stage.heldPressure": {
+    "defaultMessage": "Удержано · {node}: давление памяти {pressure} (доступно {available} ГБ)"
+  },
   "engineGlance.stage.hosting": {
     "defaultMessage": "Обслуживает ранг"
   },

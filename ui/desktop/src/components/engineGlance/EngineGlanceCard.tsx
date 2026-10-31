@@ -83,6 +83,14 @@ const i18n = defineMessages({
   serving: { id: 'engineGlance.stage.serving', defaultMessage: 'Serving' },
   hosting: { id: 'engineGlance.stage.hosting', defaultMessage: 'Serving a rank' },
   held: { id: 'engineGlance.stage.held', defaultMessage: 'Held · memory low' },
+  heldFloor: {
+    id: 'engineGlance.stage.heldFloor',
+    defaultMessage: 'Held · {node} {available} GB available (needs {needed})',
+  },
+  heldPressure: {
+    id: 'engineGlance.stage.heldPressure',
+    defaultMessage: 'Held · {node} memory pressure {pressure} ({available} GB available)',
+  },
   stale: { id: 'engineGlance.stage.stale', defaultMessage: 'Not refreshed' },
   off: { id: 'engineGlance.stage.off', defaultMessage: 'Off' },
   writeRate: { id: 'engineGlance.writeRate', defaultMessage: 'tok/s writing' },
@@ -214,11 +222,31 @@ export function stageWord(intl: IntlShape, stage: GlanceStage): string {
  */
 export function glanceHeadline(
   intl: IntlShape,
-  engine: Pick<EngineGlance, 'stage' | 'swapTo'>
+  engine: Pick<EngineGlance, 'stage' | 'swapTo' | 'hold'>
 ): string {
-  return engine.stage === 'swapping' && engine.swapTo
-    ? swappingText(intl, engine.swapTo)
-    : stageWord(intl, engine.stage);
+  if (engine.stage === 'swapping' && engine.swapTo) return swappingText(intl, engine.swapTo);
+  if (engine.stage === 'held' && engine.hold) return heldText(intl, engine.hold);
+  return stageWord(intl, engine.stage);
+}
+
+/**
+ * The memory hold by its real cause and number: the node, what it has available, and what the hold
+ * waits for — or the kernel's own pressure level when that is what holds.
+ */
+export function heldText(intl: IntlShape, hold: NonNullable<EngineGlance['hold']>): string {
+  const gb = (v: number) =>
+    intl.formatNumber(v, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return hold.cause === 'pressure'
+    ? intl.formatMessage(i18n.heldPressure, {
+        node: hold.node,
+        pressure: hold.pressure,
+        available: gb(hold.availableGb),
+      })
+    : intl.formatMessage(i18n.heldFloor, {
+        node: hold.node,
+        available: gb(hold.availableGb),
+        needed: gb(hold.neededGb),
+      });
 }
 
 export function StageIcon({ stage }: { stage: GlanceStage }) {

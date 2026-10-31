@@ -25,7 +25,7 @@ import {
 } from '../components/leanzero-swarm/mlxPhase';
 import type { EnginePhase } from '../components/lz/tokens';
 import { INITIAL_SNAPSHOT, type MlxEngineSnapshot } from './mlxEngineMonitor';
-import type { MlxDistributedReport } from './mlxDistributedReport';
+import type { MlxDistributedHold, MlxDistributedReport } from './mlxDistributedReport';
 import type { MlxRemoteReport } from './mlxRemoteReport';
 import { measuredFigure, type MlxMeasuredRead } from './mlxMeasuredRuns';
 import { leaveCause } from './leaveCause';
@@ -188,6 +188,8 @@ export interface EngineGlance {
   servedBy: GlanceServedBy | null;
   /** While `stage` is `swapping`: the node the loader is loading, by its name. */
   swapTo?: string;
+  /** While `stage` is `held`: the node and the numbers the memory hold names (null = unnamed). */
+  hold?: MlxDistributedHold | null;
 }
 
 export interface GlanceNeedsYou {
@@ -678,6 +680,7 @@ function engineParts(snapshot: MlxEngineSnapshot, options: EngineGlanceOptions):
       ranges: rangesOf(pair),
       nodes,
       detail: report.state === 'failed' ? report.lastError : null,
+      hold: stage === 'held' ? (report.hold ?? null) : null,
     });
   }
 

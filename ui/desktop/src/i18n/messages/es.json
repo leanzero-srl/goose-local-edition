@@ -2267,6 +2267,12 @@
   "engineGlance.stage.held": {
     "defaultMessage": "Retenido · poca memoria"
   },
+  "engineGlance.stage.heldFloor": {
+    "defaultMessage": "En espera · {node} {available} GB disponibles (necesita {needed})"
+  },
+  "engineGlance.stage.heldPressure": {
+    "defaultMessage": "En espera · {node} presión de memoria {pressure} ({available} GB disponibles)"
+  },
   "engineGlance.stage.hosting": {
     "defaultMessage": "Sirviendo un rango"
   },

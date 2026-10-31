@@ -2267,6 +2267,12 @@
   "engineGlance.stage.held": {
     "defaultMessage": "보류 · 메모리 부족"
   },
+  "engineGlance.stage.heldFloor": {
+    "defaultMessage": "보류 · {node} {available} GB 사용 가능 (필요 {needed})"
+  },
+  "engineGlance.stage.heldPressure": {
+    "defaultMessage": "보류 · {node} 메모리 압박 {pressure} ({available} GB 사용 가능)"
+  },
   "engineGlance.stage.hosting": {
     "defaultMessage": "랭크 제공 중"
   },

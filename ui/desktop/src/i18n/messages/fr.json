@@ -2267,6 +2267,12 @@
   "engineGlance.stage.held": {
     "defaultMessage": "Retenu · mémoire faible"
   },
+  "engineGlance.stage.heldFloor": {
+    "defaultMessage": "En attente · {node} {available} Go disponibles (requis {needed})"
+  },
+  "engineGlance.stage.heldPressure": {
+    "defaultMessage": "En attente · {node} pression mémoire {pressure} ({available} Go disponibles)"
+  },
   "engineGlance.stage.hosting": {
     "defaultMessage": "Sert un rang"
   },

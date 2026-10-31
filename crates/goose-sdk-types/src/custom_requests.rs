@@ -4461,6 +4461,23 @@ pub struct MlxDistributedLivenessDto {
     pub silent_ms: u64,
 }
 
+/// The distributed engine's memory hold, as the engine card names it.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedHoldDto {
+    /// The node whose memory holds admission (its configured name).
+    pub node: String,
+    /// "floor" (available under the WARN reserve) | "pressure" (the kernel's own level) |
+    /// "growth" (the engine grew by what is left above CRITICAL).
+    pub cause: String,
+    /// The hold's available figure on that node: free + speculative + inactive + purgeable.
+    pub available_bytes: u64,
+    /// What admission reopens at on that node.
+    pub needed_bytes: u64,
+    /// The node's kernel memory-pressure level: "normal" | "warn" | "critical".
+    pub pressure: String,
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MlxDistributedStatusDto {
@@ -4500,6 +4517,10 @@ pub struct MlxDistributedStatusDto {
     pub context_limit: Option<u64>,
     /// False while the memory watchdog holds new requests out (WARN on some node).
     pub admission_open: bool,
+    /// While `admissionOpen` is false for memory: the node that holds it, what it has available
+    /// and what admission reopens at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<MlxDistributedHoldDto>,
     /// Requests the engine has accepted and not finished; absent when not measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inflight: Option<u32>,
