@@ -187,6 +187,7 @@ impl Agent {
             model_config,
             conversation,
             CompactionRun::Manual { note },
+            None,
         );
         let mut said = None;
         while let Some(step) = compaction.next().await {

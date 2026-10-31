@@ -147,6 +147,22 @@ pub fn harness_nudge(text: impl Into<String>) -> Message {
         .with_harness_nudge()
 }
 
+/// The turn's call budget a compaction between its calls states in the kept block: the calls the
+/// cap has counted, the cap, and the wrap-up stage the last call reached.
+fn call_budget(
+    turns_taken: u32,
+    max_turns: u32,
+    wrap_up: Option<&super::wrap_up::WrapUp>,
+) -> Option<crate::context_mgmt::pillars::CallBudget> {
+    (max_turns > 0).then(|| crate::context_mgmt::pillars::CallBudget {
+        used: turns_taken,
+        max: max_turns,
+        stage: wrap_up
+            .and_then(|wrap_up| wrap_up.stage(turns_taken, max_turns))
+            .map(super::wrap_up::Stage::name),
+    })
+}
+
 fn stop_hook_denial_context_message(plugin: &str, reason: &str) -> Message {
     let nudge = format!(
         "Stop hook `{plugin}` blocked ending this turn:
@@ -2117,6 +2133,7 @@ impl Agent {
                     compact_model_config,
                     conversation_to_compact,
                     CompactionRun::AtReplyStart,
+                    None,
                 );
                 let mut end = None;
                 while let Some(step) = compaction.next().await {
@@ -3039,6 +3056,7 @@ impl Agent {
                                 model_config.clone(),
                                 conversation.clone(),
                                 CompactionRun::Recovery,
+                                call_budget(turns_taken, max_turns, wrap_up.as_ref()),
                             );
                             let mut end = None;
                             while let Some(step) = compaction.next().await {
@@ -3600,6 +3618,7 @@ impl Agent {
                                     tools: tools.clone(),
                                     system_prompt: system_prompt.clone(),
                                 },
+                                call_budget(turns_taken, max_turns, wrap_up.as_ref()),
                             );
                             let mut end = None;
                             while let Some(step) = compaction.next().await {

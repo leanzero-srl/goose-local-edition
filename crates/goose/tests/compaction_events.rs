@@ -84,6 +84,7 @@ async fn compact(answer: &'static str, chat: Vec<Message>) -> String {
         context_limit: None,
         working_dir: std::path::PathBuf::from("/Users/someone"),
         progress: None,
+        budget: None,
     };
     let ChatCompacted::Compacted { conversation, .. } = compact_chat(
         &Answers(answer),

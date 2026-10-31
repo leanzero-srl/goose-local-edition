@@ -809,6 +809,58 @@ async fn test_context_limit_recovery_compaction() -> Result<()> {
 /// byte-identical to the pre-K4 behavior. The measured defect this pins: a long tool loop's tail is
 /// all tool content, so nothing survived summarization verbatim and a 40-turn swarm sink lost the
 /// exact bytes of the file it was editing.
+/// A compaction between a budgeted turn's calls says in the kept block how many calls the turn's
+/// cap has counted of its budget. Why (the MiMo two-Mac Gauntlet vigil): a model's summary
+/// undercounted its calls and nothing goose wrote said the real count; `<turn-budget>` shows only
+/// past half the budget.
+#[tokio::test]
+async fn a_compaction_inside_a_budgeted_turn_states_the_calls_used() -> Result<()> {
+    let temp_dir = TempDir::new()?;
+    let agent = Agent::new();
+    let messages = vec![
+        Message::user().with_text("Hello"),
+        Message::assistant().with_text("Hi there"),
+        Message::user().with_text("Can you process this result?"),
+        Message::assistant().with_text("Processing the long_tool_call result..."),
+    ];
+    let session = setup_test_session(&agent, &temp_dir, "budget-in-kept-block", messages).await?;
+    let provider = Arc::new(MockCompactionProvider::new());
+    agent
+        .update_provider(provider, ModelConfig::new("mock-model"), &session.id)
+        .await?;
+    let session_config = SessionConfig {
+        id: session.id.clone(),
+        schedule_id: None,
+        max_turns: Some(30),
+        retry_config: None,
+    };
+    let reply_stream = agent
+        .reply(
+            Message::user().with_text("Tell me more"),
+            session_config,
+            None,
+        )
+        .await?;
+    tokio::pin!(reply_stream);
+    let mut kept = None;
+    while let Some(event_result) = reply_stream.next().await {
+        if let AgentEvent::HistoryReplaced(conversation) = event_result? {
+            kept = conversation
+                .messages()
+                .iter()
+                .map(|m| m.as_concat_text())
+                .find(|text| text.contains("<kept-by-goose>"));
+        }
+    }
+    let kept = kept.expect("the recovery compaction stored a kept block");
+    // The refused call is the turn's first: the cap counted it.
+    assert!(
+        kept.contains("## Calls used: 1 of 30 (29 left in this turn's budget)\n"),
+        "{kept}"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn keep_tail_survives_compaction_verbatim_and_zero_is_identity() -> Result<()> {
     use goose::context_mgmt::{compact_messages_with_tail, SummaryRequest};
