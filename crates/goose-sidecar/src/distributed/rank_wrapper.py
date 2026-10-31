@@ -1051,12 +1051,66 @@ if "prompt_cache_limit_bytes" in spec:
         str(prompt_cache_limit),
     ]
 
+    # Q-528 (rank_boundary.py `fetch_within`, `room_to_insert`): a copy is charged before it is
+    # made — a fetch's copy of the entry it reads, an insert's compacted snapshot — so the KV never
+    # outgrows the plan's charge between an admission and its trim. It changes what is evicted
+    # (and an entry nobody keeps may be left out), so it rides its own ask (`fetch_within_budget`).
+    fetch_within_budget = live_bound and prefill is not None and bool(spec.get("fetch_within_budget"))
+
     class BoundedPromptCache(LookupPromptCache):
         def __init__(self, max_size):
             super().__init__(max_size, prompt_cache_limit)
             prompt_caches[:] = [self]
+            # The budget reads mlx_lm 0.31.3's byte counts and trie; a cache without them (another
+            # mlx_lm, a stand-in) runs mlx_lm's own copy-then-trim, and says so.
+            self.budgeted = fetch_within_budget and all(
+                isinstance(getattr(self, name, None), kind)
+                for name, kind in (("_n_bytes", int), ("_n_bytes_by_type", dict))
+            )
+            if fetch_within_budget and not self.budgeted:
+                emit("RANK_FETCH_BUDGET", {"enabled": False, "why": "no mlx_lm 0.31.3 byte counts"})
+
+        def fetch_nearest_cache(self, model, tokens):
+            if not self.budgeted:
+                return super().fetch_nearest_cache(model, tokens)
+            rows, width = batch_shape(live_batch[0]) if live_batch else (0, 0)
+            need = batch_kv_charge(prefill, rows + 1, max(width, len(tokens)))
+            cache, rest, report = fetch_within(
+                self,
+                model,
+                tokens,
+                self.max_bytes,
+                need,
+                kept_now(),
+                super().fetch_nearest_cache,
+                self.nearest_cache,
+            )
+            if report is not None:
+                emit("RANK_FETCH_BUDGET", {"request_id": arriving[0], "need": need, **report})
+            return cache, rest
 
         def insert_cache(self, model, tokens, prompt_cache, *, cache_type="assistant"):
+            if self.budgeted:
+                live = live_batch[0].prompt_cache_nbytes if live_batch else 0
+                nbytes = held_bytes(prompt_cache)
+                before = self.nbytes
+                fits = room_to_insert(
+                    self, model, tokens, nbytes, self.max_bytes, live, kept_now()
+                )
+                if self.nbytes != before or not fits:
+                    emit(
+                        "RANK_INSERT_BUDGET",
+                        {
+                            "tokens": len(tokens),
+                            "nbytes": nbytes,
+                            "live": live,
+                            "cached_before": before,
+                            "cached_after": self.nbytes,
+                            "inserted": fits,
+                        },
+                    )
+                if not fits:
+                    return
             compact(prompt_cache)
             cache_inserting(tokens, prompt_cache)
             super().insert_cache(model, tokens, prompt_cache, cache_type=cache_type)
