@@ -91,6 +91,27 @@ impl RankPlan {
         self.state_bytes + self.prompt_cache_bytes
     }
 
+    /// Q-529 (WR-28): the bound the prompt cache holds cached + live KV inside while no row has
+    /// more than its last prompt token to read — the kept prompt[:-1] cut (Q-522), decode, idle.
+    /// The layer split's plan charges the row's end-of-request copy partly inside the prefill
+    /// workspace (`stage_need_cached` with no cached context: `prompt_cache` = state − workspace),
+    /// because the copy is never live with a prefill chunk's scores; the strict limit
+    /// (`prompt_cache_limit_bytes`) leaves that share out, so a rank whose workspace covers its
+    /// whole copy (MiMo 18/30 at 262,144, rank 0: workspace 2.16 GB ≥ state 2.02 GB, prompt cache
+    /// 0) bounded the split's cache at ONE live row's KV and no chat entry wider than half the
+    /// context was ever kept (run 3.0.138, req-37 onwards at 127,711 tokens; req-53 read 144,658
+    /// cold). This is the live KV plus that one copy, less a token's scores at the workspace's
+    /// width (the last prompt token and each decode step still compute one: the planner's chunk
+    /// is never below `MIN_PREFILL_CHUNK`, so a sixteenth of the workspace bounds it), and never
+    /// past one whole context's copy. Never below the strict limit.
+    pub fn prompt_cache_quiet_limit_bytes(&self) -> u64 {
+        let one_token = self.workspace_bytes / super::layer_split::MIN_PREFILL_CHUNK;
+        let copy = self
+            .state_bytes
+            .min(self.prompt_cache_bytes + self.workspace_bytes.saturating_sub(one_token));
+        self.state_bytes + self.prompt_cache_bytes.max(copy)
+    }
+
     /// MLX's free-buffer cache limit on a tensor rank (`mx.set_cache_limit`): the plan's
     /// transient allowance beside the workspace, planned × (RUNTIME_OVERHEAD_RATIO − 1). The
     /// rank used to set it to its GPU ceiling less the planned bytes — 48,135,889,408 B on the
