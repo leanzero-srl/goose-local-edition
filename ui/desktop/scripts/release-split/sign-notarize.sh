@@ -11,8 +11,12 @@ HERE=${0:A:h}
 STAGE=$(mktemp -d /tmp/goose-release-$VER-XXXXXX); rmdir $STAGE
 OUT=$WT/ui/desktop/out; DIR="$OUT/Goose Swarm-darwin-arm64"; APP="$DIR/Goose Swarm.app"
 log() { echo "=== $(date +%H:%M:%S) $*"; }
-mem_ok() { local p; p=$(memory_pressure | awk -F': ' '/free percentage/{gsub("%","",$2);print $2}');
-  log "memory free ${p}%"; [ "${p:-0}" -ge 25 ] || { echo "REFUSED: memory free ${p}% < 25% (MiMo rank 0 shares this Mac)"; exit 75; }; }
+# The signer may share its Mac with a running model: go only at kernel pressure level 1 (normal)
+# with free+inactive >= RELEASE_MIN_FREE_GB (default 8); exit 75 otherwise (never wait or retry here).
+mem_ok() { local lvl gb; lvl=$(sysctl -n kern.memorystatus_vm_pressure_level)
+  gb=$(vm_stat | awk -v ps=$(pagesize) '/Pages free|Pages inactive/{gsub("\\.","",$NF); n+=$NF} END{printf "%d", n*ps/1073741824}')
+  log "memory pressure level $lvl, free+inactive ${gb} GB"
+  [ "$lvl" = 1 ] && [ "$gb" -ge "${RELEASE_MIN_FREE_GB:-8}" ] || { echo "REFUSED: memory pressure level $lvl / free+inactive ${gb} GB (need 1 and >= ${RELEASE_MIN_FREE_GB:-8})"; exit 75; }; }
 [ -e "$OUT" ] && { echo "REFUSED: $OUT exists; never sign over an earlier output"; exit 2; }
 set -a; . "$HOME/.leanzero/apple/notary.env"; set +a
 security unlock-keychain -p "$(cat "$HOME/.leanzero/apple/signing-keychain-password.txt")" "$HOME/Library/Keychains/goose-signing.keychain-db"
@@ -28,8 +32,8 @@ mem_ok; log "notarize app"
 python3 -I $HERE/bundle-fingerprint.py "$SIGNED" "$STAGE/before-upload.json"
 cmp -s "$STAGE/before-upload.json" "$STAGE/after-signing.json" || { echo "signed app changed between receipt and upload"; exit 1; }
 ditto -c -k --sequesterRsrc --keepParent "$SIGNED" "$STAGE/notarize-app.zip"
-notarize "$STAGE/notarize-app.zip" | tee "$STAGE/notary-app.json"
-xcrun stapler staple "$SIGNED"; xcrun stapler validate "$SIGNED"
+mem_ok; notarize "$STAGE/notarize-app.zip" | tee "$STAGE/notary-app.json"
+mem_ok; xcrun stapler staple "$SIGNED"; xcrun stapler validate "$SIGNED"
 python3 -I $HERE/bundle-fingerprint.py "$SIGNED" "$STAGE/after-staple.json"
 python3 - "$STAGE/after-signing.json" "$STAGE/after-staple.json" <<'PY'
 import json, sys
@@ -47,8 +51,8 @@ ditto "$SIGNED" "$APP"
 ditto "$SIGNED" "$OUT/dmgstage/Goose Swarm.app"; ln -s /Applications "$OUT/dmgstage/Applications"
 DMG="$OUT/make/Goose-Swarm-$VER.dmg"
 hdiutil create -volname "Goose Swarm" -srcfolder "$OUT/dmgstage" -ov -format UDZO "$DMG"
-notarize "$DMG" | tee "$STAGE/notary-dmg.json"
-xcrun stapler staple "$DMG"; xcrun stapler validate "$DMG"
+mem_ok; notarize "$DMG" | tee "$STAGE/notary-dmg.json"
+mem_ok; xcrun stapler staple "$DMG"; xcrun stapler validate "$DMG"
 rm -rf "$OUT/dmgstage"
 
 log "update zip + manifest"
