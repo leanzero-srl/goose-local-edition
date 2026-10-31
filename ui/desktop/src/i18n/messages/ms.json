@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "Tidak dapat menghalakan nod ini ke {model}: {error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "Pilih nod"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Butiran"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "Sedang memasang"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "Tiada nod aktif dikonfigurasi."
+    "defaultMessage": "Sembang ini berada pada Any node (Auto), yang hanya menjawab daripada kumpulan swarm anda, dan tiada nod di dalamnya yang dihidupkan."
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Tiada model MLX tersimpan untuk nod ini — pilih satu dalam Providers."
@@ -8494,6 +8497,9 @@
   },
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Bermula dalam kira-kira {duration} · median daripada # pemuatan} other{Bermula dalam kira-kira {duration} · median daripada # pemuatan}}"
+  },
+  "nodes.startsNewChats": {
+    "defaultMessage": "Sembang baharu kini bermula pada nod ini: Any node (Auto) tiada nod untuk menjawabnya."
   },
   "nodes.stateCantRun": {
     "defaultMessage": "Tidak boleh berjalan"

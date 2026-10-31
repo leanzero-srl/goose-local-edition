@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "无法将此节点指向 {model}：{error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "选择节点"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "详细信息"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "正在挂载"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "没有配置已启用的节点。"
+    "defaultMessage": "此聊天使用 Any node (Auto)，它只从你的 swarm 池作答，而池中没有已开启的节点。"
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "此节点没有已保存的 MLX 模型 — 请在 Providers 中选择一个。"
@@ -8494,6 +8497,9 @@
   },
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{约 {duration} 后启动 · # 次加载的中位数} other{约 {duration} 后启动 · # 次加载的中位数}}"
+  },
+  "nodes.startsNewChats": {
+    "defaultMessage": "新聊天现在从此节点开始：Any node (Auto) 没有可以作答的节点。"
   },
   "nodes.stateCantRun": {
     "defaultMessage": "无法运行"

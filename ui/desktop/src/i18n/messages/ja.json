@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "このノードを {model} に切り替えられませんでした: {error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "ノードを選ぶ"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "詳細"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "マウント中"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "有効なノードが設定されていません。"
+    "defaultMessage": "このチャットは Any node (Auto) 上にあり、swarm プールからのみ応答しますが、プール内にオンのノードがありません。"
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "このノード用に保存された MLX モデルがありません — Providers で選んでください。"
@@ -8494,6 +8497,9 @@
   },
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{約 {duration} で起動 · # 回のロードの中央値} other{約 {duration} で起動 · # 回のロードの中央値}}"
+  },
+  "nodes.startsNewChats": {
+    "defaultMessage": "新しいチャットは今後このノードで始まります。Any node (Auto) には応答できるノードがありませんでした。"
   },
   "nodes.stateCantRun": {
     "defaultMessage": "実行できません"

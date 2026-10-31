@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "이 노드를 {model}(으)로 지정하지 못했습니다: {error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "노드 선택"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "세부 정보"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "마운트 중"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "구성된 활성 노드가 없습니다."
+    "defaultMessage": "이 채팅은 Any node (Auto)에 있으며, swarm 풀에서만 응답하는데 풀에 켜진 노드가 없습니다."
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "이 노드에 저장된 MLX 모델이 없습니다 — Providers에서 선택하세요."
@@ -8494,6 +8497,9 @@
   },
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{약 {duration} 후 시작 · 로드 #회의 중앙값} other{약 {duration} 후 시작 · 로드 #회의 중앙값}}"
+  },
+  "nodes.startsNewChats": {
+    "defaultMessage": "이제 새 채팅은 이 노드에서 시작됩니다. Any node (Auto)에는 응답할 노드가 없었습니다."
   },
   "nodes.stateCantRun": {
     "defaultMessage": "실행할 수 없음"

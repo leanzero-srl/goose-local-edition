@@ -175,6 +175,35 @@ describe('New node · on your Macs', () => {
     expect(screen.getByTestId('new-node-create')).toBeEnabled();
   });
 
+  // Q-522 (independent check): the dialog writes through the same door as Run it, so when the
+  // write moved new chats onto the new node the caller is told, to say it.
+  it('tells the caller when the write moved new chats onto the new node', async () => {
+    mockWrite.mockImplementation(async (config: NodesConfig) => {
+      const id = config.defs![config.defs!.length - 1].id;
+      return {
+        written: true,
+        refusals: [],
+        read: { config: { ...config, forNewChats: { kind: 'node', id } } },
+      };
+    });
+    mockRead.mockResolvedValue({
+      config: { ...CONFIG, defs: [NODE_CLOUD.def], forNewChats: { kind: 'auto' } },
+      nodes: [NODE_CLOUD],
+      stored: true,
+      lmStudioHidden: 0,
+    });
+    const { onSaved } = renderDialog();
+    await next();
+    const rows = await screen.findAllByTestId('new-node-model-row');
+    await waitFor(() => expect(rows[0]).toHaveTextContent('Needs both Macs'));
+    await userEvent.click(rows[0]);
+    await next();
+    await userEvent.click(await screen.findByTestId('placement-pick-split'));
+    await next();
+    await userEvent.click(screen.getByTestId('new-node-create'));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.anything(), false, true));
+  });
+
   it('two Macs: model with its badge, the split way, the default name, one def written', async () => {
     const { onSaved, onClose } = renderDialog();
     expect(screen.getByTestId('new-node-kind-mlx')).toHaveAttribute('aria-checked', 'true');
@@ -224,7 +253,7 @@ describe('New node · on your Macs', () => {
     // Every other def and strategy goes back as goosed holds them.
     expect(written().defs!.map((d) => d.id)).toEqual([NODE_CLOUD.def.id, def.id]);
     expect(written().strategies).toEqual(CONFIG.strategies);
-    expect(onSaved).toHaveBeenCalledWith(def, false);
+    expect(onSaved).toHaveBeenCalledWith(def, false, false);
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -352,7 +381,7 @@ describe('New node · on your Macs', () => {
     // The safe door is the primary one while starting would stop what serves.
     expect(screen.getByTestId('new-node-create').className).not.toBe(start.className);
     await userEvent.click(start);
-    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.anything(), true));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.anything(), true, false));
   });
 
   it('Q-299: nothing is claimed when the node IS the way serving now, or when nothing serves', async () => {
@@ -391,7 +420,7 @@ describe('New node · on your Macs', () => {
     await next();
     await userEvent.click(screen.getByTestId('new-node-create-start'));
     await waitFor(() =>
-      expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ kind: 'mlx' }), true)
+      expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ kind: 'mlx' }), true, false)
     );
   });
 });

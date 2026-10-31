@@ -27,7 +27,16 @@ const i18n = defineMessages({
     defaultMessage: '{count, plural, =2 {both Macs} other {# Macs}}',
   },
   defaultName: { id: 'nodes.defaultName', defaultMessage: '{model} · {where}' },
+  startsNewChats: {
+    id: 'nodes.startsNewChats',
+    defaultMessage: 'New chats start on it now: Any node (Auto) had no node to answer them.',
+  },
 });
+
+/** The one sentence every writer shows when its write moved new chats onto the node (Q-522). */
+export function startsNewChatsText(intl: IntlShape): string {
+  return intl.formatMessage(i18n.startsNewChats);
+}
 
 /** A pinned way: the planner's `PlacementKey` as a node stores it. */
 export type PinnedPlacement = Exclude<NodePlacement, { kind: 'follows' }>;
@@ -166,10 +175,25 @@ export function providerDef(id: string, draft: ProviderDraft): NodeDef {
  * config is read first (unless the caller just read it) so the write carries every other def and
  * strategy as goosed holds them now.
  */
-export async function putNode(def: NodeDef, current?: NodesConfig): Promise<NodesWrite> {
+export async function putNode(def: NodeDef, current?: NodesConfig): Promise<NodePut> {
   const config = current ?? (await nodesRead()).config;
   const defs = config.defs ?? [];
   const at = defs.findIndex((d) => d.id === def.id);
   const next = at >= 0 ? defs.map((d, i) => (i === at ? def : d)) : [...defs, def];
-  return nodesWrite({ ...config, defs: next });
+  const response = await nodesWrite({ ...config, defs: next });
+  return { ...response, startsNewChats: startsNewChatsOn(config, response, def.id) };
+}
+
+/** A `nodes/write` answer plus whether it moved new chats onto the node it wrote. */
+export type NodePut = NodesWrite & { startsNewChats: boolean };
+
+/**
+ * goosed's write door starts new chats on an added node when they ran on Any node (Auto) and Auto
+ * had nothing to answer with (nodes::new_chats_on_added_node, Q-522). Read from what the write
+ * stored, never inferred here, so every writer can say it.
+ */
+export function startsNewChatsOn(before: NodesConfig, response: NodesWrite, id: string): boolean {
+  const after = response.written ? response.read?.config.forNewChats : undefined;
+  const wasAuto = before.forNewChats == null || before.forNewChats.kind === 'auto';
+  return wasAuto && after?.kind === 'node' && after.id === id;
 }

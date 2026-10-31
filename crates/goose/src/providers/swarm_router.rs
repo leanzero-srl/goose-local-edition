@@ -436,19 +436,71 @@ fn sidecar_routed_away(record: &RouteRecord) -> Option<String> {
     }
 }
 
-/// A missing or unreadable `swarm` block is a named error, never an empty pool.
-pub(crate) fn load_pool() -> Result<PoolConfig, ProviderError> {
+/// The `swarm` block: `Ok(None)` = no block (no pool), `Err` = a block that could not be read,
+/// named, never read as an empty pool.
+pub(crate) fn load_pool() -> Result<Option<PoolConfig>, ProviderError> {
     match Config::global().get_param::<PoolConfig>(SWARM_CONFIG_KEY) {
-        Ok(cfg) => Ok(cfg),
-        Err(ConfigError::NotFound(_)) => Err(ProviderError::ExecutionError(
-            "swarm chat: no `swarm` block in config.yaml — add your nodes under `swarm.devices` \
-             (Swarm settings) before selecting the swarm model"
-                .to_string(),
-        )),
+        Ok(cfg) => Ok(Some(cfg)),
+        Err(ConfigError::NotFound(_)) => Ok(None),
         Err(e) => Err(ProviderError::ExecutionError(format!(
             "swarm chat: the `swarm` config block could not be read ({e}); nothing was routed"
         ))),
     }
+}
+
+/// What Any node (Auto) routes to: the pool's enabled devices plus the live remote route's node.
+/// The one candidate list both the turn and the nodes write door (`auto_routes_nothing`) read.
+pub(crate) fn auto_candidates(
+    pool: Option<&PoolConfig>,
+    route: Option<&PublishedRoute>,
+) -> Vec<Node> {
+    with_remote_route(pool.map(nodes_from_config).unwrap_or_default(), route)
+}
+
+/// Why Auto has nothing to route to, in the words the desktop shows (Q-522: the old text named
+/// `swarm.devices`, a key no screen shows, and never said what to click). It keeps the router's
+/// "no enabled device is configured" lead, which the NoNodeNotice classifies, and carries no
+/// top-level "; " (the notice splits reasons there).
+pub(crate) fn auto_pool_empty_reason(pool: Option<&PoolConfig>) -> String {
+    let why = match pool {
+        None => "you have no swarm pool (config.yaml has no `swarm` block)".to_string(),
+        Some(cfg) if cfg.devices.is_empty() => "your swarm pool is empty".to_string(),
+        Some(cfg) => format!(
+            "every node in your swarm pool is turned off ({})",
+            cfg.devices
+                .iter()
+                .map(|d| d.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    format!(
+        "no enabled device is configured — new chats start on Any node (Auto), which answers only \
+         from your swarm pool, and {why}. Open Nodes and choose a node under \u{201c}New chats start \
+         on\u{201d}, or pick one for this chat from the \u{201c}Any node (Auto)\u{201d} chip under \
+         the message box"
+    )
+}
+
+/// The turn's refusal when Auto has nothing: the router's "no node can serve this turn" form, so
+/// the chat shows the NoNodeNotice (and its Choose a node) instead of raw text.
+pub(crate) fn auto_empty_refusal(pool: Option<&PoolConfig>) -> String {
+    format!(
+        "swarm chat: no node can serve this turn — {}",
+        auto_pool_empty_reason(pool)
+    )
+}
+
+/// True when Any node (Auto) has no node to route a turn to right now (read from config and the
+/// remote-single route record). An unreadable `swarm` block is not "nothing": it is a named error
+/// on the turn, and no rule may act on it as an empty pool.
+pub(crate) fn auto_routes_nothing(config: &Config) -> bool {
+    let pool = match config.get_param::<PoolConfig>(SWARM_CONFIG_KEY) {
+        Ok(cfg) => Some(cfg),
+        Err(ConfigError::NotFound(_)) => None,
+        Err(_) => return false,
+    };
+    auto_candidates(pool.as_ref(), mlx_remote::read().live().as_ref()).is_empty()
 }
 
 /// What a probe learns about a SERVABLE node at pick time: the engine's own in-flight count when
@@ -1540,7 +1592,10 @@ pub(crate) async fn pool_context_window() -> Result<usize, String> {
             .to_string(),
         other => other.to_string(),
     })?;
-    let nodes = with_remote_route(nodes_from_config(&cfg), mlx_remote::read().live().as_ref());
+    let nodes = auto_candidates(cfg.as_ref(), mlx_remote::read().live().as_ref());
+    if nodes.is_empty() {
+        return Err(auto_pool_empty_reason(cfg.as_ref()));
+    }
     ROUTER.pool_context_window(&nodes, &*PROBE).await
 }
 static PROVIDERS: LazyLock<Arc<LiveProviders>> = LazyLock::new(|| Arc::new(LiveProviders::new()));
@@ -2020,20 +2075,10 @@ pub(crate) async fn route_chat(
     let providers: &LiveProviders = &PROVIDERS;
     let Some(route) = route else {
         let cfg = load_pool()?;
-        let nodes = with_remote_route(nodes_from_config(&cfg), mlx_remote::read().live().as_ref());
+        let nodes = auto_candidates(cfg.as_ref(), mlx_remote::read().live().as_ref());
         if nodes.is_empty() {
-            let disabled: Vec<String> = cfg
-                .devices
-                .iter()
-                .map(|d| format!("{} (disabled)", d.id))
-                .collect();
-            return Err(ProviderError::ExecutionError(format!(
-                "swarm chat: no enabled device under `swarm.devices` — {}",
-                if disabled.is_empty() {
-                    "the list is empty".to_string()
-                } else {
-                    disabled.join(", ")
-                }
+            return Err(ProviderError::ExecutionError(auto_empty_refusal(
+                cfg.as_ref(),
             )));
         }
         return route_stream(
@@ -5509,6 +5554,52 @@ devices:
             }
         }
         assert!(pools > 100_000, "{pools}");
+    }
+
+    /// Q-522: Auto with no pool, an empty pool or only switched-off devices has nothing to route
+    /// to, and its refusal is the NoNodeNotice's form in the desktop's words (never `swarm.devices`);
+    /// a live remote route is something to route to.
+    #[test]
+    fn auto_with_an_empty_pool_routes_nothing_and_says_what_to_click() {
+        let off = PoolConfig {
+            devices: vec![PoolDevice {
+                id: "mlx-local".to_string(),
+                model_id: "m".to_string(),
+                weight: 1,
+                enabled: false,
+                ..PoolDevice::default()
+            }],
+            ..PoolConfig::default()
+        };
+        let empty = PoolConfig::default();
+        for pool in [None, Some(&empty), Some(&off)] {
+            assert!(auto_candidates(pool, None).is_empty());
+            assert_eq!(auto_candidates(pool, Some(&remote_route(2))).len(), 1);
+            let refusal = auto_empty_refusal(pool);
+            let reason = refusal
+                .strip_prefix("swarm chat: no node can serve this turn — ")
+                .unwrap_or_else(|| panic!("not the notice's form: {refusal}"));
+            assert!(
+                reason.starts_with("no enabled device is configured"),
+                "{reason}"
+            );
+            assert!(reason.contains("Open Nodes"), "{reason}");
+            assert!(
+                reason.contains("\u{201c}New chats start on\u{201d}"),
+                "{reason}"
+            );
+            assert!(!reason.contains("swarm.devices"), "{reason}");
+            assert!(
+                !reason.contains("; "),
+                "the notice splits reasons on '; ': {reason}"
+            );
+        }
+        assert!(auto_pool_empty_reason(None).contains("you have no swarm pool"));
+        assert!(auto_pool_empty_reason(Some(&empty)).contains("your swarm pool is empty"));
+        assert!(auto_pool_empty_reason(Some(&off)).contains("turned off (mlx-local)"));
+        let mut on = off.clone();
+        on.devices[0].enabled = true;
+        assert_eq!(auto_candidates(Some(&on), None).len(), 1);
     }
 
     #[test]
