@@ -957,6 +957,15 @@ fn unsourced_counts(texts: &str, tools: &[ToolFact], earlier: &[Message]) -> Vec
         if mark == '?' || NOT_MEASURED.is_match(sentence) {
             continue;
         }
+        // "There were 0 failures." after pytest's "19 passed in 0.02s": the sentence reports the
+        // run a result line reports, in other words (Q-525).
+        if tools.iter().any(|t| {
+            t.output
+                .lines()
+                .any(|line| report_the_same_run(sentence, line))
+        }) {
+            continue;
+        }
         let beside: Vec<i128> = NUMBER
             .find_iter(sentence)
             .filter_map(|m| whole(&normalized(m.as_str())))
@@ -1016,6 +1025,236 @@ fn unsourced_counts(texts: &str, tools: &[ToolFact], earlier: &[Message]) -> Vec
         listed.join(" and "),
         tools.len()
     )]
+}
+
+/// A text as the user reads it: emphasis, code and quote marks are not words, and line breaks are
+/// spaces. Every comparison of a reply with a tool result reads both through this.
+pub(crate) fn as_read(text: &str) -> String {
+    text.replace(['*', '`', '_', '“', '”', '"'], "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The outcome words a test run reports, by what they count. `None` counts nothing: a word the
+/// summary binds to a figure ("0 measured", "3 warnings") that says nothing about pass or fail.
+fn outcome_label(word: &str) -> Option<Option<Outcome>> {
+    Some(Some(match word {
+        "passed" | "passing" | "passes" | "pass" | "succeeded" | "xpassed" => Outcome::Pass,
+        "failed" | "failing" | "failures" | "failure" | "fails" | "fail" => Outcome::Fail,
+        "errors" | "error" | "errored" => Outcome::Error,
+        "skipped" | "ignored" | "pending" | "deselected" | "xfailed" | "todo" => Outcome::Skip,
+        "total" => Outcome::Total,
+        "measured" | "filtered" | "warnings" | "warning" => return Some(None),
+        _ => return None,
+    }))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Outcome {
+    Pass,
+    Fail,
+    Error,
+    Skip,
+    Total,
+}
+
+const OUTCOME_WORDS: &str = "passed|passing|passes|pass|succeeded|xpassed|failed|failing|failures|failure|fails|fail|errors|error|errored|skipped|ignored|pending|deselected|xfailed|todo|total|measured|filtered|warnings|warning";
+
+/// "19 passed", "All 19 tests passed", "0 failed": a count, up to two words naming what was
+/// counted, an outcome word.
+static COUNT_THEN_OUTCOME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"(?:^|[^\w.,])(\d[\d,]*)\s+((?:[a-z][\w-]*\s+){{0,2}}?)({OUTCOME_WORDS})\b"
+    ))
+    .expect("static regex")
+});
+/// "failed: 0", "Tests: 19 passed (19)" — the vitest total in brackets after an outcome.
+static OUTCOME_THEN_COUNT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"\b({OUTCOME_WORDS})\s*(?:[:=]\s*(\d[\d,]*)\b|\((\d[\d,]*)\))"
+    ))
+    .expect("static regex")
+});
+/// "no tests failed", "zero errors", "without failures".
+static NONE_OF: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"\b(?:no|zero|none|without)\s+((?:[a-z][\w-]*\s+){{0,2}}?)({OUTCOME_WORDS})\b"
+    ))
+    .expect("static regex")
+});
+static OUTCOME_WORD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(r"\b({OUTCOME_WORDS}|panicked|traceback)\b")).expect("static regex")
+});
+/// Figures a run summary carries that are not counts: its duration and its progress percentage.
+static NOT_A_COUNT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\d[\d.,]*\s*(?:ms|s|secs?|seconds?|min|m)\b|\d[\d.,]*\s*%").expect("static regex")
+});
+
+/// What one text says a test run came to: the count it binds to each outcome, and whether it says
+/// something failed or passed without a count.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Tally {
+    counts: std::collections::BTreeMap<Outcome, u64>,
+    unnumbered_failure: bool,
+    unnumbered_pass: bool,
+}
+
+impl Tally {
+    /// A run stated as passing with no failure, error or skip: "All 19 tests passed", pytest's
+    /// "19 passed in 0.02s" (pytest names only the outcomes it saw).
+    fn pass_only(&self) -> bool {
+        (self.counts.contains_key(&Outcome::Pass) || self.unnumbered_pass)
+            && !self.unnumbered_failure
+            && [Outcome::Fail, Outcome::Error, Outcome::Skip]
+                .iter()
+                .all(|o| self.counts.get(o).is_none_or(|n| *n == 0))
+    }
+
+    /// The count of an outcome, stated or — on a pass-only text — implied zero.
+    fn get(&self, outcome: Outcome) -> Option<u64> {
+        self.counts.get(&outcome).copied().or_else(|| {
+            (outcome != Outcome::Pass && outcome != Outcome::Total && self.pass_only()).then_some(0)
+        })
+    }
+}
+
+/// The test-run tally a text states, or `None` when it states none or holds a figure the tally
+/// does not account for (then the text says more than how a run came out).
+fn outcome_tally(text: &str) -> Option<Tally> {
+    let text = as_read(text).to_lowercase();
+    let mut tally = Tally::default();
+    let mut bound: Vec<std::ops::Range<usize>> = Vec::new();
+    fn set(tally: &mut Tally, outcome: Option<Outcome>, value: &str) -> bool {
+        let Some(outcome) = outcome else {
+            return true;
+        };
+        let Ok(value) = value.replace(',', "").parse::<u64>() else {
+            return false;
+        };
+        // The same outcome stated twice with two counts ("Test Suites: 1 passed … Tests: 19
+        // passed") is two runs' worth: no single tally.
+        tally
+            .counts
+            .insert(outcome, value)
+            .is_none_or(|v| v == value)
+    }
+    let joined = |words: &str| {
+        words
+            .split_whitespace()
+            .any(|w| JOINING.contains(&w) || outcome_label(w).is_some())
+    };
+    for c in COUNT_THEN_OUTCOME.captures_iter(&text) {
+        let (Some(n), Some(words), Some(word)) = (c.get(1), c.get(2), c.get(3)) else {
+            continue;
+        };
+        if joined(words.as_str()) {
+            continue;
+        }
+        if !set(&mut tally, outcome_label(word.as_str())?, n.as_str()) {
+            return None;
+        }
+        bound.push(n.start()..word.end());
+    }
+    for c in OUTCOME_THEN_COUNT.captures_iter(&text) {
+        let (Some(word), Some(n)) = (c.get(1), c.get(2).or_else(|| c.get(3))) else {
+            continue;
+        };
+        // "No tests failed: 19 passed" — the figure after the colon is the next outcome's count.
+        if c.get(2).is_some()
+            && COUNT_THEN_OUTCOME
+                .find_at(&text, n.start().saturating_sub(1))
+                .is_some_and(|m| m.start() + 1 == n.start())
+        {
+            continue;
+        }
+        let outcome = if c.get(3).is_some() {
+            Some(Outcome::Total)
+        } else {
+            outcome_label(word.as_str())?
+        };
+        if !set(&mut tally, outcome, n.as_str()) {
+            return None;
+        }
+        bound.push(word.start()..c.get(0).map_or(n.end(), |m| m.end()));
+    }
+    for c in NONE_OF.captures_iter(&text) {
+        let (Some(words), Some(word)) = (c.get(1), c.get(2)) else {
+            continue;
+        };
+        if joined(words.as_str()) {
+            continue;
+        }
+        if !set(&mut tally, outcome_label(word.as_str())?, "0") {
+            return None;
+        }
+        bound.push(c.get(0).map_or(word.start(), |m| m.start())..word.end());
+    }
+    let inside = |at: usize| bound.iter().any(|r| r.contains(&at));
+    for m in OUTCOME_WORD.find_iter(&text) {
+        if inside(m.start()) {
+            continue;
+        }
+        match outcome_label(m.as_str()) {
+            Some(Some(Outcome::Pass)) => tally.unnumbered_pass = true,
+            Some(Some(Outcome::Fail | Outcome::Error)) | None => tally.unnumbered_failure = true,
+            _ => {}
+        }
+    }
+    let unaccounted = NUMBER.find_iter(&text).any(|m| {
+        !inside(m.start())
+            && !NOT_A_COUNT
+                .find_iter(&text)
+                .any(|d| d.start() <= m.start() && m.end() <= d.end())
+    });
+    if unaccounted || (tally.counts.is_empty() && !tally.unnumbered_pass) {
+        return None;
+    }
+    Some(tally)
+}
+
+/// Whether two texts — a reply's claim and a tool result, or two claims of one reply — report the
+/// SAME test-run outcome in different words: "All **19 tests passed**." and "19 passed in 0.02s"
+/// (Q-525, Gabee session 20261031_2 turn 2). Both must state a tally, share at least one outcome
+/// they both settle, and disagree on none; anything else — a text that is not a run summary, a
+/// count that differs ("17 passed, 2 failed"), a failure one side names and the other's pass-only
+/// claim denies — is not agreement, and the comparison stays the caller's.
+pub(crate) fn report_the_same_run(a: &str, b: &str) -> bool {
+    let (Some(a), Some(b)) = (outcome_tally(a), outcome_tally(b)) else {
+        return false;
+    };
+    if (a.unnumbered_failure && b.pass_only()) || (b.unnumbered_failure && a.pass_only()) {
+        return false;
+    }
+    let mut shared = false;
+    for outcome in [
+        Outcome::Pass,
+        Outcome::Fail,
+        Outcome::Error,
+        Outcome::Skip,
+        Outcome::Total,
+    ] {
+        match (a.get(outcome), b.get(outcome)) {
+            (Some(x), Some(y)) if x != y => return false,
+            (Some(_), Some(_)) => shared = true,
+            _ => {}
+        }
+    }
+    // A total on one side holds the other's whole run: "19 passed, 21 total" is not "all 19 passed".
+    let whole = |t: &Tally| {
+        [Outcome::Pass, Outcome::Fail, Outcome::Error, Outcome::Skip]
+            .iter()
+            .map(|o| t.get(*o))
+            .sum::<Option<u64>>()
+    };
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        if let (Some(total), Some(sum)) = (x.counts.get(&Outcome::Total), whole(y)) {
+            if *total != sum {
+                return false;
+            }
+        }
+    }
+    shared || (a.pass_only() && b.pass_only())
 }
 
 /// Check the assistant text in `messages[from..]` (this model response) against this turn's tool
@@ -1173,6 +1412,78 @@ mod tests {
     fn a_file_no_call_named_is_left_alone_and_sites_are_not_files() {
         let messages = turn_three("Next I'll write `scripts/check_dupes.js`; the dates are on support.atlassian.com/migration/docs/x.html.");
         assert!(check_new_text(&messages, 5, Path::new("/w"), &|_: &Path| false, 2026).is_empty());
+    }
+
+    /// Q-525: two wordings of one test run agree — markdown emphasis, "All N tests passed" and
+    /// every runner's summary line; a run that came out differently never does.
+    #[test]
+    fn the_same_test_run_in_other_words_agrees_and_a_different_run_does_not() {
+        for (claim, summary) in [
+            ("All **19 tests passed**.", "19 passed in 0.02s"),
+            ("All 19 tests passed.", "...................   [100%]\n19 passed in 0.02s"),
+            ("`19 passed`", "19 passed in 0.02s"),
+            ("All tests passed.", "19 passed in 0.02s"),
+            ("No tests failed: 19 passed.", "19 passed in 0.02s"),
+            ("All **19** tests passed", "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s"),
+            ("All 19 tests passed.", "Tests:       19 passed, 19 total"),
+            ("All 19 tests passed.", "      Tests  19 passed (19)"),
+            ("All 19 tests passed.", "  19 passing (31ms)"),
+            ("There were 0 failures.", "19 passed in 0.02s"),
+            ("2 tests failed.", "Tests:       2 failed, 17 passed, 19 total"),
+            ("17 passed, 2 failed", "=== 2 failed, 17 passed in 0.05s ==="),
+        ] {
+            assert!(
+                report_the_same_run(claim, summary),
+                "{claim:?} and {summary:?} report one run"
+            );
+        }
+        for (claim, summary) in [
+            ("All 19 tests passed.", "17 passed, 2 failed in 0.03s"),
+            ("All **19 tests passed**.", "2 failed, 17 passed in 0.03s"),
+            ("All 19 tests passed.", "19 passed, 2 failed in 0.03s"),
+            ("All 19 tests passed.", "19 passed, 2 skipped in 0.03s"),
+            ("All 19 tests passed.", "19 passed, 1 error in 0.03s"),
+            ("All 19 tests passed.", "Tests:       2 failed, 17 passed, 19 total"),
+            ("All 19 tests passed.", "Tests:       19 passed, 21 total"),
+            ("All 19 tests passed.", "test result: FAILED. 17 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s"),
+            ("All 19 tests passed.", "FAILED tests/test_io.py::test_roundtrip - AssertionError"),
+            ("All tests passed.", "1 failed, 18 passed in 0.04s"),
+            ("All 19 tests passed.", "18 passed in 0.02s"),
+            ("The file has 19 rows.", "19 rows in 0.02s"),
+            ("All 19 tests passed across 4 files.", "19 passed in 0.02s"),
+            ("All 19 tests passed.", "the export wrote 3 columns"),
+        ] {
+            assert!(
+                !report_the_same_run(claim, summary),
+                "{claim:?} and {summary:?} do not report one run"
+            );
+        }
+    }
+
+    /// Q-525's sibling in the count check: "0 failures" after pytest's pass-only summary is the
+    /// summary in other words; "3 failures" is still a count no result holds.
+    #[test]
+    fn a_count_the_run_summary_implies_is_sourced_and_one_it_does_not_is_named() {
+        let turn = |claim: &str| {
+            vec![
+                Message::user().with_text("Run the whole test suite."),
+                call("t1", "pytest tests/ -q"),
+                result("t1", "...................   [100%]\n19 passed in 0.02s", 0),
+                Message::assistant().with_text(claim),
+            ]
+        };
+        assert!(check_new_text(
+            &turn("All 19 tests passed. There were 0 failures."),
+            3,
+            Path::new("/w"),
+            &|_: &Path| false,
+            2026
+        )
+        .is_empty());
+        assert_eq!(
+            check_new_text(&turn("There were 3 failures."), 3, Path::new("/w"), &|_: &Path| false, 2026),
+            vec!["the count 3 (“3 failures”) comes from none of this turn's 1 tool result(s), the user's messages, or earlier replies."]
+        );
     }
 
     /// #2b turn 2 as recorded: two searches that found nothing (764197/764199), then 764200.
