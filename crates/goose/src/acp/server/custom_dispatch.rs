@@ -1076,6 +1076,14 @@ impl GooseAcpAgent {
         self.on_mlx_engine_wired_limit_remove_daemon(req).await
     }
 
+    #[custom_method(MlxEngineWiredLimitDisableRequest)]
+    async fn dispatch_mlx_engine_wired_limit_disable(
+        &self,
+        req: MlxEngineWiredLimitDisableRequest,
+    ) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_wired_limit_disable(req).await
+    }
+
     #[custom_method(MlxEngineSettingsUpdateRequest)]
     async fn dispatch_mlx_engine_settings_update(
         &self,

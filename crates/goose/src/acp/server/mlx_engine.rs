@@ -1060,6 +1060,8 @@ async fn core_memory_machine(
         Ok(bytes) => (Some(bytes), None),
         Err(e) => (None, Some(format!("{e:#}"))),
     };
+    let reserve = wired_reserve_gib();
+    let others = physical_bytes.saturating_sub(available_bytes);
     let (wired_limit_mb, wired_limit_error) = match wired_limit::read_wired_limit_mb() {
         Ok(mb) => (Some(mb), None),
         Err(e) => (None, Some(format!("{e:#}"))),
@@ -1082,7 +1084,50 @@ async fn core_memory_machine(
             &settings.spawn_command,
         ),
         launcher: settings.spawn_command.join(" "),
+        min_reserve_gib: reserve,
+        others_bytes: others,
+        max_wired_limit_mb: wired_limit::max_mb(physical_bytes, reserve),
+        suggested_wired_limit_mb: wired_limit::suggested_mb(physical_bytes, others, reserve),
     })
+}
+
+/// The name a peer's administrator prompt shows for a wired-limit request relayed from here.
+fn relay_requester_name() -> String {
+    super::link::computer_name().unwrap_or_else(|| REMOTE_REQUESTER.to_string())
+}
+
+/// What a peer's prompt names when the relaying Mac sent no name.
+const REMOTE_REQUESTER: &str = "another Mac on LeanZero Link";
+
+/// A wired-limit request that arrived over the mesh always names a requester, so the prompt on
+/// this Mac never reads as this Mac's own goose asking.
+fn from_peer<T>(mut req: T, requested_by: impl FnOnce(&mut T) -> &mut Option<String>) -> T {
+    let slot = requested_by(&mut req);
+    if slot.as_deref().is_none_or(|n| n.trim().is_empty()) {
+        *slot = Some(REMOTE_REQUESTER.to_string());
+    }
+    req
+}
+
+/// The owner's `GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB` (default 16 GiB, why at
+/// `wired_limit::DEFAULT_MIN_RESERVE_GIB`), published to the sidecar so the distributed
+/// preflight's what-if plans with the same reserve.
+pub(super) fn wired_reserve_gib() -> u64 {
+    let gib = match Config::global().get_param::<u64>(wired_limit::MIN_RESERVE_CONFIG_KEY) {
+        Ok(gib) => gib,
+        Err(ConfigError::NotFound(_)) => wired_limit::DEFAULT_MIN_RESERVE_GIB,
+        Err(e) => {
+            warn!(
+                error = %e,
+                "{} is unreadable; using {} GiB",
+                wired_limit::MIN_RESERVE_CONFIG_KEY,
+                wired_limit::DEFAULT_MIN_RESERVE_GIB
+            );
+            wired_limit::DEFAULT_MIN_RESERVE_GIB
+        }
+    };
+    wired_limit::set_min_reserve_gib(gib);
+    gib
 }
 
 fn wired_limit_after(command: String) -> MlxEngineWiredLimitResponse {
@@ -1098,14 +1143,20 @@ async fn core_wired_limit_apply(
 ) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
     let (physical, _) =
         memory_tunables::machine_memory().internal_err_ctx("reading this Mac's memory")?;
-    let mb = wired_limit::validate_mb(req.mb, physical).invalid_params_err()?;
+    let mb = wired_limit::validate_mb(req.mb, physical, wired_reserve_gib()).invalid_params_err()?;
+    let what = if req.persist {
+        format!("set the GPU wired limit to {mb} MB and keep it after restart")
+    } else {
+        format!("set the GPU wired limit to {mb} MB until restart")
+    };
+    let prompt = wired_limit::prompt_text(&what, req.requested_by.as_deref());
     let shell = if req.persist {
         let staged = wired_limit::staged_plist_path();
         std::fs::write(&staged, wired_limit::daemon_plist(mb))
             .internal_err_ctx("staging the wired-limit LaunchDaemon")?;
         let shell = wired_limit::install_daemon_shell(mb, &staged).invalid_params_err();
         let ran = match &shell {
-            Ok(shell) => wired_limit::run_as_admin(shell).await,
+            Ok(shell) => wired_limit::run_as_admin(shell, &prompt).await,
             Err(_) => Ok(()),
         };
         let _ = std::fs::remove_file(&staged);
@@ -1114,7 +1165,7 @@ async fn core_wired_limit_apply(
         shell
     } else {
         let shell = wired_limit::sysctl_command(mb);
-        wired_limit::run_as_admin(&shell)
+        wired_limit::run_as_admin(&shell, &prompt)
             .await
             .invalid_params_err()?;
         shell
@@ -1122,11 +1173,34 @@ async fn core_wired_limit_apply(
     Ok(wired_limit_after(shell))
 }
 
-async fn core_wired_limit_remove_daemon(
-    _req: MlxEngineWiredLimitRemoveDaemonRequest,
+async fn core_wired_limit_disable(
+    req: MlxEngineWiredLimitDisableRequest,
 ) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
+    let installed = wired_limit::installed_daemon_mb()
+        .internal_err_ctx("reading the wired-limit LaunchDaemon")?
+        .is_some();
+    let what = if installed {
+        "restore the macOS default GPU wired limit and remove its boot setting"
+    } else {
+        "restore the macOS default GPU wired limit"
+    };
+    let prompt = wired_limit::prompt_text(what, req.requested_by.as_deref());
+    let shell = wired_limit::disable_shell(installed);
+    wired_limit::run_as_admin(&shell, &prompt)
+        .await
+        .invalid_params_err()?;
+    Ok(wired_limit_after(shell))
+}
+
+async fn core_wired_limit_remove_daemon(
+    req: MlxEngineWiredLimitRemoveDaemonRequest,
+) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
+    let prompt = wired_limit::prompt_text(
+        "remove the GPU wired limit's boot setting",
+        req.requested_by.as_deref(),
+    );
     let shell = wired_limit::remove_daemon_shell();
-    wired_limit::run_as_admin(&shell)
+    wired_limit::run_as_admin(&shell, &prompt)
         .await
         .invalid_params_err()?;
     Ok(wired_limit_after(shell))
@@ -1552,20 +1626,53 @@ impl GooseAcpAgent {
         &self,
         req: MlxEngineMemoryMachineRequest,
     ) -> Result<MlxEngineMemoryMachineResponse, agent_client_protocol::Error> {
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            return self
+                .mlx_engine_relay(&node, MlxOp::MemoryMachine, &req)
+                .await;
+        }
         core_memory_machine(req).await
     }
 
     pub(super) async fn on_mlx_engine_wired_limit_apply(
         &self,
-        req: MlxEngineWiredLimitApplyRequest,
+        mut req: MlxEngineWiredLimitApplyRequest,
     ) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
+        req.requested_by = None;
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            req.requested_by = Some(relay_requester_name());
+            return self
+                .mlx_engine_relay(&node, MlxOp::WiredLimitApply, &req)
+                .await;
+        }
         core_wired_limit_apply(req).await
+    }
+
+    pub(super) async fn on_mlx_engine_wired_limit_disable(
+        &self,
+        mut req: MlxEngineWiredLimitDisableRequest,
+    ) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
+        req.requested_by = None;
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            req.requested_by = Some(relay_requester_name());
+            return self
+                .mlx_engine_relay(&node, MlxOp::WiredLimitDisable, &req)
+                .await;
+        }
+        core_wired_limit_disable(req).await
     }
 
     pub(super) async fn on_mlx_engine_wired_limit_remove_daemon(
         &self,
-        req: MlxEngineWiredLimitRemoveDaemonRequest,
+        mut req: MlxEngineWiredLimitRemoveDaemonRequest,
     ) -> Result<MlxEngineWiredLimitResponse, agent_client_protocol::Error> {
+        req.requested_by = None;
+        if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
+            req.requested_by = Some(relay_requester_name());
+            return self
+                .mlx_engine_relay(&node, MlxOp::WiredLimitRemoveDaemon, &req)
+                .await;
+        }
         core_wired_limit_remove_daemon(req).await
     }
 
@@ -1859,6 +1966,30 @@ impl MlxControl for GoosedMlxControl {
             ),
             MlxOp::ReplicaCancel => mlx_response_to_value(
                 super::mlx_replica::core_replica_cancel(mlx_req_from_value(request)?).await,
+            ),
+            MlxOp::MemoryMachine => {
+                mlx_response_to_value(core_memory_machine(mlx_req_from_value(request)?).await)
+            }
+            MlxOp::WiredLimitApply => mlx_response_to_value(
+                core_wired_limit_apply(from_peer(
+                    mlx_req_from_value::<MlxEngineWiredLimitApplyRequest>(request)?,
+                    |r| &mut r.requested_by,
+                ))
+                .await,
+            ),
+            MlxOp::WiredLimitDisable => mlx_response_to_value(
+                core_wired_limit_disable(from_peer(
+                    mlx_req_from_value::<MlxEngineWiredLimitDisableRequest>(request)?,
+                    |r| &mut r.requested_by,
+                ))
+                .await,
+            ),
+            MlxOp::WiredLimitRemoveDaemon => mlx_response_to_value(
+                core_wired_limit_remove_daemon(from_peer(
+                    mlx_req_from_value::<MlxEngineWiredLimitRemoveDaemonRequest>(request)?,
+                    |r| &mut r.requested_by,
+                ))
+                .await,
             ),
         }
     }

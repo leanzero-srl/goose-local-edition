@@ -1642,6 +1642,9 @@ fn destructive_mlx_ops_include_settings_update_and_unmount() {
         MlxOp::Unmount,
         MlxOp::ReplicaCancel,
         MlxOp::MemoryFree,
+        MlxOp::WiredLimitApply,
+        MlxOp::WiredLimitDisable,
+        MlxOp::WiredLimitRemoveDaemon,
     ] {
         assert!(op.is_destructive(), "{op:?} reshapes the node; must warn");
     }
@@ -1654,6 +1657,7 @@ fn destructive_mlx_ops_include_settings_update_and_unmount() {
         MlxOp::ReplicaTargets,
         MlxOp::ReplicaProgress,
         MlxOp::MemoryHolders,
+        MlxOp::MemoryMachine,
     ] {
         assert!(!op.is_destructive(), "{op:?} is a read");
     }

@@ -187,6 +187,15 @@ pub enum MlxOp {
     /// `manage_models`); quitting apps only when the node's own
     /// `GOOSE_LINK_ALLOW_REMOTE_APP_QUIT` switch is on.
     MemoryFree,
+    /// This node's memory facts and wired limit (the Memory tab's machine read).
+    MemoryMachine,
+    /// Raise (or set) this node's GPU wired limit: its own app shows the macOS administrator
+    /// prompt to whoever is at it; nothing changes unless that person approves.
+    WiredLimitApply,
+    /// Restore this node's macOS default wired limit (and remove its boot setting), behind the
+    /// same prompt.
+    WiredLimitDisable,
+    WiredLimitRemoveDaemon,
 }
 
 impl MlxOp {
@@ -218,6 +227,10 @@ impl MlxOp {
             Self::ReplicaCancel => "replicaCancel",
             Self::MemoryHolders => "memoryHolders",
             Self::MemoryFree => "memoryFree",
+            Self::MemoryMachine => "memoryMachine",
+            Self::WiredLimitApply => "wiredLimitApply",
+            Self::WiredLimitDisable => "wiredLimitDisable",
+            Self::WiredLimitRemoveDaemon => "wiredLimitRemoveDaemon",
         }
     }
 
@@ -247,6 +260,10 @@ impl MlxOp {
             "replicaCancel" => Self::ReplicaCancel,
             "memoryHolders" => Self::MemoryHolders,
             "memoryFree" => Self::MemoryFree,
+            "memoryMachine" => Self::MemoryMachine,
+            "wiredLimitApply" => Self::WiredLimitApply,
+            "wiredLimitDisable" => Self::WiredLimitDisable,
+            "wiredLimitRemoveDaemon" => Self::WiredLimitRemoveDaemon,
             _ => return None,
         })
     }
@@ -256,7 +273,8 @@ impl MlxOp {
     /// (persists into the node's own config and can change what it serves) and unmount
     /// (stops the engine a local session may be using), replica-cancel (deletes the
     /// partial copy) and memory-free (stops goose's engines/servers, unloads models, may quit
-    /// apps when the node allows it). These are logged at `warn` on the executing node so a remote
+    /// apps when the node allows it) and the wired-limit ops (root changes, each behind the node's own
+    /// administrator prompt). These are logged at `warn` on the executing node so a remote
     /// destructive action is never silent.
     pub fn is_destructive(self) -> bool {
         matches!(
@@ -267,11 +285,14 @@ impl MlxOp {
                 | Self::Unmount
                 | Self::ReplicaCancel
                 | Self::MemoryFree
+                | Self::WiredLimitApply
+                | Self::WiredLimitDisable
+                | Self::WiredLimitRemoveDaemon
         )
     }
 
     /// Every op, so a round-trip test cannot miss a variant added later.
-    pub const ALL: [MlxOp; 24] = [
+    pub const ALL: [MlxOp; 28] = [
         Self::Status,
         Self::Mount,
         Self::Unmount,
@@ -296,6 +317,10 @@ impl MlxOp {
         Self::ReplicaCancel,
         Self::MemoryHolders,
         Self::MemoryFree,
+        Self::MemoryMachine,
+        Self::WiredLimitApply,
+        Self::WiredLimitDisable,
+        Self::WiredLimitRemoveDaemon,
     ];
 }
 
