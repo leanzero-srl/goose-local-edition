@@ -8,6 +8,8 @@ pub mod extension_manager;
 pub mod final_output_tool;
 pub(crate) mod large_response_handler;
 mod loop_collapse;
+pub(crate) use agent::EMPTY_TURN_MESSAGE;
+pub(crate) use loop_collapse::GOOSE_STOPPED_AS_LOOP;
 pub mod mcp_client;
 pub mod moim;
 pub mod platform_extensions;

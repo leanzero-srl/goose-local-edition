@@ -399,15 +399,15 @@ pub fn mark_unverified_numbers(model_text: &str, known: &KnownNumbers) -> String
     out
 }
 
-/// The mark goose writes after an absolute path the summary names that is not on disk.
-pub const NOT_ON_DISK: &str = " (not on disk)";
+/// How goose's mark after a path the summary names wrong begins.
+pub const NOT_ON_DISK_LEAD: &str = " (not on disk";
 
 /// Marks the absolute paths in a model's summary that are not on disk (WR-18, Gabee round 4,
 /// 2026-10-31: "Input files … in `/export/`" — the chat's folder held `export/`, the root did not —
 /// and the next call ran `grep "ERROR" /export/dockgw-2026-10.log`: "No such file or directory").
-/// A path whose first folder exists at the root but which does not exist gets [`NOT_ON_DISK`]; a
-/// path whose first folder is not at the root but is in the chat's folder gets that, and the full
-/// path that is; any other `/…` word (an API route, `/v3/docs`) is left alone. Never refused, only
+/// Only a path whose first folder is not at the root but is in the chat's folder is marked, with
+/// the full path that is; any other `/…` word (a real path, an API route, `/v3/docs`, a fenced
+/// command) is left alone. Never refused, only
 /// marked, like [`mark_unverified_numbers`].
 pub fn mark_missing_paths(model_text: &str, chat_folder: Option<&std::path::Path>) -> String {
     let is_path_char =
@@ -416,8 +416,17 @@ pub fn mark_missing_paths(model_text: &str, chat_folder: Option<&std::path::Path
     let mut out = String::with_capacity(model_text.len());
     let mut copied = 0;
     let mut i = 0;
+    let mut in_fence = false;
     while i < chars.len() {
         let (at, c) = chars[i];
+        // A fenced block is a command or code as written: never marked inside.
+        if (i == 0 || chars[i - 1].1 == '\n') && model_text[at..].starts_with("```") {
+            in_fence = !in_fence;
+        }
+        if in_fence {
+            i += 1;
+            continue;
+        }
         let starts_word = i == 0
             || matches!(chars[i - 1].1, ' ' | '\t' | '\n' | '`' | '(' | '"' | '\'' | '[' | '*');
         if c != '/' || !starts_word {
@@ -440,16 +449,15 @@ pub fn mark_missing_paths(model_text: &str, chat_folder: Option<&std::path::Path
         if path.exists() {
             continue;
         }
-        let mark = if std::path::Path::new("/").join(first).exists() {
-            NOT_ON_DISK.to_string()
-        } else {
-            match chat_folder.map(|folder| folder.join(token.trim_start_matches('/'))) {
-                Some(there) if there.exists() => format!(
-                    " (not on disk; {} is)",
-                    there.display()
-                ),
-                _ => continue,
-            }
+        // Only a path whose first folder is not at the root but is in the chat's folder: a path
+        // under a real root folder may be another machine's, a file still to write, or a route
+        // the disk's case-folding matches (`/users/search`), and is left alone.
+        if std::path::Path::new("/").join(first).exists() {
+            continue;
+        }
+        let mark = match chat_folder.map(|folder| folder.join(token.trim_start_matches('/'))) {
+            Some(there) if there.exists() => format!("{NOT_ON_DISK_LEAD}; {} is)", there.display()),
+            _ => continue,
         };
         // After a closing backquote, not inside it.
         let place = if model_text[token_end..].starts_with('`') {
@@ -457,7 +465,7 @@ pub fn mark_missing_paths(model_text: &str, chat_folder: Option<&std::path::Path
         } else {
             token_end
         };
-        if model_text[place..].starts_with(" (not on disk") {
+        if model_text[place..].starts_with(NOT_ON_DISK_LEAD) {
             continue;
         }
         out.push_str(&model_text[copied..place]);
@@ -664,7 +672,12 @@ mod tests {
             marked.contains(&format!("`/export/` (not on disk; {} is)", there.display())),
             "{marked}"
         );
-        assert!(marked.contains("gone.txt (not on disk)"), "{marked}");
+        // Under a real root folder: another machine's path or a file still to write, left alone.
+        assert!(!marked.contains("gone.txt (not"), "{marked}");
+        let fenced = "```\ngrep ERROR /export/dock.log\n```\nthen /export/";
+        let fenced_marked = super::mark_missing_paths(fenced, Some(dir.path()));
+        assert!(fenced_marked.starts_with("```\ngrep ERROR /export/dock.log\n```"), "{fenced_marked}");
+        assert!(fenced_marked.ends_with("is)"), "{fenced_marked}");
         assert!(!marked.contains("dock.log` (not"), "{marked}");
         assert!(!marked.contains("summary` (not"), "{marked}");
         assert!(!marked.contains("docs (not") && !marked.contains("docs. (not"), "{marked}");

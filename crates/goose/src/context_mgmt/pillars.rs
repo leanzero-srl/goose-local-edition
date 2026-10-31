@@ -1353,6 +1353,18 @@ fn person_text(message: &Message) -> Option<String> {
 /// saw is not a reply with text and no tool call — nothing at all (a compaction before the turn
 /// starts), or a tool call or its result (a compaction in the middle of the turn's work). Rows
 /// only the model sees (a kept tail's copies, goose's continuation line) are not the activity.
+/// A row goose wrote in the model's place when a turn ended without its answer: a provider error
+/// it ends the turn on, the empty-turn notice, the loop stop stamp alone. Not a reply.
+fn is_goose_notice(message: &Message) -> bool {
+    if message.metadata.provider_error.is_some() {
+        return true;
+    }
+    let text = message.as_concat_text();
+    let text = text.trim();
+    text == crate::agents::EMPTY_TURN_MESSAGE
+        || text == crate::agents::GOOSE_STOPPED_AS_LOOP.trim()
+}
+
 fn newest_message_unanswered(messages: &[Message]) -> bool {
     let Some(at) = messages.iter().rposition(|m| person_text(m).is_some()) else {
         return false;
@@ -1371,6 +1383,7 @@ fn newest_message_unanswered(messages: &[Message]) -> bool {
         if calls_a_tool {
             answered = false;
         } else if message.role == Role::Assistant
+            && !is_goose_notice(message)
             && message.content.iter().any(
                 |c| matches!(c, MessageContent::Text(t) if !t.text.trim().is_empty()),
             )
@@ -1783,6 +1796,10 @@ mod tests {
         mid_turn.push(call("t1", "shell", serde_json::json!({"command": "ls export"})));
         mid_turn.push(Message::user().with_tool_response("t1", Ok(text_result("ROWEREK.md"))));
         assert!(kept_of(&mid_turn).contains("## Not answered yet"));
+
+        let mut failed_turn = mid_turn.clone();
+        failed_turn.push(Message::assistant().with_text(crate::agents::EMPTY_TURN_MESSAGE));
+        assert!(kept_of(&failed_turn).contains("## Not answered yet"));
 
         let mut answered = mid_turn.clone();
         answered.push(reply());

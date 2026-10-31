@@ -515,6 +515,15 @@ fn without_stream_redirects(command: &str) -> String {
     let mut out = String::with_capacity(command.len());
     let mut i = 0;
     while i < chars.len() {
+        if chars[i] == '>'
+            && chars.get(i + 1) == Some(&'&')
+            && !chars.get(i + 2).is_some_and(|c| c.is_ascii_digit() || *c == '-')
+        {
+            // `>& file` sends both streams to a file: a write, kept as `>`.
+            out.push('>');
+            i += 2;
+            continue;
+        }
         if chars[i] == '>' && chars.get(i + 1) == Some(&'&') {
             // Drop the fd before `>` too (`2>&1`).
             while out.ends_with(|c: char| c.is_ascii_digit()) {
@@ -879,9 +888,11 @@ mod tests {
             Some("x=$(ls; pwd) && make")
         );
         assert_eq!(
-            exit_step("python3 - <<EOF\nprint(1); print(2)\nEOF").as_deref(),
-            Some("python3 - <<EOF")
+            exit_step("python3 - <<EOF\nprint(1); print(2)\nEOF\nls x").as_deref(),
+            Some("ls x")
         );
+        // A last step that reads a body is that body's program: not told apart by its text.
+        assert_eq!(exit_step("cd /w && python3 << 'EOF'\nprint(1)\nEOF"), None);
         // A chain stays one step; a trailing comment line is not a step.
         assert_eq!(
             exit_step("make && ./run\n# done").as_deref(),
@@ -911,5 +922,6 @@ mod tests {
         assert!(only_looks("ls /Users/x/other-chat/work/export/ 2>&1"));
         assert!(only_looks("grep -c x log &>/dev/null"));
         assert!(!only_looks("ls x 2>&1 | python3 parse.py"));
+        assert!(!only_looks("ls x >& out.txt"));
     }
 }
