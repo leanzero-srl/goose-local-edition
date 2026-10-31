@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "Bu düğüm {model} modeline yönlendirilemedi: {error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "Bir düğüm seç"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Ayrıntılar"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "Takılıyor"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "Etkin bir düğüm yapılandırılmamış."
+    "defaultMessage": "Bu sohbet Any node (Auto) üzerinde; bu yalnızca swarm havuzunuzdan yanıt verir ve havuzda açık düğüm yok."
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Bu düğüm için kayıtlı MLX modeli yok — Providers’ta bir tane seçin."
@@ -8494,6 +8497,9 @@
   },
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Yaklaşık {duration} içinde başlar · # yüklemenin medyanı} other{Yaklaşık {duration} içinde başlar · # yüklemenin medyanı}}"
+  },
+  "nodes.startsNewChats": {
+    "defaultMessage": "Yeni sohbetler artık bu düğümde başlıyor: Any node (Auto) içinde yanıt verecek düğüm yoktu."
   },
   "nodes.stateCantRun": {
     "defaultMessage": "Çalışamaz"

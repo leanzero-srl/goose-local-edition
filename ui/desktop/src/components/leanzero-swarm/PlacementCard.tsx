@@ -41,6 +41,7 @@ import {
   nodeIdFor,
   placementOfCandidate,
   putNode,
+  startsNewChatsText,
   whereWords,
   type PinnedPlacement,
 } from '../nodes/nodeDraft';
@@ -309,7 +310,14 @@ type NoticeTone = Exclude<Tone, 'secondary'>;
 /** "Save as node" on one row: in flight, saved (or already a node), or refused with goose's words. */
 type SaveState =
   | { kind: 'saving' }
-  | { kind: 'saved'; id: string; name: string; already: boolean }
+  | {
+      kind: 'saved';
+      id: string;
+      name: string;
+      already: boolean;
+      /** The write moved new chats from Any node (Auto), which had nothing, onto it (Q-522). */
+      startsNewChats?: boolean;
+    }
   | { kind: 'refused'; text: string };
 
 /**
@@ -1146,7 +1154,7 @@ function PlacementCardBody({
       if (response.written) refreshGlanceNodes();
       say(
         response.written
-          ? { kind: 'saved', id, name, already: false }
+          ? { kind: 'saved', id, name, already: false, startsNewChats: response.startsNewChats }
           : {
               kind: 'refused',
               text: (response.refusals ?? []).map((r) => r.message).join('; ') || refused,
@@ -1444,6 +1452,11 @@ function PlacementCardBody({
             {intl.formatMessage(saved.already ? i18n.alreadyNode : i18n.savedAs, {
               name: saved.name,
             })}{' '}
+            {saved.startsNewChats && (
+              <span data-testid={`placement-saved-new-chats-${way.kind}`}>
+                {startsNewChatsText(intl)}{' '}
+              </span>
+            )}
             <a className="underline" href={`#${nodeHref(saved.id)}`}>
               {intl.formatMessage(i18n.openInNodes)}
             </a>

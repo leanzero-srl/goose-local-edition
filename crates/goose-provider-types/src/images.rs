@@ -35,13 +35,30 @@ pub fn convert_image(image: &ImageContent, image_format: &ImageFormat) -> Value 
     }
 }
 
-/// An image part a request to a text-only engine did not carry (Q-260). `label` names it in the
-/// placeholder the model reads and in the chat's notice; `new` = no assistant message follows it
-/// in the request, so this is the first request that withholds it and the chat has not been told.
+/// Why a request carried an image part as its named placeholder. The placeholder the model reads
+/// and the chat's notice both say THIS reason, never another one (F22, 2026-10-31: Gemma 4 E4B is
+/// served with `vision`, the engine refused a 40,704-token turn carrying read_image's PNG over its
+/// 8,192-token image-request cap, and the retry told the chat "gemma-4-e4b-it-8bit reads text
+/// only" — a false statement about a model that reads images).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WithholdReason {
+    /// The engine declares it reads text only (Q-260), or refused an image part as such.
+    #[default]
+    TextOnly,
+    /// The engine reads images but refused this request because its prompt is over the cap the
+    /// engine puts on a request that carries media (Rapid-MLX's MLLM lane: "Vision-request prompt
+    /// tokens (N) exceeds the per-batch cap (8192 ...)").
+    OverMediaPromptCap,
+}
+
+/// An image part a request did not carry (Q-260). `label` names it in the placeholder the model
+/// reads and in the chat's notice; `new` = no assistant message follows it in the request, so this
+/// is the first request that withholds it and the chat has not been told; `reason` is why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WithheldImage {
     pub label: String,
     pub new: bool,
+    pub reason: WithholdReason,
 }
 
 /// What formatting a request did with its image parts: how many went out as images, and which
@@ -79,30 +96,46 @@ pub fn tool_image_label(tool: Option<&str>, mime_type: &str) -> String {
     }
 }
 
-/// The text a text-only engine reads where the image was.
-pub fn withheld_image_placeholder(label: &str) -> String {
-    format!("[image {label} not sent: this model reads text only]")
+/// The text the model reads where the image was, naming why it was not sent.
+pub fn withheld_image_placeholder(label: &str, reason: WithholdReason) -> String {
+    match reason {
+        WithholdReason::TextOnly => format!("[image {label} not sent: this model reads text only]"),
+        WithholdReason::OverMediaPromptCap => format!(
+            "[image {label} not sent: this request was too long for the engine to take an image \
+             with it]"
+        ),
+    }
 }
 
 /// The chat's one notice for the images this request is the first to withhold; `None` when every
 /// withheld image was already announced by an earlier request (a past image in history).
 pub fn withheld_images_notice(model: &str, withheld: &[WithheldImage]) -> Option<String> {
-    let labels: Vec<&str> = withheld
-        .iter()
-        .filter(|image| image.new)
-        .map(|image| image.label.as_str())
-        .collect();
+    let fresh: Vec<&WithheldImage> = withheld.iter().filter(|image| image.new).collect();
     let model = model.rsplit('/').next().unwrap_or(model);
-    match labels.as_slice() {
-        [] => None,
-        [one] => Some(format!(
-            "{model} reads text only — the image {one} was not sent"
-        )),
-        many => Some(format!(
-            "{model} reads text only — the images {} were not sent",
-            many.join(", ")
-        )),
+    let why = |reason: WithholdReason| match reason {
+        WithholdReason::TextOnly => format!("{model} reads text only"),
+        WithholdReason::OverMediaPromptCap => format!(
+            "{model} reads images, but this request was too long for the engine to take one"
+        ),
+    };
+    let mut lines = Vec::new();
+    for reason in [WithholdReason::TextOnly, WithholdReason::OverMediaPromptCap] {
+        let labels: Vec<&str> = fresh
+            .iter()
+            .filter(|image| image.reason == reason)
+            .map(|image| image.label.as_str())
+            .collect();
+        match labels.as_slice() {
+            [] => {}
+            [one] => lines.push(format!("{} — the image {one} was not sent", why(reason))),
+            many => lines.push(format!(
+                "{} — the images {} were not sent",
+                why(reason),
+                many.join(", ")
+            )),
+        }
     }
+    (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
 /// What a model's provider declares about image input. A provider reads it from its own metadata:
@@ -362,6 +395,7 @@ mod tests {
         let image = |label: &str, new: bool| WithheldImage {
             label: label.to_string(),
             new,
+            reason: WithholdReason::TextOnly,
         };
         let model = "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx";
         assert_eq!(
@@ -389,9 +423,36 @@ mod tests {
             )
         );
         assert_eq!(
-            withheld_image_placeholder(&path_image_label("/Users/me/shots/q232-src.png")),
+            withheld_image_placeholder(
+                &path_image_label("/Users/me/shots/q232-src.png"),
+                WithholdReason::TextOnly
+            ),
             "[image q232-src.png not sent: this model reads text only]"
         );
+    }
+
+    /// F22 (Gabee, 2026-10-31): an image the engine refused over its media prompt cap is never
+    /// reported as "reads text only" — the model reads images.
+    #[test]
+    fn an_image_withheld_over_the_media_prompt_cap_never_says_the_model_reads_text_only() {
+        let capped = WithheldImage {
+            label: "from read_image (image/png)".to_string(),
+            new: true,
+            reason: WithholdReason::OverMediaPromptCap,
+        };
+        let notice = withheld_images_notice("mlx/gemma-4-e4b-it-8bit", &[capped]).unwrap();
+        assert_eq!(
+            notice,
+            "gemma-4-e4b-it-8bit reads images, but this request was too long for the engine to \
+             take one — the image from read_image (image/png) was not sent"
+        );
+        assert!(!notice.contains("text only"));
+        let placeholder = withheld_image_placeholder(
+            "from read_image (image/png)",
+            WithholdReason::OverMediaPromptCap,
+        );
+        assert!(!placeholder.contains("text only"), "{placeholder}");
+        assert!(placeholder.contains("too long"), "{placeholder}");
     }
     use tempfile;
 

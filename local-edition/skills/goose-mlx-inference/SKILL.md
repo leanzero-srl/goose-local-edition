@@ -87,6 +87,9 @@ Write each answer into the run's NOTES.md / parity file.
    (max(phys_footprint, MLX active+cache)) out of "others" and rises only on a reading held 15 s (at once only
    while swapping). Read `memory_budget.machine`: others_instant_bytes vs others_sustained_bytes vs
    others_ref_bytes (a spike shows as an instant reading the reference did not follow).
+   lz.22 (2026-10-31) = lz.21 + a pinned hybrid checkpoint at the system/tools frame end and deepest-resume LCP
+   selection: a new chat with the same frame resumes at the frame end (Gabee: resumed_at 20480 -> 21856,
+   2.79 s -> 0.65 s). Check `resumed_at` in the engine log of the second chat, never only the first.
 6. **Benchmark only:** parity table vs the cloud entrant (context, vision, thinking sent, sampling, tool parser,
    output cap, timeouts), every row PASS before Run:
    `python3 ~/goose-builds/loop-state/local-parity/parity_check.py --port <p> --config <root>/config/config.yaml --cloud-input-modalities text,image --min-context <cloud peak; sb-7.2 = 322851>`.

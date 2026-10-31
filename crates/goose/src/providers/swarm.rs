@@ -1337,7 +1337,7 @@ mod tests {
         assert!(
             unknown
                 .to_string()
-                .contains("the pool's context window is unknown — no `swarm` block"),
+                .contains("the pool's context window is unknown — no enabled device is configured — new chats start on Any node (Auto)"),
             "{unknown}"
         );
         let build = ModelConfig::new(SWARM_BUILD_MODEL);

@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "Không thể trỏ nút này tới {model}: {error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "Chọn một nút"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Chi tiết"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "Đang gắn"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "Chưa cấu hình nút nào đang bật."
+    "defaultMessage": "Cuộc trò chuyện này đang ở Any node (Auto), chỉ trả lời từ nhóm swarm của bạn, và không có nút nào trong đó đang bật."
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Không có mô hình MLX đã lưu cho nút này — hãy chọn một trong Providers."
@@ -8494,6 +8497,9 @@
   },
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Khởi động trong khoảng {duration} · trung vị của # lượt nạp} other{Khởi động trong khoảng {duration} · trung vị của # lượt nạp}}"
+  },
+  "nodes.startsNewChats": {
+    "defaultMessage": "Các cuộc trò chuyện mới giờ bắt đầu trên nút này: Any node (Auto) không có nút nào để trả lời."
   },
   "nodes.stateCantRun": {
     "defaultMessage": "Không chạy được"

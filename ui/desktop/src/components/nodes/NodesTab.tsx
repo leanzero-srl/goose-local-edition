@@ -19,7 +19,7 @@ import { NodeCard, type NodeCardAction } from './NodeCard';
 import { NewNodeDialog, type NewNodeStart } from './NewNodeDialog';
 import { usedByOf } from './nodeGlance';
 import { useNodeFacts } from './useNodeFacts';
-import { nodeIdFor, putNode, uniqueName } from './nodeDraft';
+import { nodeIdFor, putNode, startsNewChatsText, uniqueName } from './nodeDraft';
 import { RemoveConfirmDialog, type RemoveConfirmation } from './RemoveConfirmDialog';
 import { chatNodeSetCount, type NodeDef, type NodesConfig, type ResolvedNodeDef } from './model';
 
@@ -335,7 +335,12 @@ function NodesTabBody({ onEditInPool }: NodesTabProps) {
       say(
         def.id,
         response.written
-          ? { tone: 'ok', text: intl.formatMessage(i18n.saved) }
+          ? {
+              tone: 'ok',
+              text: response.startsNewChats
+                ? `${intl.formatMessage(i18n.saved)} ${startsNewChatsText(intl)}`
+                : intl.formatMessage(i18n.saved),
+            }
           : { tone: 'err', text: (response.refusals ?? []).map((r) => r.message).join('; ') }
       );
     } catch (e) {
@@ -666,8 +671,9 @@ function NodesTabBody({ onEditInPool }: NodesTabProps) {
           nodes={nodes}
           serving={residency?.serving ?? null}
           onClose={() => setDialog(null)}
-          onSaved={(def, startIt) => {
+          onSaved={(def, startIt, startsNewChats) => {
             refreshGlanceNodes();
+            if (startsNewChats) say(def.id, { tone: 'ok', text: startsNewChatsText(intl) });
             if (startIt) {
               const saved = {
                 def,

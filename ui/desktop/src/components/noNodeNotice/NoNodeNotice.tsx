@@ -22,6 +22,7 @@ import { refusalStopFromRecord, type SplitRecord } from '../chatServedBy/splitRe
 import { routeServesChat } from '../chatServedBy/chatServedBy';
 import { splitStopReason } from '../chatServedBy/splitStopText';
 import { ENGINE_ROUTE } from './ComposerReadiness';
+import { NODES_ROUTE } from '../../utils/navigationUtils';
 import type { NoNodeRow, NodeReason } from './parseNoNodeError';
 import { answerOnNextOf } from './answerOnNext';
 import { useGlanceNodesWhen } from '../engineGlance/glanceStore';
@@ -91,7 +92,12 @@ const i18n = defineMessages({
     defaultMessage: '{model} is not loaded on the server this node points to.',
   },
   busy: { id: 'noNodeNotice.busy', defaultMessage: 'Every slot on this node is busy.' },
-  noDevices: { id: 'noNodeNotice.noDevices', defaultMessage: 'No enabled node is configured.' },
+  noDevices: {
+    id: 'noNodeNotice.noDevices',
+    defaultMessage:
+      'This chat is on Any node (Auto), which answers only from your swarm pool, and no node in it is on.',
+  },
+  chooseNode: { id: 'noNodeNotice.chooseNode', defaultMessage: 'Choose a node' },
   mount: { id: 'noNodeNotice.mount', defaultMessage: 'Mount {model}' },
   mounting: { id: 'noNodeNotice.mounting', defaultMessage: 'Mounting' },
   mounted: { id: 'noNodeNotice.mounted', defaultMessage: 'Mounted' },
@@ -390,6 +396,8 @@ export default function NoNodeNotice({
     [read, upsert]
   );
   const mlxDown = rows.some((r) => r.reason.kind === 'mlx-down' && r.nodeId != null);
+  // Auto had nothing to route to (Q-522): the way out is a node, chosen on the Nodes page.
+  const poolEmpty = rows.some((r) => r.reason.kind === 'no-devices');
   const armed = live && mlxDown;
 
   const readSwarm = useCallback(
@@ -706,6 +714,17 @@ export default function NoNodeNotice({
 
       <div className="flex flex-wrap items-center gap-2">
         {offerButton}
+        {poolEmpty && (
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<ArrowRight />}
+            data-testid="no-node-choose-node"
+            onClick={() => navigate(NODES_ROUTE)}
+          >
+            {intl.formatMessage(i18n.chooseNode)}
+          </Button>
+        )}
         {live && retryText != null && (
           <Button
             variant={retryPrimary ? 'primary' : 'secondary'}

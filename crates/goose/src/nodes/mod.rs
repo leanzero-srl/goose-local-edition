@@ -957,6 +957,13 @@ fn store(
         Ok(view) => adopt(view.as_ref(), incoming, &mac).config,
         Err(_) => incoming,
     };
+    let incoming = new_chats_on_added_node(
+        incoming,
+        &current.config,
+        previous_for_new_chats,
+        new_chats_run_on_auto(config)
+            && crate::providers::swarm_router::auto_routes_nothing(config),
+    );
     refusals.extend(validate(&incoming));
     if let NodesForBuilds::Strategy { id } = &incoming.for_builds {
         let swarm = config.get_param::<serde_json::Value>(SWARM_KEY);
@@ -994,6 +1001,49 @@ fn store(
         refusals: Vec::new(),
         read: read(config, facts.this_mac)?,
     })
+}
+
+/// Whether new chats really start on Any node (Auto): the active provider is `swarm` with the
+/// model `swarm`. `forNewChats = auto` is also the nodes default for a person who never chose the
+/// swarm (a direct openai/anthropic user), so it alone never says chats run on Auto.
+pub fn new_chats_run_on_auto(config: &Config) -> bool {
+    crate::config::get_active_provider(config).as_deref() == Some(SWARM_PROVIDER)
+        && crate::config::get_active_model(config).and_then(|m| parse_route_model(&m))
+            == Some(RouteModel::Auto)
+}
+
+/// Q-522: a node added while new chats really start on Any node (Auto) (the active provider is
+/// the swarm on `swarm`, [`new_chats_run_on_auto`]; never a direct-provider user) and Auto has
+/// nothing to route to (no pool, an empty pool, every device off, no remote route) becomes where
+/// new chats start, in
+/// the same write: Auto could only refuse every new chat, and the person just made the one node
+/// that can answer. Stated, never silent: the write's read carries the new `forNewChats`, which
+/// the desktop says beside "Saved as the node" and shows under "New chats start on", and the
+/// global defaults follow through the `forNewChats` change below. A pool node (adoption) is not
+/// a node the person added; a write that names `forNewChats` itself, or an Auto that can route,
+/// is left exactly as written.
+pub fn new_chats_on_added_node(
+    mut incoming: NodesConfig,
+    current: &NodesConfig,
+    previous_for_new_chats: &NodesForNewChats,
+    auto_strands_new_chats: bool,
+) -> NodesConfig {
+    if !auto_strands_new_chats
+        || *previous_for_new_chats != NodesForNewChats::Auto
+        || incoming.for_new_chats != NodesForNewChats::Auto
+    {
+        return incoming;
+    }
+    let known: HashSet<&str> = current.defs.iter().map(|d| d.id.as_str()).collect();
+    let added = incoming
+        .defs
+        .iter()
+        .find(|d| d.origin != NodeOrigin::Pool && !known.contains(d.id.as_str()))
+        .map(|d| d.id.clone());
+    if let Some(id) = added {
+        incoming.for_new_chats = NodesForNewChats::Node { id };
+    }
+    incoming
 }
 
 /// What a removal changes, before the write door validates and stores it.

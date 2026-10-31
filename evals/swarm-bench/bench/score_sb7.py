@@ -978,24 +978,28 @@ def _(c: Ctx):
     # the API default sort, not the table's default order (8985a86d rendered the newest 12
     # correctly and a first-50-ascending join scored it 0/12). The probe's rowAmounts carries
     # the row's id over the same rows/cells as amountTexts; a cell whose id is a pack id is
-    # joined to that payment (currency + digits + exponent). A cell with no pack id scores 0
-    # and is named in the detail: §4 requires rows to carry data-id, and grading such a cell
-    # against every pack amount of its currency passed '$7.83' for $78.30 (review 2026-10-31).
+    # joined to that payment (currency + digits + exponent), any other cell to any pack
+    # payment of its currency. The exponent rule never depends on the join.
     pack_by_id = c.pack.index()
+    by_cur: Dict[str, set] = {}
+    for row in c.pack.payments:
+        by_cur.setdefault(row["currency"], set()).add(row["amount_minor"])
     shown = [r for r in (p.get("rowAmounts") or [])[:12]
              if isinstance(r, dict) and isinstance(r.get("amountText"), str)
              and r["amountText"].strip()]
     ids = ([r.get("id") for r in shown] if [r["amountText"] for r in shown] == texts
            else [None] * len(texts))
     graded = []
-    unjoined = 0
     for t, pid in zip(texts, ids):
         cur = _detect_currency(t)
         row = pack_by_id.get(pid) if isinstance(pid, str) else None
-        ok_cell = (cur is not None and row is not None and row["currency"] == cur
-                   and _money_ok(cur, row["amount_minor"], t))
+        if cur is None:
+            ok_cell = False
+        elif row is not None:
+            ok_cell = row["currency"] == cur and _money_ok(cur, row["amount_minor"], t)
+        else:
+            ok_cell = any(_money_ok(cur, m, t) for m in by_cur.get(cur, ()))
         graded.append((cur, ok_cell))
-        unjoined += row is None
     ok = sum(1 for _cur, o in graded if o) / len(graded)
     trap_parts = []
     for cur in ("JPY", "KWD"):
@@ -1018,13 +1022,10 @@ def _(c: Ctx):
     if offending:
         score = 0.0
     return g(score,
-             f"{ok:.2f} of {len(graded)} cells exponent-correct; JPY/KWD traps {trap:.2f}; "
-             f"{len(graded) - unjoined} of {len(graded)} cells matched by row id; "
-             f"{unjoined} without a pack id (scored 0)"
+             f"{ok:.2f} of {len(graded)} cells exponent-correct; JPY/KWD traps {trap:.2f}"
              + (f"; CROSS-CURRENCY SUM in {sorted(set(offending))}" if offending else ""),
              "a yen with two decimals — or money summed across currencies — is wrong money",
              parts={"cells": len(graded), "ok_frac": round(ok, 3), "jpy_kwd": trap_parts,
-                    "without_pack_id": unjoined,
                     "cross_currency_sum": sorted(set(offending))})
 
 

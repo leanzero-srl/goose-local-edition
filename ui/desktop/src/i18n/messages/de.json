@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "{model} konnte diesem Knoten nicht zugewiesen werden: {error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "Node auswählen"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Details"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "Wird eingebunden"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "Kein aktiver Knoten ist konfiguriert."
+    "defaultMessage": "Dieser Chat läuft auf Any node (Auto), das nur aus deinem Swarm-Pool antwortet, und darin ist kein Node eingeschaltet."
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Kein gespeichertes MLX-Modell für diesen Knoten — wähle eines unter Providers."
@@ -8494,6 +8497,9 @@
   },
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Startet in etwa {duration} · Median aus # Ladevorgang} other{Startet in etwa {duration} · Median aus # Ladevorgängen}}"
+  },
+  "nodes.startsNewChats": {
+    "defaultMessage": "Neue Chats starten jetzt auf diesem Node: Any node (Auto) hatte keinen Node, der antworten konnte."
   },
   "nodes.stateCantRun": {
     "defaultMessage": "Kann nicht laufen"

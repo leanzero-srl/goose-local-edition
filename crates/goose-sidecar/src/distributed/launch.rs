@@ -11430,7 +11430,10 @@ print("ok")
         // its own ranks copy first alike.
         let mut tailless = json.clone();
         tailless["program"] = "mlxLmServerTaillessPipelineSplit".into();
-        tailless.as_object_mut().unwrap().remove("fetch_within_budget");
+        tailless
+            .as_object_mut()
+            .unwrap()
+            .remove("fetch_within_budget");
         let read: RankSpec = serde_json::from_value(tailless).unwrap();
         assert!(matches!(
             read.program,
@@ -11511,9 +11514,7 @@ print("ok")
         }
         let refused = serde_json::from_value::<EveryConversationProgram>(json.clone()).unwrap_err();
         assert!(
-            refused
-                .to_string()
-                .contains("mlxLmServerFetchBudget"),
+            refused.to_string().contains("mlxLmServerFetchBudget"),
             "{refused}"
         );
         let why = link_control_refusal(&refused.to_string());
@@ -11567,9 +11568,7 @@ print("ok")
         }
         let refused = serde_json::from_value::<KvDtypeProgram>(json.clone()).unwrap_err();
         assert!(
-            refused
-                .to_string()
-                .contains("mlxLmServerFetchBudget"),
+            refused.to_string().contains("mlxLmServerFetchBudget"),
             "{refused}"
         );
         let why = link_control_refusal(&refused.to_string());
@@ -13091,17 +13090,13 @@ mod pipeline_launch_tests {
     fn the_pipeline_spec_round_trips_and_an_older_tag_reads_as_tensor() {
         let specs = specs_for(&mimo_split(), &pipeline_config());
         let json = serde_json::to_string(&specs[1]).unwrap();
-        assert!(
-            json.contains("\"mlxLmServerFetchBudget\""),
-            "{json}"
-        );
+        assert!(json.contains("\"mlxLmServerFetchBudget\""), "{json}");
         let back: RankSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(back, specs[1]);
 
-        let tensor = serde_json::to_string(&specs[1].clone()).unwrap().replace(
-            "mlxLmServerFetchBudget",
-            "mlxLmServerNamedConversation",
-        );
+        let tensor = serde_json::to_string(&specs[1].clone())
+            .unwrap()
+            .replace("mlxLmServerFetchBudget", "mlxLmServerNamedConversation");
         let mut old: serde_json::Value = serde_json::from_str(&tensor).unwrap();
         let program = old.as_object_mut().unwrap();
         program.remove("pipeline_split");

@@ -7808,6 +7808,9 @@
   "noNodeNotice.chatWithFailed": {
     "defaultMessage": "Не удалось назначить этому узлу {model}: {error}"
   },
+  "noNodeNotice.chooseNode": {
+    "defaultMessage": "Выбрать узел"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Подробности"
   },
@@ -7845,7 +7848,7 @@
     "defaultMessage": "Монтирование"
   },
   "noNodeNotice.noDevices": {
-    "defaultMessage": "Не настроено ни одного активного узла."
+    "defaultMessage": "Этот чат на Any node (Auto), который отвечает только из вашего пула swarm, а в нём нет ни одного включённого узла."
   },
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Для этого узла нет сохранённой модели MLX — выберите её в Providers."
@@ -8494,6 +8497,9 @@
   },
   "nodes.startsIn": {
     "defaultMessage": "{count,plural,one{Запускается примерно за {duration} · медиана по # загрузке} few{Запускается примерно за {duration} · медиана по # загрузкам} many{Запускается примерно за {duration} · медиана по # загрузкам} other{Запускается примерно за {duration} · медиана по # загрузкам}}"
+  },
+  "nodes.startsNewChats": {
+    "defaultMessage": "Новые чаты теперь начинаются на этом узле: у Any node (Auto) не было узла, чтобы ответить."
   },
   "nodes.stateCantRun": {
     "defaultMessage": "Не может работать"

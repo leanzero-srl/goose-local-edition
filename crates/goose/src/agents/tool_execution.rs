@@ -61,6 +61,7 @@ impl From<ToolResult<rmcp::model::CallToolResult>> for ToolCallResult {
 use super::agent::{tool_stream, ToolStream};
 use crate::agents::Agent;
 use crate::conversation::message::ToolRequest;
+use crate::security::destructive_command::{declined_response, DESTRUCTIVE_INSPECTOR_NAME};
 use crate::session::Session;
 use crate::tool_inspection::get_security_finding_id_from_results;
 
@@ -77,6 +78,33 @@ pub const CHAT_MODE_TOOL_SKIPPED_RESPONSE: &str = "Let the user know the tool ca
                                         2. **Outline Steps** - Break down the steps.\n \
                                         If needed, adjust the explanation based on user preferences or questions.";
 
+/// What the destructive-command gate found for this request, when it is the one that asked.
+fn destructive_summary_for(
+    request: &ToolRequest,
+    inspection_results: &[crate::tool_inspection::InspectionResult],
+) -> Option<String> {
+    inspection_results
+        .iter()
+        .find(|result| {
+            result.tool_request_id == request.id
+                && result.inspector_name == DESTRUCTIVE_INSPECTOR_NAME
+                && matches!(
+                    result.action,
+                    crate::tool_inspection::InspectionAction::RequireApproval(_)
+                )
+        })
+        .map(|result| result.reason.clone())
+}
+
+/// Tool result for a declined call: the destructive gate's own words when it asked, else the
+/// generic decline.
+pub(crate) fn declined_text(destructive: Option<&str>) -> String {
+    match destructive {
+        Some(summary) => declined_response(summary),
+        None => DECLINED_RESPONSE.to_string(),
+    }
+}
+
 impl Agent {
     pub(crate) fn handle_approval_tool_requests<'a>(
         &'a self,
@@ -90,15 +118,18 @@ impl Agent {
         try_stream! {
         for request in tool_requests.iter() {
             if let Ok(tool_call) = request.tool_call.clone() {
+                // The first inspector that asked WITH a message speaks on the card; an earlier
+                // result for the same request that only allowed or logged (egress) must not hide it.
                 let security_message = inspection_results.iter()
-                    .find(|result| result.tool_request_id == request.id)
-                    .and_then(|result| {
+                    .filter(|result| result.tool_request_id == request.id)
+                    .find_map(|result| {
                         if let crate::tool_inspection::InspectionAction::RequireApproval(Some(message)) = &result.action {
                             Some(message.clone())
                         } else {
                             None
                         }
                     });
+                let destructive = destructive_summary_for(request, inspection_results);
 
                 let confirmation_rx = self.tool_confirmation_router.register(request.id.clone()).await;
 
@@ -147,7 +178,9 @@ impl Agent {
                         ),
                     }));
 
-                    if confirmation.permission == Permission::AlwaysAllow {
+                    // "Always allow" on a destructive-command card allows THIS command; it must not
+                    // turn into a standing allow for the whole shell tool.
+                    if confirmation.permission == Permission::AlwaysAllow && destructive.is_none() {
                         self.tool_inspection_manager
                             .update_permission_manager(&tool_call.name, PermissionLevel::AlwaysAllow)
                             .await;
@@ -156,12 +189,13 @@ impl Agent {
                     if let Some(response) = request_to_response_map.get_mut(&request.id) {
                         response.add_tool_response_with_metadata(
                             request.id.clone(),
-                            Ok(CallToolResult::error(vec![Content::text(DECLINED_RESPONSE)])),
+                            Ok(CallToolResult::error(vec![Content::text(declined_text(destructive.as_deref()))])),
                             request.metadata.as_ref(),
                         );
                     }
 
-                    if confirmation.permission == Permission::AlwaysDeny {
+                    // "Always deny" on a destructive-command card must not block every shell call.
+                    if confirmation.permission == Permission::AlwaysDeny && destructive.is_none() {
                         self.tool_inspection_manager
                             .update_permission_manager(&tool_call.name, PermissionLevel::NeverAllow)
                             .await;
