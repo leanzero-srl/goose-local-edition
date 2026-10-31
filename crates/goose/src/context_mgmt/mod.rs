@@ -971,6 +971,10 @@ async fn compact_core(
             };
             let known = summary_check::known_text(messages, &[&rendered, system]);
             let written = summary_check::mark_unverified_numbers(&written, &known);
+            let written = summary_check::mark_missing_paths(
+                &written,
+                kept.chat_folder.as_deref().map(std::path::Path::new),
+            );
             let unverified = written.matches(summary_check::UNVERIFIED).count();
             if unverified > 0 {
                 tracing::warn!(
