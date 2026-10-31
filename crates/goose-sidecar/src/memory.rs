@@ -29,10 +29,37 @@ pub(crate) struct VmPageCounts {
     /// speculative read-ahead pages are among them.
     pub(crate) external: u64,
     pub(crate) purgeable: u64,
+    /// `inactive_count` ("Pages inactive" in vm_stat): anonymous AND file pages the kernel has
+    /// aged out of use. `None` where the source did not report it (an older or odd vm_stat, or a
+    /// failed `host_statistics64`): the reading then counts only free + file cache + purgeable.
+    pub(crate) inactive: Option<u64>,
 }
 
-/// macOS available memory the way Activity Monitor draws it: physical memory minus App
-/// Memory, Wired and Compressed — which is truly-free pages plus file cache plus purgeable.
+/// THE one macOS "available" rule. Every reader of this Mac's or a node's memory goes through it:
+/// the single-engine mount gate (`measure`), the distributed preflight and split planner, the
+/// discovery probe, compaction, and the supervisor's admission/hold and CRITICAL stop (all via
+/// `probe::parse_vm_stat`). There is no second copy of it anywhere.
+///
+/// Available = the larger of two lower bounds on what a new allocation can take without pushing a
+/// page in use out:
+/// - the file-cache figure: truly-free + file-backed + purgeable pages (what Activity Monitor
+///   draws as physical memory minus App Memory, Wired and Compressed);
+/// - the aged-out figure: free (incl. speculative) + INACTIVE + purgeable pages.
+/// Their true union (free + file cache + inactive ANONYMOUS + purgeable) cannot be built from the
+/// counters (inactive mixes anonymous and file pages), so the larger of the two is taken: never
+/// more than the union, and never counting a page twice.
+///
+/// Why inactive counts (2026-10-31): leaving inactive anonymous pages out made the plan read the
+/// workhorse at ~69-70 GiB with 66.6 GB free + 12.2 GB inactive, `memory_pressure` 85% free and
+/// the kernel NORMAL, so the MiMo split 18/30 at 262,144 (rank 0 ~75.9 GiB with its 5% reserve)
+/// was refused for a 17/31 that put rank 1 over its Metal limit; the same miscount made the hold
+/// flap 56 times at 09:18 (free 7,878 pages, inactive 562,027). Inactive anonymous pages are not
+/// freed outright: the kernel COMPRESSES (or swaps) them as a wired allocation grows over them.
+/// The margin for that is kept OUTSIDE this figure, never by shrinking it: the plan's reserve
+/// (RAM x `plan_reserve_ratio`, floor = the watchdog WARN reserve, 4.8 GiB on 96 GiB) stays on
+/// top of every plan, and the kernel's own pressure level (`kern.memorystatus_vm_pressure_level`)
+/// stays the guard of last resort: preflight fails a node at CRITICAL and warns at WARN, and the
+/// serving hold stops on CRITICAL whatever this figure says.
 ///
 /// Why not sysinfo: its macOS `available_memory()` is `free + inactive + purgeable −
 /// compressor`, which drops every active file-cache page and then subtracts the compressor's
@@ -48,13 +75,25 @@ pub(crate) fn darwin_reading(
     total_bytes: u64,
 ) -> MemoryReading {
     let truly_free = counts.free.saturating_sub(counts.speculative);
-    let reclaimable = counts.external.saturating_add(counts.purgeable);
+    let file_cache = truly_free
+        .saturating_add(counts.external)
+        .saturating_add(counts.purgeable);
+    let aged_out = counts.inactive.map_or(0, |inactive| {
+        counts
+            .free
+            .saturating_add(inactive)
+            .saturating_add(counts.purgeable)
+    });
+    let available = file_cache
+        .max(aged_out)
+        .saturating_mul(page_size)
+        .min(total_bytes);
     MemoryReading {
-        available_bytes: truly_free
-            .saturating_add(reclaimable)
-            .saturating_mul(page_size),
+        available_bytes: available,
         total_bytes,
-        reclaimable_cache_bytes: Some(reclaimable.saturating_mul(page_size)),
+        reclaimable_cache_bytes: Some(
+            available.saturating_sub(truly_free.saturating_mul(page_size)),
+        ),
     }
 }
 
@@ -99,6 +138,7 @@ mod darwin {
             speculative,
             external: page_count(c"vm.page_pageable_external_count")?,
             purgeable: page_count(c"vm.page_purgeable_count")?,
+            inactive: inactive_count(),
         };
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         anyhow::ensure!(
@@ -107,6 +147,37 @@ mod darwin {
             std::io::Error::last_os_error()
         );
         Ok(darwin_reading(counts, page_size as u64, total_bytes()?))
+    }
+
+    extern "C" {
+        fn mach_host_self() -> libc::mach_port_t;
+    }
+
+    /// One host send right for the process: every `mach_host_self()` call adds a user reference,
+    /// and the status poll would otherwise leak one per read.
+    fn host_port() -> libc::mach_port_t {
+        static HOST: std::sync::OnceLock<libc::mach_port_t> = std::sync::OnceLock::new();
+        *HOST.get_or_init(|| unsafe { mach_host_self() })
+    }
+
+    /// The inactive page count. No `vm.page_*` sysctl carries it (checked 2026-10-31 on macOS 27:
+    /// `sysctl -a` has no inactive/active page counter), so it alone comes from
+    /// `host_statistics64(HOST_VM_INFO64)`. That call is rate-limited (see `measure`): past the
+    /// limit it answers with the copy from at most ~1 s earlier, so this one term may lag by that
+    /// much while free, file cache and purgeable stay live. `None` when the call fails: the
+    /// reading then keeps the file-cache figure alone.
+    fn inactive_count() -> Option<u64> {
+        let mut stat: libc::vm_statistics64 = unsafe { std::mem::zeroed() };
+        let mut count = libc::HOST_VM_INFO64_COUNT;
+        let rc = unsafe {
+            libc::host_statistics64(
+                host_port(),
+                libc::HOST_VM_INFO64,
+                &mut stat as *mut libc::vm_statistics64 as libc::host_info64_t,
+                &mut count,
+            )
+        };
+        (rc == libc::KERN_SUCCESS).then(|| u64::from(stat.inactive_count))
     }
 
     /// A `vm.page_*` counter: 4 bytes for most, 8 for `vm.page_purgeable_count` (measured).
@@ -290,6 +361,7 @@ mod tests {
                 speculative: 1_117_292,
                 external: 1_610_894,
                 purgeable: 0,
+                inactive: None,
             },
             PAGE_16K,
             M4_MAX_TOTAL,
@@ -307,6 +379,7 @@ mod tests {
             speculative: 200,
             external: 500,
             purgeable: 50,
+            inactive: None,
         };
         let r = darwin_reading(base, PAGE_16K, M4_MAX_TOTAL);
         assert_eq!(r.available_bytes, (800 + 500 + 50) * PAGE_16K);

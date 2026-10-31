@@ -65,18 +65,29 @@ pub fn section<'a>(sections: &'a BTreeMap<String, String>, name: &str) -> Result
         .with_context(|| format!("the node's answer has no `{name}` section"))
 }
 
-/// `vm_stat` → the same page counts `memory::measure` reads from `host_statistics64`, fed to the
-/// SAME `darwin_reading`. vm_stat prints "Pages free" as `free_count - speculative_count`, so the
-/// raw `free_count` is rebuilt by adding speculative back before the shared arithmetic subtracts it.
+/// `vm_stat` → the same page counts `memory::measure` reads live, fed to the SAME
+/// `darwin_reading` (THE one "available" rule: free + file cache + purgeable, or free + inactive +
+/// purgeable when that is larger). vm_stat prints "Pages free" as `free_count - speculative_count`,
+/// so the raw `free_count` is rebuilt by adding speculative back before the shared arithmetic
+/// subtracts it. A vm_stat with no "Pages inactive" line (an older or odd one) is read without it.
 pub fn parse_vm_stat(text: &str, total_bytes: u64) -> Result<MemoryReading> {
     let page_size = vm_page_size(text)?;
     let free_minus_speculative = vm_count(text, "Pages free")?;
     let speculative = vm_count(text, "Pages speculative")?;
+    let inactive = if text
+        .lines()
+        .any(|l| l.trim_start().starts_with("Pages inactive"))
+    {
+        Some(vm_count(text, "Pages inactive")?)
+    } else {
+        None
+    };
     let counts = VmPageCounts {
         free: free_minus_speculative + speculative,
         speculative,
         external: vm_count(text, "File-backed pages")?,
         purgeable: vm_count(text, "Pages purgeable")?,
+        inactive,
     };
     Ok(darwin_reading(counts, page_size, total_bytes))
 }
@@ -104,31 +115,6 @@ fn vm_count(text: &str, label: &str) -> Result<u64> {
     value
         .parse::<u64>()
         .with_context(|| format!("vm_stat `{label}` is not a count: {line}"))
-}
-
-/// What the memory HOLD counts as available on a serving node: truly free + speculative +
-/// INACTIVE + purgeable pages — everything the kernel takes back before it has to touch a page in
-/// use. The mount figure (`parse_vm_stat`: free + file cache + purgeable) leaves inactive anonymous
-/// pages out, which is right before a mount and wrong for a hold: with rank 0's Metal wired, the
-/// workhorse showed free 7,878 pages and inactive 562,027 (≈9.2 GB) at 2026-10-31 09:18 while the
-/// mount figure read 3.2–4.8 GiB and the hold flapped 56 times under its 4.8 GiB WARN reserve with
-/// the kernel NORMAL (`memory_pressure`: 17% free). Inactive anonymous pages are compressed or
-/// swapped, not freed outright, so the kernel's own pressure level stays the guard of last resort
-/// beside this figure. `None` when vm_stat printed no inactive line (an older or odd vm_stat): the
-/// caller keeps the mount figure.
-pub fn vm_hold_available_bytes(text: &str) -> Result<Option<u64>> {
-    if !text
-        .lines()
-        .any(|l| l.trim_start().starts_with("Pages inactive"))
-    {
-        return Ok(None);
-    }
-    let page_size = vm_page_size(text)?;
-    let pages = vm_count(text, "Pages free")?
-        + vm_count(text, "Pages speculative")?
-        + vm_count(text, "Pages inactive")?
-        + vm_count(text, "Pages purgeable")?;
-    Ok(Some(pages.saturating_mul(page_size)))
 }
 
 /// The lines `sysctl -n` printed, as integers, in the order the names were asked.
@@ -738,6 +724,7 @@ Pages occupied by compressor:                 649325.
                 speculative: 37_587,
                 external: 3_197_112,
                 purgeable: 9_322,
+                inactive: Some(2_775_337),
             },
             page,
             total,
@@ -773,7 +760,7 @@ Pages occupied by compressor:                 649325.
     }
 
     /// The workhorse's own vm_stat, read 2026-10-31 09:25 with rank 0 of the live MiMo split wired
-    /// (5.03M wired pages): the mount figure says 6.4 GiB, the hold figure 9.4 GiB.
+    /// (5.03M wired pages): free + file cache reads 6.4 GiB, free + inactive 9.4 GiB.
     const VM_STAT_WORKHORSE_SERVING: &str =
         "Mach Virtual Memory Statistics: (page size of 16384 bytes)
 Pages free:                                    62093.
@@ -788,17 +775,23 @@ File-backed pages:                            356392.
 ";
 
     #[test]
-    fn the_hold_counts_inactive_pages_the_mount_figure_leaves_out() {
+    fn a_serving_node_counts_its_inactive_pages_through_the_one_rule() {
         let page = 16_384;
-        let mount = parse_vm_stat(VM_STAT_WORKHORSE_SERVING, 103_079_215_104).unwrap();
-        assert_eq!(mount.available_bytes, (62_093 + 356_392 + 1_271) * page);
-        let hold = vm_hold_available_bytes(VM_STAT_WORKHORSE_SERVING)
-            .unwrap()
-            .unwrap();
-        assert_eq!(hold, (62_093 + 1_179 + 551_229 + 1_271) * page);
-        assert!(hold > mount.available_bytes);
+        let reading = parse_vm_stat(VM_STAT_WORKHORSE_SERVING, 103_079_215_104).unwrap();
+        // free + speculative + inactive + purgeable beats free + file-backed + purgeable here.
+        assert_eq!(
+            reading.available_bytes,
+            (62_093 + 1_179 + 551_229 + 1_271) * page
+        );
+        assert!(reading.available_bytes > (62_093 + 356_392 + 1_271) * page);
         let no_inactive = VM_STAT_WORKHORSE_SERVING.replace("Pages inactive", "Pages idle");
-        assert_eq!(vm_hold_available_bytes(&no_inactive).unwrap(), None);
+        assert_eq!(
+            parse_vm_stat(&no_inactive, 103_079_215_104)
+                .unwrap()
+                .available_bytes,
+            (62_093 + 356_392 + 1_271) * page,
+            "a vm_stat without an inactive line keeps the file-cache figure"
+        );
     }
 
     #[test]

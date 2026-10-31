@@ -1018,6 +1018,76 @@ pub(crate) mod tests {
         assert_eq!(node.budget(0.05), 75_494_174_720);
     }
 
+    /// The workhorse's vm_stat page counts at 2026-10-31 ~23:30 (96 GiB, nothing loaded, kernel
+    /// NORMAL, `memory_pressure` 85% free): free 66.6 GB, inactive 12.2 GB. Lines in vm_stat's own
+    /// order and wording.
+    fn workhorse_vm_stat(free: u64, inactive: u64) -> String {
+        format!(
+            "Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                               {free}.
+Pages active:                                 380827.
+Pages inactive:                           {inactive}.
+Pages speculative:                             29203.
+Pages throttled:                                   0.
+Pages wired down:                             865903.
+Pages purgeable:                               38700.
+File-backed pages:                            392401.
+Anonymous pages:                              770769.
+"
+        )
+    }
+
+    /// Q-530 (2026-10-31): the MiMo split 18/30 at 262,144 could not mount because the plan read
+    /// the workhorse through free + file cache only (69.9 GiB) and so offered 17/31, which puts
+    /// rank 1 over its Metal limit. Read through the one `available` rule (inactive counted), the
+    /// same node plans 18/30 at the requested 262,144; a genuinely tight node still refuses.
+    #[test]
+    fn tonight_s_workhorse_plans_mimo_18_30_at_262144_and_a_tight_node_still_refuses() {
+        let omni = LayerSplitFacts::from_parts(&mimo_config(), omni_tensors()).unwrap();
+        let warn = super::super::WATCHDOG_WARN_RESERVE_RATIO;
+        let workhorse = |vm: &str| {
+            let reading = super::super::probe::parse_vm_stat(vm, 96 * GIB).unwrap();
+            SplitNode {
+                name: "workhorse".to_string(),
+                available: reading.available_bytes,
+                total: 96 * GIB,
+                ceiling: 83_490_000_000,
+            }
+        };
+        let tonight = workhorse(&workhorse_vm_stat(4_151_703, 742_603));
+        assert_eq!(
+            tonight.available,
+            (4_151_703 + 29_203 + 742_603 + 38_700) * 16_384,
+            "free + speculative + inactive + purgeable"
+        );
+        let mut nodes = nodes();
+        nodes[0] = tonight;
+        let split = plan_layer_split(&omni, &nodes, warn, warn, Some(262_144)).unwrap();
+        let spare: Vec<i128> = split
+            .plans
+            .iter()
+            .map(|p| p.budget_bytes as i128 - p.with_overhead_bytes as i128)
+            .collect();
+        println!(
+            "tonight: split {:?} context {} chunk {} rank0 {} of {} rank1 {} of {} spare {spare:?}",
+            split.layers,
+            split.context,
+            split.chunk,
+            split.plans[0].with_overhead_bytes,
+            split.plans[0].budget_bytes,
+            split.plans[1].with_overhead_bytes,
+            split.plans[1].budget_bytes,
+        );
+        assert_eq!(split.layers, vec![18, 30], "{}", split.reason);
+        assert_eq!(split.context, 262_144);
+        assert!(split.plans.iter().all(|p| p.fits));
+
+        // Little free and little inactive: the same 18/30 at 262,144 is refused, not squeezed in.
+        nodes[0] = workhorse(&workhorse_vm_stat(3_600_000, 60_000));
+        let refusal = plan_layer_split(&omni, &nodes, warn, warn, Some(262_144));
+        assert!(refusal.is_err(), "{:?}", refusal.map(|s| s.layers));
+    }
+
     #[test]
     fn a_context_no_chunk_fits_refuses_at_the_smallest_chunk() {
         let warn = super::super::WATCHDOG_WARN_RESERVE_RATIO;

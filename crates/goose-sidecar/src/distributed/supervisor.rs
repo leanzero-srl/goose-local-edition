@@ -697,7 +697,7 @@ impl HoldCause {
 pub struct MemoryHold {
     pub node: String,
     pub cause: HoldCause,
-    /// The hold's available figure on that node (`probe::vm_hold_available_bytes`).
+    /// The available figure on that node (the one rule, `memory::darwin_reading`).
     pub available_bytes: u64,
     /// What admission reopens at: the reopen bar for a floor or pressure hold, the CRITICAL
     /// reserve plus the engine's growth for a growth hold.
@@ -1701,12 +1701,8 @@ fn parse_sample(out: super::ExecOutput) -> Result<NodeSample> {
     let sections = probe::sections(&out.stdout);
     let values = probe::parse_sysctl_values(probe::section(&sections, "sysctl")?, 2)?;
     let vm = probe::section(&sections, "vm")?;
-    let mut reading = probe::parse_vm_stat(vm, values[0])?;
-    // The hold and the CRITICAL stop judge a SERVING node, so inactive pages count as available
-    // (`probe::vm_hold_available_bytes`); the mount and the plan keep the stricter mount figure.
-    if let Some(hold) = probe::vm_hold_available_bytes(vm)? {
-        reading.available_bytes = reading.available_bytes.max(hold).min(reading.total_bytes);
-    }
+    // The same `available` rule the preflight plan and the mount read (`memory::darwin_reading`).
+    let reading = probe::parse_vm_stat(vm, values[0])?;
     let pressure = Pressure::from_level(values[1])?;
     let row = match sections.get("ps") {
         Some(text) => probe::parse_ps_row(text)?,
@@ -4518,15 +4514,15 @@ Pages wired down:                            5030918.
 Pages purgeable:                                1271.
 File-backed pages:                            298000.
 ";
-        let mount = probe::parse_vm_stat(vm, total).unwrap().available_bytes;
-        assert_eq!(mount, (7_878 + 298_000 + 1_271) * page);
+        let file_cache = (7_878 + 298_000 + 1_271) * page;
         assert_eq!(
-            watchdog_verdict(Pressure::Normal, mount, total, ratios),
+            watchdog_verdict(Pressure::Normal, file_cache, total, ratios),
             Watchdog::Warn,
             "the old figure ({:.2} GiB) is what closed admission 56 times tonight",
-            mount as f64 / GIB as f64
+            file_cache as f64 / GIB as f64
         );
-        let hold = probe::vm_hold_available_bytes(vm).unwrap().unwrap();
+        // The one rule (`memory::darwin_reading` via `probe::parse_vm_stat`) counts inactive.
+        let hold = probe::parse_vm_stat(vm, total).unwrap().available_bytes;
         assert_eq!(hold, (7_878 + 1_179 + 562_027 + 1_271) * page);
         assert!(hold > reopen_bar(total, ratios.0), "{hold}");
         assert_eq!(
