@@ -115,6 +115,19 @@ fn resolve_timeout(timeout: Option<u64>) -> u64 {
     })
 }
 
+const MEMORY_BUILTIN_NAME: &str = "memory";
+/// WR-17 (Gabee RU-2026-10-31-2, Qwen3.5-9B, memory ON): the user said "For everything we write for
+/// this client: English, but keep Portuguese law and authority names in Portuguese, and put the
+/// source link right after each claim" — `memory__remember_memory` was in the tool list and the
+/// extension's instructions say to call it unasked for exactly this, yet the model edited a file and
+/// never saved the rule. Those instructions sit in the system prompt, ~60k tokens back; the
+/// turn-context block rides next to the newest message, where a 9B model heeds goose's lines (the
+/// wrap-up probe of 2026-10-30 measured the same distance effect). So while memory is loaded, every
+/// turn carries this one line.
+pub const MEMORY_TURN_CUE: &str = "<memory>If the user's newest message says how they want things \
+done from now on (a preference, a standing rule, a correction, \"remember ...\"), call \
+memory__remember_memory with their own words first, then continue the task.</memory>";
+
 struct Extension {
     pub config: ExtensionConfig,
     /// Resolved config snapshot (with secrets from keyring substituted)
@@ -2164,12 +2177,23 @@ impl ExtensionManager {
                 .collect()
         };
 
+        let memory_loaded = {
+            let extensions = self.extensions.lock().await;
+            extensions.values().any(|extension| {
+                matches!(&extension.config, ExtensionConfig::Builtin { name, .. }
+                    if name_to_key(name) == MEMORY_BUILTIN_NAME)
+            })
+        };
+
         let mut parts = Vec::new();
         for (name, client) in platform_clients {
             if let Some(moim_content) = client.get_moim(session_id).await {
                 tracing::debug!("MOIM content from {}: {} chars", name, moim_content.len());
                 parts.push(moim_content);
             }
+        }
+        if memory_loaded {
+            parts.push(MEMORY_TURN_CUE.to_string());
         }
         parts
     }
@@ -2754,6 +2778,27 @@ mod tests {
             .collect();
         assert!(tool_names.iter().any(|n| n.starts_with("ext_a__")));
         assert!(tool_names.iter().any(|n| n.starts_with("ext_b__")));
+    }
+
+    /// WR-17: the memory cue rides in every turn's context while — and only while — memory is
+    /// loaded.
+    #[tokio::test]
+    async fn the_memory_cue_rides_in_the_turn_context_only_while_memory_is_loaded() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let extension_manager =
+            ExtensionManager::new_without_provider(temp_dir.path().to_path_buf());
+        extension_manager
+            .add_mock_extension("developer".to_string(), Arc::new(MockClient {}))
+            .await;
+        let parts = extension_manager.collect_moim_parts("s").await;
+        assert!(!parts.iter().any(|p| p == MEMORY_TURN_CUE), "{parts:?}");
+
+        extension_manager
+            .add_mock_extension("memory".to_string(), Arc::new(MockClient {}))
+            .await;
+        let parts = extension_manager.collect_moim_parts("s").await;
+        assert_eq!(parts.iter().filter(|p| *p == MEMORY_TURN_CUE).count(), 1);
+        assert!(MEMORY_TURN_CUE.contains("memory__remember_memory"));
     }
 
     #[tokio::test]
