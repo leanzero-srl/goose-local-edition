@@ -38,7 +38,7 @@ Nothing of the loop runs. Do NOT restart any run, gate, build, agent or cron unt
 - Q-452 waits on: a second red. Q-506/513 parked (model). Q-510 refuted (keys — owner: leave as is).
 
 ## Standing rules for every tick
-- Check CI, agents, disk ≥ 30 GB. Take a vigil screenshot and READ it. The next free id is Q-522.
+- Check CI, agents, disk ≥ 30 GB. Take a vigil screenshot and READ it. The next free id is Q-523.
 - Merge via scratch plus ledger_resolve, then gate, ff, push.
 - Nothing an E2E raises stays pending. Never navigate the main window while r1 runs.
 - If the owner uses another chat mid-run, Q-498 thrash follows. Read the Engine glance first.

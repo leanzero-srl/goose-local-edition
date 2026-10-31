@@ -521,6 +521,29 @@ class Conversations:
         self.drop_empty(conversation)
         return conversation
 
+    def tailless_turn(self, prompt, head, name):
+        """Q-522: whether a tool-bearing chat request naming NO transient tail is a call of its
+        conversation, to be cut and kept like a tail-bearing one. goose's chat names no tail since
+        it keeps its turn-context blocks (a79067e2f0), and its background side calls carry the
+        chat's session name too (Q-508), so a named request continues its conversation only when
+        its prompt extends the held prefix (the next call, the compaction's summary) or opens on
+        the same head (the call after a compaction); one with another head is a side call, left
+        as mlx_lm cuts it, so it never takes the chat's kept prefix away. With nothing held yet
+        and a head unknown on either side, it continues (the chat's first call). An unnamed
+        request is told apart by its tokens, as an unnamed tail-bearing one is."""
+        if name is None:
+            return True
+        conversation = next((c for c in self.all if c.name == name), None)
+        if conversation is None:
+            return True
+        held = conversation.prefix.tokens
+        if held is not None and extends(prompt, held):
+            return True
+        head_key = prefix_key(prompt[:head]) if head else None
+        if conversation.head is None or head_key is None:
+            return held is None
+        return conversation.head == head_key
+
     def extended_by(self, prompt):
         """The unnamed conversation whose held prefix `prompt` extends (the longest), or None."""
         found = None
