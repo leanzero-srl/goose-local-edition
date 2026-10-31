@@ -93,5 +93,24 @@ class MoneyRenderedTests(unittest.TestCase):
         self.assertEqual(CHECK(c)["score"], 1.0)
 
 
+    def test_cross_currency_sum_still_zeroes_correct_newest_first_cells(self):
+        """The F16 leg is untouched by the join: correct cells plus a summary that sums EUR and
+        JPY minors into one number is still wrong money (0.0, the severity input too)."""
+        seed, rows = RUN_8985A86D["seed"], RUN_8985A86D["rows"]
+        if seed not in _PACKS:
+            _PACKS[seed] = fixtures_v3.build(seed)
+        c = s.Ctx(Path("/nonexistent"))
+        c.pack = _PACKS[seed]
+        c.payments = {"total": s.N_FROZEN}
+        c.probes = {"load": {"amountTexts": [t for _i, t in rows],
+                             "rowAmounts": [{"id": i, "amountText": t} for i, t in rows]}}
+        c.summary = {"by_currency": [{"currency": "EUR", "count": 1, "total_minor": 100},
+                                     {"currency": "JPY", "count": 1, "total_minor": 7}],
+                     "grand_total": 107}
+        r = CHECK(c)
+        self.assertEqual(r["score"], 0.0)
+        self.assertEqual(r["parts"]["cross_currency_sum"], ["grand_total"])
+        self.assertEqual(r["parts"]["ok_frac"], 1.0)
+
 if __name__ == "__main__":
     unittest.main()
