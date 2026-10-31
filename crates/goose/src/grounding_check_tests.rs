@@ -702,18 +702,18 @@ fn an_edit_that_kept_the_dates_is_not_shown() {
 }
 
 #[test]
-fn the_check_is_on_and_the_reask_off_by_default() {
+fn the_check_and_the_reask_are_off_by_default() {
     let _guard = env_lock::lock_env([(ENABLED_KEY, None::<&str>), (REASK_KEY, None::<&str>)]);
     let config_file = tempfile::NamedTempFile::new().unwrap();
     let secrets_file = tempfile::NamedTempFile::new().unwrap();
     let config =
         crate::config::Config::new_with_file_secrets(config_file.path(), secrets_file.path())
             .unwrap();
-    assert!(enabled_in(&config));
-    assert!(!reask_enabled_in(&config));
-    config.set_param(ENABLED_KEY, false).unwrap();
-    config.set_param(REASK_KEY, true).unwrap();
     assert!(!enabled_in(&config));
+    assert!(!reask_enabled_in(&config));
+    config.set_param(ENABLED_KEY, true).unwrap();
+    config.set_param(REASK_KEY, true).unwrap();
+    assert!(enabled_in(&config));
     assert!(reask_enabled_in(&config));
 }
 

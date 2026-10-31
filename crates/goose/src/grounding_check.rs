@@ -19,8 +19,8 @@
 //! (fenced, indented or inline), a reformat that names the old format, and a number a compaction
 //! summary carries (round 2: the reviewer's correct-answer probes, rebuilt as tests).
 //!
-//! Tunable: `GOOSE_GROUNDING_CHECK` (default on) turns the three findings off; `GOOSE_GROUNDING_REASK`
-//! (default off) hands a finding back to the model once per turn so it can check and correct itself.
+//! Tunable: `GOOSE_GROUNDING_CHECK` (default off until a review shows 0 false alarms) turns the
+//! three findings on; `GOOSE_GROUNDING_REASK` (default off) hands a finding back to the model once per turn so it can check and correct itself.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -33,7 +33,8 @@ use crate::conversation::message::{Message, MessageContent};
 pub const ENABLED_KEY: &str = "GOOSE_GROUNDING_CHECK";
 pub const REASK_KEY: &str = "GOOSE_GROUNDING_REASK";
 
-pub const ENABLED_DEFAULT: bool = true;
+/// Off until a correct-answer review shows 0 false alarms (WR-19 round 3).
+pub const ENABLED_DEFAULT: bool = false;
 pub const REASK_DEFAULT: bool = false;
 
 fn flag(config: &crate::config::Config, key: &str, default: bool) -> bool {
