@@ -11,6 +11,11 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
 3. Fix egregious problems at the root, ranked by how badly they block real use; test + mutation proof + independent check.
 
 ## Decisions
+- 2026-10-31 21:58 RELEASED 3.0.139 (tag on 74bc574be3): WR-17 bundled MCPs (wk/wr17-mcps 643e6a8547: LeanZero Web Search +
+  Documents added on a packaged start, missing-tool errors make the model say it could not do the step) + WR-18 compaction
+  (a4f6d05ff5, already on main). First SPLIT release: gate + unsigned build on Gabee, Developer-ID sign + notarize on the
+  workhorse under nice/taskpolicy with per-Mach-O receipts (ui/desktop/scripts/release-split). Installed Gabee; Studios after
+  MiMo is scored. WR-17 memory + WR-19 grounding -> 3.0.140.
 - 2026-10-31 19:40 RELEASED 3.0.138 (tag on 628cd13e6e): lz.22 engine pin (frame-end resume checkpoint) on lz.21, WR-1/2
   first-run node fix + Q-523 restart banner (wk/q522-setup), WR-11 vision images via the media pre-pass (wk/f22-vision),
   WR-4 goose check (wk/q525-check b49cf977bb), WR-10 destructive-command guard (wk/f17-destructive a2bfbf3d85), WR-15 MiMo
@@ -21,11 +26,6 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
   eca39ae893 has run the 5 h MiMo split Gauntlet 8985a86d (compaction graded B+, vision in use). Decision: merge
   into main IF the merge gate (cargo tests of touched crates + desktop typecheck/tests + unsigned package + launch)
   is green; otherwise ship 3.0.137 without it and record why.
-- 2026-10-31 21:58 RELEASED 3.0.139 (tag on 74bc574be3): WR-17 bundled MCPs (wk/wr17-mcps 643e6a8547: LeanZero Web Search +
-  Documents added on a packaged start, missing-tool errors make the model say it could not do the step) + WR-18 compaction
-  (a4f6d05ff5, already on main). First SPLIT release: gate + unsigned build on Gabee, Developer-ID sign + notarize on the
-  workhorse under nice/taskpolicy with per-Mach-O receipts (ui/desktop/scripts/release-split). Installed Gabee; Studios after
-  MiMo is scored. WR-17 memory + WR-19 grounding -> 3.0.140.
 - 11:20 MERGED: gate run2 green on the laptop (fmt, clippy 6 crates, sidecar/providers/goose developer/swarm gates, typecheck, vitest 568, unsigned package); main = 053c715e25 incl. 3.0.137 bump + notes. Notarized build waits for MiMo scoring.
 - 11:40 owner (via coordinator): 3.0.137 must hold EVERY fix of the two days incl. mimo-distributed (re-merge its later commits); ancestry checklist in ~/goose-builds/release-3.0.137.NOTES.md. After install on both Studios: one E2E real-use test with everything on (single + split) before the benchmark re-runs.
 - 11:31 3.0.137 re-gate green on the workhorse (all 19 listed fix commits ancestors; manifests sb7.2 118/118, forge2 156/156; engine pin lz.20 = newest; split fork lz-pipeline-qwen4.16; rank fixes ship via include_str!). Notarized build pid 85910.
