@@ -559,6 +559,10 @@ pub struct ExtensionInfo {
     pub name: String,
     pub instructions: String,
     pub has_resources: bool,
+    /// The instructions list what the session's working directory holds
+    /// (`McpClientTrait::instructions_follow_working_dir`): rendered after every other extension.
+    #[serde(skip)]
+    pub follows_working_dir: bool,
 }
 
 impl ExtensionInfo {
@@ -567,7 +571,13 @@ impl ExtensionInfo {
             name: name.to_string(),
             instructions: instructions.to_string(),
             has_resources,
+            follows_working_dir: false,
         }
+    }
+
+    pub fn following_working_dir(mut self, follows: bool) -> Self {
+        self.follows_working_dir = follows;
+        self
     }
 }
 

@@ -357,7 +357,13 @@ fn build_subagent_instructions(session: Option<&crate::session::Session>) -> Str
         return String::new();
     }
 
-    sources.sort_by(|a, b| (&a.source_type, &a.name).cmp(&(&b.source_type, &b.name)));
+    // The subagents every project shares first, the working directory's own after them (its
+    // recipes, .goose/.claude/.agents agents), so a new chat in another project still matches the
+    // shared list byte for byte up to its first project entry (Q-524, prefix cache).
+    let in_project = |s: &SourceEntry| crate::sources::found_under(&s.path, &session.working_dir);
+    sources.sort_by(|a, b| {
+        (in_project(a), &a.source_type, &a.name).cmp(&(in_project(b), &b.source_type, &b.name))
+    });
     let subagents: Vec<&SourceEntry> = sources.iter().collect();
 
     let names = subagents
@@ -373,11 +379,16 @@ fn build_subagent_instructions(session: Option<&crate::session::Session>) -> Str
          the `load` tool (read their instructions into your own context):\n",
     );
 
-    let mut current_kind: Option<SourceType> = None;
+    let mut current_kind: Option<(bool, SourceType)> = None;
     for s in &subagents {
-        if current_kind != Some(s.source_type) {
-            out.push_str(&format!("\n{}:", kind_plural(s.source_type)));
-            current_kind = Some(s.source_type);
+        let kind = (in_project(s), s.source_type);
+        if current_kind != Some(kind) {
+            if kind.0 {
+                out.push_str(&format!("\nThis project's {}:", kind_plural(s.source_type)));
+            } else {
+                out.push_str(&format!("\n{}:", kind_plural(s.source_type)));
+            }
+            current_kind = Some(kind);
         }
         out.push_str(&format!(
             "\n• {} — {}",
@@ -2015,6 +2026,10 @@ impl McpClientTrait for SummonClient {
 
     fn get_info(&self) -> Option<&InitializeResult> {
         Some(&self.info)
+    }
+
+    fn instructions_follow_working_dir(&self) -> bool {
+        true
     }
 
     fn get_instructions(&self) -> Option<String> {

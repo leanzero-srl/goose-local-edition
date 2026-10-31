@@ -373,6 +373,10 @@ impl McpClientTrait for SkillsClient {
         Some(&self.info)
     }
 
+    fn instructions_follow_working_dir(&self) -> bool {
+        true
+    }
+
     fn get_instructions(&self) -> Option<String> {
         let sources = self.discover_skills();
         let mut skills: Vec<&SourceEntry> = sources
@@ -381,7 +385,13 @@ impl McpClientTrait for SkillsClient {
                 s.source_type == SourceType::Skill || s.source_type == SourceType::BuiltinSkill
             })
             .collect();
-        skills.sort_by(|a, b| (&a.name, &a.path).cmp(&(&b.name, &b.path)));
+        // The skills every project shares first, the working directory's own after them, so a new
+        // chat in another project still matches the shared list byte for byte up to its first
+        // project skill (Q-524, prefix cache).
+        let in_project = |s: &SourceEntry| crate::sources::found_under(&s.path, &self.working_dir);
+        skills.sort_by(|a, b| {
+            (in_project(a), &a.name, &a.path).cmp(&(in_project(b), &b.name, &b.path))
+        });
 
         if skills.is_empty() {
             return None;
@@ -408,6 +418,45 @@ mod tests {
     use std::fs;
     use std::sync::Arc;
     use tempfile::TempDir;
+
+    /// Q-524: the working directory's own skills list after the ones every project shares, so a
+    /// new chat in another project matches the shared list byte for byte up to its first project
+    /// skill. "aaa-…" sorts before every built-in skill by name: name order would put it first.
+    #[tokio::test]
+    async fn project_skills_list_after_the_shared_ones() {
+        let temp_dir = TempDir::new().unwrap();
+        let skill_dir = temp_dir.path().join(".goose/skills/aaa-project-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: aaa-project-skill\ndescription: Only this project has it\n---\nBody.",
+        )
+        .unwrap();
+        let session = std::sync::Arc::new(crate::session::Session {
+            working_dir: temp_dir.path().to_path_buf(),
+            ..crate::session::Session::default()
+        });
+        let client = SkillsClient::new(PlatformExtensionContext {
+            extension_manager: None,
+            session_manager: Arc::new(crate::session::SessionManager::instance()),
+            session: Some(session),
+            use_login_shell_path: false,
+            working_dir: None,
+        })
+        .unwrap();
+        assert!(client.instructions_follow_working_dir());
+
+        let instructions = client.get_instructions().unwrap();
+        let bullets: Vec<&str> = instructions.split("\n• ").skip(1).collect();
+        assert!(
+            bullets.len() > 1,
+            "built-in skills must be listed too, or the order proves nothing: {instructions}"
+        );
+        assert!(
+            bullets.last().unwrap().starts_with("aaa-project-skill"),
+            "the project skill must be the last bullet: {bullets:?}"
+        );
+    }
 
     #[tokio::test]
     async fn test_load_filesystem_skill_without_builtin_skills() {

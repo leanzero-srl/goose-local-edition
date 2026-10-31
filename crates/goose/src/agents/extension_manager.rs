@@ -156,6 +156,10 @@ impl Extension {
         self.client.get_instructions()
     }
 
+    fn instructions_follow_working_dir(&self) -> bool {
+        self.client.instructions_follow_working_dir()
+    }
+
     fn get_client(&self) -> McpClientBox {
         self.client.clone()
     }
@@ -1270,6 +1274,7 @@ impl ExtensionManager {
                 let instructions = ext.get_instructions().unwrap_or_default();
                 let instructions = instructions.replace("{{WORKING_DIR}}", &working_dir_str);
                 ExtensionInfo::new(name, &instructions, ext.supports_resources())
+                    .following_working_dir(ext.instructions_follow_working_dir())
             })
             .collect()
     }

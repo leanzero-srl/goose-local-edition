@@ -18,6 +18,16 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
+/// Whether a discovered source (skill dir, agent or recipe file) lives under `working_dir`: the
+/// project's own, as opposed to the global and built-in ones every project shares. Lists the
+/// model sees put the project's entries last so the shared ones stay a byte-identical prefix
+/// across projects (Q-524). An empty or relative-vs-absolute mismatch reads as "not under".
+pub fn found_under(path: &str, working_dir: &Path) -> bool {
+    !working_dir.as_os_str().is_empty()
+        && !path.is_empty()
+        && Path::new(path).starts_with(working_dir)
+}
+
 /// Split a markdown source into its YAML frontmatter and body, and deserialize the frontmatter.
 ///
 /// `Ok(None)` means the file has no frontmatter: it does not OPEN with a `---` line, or the block is never

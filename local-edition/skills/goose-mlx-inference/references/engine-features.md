@@ -7,6 +7,7 @@ Moved verbatim from SKILL.md on 2026-10-30 (skills audit). Read by section; the 
 - MTP logprobs
 - Warm vs cold, and what a census actually measures
 - Placement planner + "Measure speed"
+- New chat, cold first token: what the cross-chat prefix cache actually reuses (Q-524)
 
 ## KV-cache compression (2026-09-24 — per model, OFF by default = no flag)
 - Profile `kv_cache` (wire `kvCache: "int8"|"int4"`, absent = off) → `--kv-cache-dtype int8|int4`. goose_sidecar::kv_cache
@@ -140,3 +141,19 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
   ranks are still NOT credited (their per-rank footprint is unread) — a split → single switch can read "short" until then.
 - LIVE TRAP (harness): my Run-button finder returned -1 and `.nth(-1)` clicked the LAST Run on the page — it started the
   27B on this Mac. Always `process.exit` when the index is < 0; never feed a -1 into nth().
+
+## New chat, cold first token: what the cross-chat prefix cache reuses (Q-524, 2026-10-31, Gabee, Qwen3.5-9B, lz.19)
+- goose's prefix is byte-identical across new chats: measured `LCP snapped to checkpoint: shared=21860 entry_len=34055
+  resumed_at=16384 remaining=5917` (engine log, two chats in two different work dirs). Tools sorted (reply_parts.rs),
+  extensions sorted, time/cwd live in the per-turn turn-context block, hints/project text at the very end. Since Q-524 the
+  project-scoped lists (skills, summon: `instructions_follow_working_dir`) render after every other extension and list the
+  shared entries before the project's own, so another PROJECT also shares the bulk.
+- Qwen3.5/3.8 templates render the TOOLS FIRST (~6k tokens), then goose's system text (~15.7k); token map tool:
+  apply_chat_template + offset_mapping on a `llm_request.N.jsonl` (goose logs keep the last 10 requests only).
+- The loss is the ENGINE's: a hybrid (GatedDeltaNet) entry is reusable only at a recorded recurrent checkpoint
+  (rapid_mlx/hybrid_state_checkpoints.py: max 4, stride 2048, thinned by smallest gap, newest kept), so a 21.9k shared frame
+  snaps to 16384 or 20480. And the LCP fetch (memory_cache.py ~2351) compares only the two sorted neighbours and snaps the
+  longest-LCP entry, not the one with the deepest checkpoint. Fix lives in the fork: a checkpoint at the session frame
+  (`_session_hint` frame, batched.py ~3705) and/or pick the deepest snap among equal-LCP candidates.
+- First chat after a model's FIRST engine start is fully cold (`[cache_persist] no index ... nothing to load`): ~35 s for
+  22k tokens on a 9B 4-bit on Gabee. The cache is persisted only at a graceful shutdown (server.py ~406) and autoloaded at boot.

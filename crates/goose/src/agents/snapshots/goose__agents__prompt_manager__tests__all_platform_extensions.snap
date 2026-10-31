@@ -168,18 +168,7 @@ Manage agent sessions: list, view, start, send messages, and interrupt agents.
 
 ### Instructions
 When a request's words match saved memories or a skill's description, the turn context carries a <recalled-memories> block (those memories in full) and a <relevant-skills> block (skill names to load with load_skill). goose adds them; use them when they apply and ignore them when they do not.
-## skills
-
-### Instructions
-
-
-You have these skills at your disposal, when it is clear they can help you solve a problem or you are asked to use them:
-• goose-doc-guide - Reference goose documentation to create, configure, or explain goose-specific features like recipes, extensions, sessions, and providers. You MUST fetch relevant goose docs before answering. You MUST NOT rely on training data or assumptions for any goose-specific fields, values, names, syntax, or commands.
-• web-search - Search the web and extract page content using DuckDuckGo (no API key required), Tavily, or SearXNG. Use whenever the task needs current information, facts not in training data, or content from a specific URL.
 ## summarize
-
-
-## summon
 
 
 ## todo
@@ -196,6 +185,17 @@ meaningful step, not only at the start. Sections that make it recoverable:
 After a compaction, trust the scratchpad over the summary where they differ.
 
 ## tom
+
+
+## skills
+
+### Instructions
+
+
+You have these skills at your disposal, when it is clear they can help you solve a problem or you are asked to use them:
+• goose-doc-guide - Reference goose documentation to create, configure, or explain goose-specific features like recipes, extensions, sessions, and providers. You MUST fetch relevant goose docs before answering. You MUST NOT rely on training data or assumptions for any goose-specific fields, values, names, syntax, or commands.
+• web-search - Search the web and extract page content using DuckDuckGo (no API key required), Tavily, or SearXNG. Use whenever the task needs current information, facts not in training data, or content from a specific URL.
+## summon
 
 
 

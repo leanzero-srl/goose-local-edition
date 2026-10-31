@@ -100,6 +100,16 @@ pub trait McpClientTrait: Send + Sync {
         self.get_info().and_then(|info| info.instructions.clone())
     }
 
+    /// True when `get_instructions()` lists things found under the session's working directory
+    /// (project skills, project agents and recipes), so the same extension renders different bytes
+    /// in another project. The system prompt puts these extensions after every other one: the
+    /// engine's prefix cache reuses a new chat's prompt only up to the first differing token, and
+    /// a project-specific block mid-prompt cuts every extension after it out of the shared prefix
+    /// (Q-524).
+    fn instructions_follow_working_dir(&self) -> bool {
+        false
+    }
+
     async fn list_resources(
         &self,
         _session_id: &str,

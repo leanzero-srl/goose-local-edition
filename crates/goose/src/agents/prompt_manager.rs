@@ -132,8 +132,14 @@ impl<'a> SystemPromptBuilder<'a, PromptManager> {
                 false,
             ));
         }
-        // Stable tool ordering is important for multi session prompt caching.
-        extensions_info.sort_by(|a, b| a.name.cmp(&b.name));
+        // Stable ordering is important for multi session prompt caching: by name, and every
+        // extension whose instructions list the working directory's contents (project skills,
+        // agents, recipes) after all the others, so a chat in another project still shares the
+        // whole stable bulk (Q-524: on Qwen3.5 the tools render first, then this text; a project
+        // skill sorted mid-list cut the shared prefix at the skills block, ~7.8k of ~21.7k tokens).
+        extensions_info.sort_by(|a, b| {
+            (a.follows_working_dir, &a.name).cmp(&(b.follows_working_dir, &b.name))
+        });
 
         let sanitized_extensions_info: Vec<ExtensionInfo> = extensions_info
             .into_iter()
@@ -500,6 +506,7 @@ mod tests {
                     .and_then(|i| i.capabilities.resources.as_ref())
                     .is_some();
                 ExtensionInfo::new(def.name, &instructions, has_resources)
+                    .following_working_dir(client.instructions_follow_working_dir())
             })
             .collect();
 
@@ -512,5 +519,92 @@ mod tests {
             .build();
 
         assert_snapshot!(system_prompt);
+    }
+
+    /// The longest common prefix of two renders, in bytes.
+    fn shared_prefix(a: &str, b: &str) -> usize {
+        a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count()
+    }
+
+    /// Q-524: two NEW chats (different session times, different project folders, one of them with
+    /// a project skill, a project agent and an AGENTS.md) must render a system prompt whose shared
+    /// prefix holds every extension that does not follow the working directory, and the shared
+    /// part of the skills list. The engine's prefix cache reuses a new chat only up to the first
+    /// differing token; on Gabee (2026-10-31, Qwen3.5-9B) the prefix was 21,860 tokens and a
+    /// project skill sorted mid-list would have cut it at the skills block.
+    #[test]
+    fn new_chats_in_other_projects_share_the_stable_prefix() {
+        let project_a = tempfile::tempdir().unwrap();
+        std::fs::write(
+            project_a.path().join("AGENTS.md"),
+            "Project A runs on tabs.",
+        )
+        .unwrap();
+        let project_b = tempfile::tempdir().unwrap();
+
+        let stable = [
+            (
+                "developer",
+                "Use the developer extension to build software.",
+            ),
+            ("todo", "Your todo content is your SCRATCHPAD."),
+            ("tom", "Theory of mind notes for this person."),
+        ];
+        let render = |at: i64, dir: &Path, skills: &str, summon: &str| {
+            let manager =
+                PromptManager::with_timestamp(DateTime::<Utc>::from_timestamp(at, 0).unwrap());
+            let mut builder = manager.builder();
+            for (name, text) in stable {
+                builder = builder.with_extension(ExtensionInfo::new(name, text, false));
+            }
+            builder
+                .with_extension(
+                    ExtensionInfo::new("skills", skills, false).following_working_dir(true),
+                )
+                .with_extension(
+                    ExtensionInfo::new("summon", summon, false).following_working_dir(true),
+                )
+                .with_goose_mode(GooseMode::Auto)
+                .with_hints(dir)
+                .build()
+        };
+        let shared_skills = "\n• goose-doc - the shared skill every project sees";
+        let a = render(
+            0,
+            project_a.path(),
+            &format!("{shared_skills}\n• aaa-project-a - only project A has it"),
+            "\nAgents:\n• reviewer — shared\nProject agents:\n• aaa-a-agent — only A",
+        );
+        let b = render(
+            5 * 3600 + 17 * 60,
+            project_b.path(),
+            shared_skills,
+            "\nAgents:\n• reviewer — shared",
+        );
+
+        assert_ne!(
+            a, b,
+            "the two projects must differ somewhere, or the test proves nothing"
+        );
+        let lcp = shared_prefix(&a, &b);
+        for (name, text) in stable {
+            let end = a.find(text).expect("stable instructions rendered") + text.len();
+            assert!(
+                end <= lcp,
+                "`{name}` ends at byte {end}, after the shared prefix ({lcp} bytes): a project-scoped \
+                 block was rendered before it"
+            );
+        }
+        let skills_end = a.find(shared_skills).unwrap() + shared_skills.len();
+        assert!(
+            skills_end <= lcp,
+            "the shared skills end at byte {skills_end}, after the shared prefix ({lcp} bytes)"
+        );
+        for project_only in ["aaa-project-a", "Project A runs on tabs."] {
+            assert!(
+                a.find(project_only).unwrap() >= lcp,
+                "{project_only} inside the shared prefix"
+            );
+        }
     }
 }
