@@ -13000,7 +13000,10 @@ mod pipeline_launch_tests {
         // The live run's GOOSE_RANK_CAPS planned figures.
         assert_eq!(split.plans[0].planned_bytes, 68_240_465_792);
         assert_eq!(split.plans[1].planned_bytes, 109_760_618_496);
-        assert_eq!(split.plans[0].prompt_cache_bytes, 0, "rank 0's workspace covers its copy");
+        assert_eq!(
+            split.plans[0].prompt_cache_bytes, 0,
+            "rank 0's workspace covers its copy"
+        );
         let plans: Vec<&RankPlan> = split.plans.iter().collect();
         let (launches, weights) =
             TensorLaunch::for_pipeline_ranks(&plans, &split.layers, &split.full_layers).unwrap();
@@ -13010,15 +13013,18 @@ mod pipeline_launch_tests {
         let quiet = launches[0].prompt_cache_quiet_limit_bytes;
         assert_eq!(strict, 4_046_192_640);
         assert_eq!(quiet, 7_949_778_944);
-        assert!(launches
-            .iter()
-            .all(|l| (l.prompt_cache_limit_bytes, l.prompt_cache_quiet_limit_bytes)
-                == (strict, quiet)));
+        assert!(launches.iter().all(|l| (
+            l.prompt_cache_limit_bytes,
+            l.prompt_cache_quiet_limit_bytes
+        ) == (strict, quiet)));
 
         // A chat cut of n tokens beside its own live row, in the launch's weighted unit
         // (6 x 2,560 B per token, 120 x 655,360 B of sliding state).
         let pair = |n: u64| 2 * (n * 15_360 + 78_643_200);
-        assert!(pair(126_592) <= strict && pair(127_711) > strict, "the live refusal point");
+        assert!(
+            pair(126_592) <= strict && pair(127_711) > strict,
+            "the live refusal point"
+        );
         for n in [141_000, 200_000, 230_000, 253_661] {
             assert!(pair(n) <= quiet, "{n} tokens: the cut fits beside its row");
         }
@@ -13031,7 +13037,10 @@ mod pipeline_launch_tests {
             let real = quiet / weight;
             let charged = plan.state_bytes + plan.prompt_cache_bytes + plan.workspace_bytes;
             let one_token = 262_144 * facts.pair_bytes;
-            assert!(real + one_token <= charged, "rank {rank}: {real} + {one_token} > {charged}");
+            assert!(
+                real + one_token <= charged,
+                "rank {rank}: {real} + {one_token} > {charged}"
+            );
         }
 
         // The spec hands it to every rank, beside the strict limit.
@@ -13049,7 +13058,10 @@ mod pipeline_launch_tests {
         let plans: Vec<&RankPlan> = roomy.plans.iter().collect();
         let (launches, _) =
             TensorLaunch::for_pipeline_ranks(&plans, &roomy.layers, &roomy.full_layers).unwrap();
-        assert_eq!(launches[0].prompt_cache_limit_bytes, 8_084_520_960, "a005ed73's charge");
+        assert_eq!(
+            launches[0].prompt_cache_limit_bytes, 8_084_520_960,
+            "a005ed73's charge"
+        );
         assert_eq!(
             launches[0].prompt_cache_quiet_limit_bytes,
             launches[0].prompt_cache_limit_bytes
