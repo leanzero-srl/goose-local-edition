@@ -11,6 +11,11 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
 3. Fix egregious problems at the root, ranked by how badly they block real use; test + mutation proof + independent check.
 
 ## Decisions
+- 2026-10-31 19:40 RELEASED 3.0.138 (tag on 628cd13e6e): lz.22 engine pin (frame-end resume checkpoint) on lz.21, WR-1/2
+  first-run node fix + Q-523 restart banner (wk/q522-setup), WR-11 vision images via the media pre-pass (wk/f22-vision),
+  WR-4 goose check (wk/q525-check b49cf977bb), WR-10 destructive-command guard (wk/f17-destructive a2bfbf3d85), WR-15 MiMo
+  split fetch budget (9b82ee840b). https://github.com/leanzero-srl/goose-local-edition/releases/tag/v3.0.138 . Installed
+  workhorse, workmule, Gabee (About 3.0.138, new session opens, score_sb7.py pack_by_id 2 = source sha); laptop untouched.
 - 2026-10-31 10:50 mimo-distributed merge: trial `git merge-tree main mimo-edit-arg-names` = ONE conflict
   (crates/goose-sidecar/src/engine.rs); the branch already merged main 3.0.136 (2e1304d70a) and its dev build
   eca39ae893 has run the 5 h MiMo split Gauntlet 8985a86d (compaction graded B+, vision in use). Decision: merge
