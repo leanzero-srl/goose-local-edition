@@ -48,14 +48,31 @@ class MoneyRenderedTests(unittest.TestCase):
         self.assertEqual(r["parts"]["ok_frac"], 1.0)
         self.assertEqual(r["parts"]["jpy_kwd"], [1.0, 1.0])
 
-    def test_8985a86d_without_row_ids_still_12_of_12(self):
+        self.assertIn("12 of 12 cells matched by row id; 0 without a pack id", r["detail"])
+
+    def test_cells_without_row_ids_score_0_and_are_named(self):
         r = run_check(RUN_8985A86D["seed"], RUN_8985A86D["rows"], with_ids=False)
-        self.assertEqual(r["score"], 1.0, r["detail"])
+        self.assertEqual(r["score"], 0.0, r["detail"])
+        self.assertEqual(r["parts"]["without_pack_id"], 12)
+        self.assertIn("0 of 12 cells matched by row id; 12 without a pack id (scored 0)", r["detail"])
 
     def test_a16c45bf_ascending_still_12_of_12(self):
-        for with_ids in (True, False):
-            r = run_check(RUN_A16C45BF["seed"], RUN_A16C45BF["rows"], with_ids=with_ids)
-            self.assertEqual(r["score"], 1.0, r["detail"])
+        r = run_check(RUN_A16C45BF["seed"], RUN_A16C45BF["rows"])
+        self.assertEqual(r["score"], 1.0, r["detail"])
+
+    def test_planted_digit_errors_fail_by_id_and_with_made_up_ids(self):
+        """Review 2026-10-31: each of these passed 12/12 against the whole-pack fallback."""
+        for idx, text in ((10, "$7.83"), (3, "€141.00"), (1, "¥312")):
+            r = self._planted(idx, text, True)
+            self.assertAlmostEqual(r["parts"]["ok_frac"], 11 / 12, places=3, msg=text)
+            self.assertLess(r["score"], 1.0, text)
+        jpy = self._planted(1, "¥312", True)
+        self.assertEqual(jpy["parts"]["jpy_kwd"][0], 0.0)
+        rows = [(f"row-{i}", t) for i, (_pid, t) in enumerate(RUN_8985A86D["rows"])]
+        rows[10] = ("row-10", "$7.83")
+        made_up = run_check(RUN_8985A86D["seed"], rows)
+        self.assertEqual(made_up["score"], 0.0, made_up["detail"])
+        self.assertEqual(made_up["parts"]["without_pack_id"], 12)
 
     def _planted(self, idx, text, with_ids):
         rows = list(RUN_8985A86D["rows"])
@@ -80,7 +97,7 @@ class MoneyRenderedTests(unittest.TestCase):
         r = self._planted(0, "€224.00", True)
         self.assertAlmostEqual(r["parts"]["ok_frac"], 11 / 12, places=3)
 
-    def test_misaligned_row_ids_fall_back_to_the_whole_pack(self):
+    def test_misaligned_row_ids_score_0(self):
         rows = RUN_8985A86D["rows"]
         c_rows = [{"id": "pay_00000", "amountText": "elsewhere"}] + [
             {"id": pid, "amountText": t} for pid, t in rows]
@@ -90,7 +107,9 @@ class MoneyRenderedTests(unittest.TestCase):
         c.pack = _PACKS[RUN_8985A86D["seed"]]
         c.payments = {"total": s.N_FROZEN}
         c.probes = {"load": {"amountTexts": [t for _i, t in rows], "rowAmounts": c_rows}}
-        self.assertEqual(CHECK(c)["score"], 1.0)
+        r = CHECK(c)
+        self.assertEqual(r["score"], 0.0)
+        self.assertEqual(r["parts"]["without_pack_id"], 12)
 
 
     def test_cross_currency_sum_still_zeroes_correct_newest_first_cells(self):
