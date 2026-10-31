@@ -2,7 +2,7 @@
 // prove it serves a completion. Q-113: 3.0.44 shipped a split that died 2 s after every launch, and nothing
 // noticed until an E2E round tried to use it. Exit 0 = split up and answered; 1 = it failed (the goosed log's
 // distributed WARN is printed); 2 = no split Run button on screen.
-import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
+import { chromium } from './pw.mjs';
 import { mainPage } from './mainpage.mjs';
 import { readdirSync, readFileSync } from 'node:fs';
 const b = await chromium.connectOverCDP('http://127.0.0.1:9333');

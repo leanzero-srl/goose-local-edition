@@ -24,7 +24,7 @@ endpoint = os.environ.get('REPLAY_ENDPOINT')
 key = None
 if endpoint is None:
     endpoint = 'https://openrouter.ai/api/v1/chat/completions'
-    for line in open('/Users/mihaiperdum/.agents/skills/goose-benchmark-iteration/secrets/cloud-providers.env'):
+    for line in open(os.path.expanduser('~/.agents/skills/goose-benchmark-iteration/secrets/cloud-providers.env')):
         if line.startswith('OPENROUTER_API_KEY='):
             key = line.split('=', 1)[1].strip().strip('"').strip("'")
 rows = [json.loads(l) for l in open(src)]

@@ -1,0 +1,11 @@
+body { font-family: -apple-system, Helvetica, Arial, sans-serif; background: #f2f2f2; margin: 0; padding: 32px; }
+.card { width: 420px; background: #fff; padding: 24px 28px; border: 1px solid #ccc; }
+h1 { margin: 0 0 4px; font-size: 24px; }
+.clinic { margin: 0 0 18px; color: #555; }
+label { display: block; font-weight: 600; margin: 14px 0 6px; }
+.services, .days { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { border: 1px solid #888; padding: 6px 10px; font-size: 14px; }
+.chip.on { background: #1f4e79; color: #fff; border-color: #1f4e79; }
+input { width: 100%; padding: 8px; font-size: 15px; box-sizing: border-box; }
+.summary { display: flex; justify-content: space-between; margin: 20px 0 14px; font-size: 18px; }
+button { background: #1f4e79; color: #fff; border: 0; padding: 12px 18px; font-size: 16px; width: 100%; }

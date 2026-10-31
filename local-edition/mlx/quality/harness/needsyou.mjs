@@ -252,7 +252,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.log(JSON.stringify({ dbSession: sid, ok: db.ok, error: db.error, items: db.items.length }));
     for (const it of db.items) console.log(JSON.stringify({ id: it.id, status: it.status, ...say({ question: it.question, recommended: it.recommended_answer }, it) }, null, 1));
   }
-  const { chromium } = await import('/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs');
+  const { chromium } = await import('./pw.mjs');
   const { mainPage } = await import('./mainpage.mjs');
   const b = await chromium.connectOverCDP('http://127.0.0.1:9333');
   const p = await mainPage(b);

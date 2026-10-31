@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Book a session - Harbour Physio</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="card">
+  <h1>Book a session</h1>
+  <p class="clinic">Harbour Physio, Dún Laoghaire</p>
+  <label for="service">Treatment</label>
+  <div id="service" class="services"></div>
+  <label>Day</label>
+  <div id="days" class="days"></div>
+  <label for="code">Discount code</label>
+  <input id="code" value="WINTER10">
+  <div class="summary">
+    <span>Total</span><strong id="total"></strong>
+  </div>
+  <button id="confirm">Confirm booking</button>
+</main>
+<script src="booking.js"></script>
+</body>
+</html>

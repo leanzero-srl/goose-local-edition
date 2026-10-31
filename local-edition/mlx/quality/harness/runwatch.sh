@@ -9,8 +9,8 @@ d=${1:?run dir}
 RATIO=${RATIO:-20}   # ratio: of the run's own median call output
 seen_live=$(cat $d/events.log 2>/dev/null | grep -c ' LIVE ')  # grep -c already prints 0; '|| echo 0' made it "0\n0"
 while true; do
-  if awk -F'\t' 'NR>1 && ($5=="notice" || $5=="hang") {f=1} END {exit !f}' $d/turns.tsv 2>/dev/null; then
-    echo "STOP: a turn ended notice/hang"; awk -F'\t' 'NR>1 {print $1, $4, $5, $8}' $d/turns.tsv | tail -3; exit 0; fi
+  if awk -F'\t' 'NR>1 && ($5=="notice" || $5=="hang" || $5=="error" || $5=="attach_fail") {f=1} END {exit !f}' $d/turns.tsv 2>/dev/null; then
+    echo "STOP: a turn ended notice/hang/error/attach_fail"; awk -F'\t' 'NR>1 {print $1, $4, $5, $8}' $d/turns.tsv | tail -3; exit 0; fi
   now_live=$(cat $d/events.log 2>/dev/null | grep -c ' LIVE ')
   if [ "$now_live" -gt "$seen_live" ]; then echo "LIVE finding:"; grep ' LIVE ' $d/events.log | tail -1 | cut -c1-300; exit 0; fi
   # The round's end: r1 writes every card still open and every note not delivered as acted into round.json

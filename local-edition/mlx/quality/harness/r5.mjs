@@ -12,7 +12,7 @@
 //   page's "New chats start on:" picker, set to NAME_A / NAME_B (the nodes' display names) and set back
 //   to what it showed before.
 //   J4=1 NODE_A=<id> NODE_B=<id> NAME_A=<display name> NAME_B=<display name> [ROUNDS=10] node r5.mjs <dir>
-import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
+import { chromium } from './pw.mjs';
 import { mainPage } from './mainpage.mjs';
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, appendFileSync, readdirSync, statSync, existsSync } from 'node:fs';

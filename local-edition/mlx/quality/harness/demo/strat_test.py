@@ -1,4 +1,4 @@
-p='/Users/mihaiperdum/Projects/goose/.claude/worktrees/agent-a7b0919188cbd8067/ui/desktop/src/components/nodes/StrategiesTab.test.tsx'
+import os; p=os.path.expanduser('~/Projects/goose/.claude/worktrees/agent-a7b0919188cbd8067/ui/desktop/src/components/nodes/StrategiesTab.test.tsx')
 s=open(p).read()
 a=s.index("  it('Remove: a refusal offers its way through and the second try carries it'")
 b=s.index("describe('the strategy editor'")

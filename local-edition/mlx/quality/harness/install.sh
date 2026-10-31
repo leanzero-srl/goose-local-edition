@@ -9,7 +9,7 @@
 # (E2E #3g void). Now: no swap while the old app runs (exit 3, naming the pid and any dialog holding it), and
 # "up" means a main process that STARTED after the swap.
 set -euo pipefail
-v=$1; repo=${REPO:-/Users/mihaiperdum/Projects/goose}/ui/desktop
+v=$1; repo=${REPO:-$HOME/Projects/goose}/ui/desktop
 dmg="$repo/out/make/Goose-Swarm-$v.dmg"; app="$repo/out/Goose Swarm-darwin-arm64/Goose Swarm.app"
 MAIN='Goose Swarm.app/Contents/MacOS/Goose Swarm'
 # Q-241: the quit now waits for goosed to EXIT before the app does. Its worst case is the stop's
@@ -42,8 +42,8 @@ for i in $(seq 1 $QUIT_WAIT); do pgrep -f "$MAIN" >/dev/null || break; sleep 1; 
 if pgrep -f "$MAIN" >/dev/null; then
   held=$(pgrep -f "$MAIN" | head -1)
   # Name what holds it (a confirm the quit raised) instead of swapping under a live app.
-  dialog=$(node -e "
-const {chromium}=require('/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core');
+  dialog=$(PW_DIR="${repo%/desktop}/node_modules/playwright-core" node -e "
+const {chromium}=require(process.env.PW_DIR);
 chromium.connectOverCDP('http://127.0.0.1:9333').then(async b=>{let p; for (const q of b.contexts()[0].pages()) { if (q.url().includes('index.html') && !(await q.evaluate(()=>!!document.querySelector('[data-testid=engine-glance-desktop]')).catch(()=>true))) { p=q; break; } }
 const d=p.getByRole('dialog'); console.log(await d.count()? (await d.first().innerText()).replace(/\s+/g,' ').slice(0,200):'no dialog'); process.exit(0)}).catch(e=>{console.log('cdp: '+e.message);process.exit(0)})" 2>/dev/null)
   echo "macbook: the old app did not quit (pid $held; on screen: $dialog) — NOT swapping"; exit 3

@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import { existsSync, readdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
-import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
+import { chromium } from './pw.mjs';
 import { readNoteTray, clickNoteSteps, planNoteSteps, chooseNoteAction, loadNoteGuidance } from './notes.mjs';
 
 const card = (id, target, live) => `

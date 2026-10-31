@@ -8,7 +8,7 @@
 // session the caller knows is running (r1.mjs passes its own). Each surface is read from the DOM as a user sees it.
 // Never clicks, never navigates. Prints one JSON line; exit 0 = consistent, 3 = at least one contradiction.
 // Also importable: `liveCheck(page, { title })` returns the same object (r1.mjs calls it every minute).
-import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
+import { chromium } from './pw.mjs';
 import { mainPage } from './mainpage.mjs';
 import { fileURLToPath } from 'node:url';
 
