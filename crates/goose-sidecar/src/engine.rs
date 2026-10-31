@@ -194,6 +194,12 @@ pub fn max_concurrent_requests(settings: &EngineSettings) -> u32 {
         .unwrap_or(MAX_CONCURRENT_REQUESTS)
 }
 
+/// v0.14.3-lz.22 (fork lz/hybrid-frame-ckpt 1283c61c4, on lz.21's 2bed59db4) = lz.21 + the hybrid prefix cache resumes
+/// a new chat at the end of the shared system/tools frame: the scheduler splits a hybrid prefill at the session's frame
+/// end and records a PINNED recurrent checkpoint there (thinning keeps it; the checkpoint count bound is unchanged, so
+/// memory is unchanged), and the LCP fetch keeps the DEEPEST resume point instead of the nearest sorted neighbour. A
+/// second chat with the same frame resumed at 16384/20480 and re-prefilled thousands of tokens; on Gabee resumed_at
+/// 20480 -> 21856 and 2.79 s -> 0.65 s.
 /// v0.14.3-lz.21 (fork lz/metal-tunables 2bed59db4) = lz.20 + the free-memory floor's "others" reference follows
 /// SUSTAINED readings only: the engine's whole process (max(phys_footprint, MLX active + cache), read with the page
 /// counts) is out of "others", a part rises only to a reading held 15 s (at once only while the Mac swaps out), and
@@ -338,7 +344,7 @@ pub fn max_concurrent_requests(settings: &EngineSettings) -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.21",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.22",
     "rapid-mlx",
 ];
 
@@ -513,6 +519,11 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.20",
+        "rapid-mlx",
+    ],    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.21",
         "rapid-mlx",
     ],
 ];
@@ -3783,7 +3794,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.21",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.22",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -3866,7 +3877,7 @@ mod tests {
             spawn_command: vec![
                 "uvx".into(),
                 "--from".into(),
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.21"
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.22"
                     .into(),
                 "rapid-mlx".into(),
             ],
@@ -4608,7 +4619,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.21",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.22",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
