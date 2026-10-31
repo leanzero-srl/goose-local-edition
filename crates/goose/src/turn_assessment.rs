@@ -1667,6 +1667,7 @@ mod tests {
         let review = "please never push to main without a review";
         let straight = "and don't push straight to main, ever";
         let tabs = "in this repo use tabs, not spaces";
+        let plain_tabs = "in this repo we use tabs for indenting";
         for (said, quote, flipped) in [
             (
                 review,
@@ -1684,6 +1685,12 @@ mod tests {
                 "Push straight to main.",
             ),
             (tabs, "use tabs, not spaces", "Use spaces, not tabs."),
+            // A negation the user never said.
+            (
+                plain_tabs,
+                "we use tabs for indenting",
+                "Never use tabs for indenting.",
+            ),
         ] {
             assert_eq!(
                 judge(said, quote, flipped),
