@@ -203,8 +203,17 @@ pub enum RankProgram {
     /// the fork's interpreter) and run `mlx_lm.server --pipeline`; a peer whose wrapper ignored it
     /// would load the whole model as a tensor rank and the collectives would never pair up.
     /// `mlxLmServerNamedConversation` (a requester before it) still reads, with no split: tensor.
+    ///
+    /// Tagged `mlxLmServerTaillessPipelineSplit` since Q-522: `keep_tailless_conversations`
+    /// makes every rank cut and keep a tool-bearing chat request that names no transient tail as
+    /// its conversation's call (goose's chat names none since a79067e2f0). It changes what is
+    /// evicted and, where the probe parts before the prompt's end, where a prefill segment ends,
+    /// so a peer that kept such a chat nothing would reuse a different prefix and run different
+    /// steps. `mlxLmServerPipelineSplit` (a requester before it) still reads, with it off: that
+    /// requester's ranks keep tailless chats nothing alike.
     #[serde(
-        rename = "mlxLmServerPipelineSplit",
+        rename = "mlxLmServerTaillessPipelineSplit",
+        alias = "mlxLmServerPipelineSplit",
         alias = "mlxLmServerNamedConversation",
         alias = "mlxLmServerEveryConversation",
         alias = "mlxLmServerKvDtype",
@@ -318,6 +327,14 @@ pub enum RankProgram {
         /// `keep_every_conversation` only.
         #[serde(default)]
         name_conversations: bool,
+        /// Every rank cuts and keeps a tool-bearing chat request that names no transient tail as
+        /// a call of its conversation (`rank_boundary.py` `Conversations.tailless_turn`, Q-522):
+        /// goose's chat keeps its turn-context blocks and names no tail, so no chat was kept, and
+        /// run 8985a86d's summary re-read 177,269 tokens (30 min) after the cache yielded the
+        /// chat's only extendable entry to its own growing row. With `keep_every_conversation`
+        /// only.
+        #[serde(default)]
+        keep_tailless_conversations: bool,
         /// goose's sampling profile for the model (Q-159, `rank_sampling.py`): the layer rank 0
         /// resolves between a request's own fields and the checkpoint's generation_config.json.
         /// Rank 0 only — the workers sample from the arguments rank 0 shares — so it needs no new
@@ -734,6 +751,7 @@ fn mlx_lm_server_specs(
             batch_kv_dtype: true,
             keep_every_conversation: true,
             name_conversations: true,
+            keep_tailless_conversations: true,
             sampling_defaults: Box::default(),
             pipeline_split: pipeline.map(|(split, _)| split.to_vec()),
             pipeline_cache_weights: pipeline.map(|(_, weights)| weights[rank]),
@@ -1453,6 +1471,7 @@ pub(crate) mod tests {
                 batch_kv_dtype: true,
                 keep_every_conversation: true,
                 name_conversations: true,
+                keep_tailless_conversations: true,
                 sampling_defaults: _,
                 pipeline_split: None,
                 pipeline_cache_weights: None,
@@ -4740,6 +4759,8 @@ tailed = replay(named, True)
 kept = kept_prefix_tokens()
 kept_prefix = [len(kept), kept_room()[0]] if kept is not None else None
 untailed = replay(conversation("B. " + goose, 3), False)
+# Read before the Q-342 summary below, which extends A and so is A's next call (Q-522).
+kept_after_untailed = any(entry.tokens is kept for entry in kept_now())
 system_end = next(i for i, (a, b) in enumerate(zip(
     render(named[0][0]), render(named[0][0][:1] + [{"role": "user", "content": ""}], generation=False))) if a != b)
 bounds = [stable_boundary(render(messages), render(messages, False, tail)) for messages, tail in named]
@@ -4787,7 +4808,7 @@ print("GOOSE_TEST " + json.dumps({
     "bounds": bounds,
     "prompts": prompts,
     "kept_prefix": kept_prefix,
-    "kept_after_untailed": kept_prefix_tokens() is kept,
+    "kept_after_untailed": kept_after_untailed,
     "restored_kinds": sorted({type(layer).__name__ for layer in restored}),
     "warm_equals_cold": bool(mx.allclose(warm, cold, atol=1e-4).item())
         and int(mx.argmax(warm).item()) == int(mx.argmax(cold).item()),
@@ -4847,7 +4868,8 @@ os._exit(0)
             .is_some_and(|bytes| bytes > 0));
         assert_eq!(
             seen["kept_after_untailed"], true,
-            "requests that name no tail (goose's helpers) never become the conversation prefix"
+            "another chat's requests that name no tail leave this conversation's prefix kept (Q-502; \
+             since Q-522 a tool-bearing tailless chat is a conversation of its own)"
         );
         assert_eq!(
             seen["restored_kinds"],
@@ -5835,6 +5857,300 @@ os._exit(0)
                 "{why}: {seen}"
             );
         }
+    }
+
+    /// Q-522 through the REAL mlx_lm 0.31.3 server on a tiny qwen3_5, the wrapper's own hooks
+    /// installed (rank 0): goose's chat as it has been sent since a79067e2f0 — its turn-context
+    /// blocks kept in place, NO transient tail, goose's session id on every request — takes two
+    /// tool steps; a background side call of the same session (another system prompt, tools)
+    /// arrives; then the cache yields entries to a growing row (here: down to three, as
+    /// TrackedBatchGenerator.next's per-step trim did to run 8985a86d while req-121 decoded), and
+    /// the compaction's summary (the whole chat, the instruction last) is sent. The shipped spec
+    /// keeps the chat's last prompt[:-1] — the entry the summary extends — through the side call
+    /// and the trim, and the summary reads it. The NEGATIVE CONTROL is the spec before Q-522: no
+    /// chat is kept, mlx_lm's type counts take that entry (an "assistant" beside a stale "user"),
+    /// the summary reads less and the rank names it exactly as run 8985a86d's did at 07:44:15Z —
+    /// GOOSE_RANK_PREFIX_LOST of that entry's tokens, `while_keeping: null`.
+    #[test]
+    fn a_tailless_chats_prefix_survives_the_cache_yielding_to_its_row_through_the_real_server() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let config = two_mac_config();
+        let spec_with = |keep_tailless: bool| {
+            let tensor = TensorLaunch {
+                planned_bytes: 27_456_216_576,
+                prompt_cache_limit_bytes: 9_431_744_512,
+                prompt_cache_entries: 64,
+                mlx_cache_limit_bytes: 2_745_621_658,
+                prefill: e2e_prefill(),
+            };
+            let mut spec = rank_specs(
+                &config,
+                &ServedNames::only("node-alias"),
+                &[tensor, tensor],
+                141_568,
+                2.0,
+            )
+            .remove(0);
+            if let RankProgram::MlxLmServer {
+                doorbell,
+                keep_tailless_conversations: tailless,
+                ..
+            } = &mut spec.program
+            {
+                *doorbell = false;
+                *tailless = keep_tailless;
+            }
+            spec.load_lock = Some(launch_load_lock());
+            spec
+        };
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("import faulthandler  # noqa")
+            .expect("the wrapper's body starts after the group check");
+        let end = wrapper
+            .find("server.main()")
+            .expect("the wrapper ends in mlx_lm's main");
+        let checks = r#"
+SESSION = {"agent-session-id": "20261031_8985a86d"}
+
+
+def send(messages, tools=TOOLS):
+    body = {"model": served, "messages": messages, "max_tokens": 2, "temperature": 0.0}
+    if tools:
+        body["tools"] = tools
+    status, reply = call("/v1/chat/completions", body, SESSION)
+    assert status == 200, reply
+    return [reply["usage"]["prompt_tokens"], reply["usage"]["prompt_tokens_details"]["cached_tokens"]]
+
+
+# goose's chat since a79067e2f0: every block stays where it was sent, so each request is the
+# previous one's messages, its answer and the tool result (with the block of that minute).
+messages = [{"role": "system", "content": "You are goose, a general-purpose agent. " * 40},
+            {"role": "user", "content": "Write the users script and run it." + block(51)}]
+reads, prompts = [], []
+for k in range(3):
+    reads.append(send(messages))
+    prompts.append(reads[-1][0])
+    messages = messages + [
+        {"role": "assistant", "content": f"Step {k}.", "tool_calls": [
+            {"id": f"call-{k}", "type": "function",
+             "function": {"name": "shell", "arguments": json.dumps({"command": f"node step{k}.js"})}}]},
+        {"role": "tool", "tool_call_id": f"call-{k}", "content": f"step {k} ok\n" * 40 + block(52 + k)},
+    ]
+kept_after_steps = len(kept_prefix_tokens() or [])
+# A background side call of the same session (background_work.rs runs in the session scope).
+reads.append(send([{"role": "system", "content": "You label tool calls in three words. " * 30},
+                   {"role": "user", "content": "Label: node step2.js"}]))
+kept_after_side = len(kept_prefix_tokens() or [])
+# The cache yields to the growing row.
+prompt_caches[0].trim_to(n_sequences=3)
+kept_after_trim = len(kept_prefix_tokens() or [])
+summary = send(messages + [{"role": "user", "content": "Summarize this conversation for yourself."}])
+print("GOOSE_TEST " + json.dumps({
+    "reads": reads, "summary": summary, "last_prompt": prompts[-1],
+    "kept": [kept_after_steps, kept_after_side, kept_after_trim],
+}), flush=True)
+os._exit(0)
+"#;
+        let run = |spec: &RankSpec| {
+            let program = format!(
+                "{}\
+                 class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
+                 group = _Group()\n{}QWEN38 = {qwen}\n{TINY_QWEN35_SERVER}{checks}",
+                tensor_modules(),
+                &wrapper[start..end],
+                qwen = serde_json::to_string(QWEN38).unwrap(),
+            );
+            run_against_real_packages_printing(&python, &program, spec)
+        };
+        let lost_lines = |stdout: &str| -> Vec<serde_json::Value> {
+            stdout
+                .lines()
+                .filter_map(|l| l.strip_prefix("GOOSE_RANK_PREFIX_LOST "))
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect()
+        };
+        let pair = |seen: &serde_json::Value, key: &str| -> (u64, u64) {
+            serde_json::from_value(seen[key].clone()).unwrap()
+        };
+
+        let (kept, kept_out) = run(&spec_with(true));
+        let last = kept["last_prompt"].as_u64().unwrap();
+        let reads: Vec<(u64, u64)> = serde_json::from_value(kept["reads"].clone()).unwrap();
+        assert_eq!(
+            reads[1].1,
+            reads[0].0 - 1,
+            "each tool step reads the previous call's prompt[:-1]: {kept}"
+        );
+        assert_eq!(reads[2].1, reads[1].0 - 1, "{kept}");
+        assert_eq!(
+            kept["kept"],
+            serde_json::json!([last - 1, last - 1, last - 1]),
+            "the chat's last prompt[:-1] is kept through the side call and the trim: {kept}"
+        );
+        assert_eq!(
+            pair(&kept, "summary").1,
+            last - 1,
+            "Q-522: the summary reads the chat's prefix: {kept}"
+        );
+        assert!(lost_lines(&kept_out).is_empty(), "{kept_out}");
+
+        let (control, control_out) = run(&spec_with(false));
+        assert_eq!(control["last_prompt"], kept["last_prompt"]);
+        assert_eq!(
+            control["kept"],
+            serde_json::json!([0, 0, 0]),
+            "NEGATIVE CONTROL: no tailless chat is kept: {control}"
+        );
+        let cached = pair(&control, "summary").1;
+        assert!(
+            cached < last - 1,
+            "NEGATIVE CONTROL: the trim took the entry the summary extends: read {cached}: {control}"
+        );
+        let lost = lost_lines(&control_out);
+        let named = lost
+            .last()
+            .unwrap_or_else(|| panic!("the loss is named: {control_out}"));
+        assert_eq!(named["tokens"].as_u64(), Some(last - 1), "{named}");
+        assert_eq!(named["cached"].as_u64(), Some(cached), "{named}");
+        assert_eq!(named["while_keeping"], serde_json::Value::Null, "{named}");
+    }
+
+    /// Q-522 at run 8985a86d's sizes through the real mlx_lm 0.31.3 LRUPromptCache (MiMo split,
+    /// rank0 ...1793416063838.log, 2026-10-31): the plan's 8,084,520,960 B bound, 15,360 B per
+    /// token + 78,643,200 B of state, the 35,503-token head the summary read, the stale system
+    /// and user snapshots beside it (system 2 seqs 0.99 GB, user 1 seq 0.66 GB), and the chat's
+    /// calls req-119/120/121 (prompts 193,467 / 198,713 / 202,918, answers 5,048 / 4,013 /
+    /// 9,206), each one mlx_lm's way: admitted alone (the cache trimmed beside the row), its
+    /// prompt[:-1] snapshotted, every decode step yielding to the growing row, its end cached.
+    /// NEGATIVE CONTROL (the spec before Q-522, nothing kept): every call reads the previous
+    /// prompt[:-1] until req-121's decode passes ~205k tokens and the yield takes its 202,917-token
+    /// entry ("assistant" 1 vs a stale "user" 1); the summary (212,772) reads the 35,503 head and
+    /// the loss is named with `while_keeping: None` — the log's line. The shipped rule keeps the
+    /// chat's prompt[:-1] and its head, the yield takes the stale entries, and the summary reads
+    /// 202,917: 177,269 tokens fewer to read (30 minutes of tonight's prefill). A side call of the
+    /// same session with another head is not the chat's call (`tailless_turn`).
+    #[test]
+    fn a_tailless_chats_summary_reads_its_prefix_at_run_8985a86d_sizes_through_real_mlx_lm() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+from mlx_lm.models.cache import LRUPromptCache
+
+p = {"kv_bytes_per_token": 15360, "sequence_state_bytes": 78643200, "batch_transient_ratio": 2.2}
+PLAN_LIMIT = 8084520960
+ENTRIES = 205
+
+
+class Layer:
+    def __init__(self, tokens):
+        self.nbytes = batch_kv_charge(p, 1, tokens)
+
+    def is_trimmable(self):
+        return False
+
+
+HEAD, OLD_SYSTEM, OLD_USER = 35503, 18700, 37850
+CALLS = [(193467, 5048), (198713, 4013), (202918, 9206)]
+SUMMARY = 212772
+SESSION = "20261031_8985a86d"
+upstream_pop = LRUPromptCache.CacheOrder.pop
+
+
+def replay(keep_tailless):
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    convs = Conversations()
+    keep_conversations(LRUPromptCache.CacheOrder, convs)
+    log = EvictionLog(ENTRIES)
+    kept_pop = LRUPromptCache.CacheOrder.pop
+    width = [0]
+
+    def recorded(self):
+        item = kept_pop(self)
+        log.evicted(item[1], convs.newest_prefix(), 1, width[0], ["req"], 0)
+        return item
+
+    LRUPromptCache.CacheOrder.pop = recorded
+    cache = LRUPromptCache(max_size=ENTRIES, max_bytes=PLAN_LIMIT)
+    beside = lambda w: PLAN_LIMIT - batch_kv_charge(p, 1, w)
+
+    def insert(tokens, cache_type, bound=None):
+        layers = [Layer(len(tokens))]
+        convs.inserted(tokens, layers[0].nbytes)
+        cache.insert_cache("m", tokens, layers, cache_type=cache_type)
+        forget_dropped(cache._lru, convs.kept())
+        if bound is not None:
+            cache.trim_to(n_bytes=bound)
+
+    def lookup(prompt):
+        found, rest = cache.fetch_nearest_cache("m", prompt)
+        cached = len(prompt) - len(rest) if found is not None else 0
+        return cached, log.lost_prefix(prompt, cached, 0)
+
+    chat = list(range(SUMMARY))
+    insert(chat[:HEAD], "system")
+    insert([-1 - k for k in range(OLD_SYSTEM)], "system")
+    insert([-100000 - k for k in range(OLD_USER)], "user")
+    out = {"reads": [], "yield_width": None}
+    for n, answer in CALLS:
+        prompt = chat[:n]
+        if keep_tailless:
+            assert convs.tailless_turn(prompt, HEAD, SESSION)
+            convs.cut(prompt, n - 1, HEAD, SESSION)
+        out["reads"].append(lookup(prompt)[0])
+        width[0] = n
+        cache.trim_to(n_bytes=beside(n))
+        insert(prompt[:-1], "assistant", beside(n))
+        for w in range(n, n + answer):
+            width[0] = w
+            if cache.nbytes > beside(w):
+                held = any(len(t) == n - 1 for lru in cache._lru._lrus.values() for _, t in lru)
+                cache.trim_to(n_bytes=beside(w))
+                gone = not any(len(t) == n - 1 for lru in cache._lru._lrus.values() for _, t in lru)
+                if held and gone and out["yield_width"] is None:
+                    out["yield_width"] = w
+        insert(prompt + [-(10_000_000 + n + k) for k in range(answer)], "assistant")
+    side = [-(20_000_000 + k) for k in range(900)] + chat[HEAD:HEAD + 100]
+    out["side_call_is_the_chat"] = convs.tailless_turn(side, 800, SESSION) if keep_tailless else None
+    summary = chat[:SUMMARY]
+    if keep_tailless:
+        assert convs.tailless_turn(summary, HEAD, SESSION)
+        convs.cut(summary, SUMMARY - 1, HEAD, SESSION)
+    out["summary"], out["lost"] = lookup(summary)
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    return out
+
+
+control = replay(False)
+assert control["reads"] == [35503, 193466, 198712], control
+assert control["summary"] == 35503, control
+assert control["lost"]["tokens"] == 202917 and control["lost"]["while_keeping"] is None, control
+assert 202918 < control["yield_width"] < 202918 + 9206, control
+kept = replay(True)
+assert kept["reads"] == [35503, 193466, 198712], kept
+assert kept["yield_width"] is None, kept
+assert kept["summary"] == 202917 and kept["lost"] is None, kept
+assert kept["side_call_is_the_chat"] is False, kept
+print("ok")
+"#;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!(
+                "{}{}{checks}",
+                include_str!("rank_prefill.py"),
+                include_str!("rank_boundary.py")
+            ))
+            .output()
+            .expect("the tensor venv's python runs");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
     }
 
     /// Q-502's admission through the REAL mlx_lm 0.31.3 server on a tiny qwen3_5, the wrapper's
@@ -10924,8 +11240,27 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerPipelineSplit");
+        assert_eq!(json["program"], "mlxLmServerTaillessPipelineSplit");
+        assert_eq!(json["keep_tailless_conversations"], true);
         assert_eq!(json["name_conversations"], true);
+
+        // A requester before Q-522 (the pipeline-split tag, no keep_tailless_conversations) keeps
+        // tailless chats nothing here: its own ranks keep them nothing alike.
+        let mut split = json.clone();
+        split["program"] = "mlxLmServerPipelineSplit".into();
+        split
+            .as_object_mut()
+            .unwrap()
+            .remove("keep_tailless_conversations");
+        let read: RankSpec = serde_json::from_value(split).unwrap();
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                keep_tailless_conversations: false,
+                name_conversations: true,
+                ..
+            }
+        ));
         assert_eq!(json["keep_every_conversation"], true);
         assert_eq!(json["batch_kv_dtype"], true);
         assert_eq!(json["keep_stable_head"], true);
@@ -10978,7 +11313,9 @@ print("ok")
         }
         let refused = serde_json::from_value::<EveryConversationProgram>(json.clone()).unwrap_err();
         assert!(
-            refused.to_string().contains("mlxLmServerPipelineSplit"),
+            refused
+                .to_string()
+                .contains("mlxLmServerTaillessPipelineSplit"),
             "{refused}"
         );
         let why = link_control_refusal(&refused.to_string());
@@ -11032,7 +11369,9 @@ print("ok")
         }
         let refused = serde_json::from_value::<KvDtypeProgram>(json.clone()).unwrap_err();
         assert!(
-            refused.to_string().contains("mlxLmServerPipelineSplit"),
+            refused
+                .to_string()
+                .contains("mlxLmServerTaillessPipelineSplit"),
             "{refused}"
         );
         let why = link_control_refusal(&refused.to_string());
@@ -12554,13 +12893,17 @@ mod pipeline_launch_tests {
     fn the_pipeline_spec_round_trips_and_an_older_tag_reads_as_tensor() {
         let specs = specs_for(&mimo_split(), &pipeline_config());
         let json = serde_json::to_string(&specs[1]).unwrap();
-        assert!(json.contains("\"mlxLmServerPipelineSplit\""), "{json}");
+        assert!(
+            json.contains("\"mlxLmServerTaillessPipelineSplit\""),
+            "{json}"
+        );
         let back: RankSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(back, specs[1]);
 
-        let tensor = serde_json::to_string(&specs[1].clone())
-            .unwrap()
-            .replace("mlxLmServerPipelineSplit", "mlxLmServerNamedConversation");
+        let tensor = serde_json::to_string(&specs[1].clone()).unwrap().replace(
+            "mlxLmServerTaillessPipelineSplit",
+            "mlxLmServerNamedConversation",
+        );
         let mut old: serde_json::Value = serde_json::from_str(&tensor).unwrap();
         let program = old.as_object_mut().unwrap();
         program.remove("pipeline_split");

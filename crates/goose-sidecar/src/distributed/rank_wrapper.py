@@ -916,6 +916,17 @@ conversations = Conversations() if spec.get("keep_every_conversation") else None
 # with the request. It changes what every rank evicts, so it rides its own ask
 # (`name_conversations`), and a peer that told conversations apart by tokens alone refuses the spec.
 names_conversations = conversations is not None and bool(spec.get("name_conversations"))
+# Q-522 (rank_boundary.py `Conversations.tailless_turn`): a tool-bearing chat request that names no
+# transient tail is a conversation's call too. goose's chat has named none since it keeps its
+# turn-context blocks (a79067e2f0, 2026-10-02), so from then on no chat was cut or kept, and the
+# cache evicted by mlx_lm's type counts alone. Run 8985a86d (MiMo split, rank0 ...1793416063838.log,
+# 2026-10-31): while req-121 decoded its 202,918-token prompt, the cache yielding to the growing
+# row (TrackedBatchGenerator.next) took the one entry the next call extends — req-121's own
+# prompt[:-1], "assistant" 1 vs "user" 1 — and kept a stale 0.66 GB user entry; 07:44:15
+# GOOSE_RANK_PREFIX_LOST {"cached": 35503, "tokens": 202917, "while_keeping": null}, and the
+# compaction's summary re-read 177,269 tokens for 30 minutes. It changes what every rank evicts and,
+# where the probe parts earlier, where a segment ends, so it rides its own ask.
+tailless_conversations = conversations is not None and bool(spec.get("keep_tailless_conversations"))
 conversation_prefix = (
     KeptEntry() if spec.get("keep_conversation_prefix") and conversations is None else None
 )
@@ -1608,7 +1619,8 @@ def _tokenize(self, tokenizer, request, args):
     its transient tail (rank_boundary.py), and one ending at the chat's stable head (Q-347).
     `settle` counts with the upstream one."""
     tail = getattr(request, "transient_tail", None)
-    if not tail or request.request_type != "chat" or not tokenizer.has_chat_template:
+    tailless = not tail and tailless_conversations and bool(request.tools)
+    if (not tail and not tailless) or request.request_type != "chat" or not tokenizer.has_chat_template:
         return original_tokenize(self, tokenizer, request, args)
     # Upstream rewrites the messages in place (content lists joined, tool-call arguments parsed);
     # the stable conversation is rendered from the same rewrite of an untouched copy.
@@ -1621,6 +1633,28 @@ def _tokenize(self, tokenizer, request, args):
     if args.chat_template_kwargs:
         template_args = {**template_args, **args.chat_template_kwargs}
     head = cut_stable_head(tokenizer, messages, request.tools, template_args, prompt)
+    conversation = getattr(request, "conversation", None)
+    if tailless:
+        if not conversations.tailless_turn(prompt, head, conversation):
+            return prompt, segments, segment_types, initial_state
+        future = tokenizer.apply_chat_template(
+            [*messages, {"role": "assistant", "content": BOUNDARY_PROBE}],
+            tools=request.tools,
+            tokenize=True,
+            add_generation_prompt=False,
+            **template_args,
+        )
+        if common_prefix(prompt, future) >= len(prompt) - 1:
+            # The next call extends prompt[:-1], the entry mlx_lm snapshots at its last segment's
+            # end on its own: that entry is kept, and no segment is added (Q-522).
+            record_cuts(prompt, len(prompt) - 1, head, conversation)
+            segments, segment_types = cut_at_head(segments, segment_types, head)
+            return prompt, segments, segment_types, initial_state
+        boundary = stable_boundary(prompt, future)
+        record_cuts(prompt, boundary if 0 < boundary < len(prompt) else 0, head, conversation)
+        segments, segment_types = cut_at_boundary(segments, segment_types, boundary)
+        segments, segment_types = cut_at_head(segments, segment_types, head)
+        return prompt, segments, segment_types, initial_state
     try:
         stable = stable_messages(messages, tail)
     except TailIgnored as ignored:
