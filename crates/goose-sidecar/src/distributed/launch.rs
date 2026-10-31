@@ -210,13 +210,10 @@ pub enum RankProgram {
     /// evicted and, where the probe parts before the prompt's end, where a prefill segment ends,
     /// so a peer that kept such a chat nothing would reuse a different prefix and run different
     /// steps. `mlxLmServerPipelineSplit` (a requester before it) still reads, with it off: that
-    /// requester's ranks keep tailless chats nothing alike. main's tensor-only Q-522 tag,
-    /// `mlxLmServerTaillessConversation` (no split), reads too; main's goosed knows neither
-    /// pipeline tag, so it refuses a split it would load as a tensor rank.
+    /// requester's ranks keep tailless chats nothing alike.
     #[serde(
         rename = "mlxLmServerTaillessPipelineSplit",
         alias = "mlxLmServerPipelineSplit",
-        alias = "mlxLmServerTaillessConversation",
         alias = "mlxLmServerNamedConversation",
         alias = "mlxLmServerEveryConversation",
         alias = "mlxLmServerKvDtype",
@@ -11168,17 +11165,6 @@ print("ok")
             RankProgram::MlxLmServer {
                 keep_tailless_conversations: false,
                 name_conversations: true,
-                ..
-            }
-        ));
-        // main's tensor-only Q-522 spec (its tag, no split) keeps tailless chats here too.
-        let mut main_tag = json.clone();
-        main_tag["program"] = "mlxLmServerTaillessConversation".into();
-        let read: RankSpec = serde_json::from_value(main_tag).unwrap();
-        assert!(matches!(
-            read.program,
-            RankProgram::MlxLmServer {
-                keep_tailless_conversations: true,
                 ..
             }
         ));

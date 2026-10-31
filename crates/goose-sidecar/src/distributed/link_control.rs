@@ -634,7 +634,6 @@ pub async fn spawn_link_rank(
 pub fn older_peer_refusal(error: &str) -> Option<&'static str> {
     [
         "mlxLmServerTaillessPipelineSplit",
-        "mlxLmServerTaillessConversation",
         "mlxLmServerPipelineSplit",
         "mlxLmServerNamedConversation",
         "mlxLmServerEveryConversation",
