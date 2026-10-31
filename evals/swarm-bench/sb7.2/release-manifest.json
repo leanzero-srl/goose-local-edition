@@ -110,7 +110,7 @@
     "bench/test_score_routes.py": "c6e5e2e3e6ca632f1de3671b6e68d1b321d51343a43333f4e3b84c8b04770a92",
     "bench/test_score_sb71.py": "cdc50168c03354444136a62009fd37e17f650f1474748f5d4e6abf83b05581a0",
     "bench/test_score_sb72.py": "6ea36aeb586e294c19547b7c02c79475b5e4065b572510efa9ce8e823965dc7a",
-    "bench/test_score_sb7_money.py": "1a5b0a558008465848b2b83950941a5b3adb3b15fe69e09f700a8900d5d17e48",
+    "bench/test_score_sb7_money.py": "834a411727d4dd8309310c80acebe220cdb1e28ea1461a541fe87721050b7210",
     "bench/test_scorer_interface.py": "5133013ce5ba610d4574f6117010a5e1edb0547ea782e6238abd4a8101c6fd73",
     "bench/test_seed_gate.py": "c68d835938de413f74268cb5d31ea5b6b500db89961426860a2181591ba52b9a",
     "bench/test_starter_sb71.py": "9d475c3b160774ba1f486da05542043fff41912df31d59158d06266bd48bc94b",
