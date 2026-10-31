@@ -191,3 +191,10 @@ llm_request.9.jsonl = the first request after its compaction, summary text insid
   M5/M6 killed (gabee ~/scratch/steward/mutate.sh). Gates: clippy -D warnings clean; lib 2436 pass, 1 known env
   failure (key_connection loopback, macOS 27); integration tests pass except providers::test_claude_code_provider
   (live claude CLI on gabee, untouched code).
+- STEWARD 2026-10-31 c (relay 2, no code change): the "3 repeated calls" after 8985a86d's compaction were NOT re-runs.
+  sessions.db rows 293-298 (node --check, browser self-test, screenshot) are the verbatim kept tail
+  (`tail_that_fits`), byte-identical to rows 283-288 and written at 07:38:01 together with the summary row (289) and
+  the preserved task prompt; the model's first real call (row 302) wrote DECISIONS.md, as the Next step said.
+  GRADER TRAP: when reading "what happened after a compaction" from sessions.db, rows sharing the compaction's
+  created_timestamp (and agentVisible copies of agent-invisible originals) are the kept tail, not new calls; real
+  post-compaction calls start after the fresh `<turn-context>` row with the low context figure.
