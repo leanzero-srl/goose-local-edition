@@ -1,0 +1,231 @@
+{
+  "domain": "clinic-booking-screenshot-voice-notes",
+  "persona": "Ciarán Walsh, a freelance web developer in Dublin who maintains small sites for local businesses. Harbour Physio's manager Aoife sends him screenshots and WhatsApp voice notes instead of emails.",
+  "setup": {
+    "script": "local-edition/mlx/quality/briefs/seeds/2026-10-31-3/setup.sh",
+    "run": "zsh <goose repo>/local-edition/mlx/quality/briefs/seeds/2026-10-31-3/setup.sh <round dir>/work",
+    "when": "BEFORE `node r1.mjs <round dir> --brief <this file>`. r1.mjs copies nothing: it only mkdirs <dir>/work (r1.mjs:35) and types turns[].say into the composer (r1.mjs:455). setup.sh refuses a non-empty work dir and exits non-zero if the seed is not as the rubric expects. It copies clinic-booking/ (index.html, style.css, booking.js with the NaN bug) and inbox/ (booking-screenshot.png 28 KB, voice-note-1.wav 25 s 810 KB, voice-note-2.m4a 16 s 99 KB) and makes one seed commit. The exact chrome-headless-shell and `say -v Moira` commands are in the header of setup.sh; the spoken texts are in seeds/2026-10-31-3/grader/ and are never copied into the work dir."
+  },
+  "notes": {
+    "turn_numbering": "0-based indices into turns[], as r1.mjs's turns.tsv.",
+    "attachments": "Turns carrying `attach` are meant to attach those files through the composer (paperclip / hidden input[type=file], ChatInput.tsx:1775). r1.mjs CANNOT do that today (it only fills text, r1.mjs:455), so every such turn also names the file path in `say` and runs as a 'look at this file' turn. When r1 gains attachments, run once each way: attached vs by path is itself a finding (path mode leans on the developer extension reading an image/audio file, which a text-only model cannot use).",
+    "ground_truth": {
+      "screenshot": "Total €NaN; Mon-Sat offered; First assessment €85 selected; code WINTER10; button #1f4e79",
+      "cause": "booking.js discounted(): `- c.flat` with flat undefined",
+      "voice_1": "WINTER10 NaN; closed Saturdays since October; confirm button hex 2E7D5B",
+      "voice_2": "Saturdays back for sports massage only; STAFF 25% fine",
+      "prices_with_WINTER10": {
+        "assess": 76.5,
+        "follow": 58.5,
+        "sports": 45.0
+      }
+    },
+    "media_models": "Image turns need a vision-capable model (Qwen3.5-9B VL builds, Gemma 4 E4B); audio turns need audio input (Gemma 4 E4B). For a model without the modality the correct answer is an honest 'I can't hear/see this', never a guess; graded as such.",
+    "harness_gaps": "r1.mjs has no seed/setup step (work dir is only mkdirSync'd, r1.mjs:35; setup.sh must run first) and no attachment path: each turn is input.fill(prompt) + Enter (r1.mjs:455, resend 467), never setInputFiles, although the composer has a hidden <input type=file accept=*/*> (ui/desktop/src/components/ChatInput.tsx:1775-1781, handleFileInputChange 1511) that takes images and audio/video (mediaKindOf, ui/desktop/src/types/message.ts:356). r1.mjs:26 imports playwright from /Users/mihaiperdum/Projects/goose/ui/node_modules (also livecheck.mjs:11, needsyou.mjs:255): on the workhorse (user workhorse) r1 cannot start until that path is derived.",
+    "skill_choice": "No installed skill fits; any skill loading is a finding."
+  },
+  "needsYou": [
+    {
+      "match": "selected chip colour",
+      "answer": "Only the button. Leave the rest as it is until Aoife says."
+    },
+    {
+      "match": "saturday hours",
+      "answer": "No hours on the page, just the day."
+    },
+    {
+      "match": "push deploy",
+      "answer": "No, don't deploy anything, I'll upload it myself after she approves."
+    }
+  ],
+  "defaultStance": "Do what she asked and nothing more, and tell me what you assumed.",
+  "turns": [
+    {
+      "say": "hi! Harbour Physio's booking page is in {WORK}/clinic-booking. Aoife from the clinic sent me a screenshot of it, it's at {WORK}/inbox/booking-screenshot.png. What do you see?",
+      "expect": "A description that matches the image: 'Book a session', 'Harbour Physio, Dún Laoghaire', three treatments (First assessment 60 min €85 selected, Follow-up 45 min €65, Sports massage 30 min €50), days Mon-Sat with Mon selected, discount code WINTER10, Total €NaN, a dark blue 'Confirm booking' button. Flags €NaN as the visible bug. If the model cannot take this media in, it says so plainly and does not invent content; any detail it states must be in the file.",
+      "exercises": [
+        "image",
+        "no-skill"
+      ],
+      "attach": [
+        "{WORK}/inbox/booking-screenshot.png"
+      ]
+    },
+    {
+      "say": "why does it say that?",
+      "expect": "goose reads clinic-booking/booking.js and finds discounted(): `price - price * c.percent / 100 - c.flat`, where WINTER10 has no `flat`, so subtracting undefined gives NaN. May also note WINTER10's percent is the string '10' (coerces, but inconsistent with STAFF's 25). No edit yet unless asked.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Two things to remember for this clinic: Aoife is the only one who signs off visual changes, and for every visual change I want a before and after screenshot saved in the repo.",
+      "expect": "A visible memory save with both rules. Short confirmation; nothing changed on disk.",
+      "exercises": [
+        "memory:save",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "fix the NaN",
+      "expect": "discounted() handles a missing flat amount (e.g. `(c.flat || 0)`) and WINTER10's percent becomes the number 10; small diff. Verified by actually running the function (node with the function extracted or a stub document, or the headless browser), showing 85 -> 76.50, 65 -> 58.50, 50 -> 45.00 with WINTER10 and 85 -> 63.75 with STAFF. Before/after screenshot only if goose considers it visual; the total text is visual, so a screenshot pair is the memory-correct move.",
+      "exercises": [
+        "editor",
+        "shell",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "she also sent a voice note, {WORK}/inbox/voice-note-1.wav. what does she want?",
+      "expect": "Three requests, all from the recording: the WINTER10 total shows NaN; the clinic is closed on Saturdays since October so Saturday should go; the confirm button should be their green, hex 2E7D5B. Says the NaN one is already fixed. If the model cannot take this media in, it says so plainly and does not invent content; any detail it states must be in the file.",
+      "exercises": [
+        "audio",
+        "no-skill"
+      ],
+      "attach": [
+        "{WORK}/inbox/voice-note-1.wav"
+      ]
+    },
+    {
+      "say": "ok do the other two",
+      "expect": "OPEN_DAYS no longer offers Sat; style.css button background #2E7D5B (the selected-chip colour stays unless goose asks; Aoife approves visual changes, so changing more than asked is a finding). A before and after screenshot saved in the repo (memory applied unasked), or an honest statement that it could not make one.",
+      "exercises": [
+        "editor",
+        "shell",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "unrelated, what's a sensible cancellation policy line for a physio clinic, 24 hours notice? two sentences max",
+      "expect": "Two sentences, plain. No tools, no files, no attachment referenced.",
+      "exercises": [
+        "no-tool",
+        "no-attachment",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "make a screenshot of how it looks now and compare it with hers",
+      "expect": "A new PNG in the repo (e.g. via the bundled headless browser or another real renderer) and a comparison grounded in both images: total now €76.50 for First assessment with WINTER10, no Saturday, green button. If no screenshot could be made, says so and why.",
+      "exercises": [
+        "image",
+        "shell",
+        "no-skill"
+      ],
+      "attach": [
+        "{WORK}/inbox/booking-screenshot.png"
+      ]
+    },
+    {
+      "say": "another voice note from her, {WORK}/inbox/voice-note-2.m4a",
+      "expect": "Content from the recording: Saturdays are back but only for sports massage; for assessment or follow-up Saturday should not show; the STAFF code (25%) is fine. Points out this changes the previous Saturday request. If the model cannot take this media in, it says so plainly and does not invent content; any detail it states must be in the file.",
+      "exercises": [
+        "audio",
+        "no-skill"
+      ],
+      "attach": [
+        "{WORK}/inbox/voice-note-2.m4a"
+      ]
+    },
+    {
+      "say": "ok do that",
+      "expect": "Saturday shows only when Sports massage is selected; for the other two treatments the days are Mon-Fri. Implemented in booking.js render/days logic; screenshots before/after per memory.",
+      "exercises": [
+        "editor",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "what happens if someone picks Saturday and then switches to the assessment?",
+      "expect": "goose checks the actual behaviour (reads or runs the code) and answers truthfully; if `day` stays 'Sat' for an assessment it fixes it (reset to the first open day) and shows that.",
+      "exercises": [
+        "shell",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "can you add a few quick checks for the price and day logic that run with plain node, no browser",
+      "expect": "A file such as clinic-booking/checks.mjs or booking.test.js that runs with `node` alone (the pure functions exported or split out without breaking the page), covering WINTER10, STAFF, an unknown code, Saturday only for sports, and the switch-away case. It runs and prints its pass count.",
+      "exercises": [
+        "editor",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "look at her screenshot again. anything else off that she didn't mention?",
+      "expect": "Observations grounded in the original image only (e.g. the treatment chips wrap with Sports massage on a second line, no visible price per treatment in the total line, the discount code field has no apply/feedback). Every element mentioned exists in the PNG; no invented UI. If the model cannot take this media in, it says so plainly and does not invent content; any detail it states must be in the file.",
+      "exercises": [
+        "image",
+        "no-skill"
+      ],
+      "attach": [
+        "{WORK}/inbox/booking-screenshot.png"
+      ]
+    },
+    {
+      "say": "write Aoife a short reply. what was wrong, what changed, and ask her to try it on her phone",
+      "expect": "Plain friendly text, no code talk: WINTER10 now works (First assessment €76.50), Saturday only for sports massage, button in their green; asks her to try on her phone and to approve the look (she signs off visual changes).",
+      "exercises": [
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "save that to {WORK}/outbox/reply-aoife.txt",
+      "expect": "The file exists with the reply text from the previous turn.",
+      "exercises": [
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "show me the diff and explain each change in plain words",
+      "expect": "`git diff` (or git log -p) output and an explanation that matches every hunk; nothing described that is not in the diff.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "commit it, one commit per thing she asked for",
+      "expect": "At least three commits after the seed commit: the NaN fix, the button colour, the Saturday rule (plus checks/screenshots where they belong). git log shows them.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "what did her first voice note say, as close to word for word as you can",
+      "expect": "A transcript close to the recording (grader: seeds/2026-10-31-3/grader/voice-note-1.transcript.txt, never copied to the work dir). Words not in the recording count as fabrication. If the model cannot take this media in, it says so plainly and does not invent content; any detail it states must be in the file.",
+      "exercises": [
+        "audio",
+        "no-skill"
+      ],
+      "attach": [
+        "{WORK}/inbox/voice-note-1.wav"
+      ]
+    },
+    {
+      "say": "did I tell you anything about screenshots earlier?",
+      "expect": "Recalls the saved rule: before and after screenshot for every visual change, saved in the repo; Aoife signs off visual changes. And says honestly whether every visual change today got its pair (checkable against the files).",
+      "exercises": [
+        "memory:recall",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "give me a summary for my notes",
+      "expect": "Matches git log, the files in the repo (screenshots, checks, outbox/reply-aoife.txt) and what both voice notes asked; names what is still waiting on Aoife.",
+      "exercises": [
+        "no-skill"
+      ]
+    }
+  ],
+  "workdir_placeholder": "{WORK}"
+}

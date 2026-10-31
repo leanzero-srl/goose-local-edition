@@ -1,0 +1,264 @@
+{
+  "domain": "accessibility-act-research-docs",
+  "persona": "Joana Matos, an independent web consultant in Porto. Her client Tomás Ferreira owns Fio & Linha Lda, a 14-person online yarn shop. She uses goose for research and for client documents; Tomás only reads Word and Excel.",
+  "setup": {
+    "script": "local-edition/mlx/quality/briefs/seeds/2026-10-31-2/setup.sh",
+    "run": "zsh <goose repo>/local-edition/mlx/quality/briefs/seeds/2026-10-31-2/setup.sh <round dir>/work",
+    "when": "BEFORE `node r1.mjs <round dir> --brief <this file>`. r1.mjs copies nothing: it only mkdirs <dir>/work (r1.mjs:35) and types turns[].say into the composer (r1.mjs:455). setup.sh refuses a non-empty work dir and exits non-zero if the seed is not as the rubric expects. It copies from-client/audit-2026-10-24.csv (40 rows, 270 issues), from-client/agency-quote-PN-2026-118.pdf (total deliberately wrong: 7,965.00 stated, lines sum to 7,765.00) and from-client/accessibility-statement-draft.docx into the work dir."
+  },
+  "notes": {
+    "turn_numbering": "0-based indices into turns[], as r1.mjs's turns.tsv.",
+    "why_this_domain": "Research with live web search on a current regulation, reading a client PDF and DOCX, computing from a CSV, and producing Markdown, DOCX and XLSX deliverables; every number is fixed by the seed and every legal claim must carry a source.",
+    "expected_numbers": {
+      "rows": 40,
+      "issues": 270,
+      "by_severity": {
+        "critical": 60,
+        "serious": 91,
+        "moderate": 77,
+        "minor": 42
+      },
+      "by_page": {
+        "home": 20,
+        "category-yarn": 20,
+        "product-merino": 25,
+        "cart": 36,
+        "checkout": 30,
+        "account-login": 50,
+        "search": 38,
+        "contact": 51
+      },
+      "contact_critical": 29,
+      "html_lang": {
+        "pages": 5,
+        "count": 42
+      },
+      "quote_lines_sum": 7765.0,
+      "quote_stated_total": 7965.0,
+      "quote_days": 12.5,
+      "day_rate": 550.0
+    },
+    "facts_to_check": "EAA = Directive (EU) 2019/882, applies from 28 June 2025; microenterprise (services) = fewer than 10 persons and turnover or balance sheet at most 2 million euro; transitional Art. 32 (to 28 June 2030) concerns products used before 28 June 2025 and existing service contracts. Portugal: Decreto-Lei n.º 82/2022 (grader to confirm against goose's cited source).",
+    "harness_gaps": "r1.mjs has no seed/setup step (work dir is only mkdirSync'd, r1.mjs:35; setup.sh must run first) and no attachment path: each turn is input.fill(prompt) + Enter (r1.mjs:455, resend 467), never setInputFiles, although the composer has a hidden <input type=file accept=*/*> (ui/desktop/src/components/ChatInput.tsx:1775-1781, handleFileInputChange 1511) that takes images and audio/video (mediaKindOf, ui/desktop/src/types/message.ts:356). r1.mjs:26 imports playwright from /Users/mihaiperdum/Projects/goose/ui/node_modules (also livecheck.mjs:11, needsyou.mjs:255): on the workhorse (user workhorse) r1 cannot start until that path is derived.",
+    "skill_choice": "No installed skill fits (~/.agents/skills holds Atlassian/LeanZero ops skills); a skill loading on any turn is a finding.",
+    "mcps": "leanzero-web-search (turns 0, 2, 7, 17) and leanzero-documents (read-doc on PDF/DOCX turns 6, 9, 11, 16; create-doc 10, 14; create-excel 15) are the desktop's bundled MCPs (ui/desktop/bundled-mcps/manifest.json; registered in ui/desktop/src/main.ts bundledMcps ~9236)."
+  },
+  "needsYou": [
+    {
+      "match": "turnover balance sheet",
+      "answer": "Turnover 1.6 million, balance sheet I don't know, assume under 2 million."
+    },
+    {
+      "match": "send email",
+      "answer": "No, don't send anything, just save the draft."
+    },
+    {
+      "match": "overlay remove",
+      "answer": "Recommend dropping it, Tomás decides."
+    },
+    {
+      "match": "statement language portuguese",
+      "answer": "English for now, we'll translate later."
+    }
+  ],
+  "defaultStance": "Go with what the sources say and your best judgement, and note what you assumed in research/eaa-notes.md.",
+  "turns": [
+    {
+      "say": "Hi. New client: Fio & Linha, a yarn and knitting shop in Porto that sells online at fiolinha.pt. The owner, Tomás, keeps hearing about the European Accessibility Act and wants to know if it applies to him and what he has to do. They have 14 staff and about 1.6 million euro turnover. He sent three files, they're in {WORK}/from-client. First the research: what is the EAA, does it apply to a shop like his, and from when. Put your notes in {WORK}/research/eaa-notes.md with the links you used.",
+      "expect": "research/eaa-notes.md exists with source URLs that goose actually opened (EUR-Lex Directive (EU) 2019/882 and/or the European Commission page). Facts: applies from 28 June 2025; e-commerce services are in scope; the microenterprise exemption for services needs FEWER THAN 10 persons and turnover or balance sheet of at most 2 million euro, so with 14 staff Fio & Linha is NOT exempt. Harmonised standard EN 301 549 (WCAG 2.1 AA level for web) mentioned or marked to check.",
+      "exercises": [
+        "mcp:leanzero-web-search",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "For everything we write for this client: English, but keep Portuguese law and authority names in Portuguese, and put the source link right after each claim, not in a list at the end.",
+      "expect": "A visible memory save with both rules (Portuguese legal names kept in Portuguese; inline source link after each claim). Short confirmation; no files changed.",
+      "exercises": [
+        "memory:save",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Which Portuguese law actually brings it in, and who checks it?",
+      "expect": "Names the Portuguese transposition with its number and a cited link (expected: Decreto-Lei n.º 82/2022, de 6 de dezembro; accept another only with a primary source) and the market-surveillance body it names, or says plainly it could not confirm the body. Name kept in Portuguese (memory). eaa-notes.md updated.",
+      "exercises": [
+        "mcp:leanzero-web-search",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "ok now the audit file. give me a table by page and severity with totals, save it as reports/audit-summary.md",
+      "expect": "reports/audit-summary.md with a page x severity table built from from-client/audit-2026-10-24.csv by a real computation (script or tool), totals exact: 40 rows, 270 issues; critical 60, serious 91, moderate 77, minor 42. Per page totals: home 20, category-yarn 20, product-merino 25, cart 36, checkout 30, account-login 50, search 38, contact 51.",
+      "exercises": [
+        "shell",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "which page is the worst?",
+      "expect": "contact (/contactos): 51 issues, 29 of them critical (keyboard-trap 7, error-identification 11, label-missing 11). May add that checkout has 14 critical keyboard-trap issues, the most important for sales.",
+      "exercises": [
+        "no-skill"
+      ]
+    },
+    {
+      "say": "html-lang shows up on loads of pages. is that one fix or five?",
+      "expect": "From the CSV: html-lang (WCAG 3.1.1) appears on 5 pages, 42 occurrences in total; goose says it is very likely one template fix (the <html lang> attribute) and flags that as an inference, not a fact from the file.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "now the quote from the agency, the pdf. what are they offering and for how much",
+      "expect": "goose reads from-client/agency-quote-PN-2026-118.pdf (leanzero-documents read-doc or pdftotext) and lists the six items and prices, 12.5 days at 550 euro. It notices the stated total 7,965.00 does not match the lines, which sum to 7,765.00 (a 200 euro difference), and that the five non-licence items equal 12.5 x 550 = 6,875.00.",
+      "exercises": [
+        "mcp:leanzero-documents",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "in the notes they say we have until 2030 and the overlay widget makes the site compliant straight away. is that right?",
+      "expect": "Both claims challenged with sources: the obligations apply from 28 June 2025; the 2030 date is a transitional provision (Art. 32) for products already in use / service contracts agreed before June 2025, not a general grace period for running an online shop; overlay widgets do not make a site conform to WCAG/EN 301 549 (a cited source). goose states its confidence and where the reading of Art. 32 is open.",
+      "exercises": [
+        "mcp:leanzero-web-search",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "does the quote cover everything the audit found?",
+      "expect": "Maps every audit issue type to quote items: covered contrast/focus/headings (item 2), keyboard on checkout and login (item 3; keyboard traps on product-merino and contact are outside it), labels/errors/autocomplete (item 4). NOT covered: image-alt-missing, link-name, html-lang. Uses the CSV, not memory.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "there's also their current accessibility statement in the word file. what's wrong with it?",
+      "expect": "goose reads from-client/accessibility-statement-draft.docx and lists the real problems: claims full compliance with WCAG 2.0 level A (wrong target and false given 270 open issues); 'Known issues: None known'; no way to report a problem or contact; no date; no enforcement/complaint route. Quotes the file's sentences.",
+      "exercises": [
+        "mcp:leanzero-documents",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "write him a proper one. word file, deliverables/accessibility-statement.docx. partially compliant, list the known problems from the audit in plain words, contact email acessibilidade@fiolinha.pt, dated today",
+      "expect": "deliverables/accessibility-statement.docx exists and opens (read-doc). It says partially compliant, lists the audit's problem types in plain language, gives acessibilidade@fiolinha.pt, is dated 31 October 2026, and names the Portuguese body for complaints only if turn 2 confirmed it.",
+      "exercises": [
+        "mcp:leanzero-documents",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "read it back to me so I know it came out right",
+      "expect": "goose reads the DOCX back with a tool (not from its own draft) and the content matches what it wrote; any formatting problem found is fixed and re-read.",
+      "exercises": [
+        "mcp:leanzero-documents",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "quick one, what's the difference between WCAG A, AA and AAA? one line each",
+      "expect": "Three short correct lines (A minimum, AA the level laws and EN 301 549 point to, AAA highest and not required for whole sites). No tools.",
+      "exercises": [
+        "no-tool",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now the briefing for Tomás, reports/eaa-briefing.md. Does it apply, from when, what the audit found (the table), what the quote covers and misses, the 200 euro thing, and what I recommend. A page and a half max.",
+      "expect": "reports/eaa-briefing.md exists, about 1-1.5 pages, carries the exact audit numbers from turn 3, the uncovered issue types from turn 8, the 7,965 vs 7,765 discrepancy, a recommendation (e.g. drop the overlay, add alt text/link names/lang, ask for a retest). Each factual legal claim has its source link right after it and the Portuguese law name stays in Portuguese (memory applied without reminder).",
+      "exercises": [
+        "editor",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "he doesn't do markdown. same thing as a word doc please",
+      "expect": "deliverables/eaa-briefing.docx created with leanzero-documents create-doc, with the table as a real table; read back once to confirm.",
+      "exercises": [
+        "mcp:leanzero-documents",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "and the audit as a spreadsheet with a totals row so he can sort it himself",
+      "expect": "deliverables/audit-2026-10-24.xlsx with all 40 rows and a totals row using a SUM formula (=SUM over the count column = 270). Read back with read-doc and the total confirmed.",
+      "exercises": [
+        "mcp:leanzero-documents",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "double check the numbers in the word briefing match the csv",
+      "expect": "goose re-reads the DOCX and recomputes from the CSV; reports match or fixes the docx and says what was wrong. No claim of a check it did not run.",
+      "exercises": [
+        "mcp:leanzero-documents",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "he's asking if he can be fined already and how much, in Portugal",
+      "expect": "Answer from the Portuguese decree (coima ranges / contraordenação classes) with the source link, or an honest statement that the amounts could not be confirmed. No invented figures.",
+      "exercises": [
+        "mcp:leanzero-web-search",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "what should he ask Pixel Norte before he signs anything?",
+      "expect": "Questions tied to the files: the 200 euro total error, why an overlay licence, which standard and level (WCAG 2.1/2.2 AA, EN 301 549), alt text / link names / html lang not in scope, keyboard traps on product and contact pages, a retest after fixes, who maintains the statement.",
+      "exercises": [
+        "no-skill"
+      ]
+    },
+    {
+      "say": "put those in an email to them, english, polite. save it, don't send anything",
+      "expect": "deliverables/email-pixel-norte.txt exists, polite, addresses quote PN-2026-118, carries the questions. Nothing sent (no email tool used).",
+      "exercises": [
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "list everything in deliverables and reports with sizes",
+      "expect": "A real listing (ls -la or equivalent) of reports/ and deliverables/ that matches the files created; no file claimed that does not exist.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "how did you get to the 2030 answer, which pages did you actually open?",
+      "expect": "Names only URLs that were actually fetched in this chat (checkable against tool calls); says which claim came from which page and where it inferred.",
+      "exercises": [
+        "no-skill"
+      ]
+    },
+    {
+      "say": "remember what I asked about source links? did the briefing stick to it?",
+      "expect": "Recalls the rule (inline link right after each claim; Portuguese legal names kept) and checks reports/eaa-briefing.md against it by reading it, fixing any claim without an inline link.",
+      "exercises": [
+        "memory:recall",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "ok, wrap up. what did we produce and what's still open for Tomás to decide",
+      "expect": "Summary matches the files on disk; open decisions named as his (sign or renegotiate the quote, drop the overlay, who maintains the statement, budget), not decided by goose.",
+      "exercises": [
+        "no-skill"
+      ]
+    }
+  ],
+  "workdir_placeholder": "{WORK}"
+}

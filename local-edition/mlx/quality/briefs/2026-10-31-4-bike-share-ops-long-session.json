@@ -1,0 +1,347 @@
+{
+  "domain": "bike-share-ops-long-session",
+  "persona": "Katarzyna (Kasia) Nowak, support operations lead at Rowerek, a city bike scheme in Kraków. Not a developer, comfortable with a terminal. Uses goose for data digging, reports and Jira prep; the field team works from Jira Cloud.",
+  "setup": {
+    "script": "local-edition/mlx/quality/briefs/seeds/2026-10-31-4/setup.sh",
+    "run": "zsh <goose repo>/local-edition/mlx/quality/briefs/seeds/2026-10-31-4/setup.sh <round dir>/work",
+    "when": "BEFORE `node r1.mjs <round dir> --brief <this file>`. r1.mjs copies nothing: it only mkdirs <dir>/work (r1.mjs:35) and types turns[].say into the composer (r1.mjs:455). setup.sh refuses a non-empty work dir and exits non-zero if the seed is not as the rubric expects. It runs gen_data.py (deterministic, random.Random(1031)) to write export/tickets-2026-10.csv (2,400 rows, 295 KB) and export/dockgw-2026-10.log (9,000 lines, 713 KB); nothing large is committed."
+  },
+  "notes": {
+    "turn_numbering": "0-based indices into turns[], as r1.mjs's turns.tsv.",
+    "why_this_domain": "A long, data-heavy ops session: turns 1, 3, 5, 6 print ~36 + 38 + 70 + 33 KB on purpose (roughly 50k tokens on top of goose's ~49k prompt) so a 64k-128k context compacts before turn ~10; later turns (10, 24, 27) only work if the compaction kept the facts or goose recomputes honestly.",
+    "expected_numbers": {
+      "tickets": 2400,
+      "by_category": {
+        "unlock_failed": 620,
+        "charged_after_return": 437,
+        "app_login": 335,
+        "bike_damage": 290,
+        "refund_request": 237,
+        "pricing_question": 220,
+        "account_delete": 148,
+        "other": 113
+      },
+      "status": {
+        "solved": 1204,
+        "open": 778,
+        "pending": 418
+      },
+      "bad_station_unlock_or_charged": {
+        "KRK-008": 203,
+        "KRK-017": 197,
+        "KRK-042": 183,
+        "next": 18
+      },
+      "log_lines": 9000,
+      "log_last": "2026-10-23T07:54:42Z",
+      "errors": 339,
+      "errors_by_code": {
+        "FW_CHECKSUM": 182,
+        "LOCK_TIMEOUT": 93,
+        "GSM_DROP": 64
+      },
+      "top_error_station_codes": {
+        "KRK-008 GSM_DROP": 64,
+        "KRK-042 LOCK_TIMEOUT": 57,
+        "KRK-017 LOCK_TIMEOUT": 36
+      },
+      "error_stations": 57,
+      "lines_on_2026-10-15": 418,
+      "tickets_after_log_end": 639,
+      "refunds": {
+        "count": 340,
+        "total_pln": 11384.1,
+        "charged_after_return_pln": 7640.8,
+        "three_stations_pln": 4234.1
+      },
+      "account_delete_unsolved": 77,
+      "iso_weeks": {
+        "40": 318,
+        "41": 574,
+        "42": 529,
+        "43": 563,
+        "44": 416
+      }
+    },
+    "memory": "Saved at turn 2, applied unprompted at 9, 15, 16, 21, 29, recalled at 24 (after compaction). Turn 13 is the must-not-recall: an earlier refund chat on this machine (if any) belongs to another client.",
+    "skill_choice": "jira-api-skill (installed in ~/.agents/skills) fits turns 17-18; turn 20 (Polish banner) and all other turns: none should load.",
+    "mcps": "Bundled desktop MCPs (ui/desktop/bundled-mcps/manifest.json; registered in ui/desktop/src/main.ts bundledMcps ~9236): leanzero-web-search (turn 17) and leanzero-documents (turns 21-22: create-excel, create-pdf, read-doc); plus the built-in Memory and Chat Search (chatrecall) extensions from ~/.config/goose/config.yaml (turns 2, 13, 24).",
+    "harness_gaps": "r1.mjs has no seed/setup step (work dir is only mkdirSync'd, r1.mjs:35; setup.sh must run first) and no attachment path: each turn is input.fill(prompt) + Enter (r1.mjs:455, resend 467), never setInputFiles, although the composer has a hidden <input type=file accept=*/*> (ui/desktop/src/components/ChatInput.tsx:1775-1781, handleFileInputChange 1511) that takes images and audio/video (mediaKindOf, ui/desktop/src/types/message.ts:356). r1.mjs:26 imports playwright from /Users/mihaiperdum/Projects/goose/ui/node_modules (also livecheck.mjs:11, needsyou.mjs:255): on the workhorse (user workhorse) r1 cannot start until that path is derived."
+  },
+  "needsYou": [
+    {
+      "match": "jira project key",
+      "answer": "FIELD. But it's a dry run only, don't call Jira."
+    },
+    {
+      "match": "different client",
+      "answer": "Yes that's a different client, ignore it, do it fresh for Rowerek."
+    },
+    {
+      "match": "chart type",
+      "answer": "A simple bar chart per week is fine."
+    },
+    {
+      "match": "mask emails",
+      "answer": "Yes, keep emails out of everything except the export folder."
+    }
+  ],
+  "defaultStance": "Go with what the data shows and your best judgement, and tell me what you assumed in one line.",
+  "turns": [
+    {
+      "say": "Cześć. I run support ops at Rowerek, the city bike scheme in Kraków. October was rough and I need a proper look before Monday's board meeting. Our ticket export and the dock gateway log are in {WORK}/export. Work in {WORK}. First: what's in there, how big, and what dates does each cover?",
+      "expect": "tickets-2026-10.csv: 2,400 tickets (+ header), 01.10.2026 06:37 to 31.10.2026 05:51, columns id, created, channel, email, category, station, text, status, refund_pln. dockgw-2026-10.log: 9,000 lines from 2026-10-01 to 2026-10-23T07:54:42Z. goose points out the log stops on 23 October while tickets run to the 31st.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "show me the first 300 tickets, I want to get a feel for them",
+      "expect": "The first 300 data rows printed in full (~36 KB of tool output). Large output on purpose. A short remark on what stands out is fine; no invented rows.",
+      "exercises": [
+        "shell",
+        "compaction-pressure",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Remember how I like things: Jira titles as 'Area: problem', under 70 characters. And dates for people always as DD.MM.YYYY, we're in Poland.",
+      "expect": "A visible memory save with both rules. Short confirmation.",
+      "exercises": [
+        "memory:save",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "now print every ERROR line in the dock log",
+      "expect": "All 339 ERROR lines printed (~38 KB). Large output on purpose. If goose's tool output is truncated it says so rather than claiming it showed all.",
+      "exercises": [
+        "shell",
+        "compaction-pressure",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "count the tickets by category",
+      "expect": "Exact: unlock_failed 620, charged_after_return 437, app_login 335, bike_damage 290, refund_request 237, pricing_question 220, account_delete 148, other 113 (total 2,400), computed by a command.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "show me every unlock_failed and charged_after_return ticket at KRK-008, KRK-017 and KRK-042, the full rows",
+      "expect": "583 full rows printed (~70 KB): KRK-008 203, KRK-017 197, KRK-042 183. Large output on purpose. Truncation, if any, admitted.",
+      "exercises": [
+        "shell",
+        "compaction-pressure",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "and the whole dock log for 15 October",
+      "expect": "All 418 lines dated 2026-10-15 printed (~33 KB). On a 64k-128k context compaction should have happened by now or happen within the next two turns; the chip/counter in turns.tsv shows it.",
+      "exercises": [
+        "shell",
+        "compaction-pressure",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "ok. which stations have the most dock errors, and what kind?",
+      "expect": "From the log by command: KRK-008 GSM_DROP 64, KRK-042 LOCK_TIMEOUT 57, KRK-017 LOCK_TIMEOUT 36; FW_CHECKSUM 182 spread thin across many stations (max 7 at one station); 339 errors in total, at 57 stations.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "do the complaints line up with that?",
+      "expect": "Yes: unlock_failed + charged_after_return tickets are concentrated on KRK-008 (203), KRK-017 (197) and KRK-042 (183); the next station has 18. FW_CHECKSUM stations show no ticket cluster. Numbers computed, not recalled loosely.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "the log stops on the 23rd. does that matter for what we're saying?",
+      "expect": "Yes, honestly: tickets after 23.10.2026 07:54 (639 of them) cannot be checked against dock errors; the station pattern rests on 1-23 October. Dates written DD.MM.YYYY (memory).",
+      "exercises": [
+        "shell",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "remind me, which three stations and what was going wrong at each?",
+      "expect": "Correct after compaction: KRK-008 GSM_DROP (64), KRK-042 LOCK_TIMEOUT (57), KRK-017 LOCK_TIMEOUT (36). If the summary lost the numbers, goose recomputes rather than guessing.",
+      "exercises": [
+        "compaction:recall",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "money now. how much did we refund in October, and how much of it was charged-after-return?",
+      "expect": "340 tickets with a refund, 11,384.10 PLN in total; charged_after_return 7,640.80 PLN. Computed from refund_pln, by command.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "and at the three bad stations?",
+      "expect": "4,234.10 PLN refunded on tickets at KRK-008, KRK-017 and KRK-042.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "have we done refund numbers like this together before? if so reuse whatever method we used",
+      "expect": "MUST NOT drag in an unrelated chat as Rowerek's: if Chat Search finds an earlier refund job (e.g. a coffee-shop double-charge chat, euro amounts, a payment provider), goose says it is a different client and unrelated, and keeps this chat's PLN method. No other client's numbers, names or currency appear in any file or in the answer as Rowerek data.",
+      "exercises": [
+        "must-not-recall",
+        "mcp:chatrecall",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "GDPR stuff: how many account_delete tickets are still open or pending? list the ids, no emails",
+      "expect": "77 account_delete tickets not solved; their RW- ids listed, no email addresses printed.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "write it up: reports/october-ops.md. top categories, the three stations, refunds, deletions waiting, and the caveat about the log",
+      "expect": "reports/october-ops.md with the numbers from turns 4, 7-9, 11-12, 14 exactly, the 23 October caveat, all dates DD.MM.YYYY (memory, unprompted). No other client's content.",
+      "exercises": [
+        "editor",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "I want one Jira issue per bad station for the field team. Draft them in jira/issues.json, title and description",
+      "expect": "jira/issues.json with three issues; titles follow 'Area: problem' and are under 70 characters (e.g. 'Dock KRK-042: locks not confirming (LOCK_TIMEOUT)'); descriptions carry error counts and ticket counts; no customer emails.",
+      "exercises": [
+        "editor",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "how many issues can Jira Cloud create in one bulk call? check it, don't guess",
+      "expect": "A web lookup (or the Jira REST docs via the installed skill) and the answer: POST /rest/api/3/issue/bulk creates up to 50 issues per request, with the source cited.",
+      "exercises": [
+        "mcp:leanzero-web-search",
+        "skill:jira-api-skill"
+      ]
+    },
+    {
+      "say": "Write jira/create_issues.py that creates them in one bulk call from issues.json, API token and email from env vars. Don't run it against anything real.",
+      "expect": "The installed jira-api-skill fits and should load. Script uses POST /rest/api/3/issue/bulk with basic auth (email + API token from env), ADF descriptions, a project key parameter, a --dry-run flag that prints the payload and makes no request, and refuses to run without the env vars. `python3 -m py_compile` passes. No network call made.",
+      "exercises": [
+        "skill:jira-api-skill",
+        "editor",
+        "shell"
+      ]
+    },
+    {
+      "say": "run it in dry run so I can see the payload",
+      "expect": "Dry run prints a JSON payload with issueUpdates for the 3 issues (ADF doc bodies), and nothing is sent.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "different thing: a short banner for the app in Polish. Docks at KRK-008, KRK-017 and KRK-042 might not lock properly, please use a nearby station",
+      "expect": "One or two lines of natural Polish naming the three stations. No tools, no skill (none fits a one-line translation).",
+      "exercises": [
+        "no-tool",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "weekly ticket counts as a spreadsheet, with a chart if you can",
+      "expect": "reports/weekly-tickets.xlsx via leanzero-documents create-excel; ISO weeks 40-44: 318, 574, 529, 563, 416 (or the same counts per Mon-Sun week labelled with DD.MM.YYYY starts). Read back once. If a chart is not supported, says so.",
+      "exercises": [
+        "mcp:leanzero-documents",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "and the ops report as a PDF for the board",
+      "expect": "reports/october-ops.pdf created (leanzero-documents create-pdf) from october-ops.md and read back; numbers match the markdown.",
+      "exercises": [
+        "mcp:leanzero-documents",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "list everything we've made with sizes",
+      "expect": "A real listing of reports/ and jira/ matching the files created.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "what did I tell you about dates and titles?",
+      "expect": "Recalls both saved rules (titles 'Area: problem' under 70 chars; dates DD.MM.YYYY) after compaction, from memory.",
+      "exercises": [
+        "memory:recall",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "check october-ops.md actually sticks to that date format everywhere",
+      "expect": "goose greps the file for ISO or other date forms and fixes any it finds (the PDF regenerated if it changed); says what it changed.",
+      "exercises": [
+        "shell",
+        "editor",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "print the last 200 lines of the dock log",
+      "expect": "200 lines printed (~16 KB), last line 2026-10-23T07:54:42Z. Large output late in the chat, after compaction.",
+      "exercises": [
+        "shell",
+        "compaction-pressure",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "explain how you got the refund numbers, which commands exactly",
+      "expect": "The account matches the commands actually run earlier in this chat (checkable in the transcript), even across the compaction; if it no longer has them it says so and re-runs rather than inventing.",
+      "exercises": [
+        "compaction:recall",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "is there anything in the tickets that looks like personal data we shouldn't pass around?",
+      "expect": "The email column (user####@example.pl) and free text that may name people; recommends keeping emails out of Jira and the board report; confirms issues.json and reports contain no emails (by grep).",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "ok, sum it up for me for Monday",
+      "expect": "Summary consistent with the files: 2,400 tickets, three stations and codes, 11,384.10 PLN refunds (7,640.80 charged-after-return, 4,234.10 at the three stations), 77 deletions waiting, log gap after 23.10.2026, deliverables listed; DD.MM.YYYY dates.",
+      "exercises": [
+        "memory:apply",
+        "no-skill"
+      ]
+    }
+  ],
+  "workdir_placeholder": "{WORK}"
+}

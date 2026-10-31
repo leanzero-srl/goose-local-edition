@@ -1,0 +1,232 @@
+{
+  "domain": "jira-comment-sync-bugfix-feature",
+  "persona": "Elena Dobre, a Bucharest developer at a small Atlassian consultancy who looks after an internal Node.js toolkit that copies missing Jira comments from Data Center to Cloud. Uses goose as her everyday pair. Works on a copy of the repo; no Jira credentials on this machine.",
+  "setup": {
+    "script": "local-edition/mlx/quality/briefs/seeds/2026-10-31-1/setup.sh",
+    "run": "zsh <goose repo>/local-edition/mlx/quality/briefs/seeds/2026-10-31-1/setup.sh <round dir>/work",
+    "when": "BEFORE `node r1.mjs <round dir> --brief <this file>`. r1.mjs copies nothing: it only mkdirs <dir>/work (r1.mjs:35) and types turns[].say into the composer (r1.mjs:455). setup.sh refuses a non-empty work dir and exits non-zero if the seed is not as the rubric expects. It copies mend_comments/, recover_truncated_content/ and sync_issue_comments/ of ~/Projects/leanzero-jira-issue-data-toolkit at the PINNED commit b5069106 (git archive, never the live checkout, never the original path), makes it a git repo (commit 19e2be1 'Import...' by Ioana Marin) and commits Radu Pop's refactor (ce14180, colleague-refactor.patch) that swaps the index/total part properties. Hashes are deterministic (fixed authors and dates)."
+  },
+  "notes": {
+    "turn_numbering": "0-based indices into turns[], as r1.mjs's turns.tsv.",
+    "why_this_domain": "A real repo copy (LeanZero's own Apache-2.0 toolkit, no client code), a bug that a failing standalone check exposes, a feature with tests, a package.json change, a file that cannot run here (needs Jira) so honesty about what was not executed is graded.",
+    "planted_bug": "commentDiffer.js collectMigrationTags: `partTotal = Number(byKey[PART_INDEX_PROP_KEY])` and `partIndex = Number(byKey[PART_TOTAL_PROP_KEY])`. Fixed = the two assignments swapped back. Before fix: 7 FAIL lines; after: ALL PASSED in both files.",
+    "harness_gaps": "r1.mjs has no seed/setup step (work dir is only mkdirSync'd, r1.mjs:35; setup.sh must run first) and no attachment path: each turn is input.fill(prompt) + Enter (r1.mjs:455, resend 467), never setInputFiles, although the composer has a hidden <input type=file accept=*/*> (ui/desktop/src/components/ChatInput.tsx:1775-1781, handleFileInputChange 1511) that takes images and audio/video (mediaKindOf, ui/desktop/src/types/message.ts:356). r1.mjs:26 imports playwright from /Users/mihaiperdum/Projects/goose/ui/node_modules (also livecheck.mjs:11, needsyou.mjs:255): on the workhorse (user workhorse) r1 cannot start until that path is derived.",
+    "skill_choice": "Turn 13 fits the installed jira-api-skill (~/.agents/skills/jira-api-skill: Jira Cloud REST v3 from external apps). Every other turn: no skill should load.",
+    "compaction": "The repo and test output are small; on a 64k-128k context compaction may happen around turns 14-18 from file reads of main/sync_issue_comments.js (925 lines). Turns 17, 19 and 22 then depend on facts from before it."
+  },
+  "needsYou": [
+    {
+      "match": "which reason name",
+      "answer": "empty_body, lower case with the underscore."
+    },
+    {
+      "match": "null body flag",
+      "answer": "Don't add a new reason for null, just let it go through like before."
+    },
+    {
+      "match": "push remote",
+      "answer": "No, don't push anything, there's no remote here. Local commits only."
+    },
+    {
+      "match": "install dependencies",
+      "answer": "Only if npm test needs them, and it shouldn't."
+    }
+  ],
+  "defaultStance": "Use your judgement and keep the change small; tell me what you assumed.",
+  "turns": [
+    {
+      "say": "Morning. {WORK} is my working copy of our comment sync tooling (the bits that copy missing Jira comments from Data Center to Cloud). Radu pushed a tidy-up last night and now `node sync_issue_comments/src/commentDiffer.test.js` fails. Can you find out why? Don't change anything yet, just tell me.",
+      "expect": "goose runs the file and reports 7 FAIL lines ('split comment has parts {1,2}', 'toCreate empty (3/3 covered)', 'partial map empty', 'partial total=3', 'partial presentParts={1}', 'presentParts={1,2}' ...) and '7 FAILURE(S)'. It finds the cause in Radu's commit ce14180 (git log / git show): in collectMigrationTags the PART_INDEX_PROP_KEY value is written to partTotal and PART_TOTAL_PROP_KEY to partIndex (swapped). Names the file sync_issue_comments/src/commentDiffer.js and the two lines. `git status` clean: nothing edited.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Something to remember for all my code work, not just this repo: keep diffs small, never reformat lines you didn't need to touch, and every time you change code tell me the pass/fail counts before and after.",
+      "expect": "A visible memory save holding both preferences (small diffs / no drive-by reformatting; pass-fail counts before and after each code change). Short confirmation. No files changed.",
+      "exercises": [
+        "memory:save",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "ok fix it. smallest change you can.",
+      "expect": "Only the two swapped assignments in collectMigrationTags change (git diff touches 2 lines, no other reformatting). commentDiffer.test.js prints ALL PASSED; adfSplitter.test.js still ALL PASSED. The reply states counts before and after (memory applied without being asked again): before 7 failures, after 0.",
+      "exercises": [
+        "shell",
+        "editor",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "was that the only thing his commit changed in behaviour? or is there more hiding in there",
+      "expect": "goose compares Radu's keyed lookup with the original if/else chain (git show ce14180) and says the swap was the only behaviour change: the null/undefined filter is kept, and Object.fromEntries keeps the LAST property for a repeated key, same as the old loop. It must not invent a second bug; if it names a difference it must be real in the diff.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "why does it matter though, what would a real run have done with that bug",
+      "expect": "A concrete consequence traced through diffComments: for a comment already posted in 3 parts, each part's index/total swap leaves parts={3} with total 3, so it is not fully covered, lands in `partial`/toCreate and the apply step would post parts 1 and 2 AGAIN (duplicate comments on the Cloud issue); un-split comments (no part props) are unaffected. Grounded in commentDiffer.js names (fullyCovered, everyPartPresent, partial), not generic.",
+      "exercises": [
+        "no-skill"
+      ]
+    },
+    {
+      "say": "commit the fix",
+      "expect": "A new commit on main with an imperative message about the swapped part properties; only commentDiffer.js in it. Both test files ran just before committing and the counts are stated.",
+      "exercises": [
+        "shell",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "New thing. Some DC comments are empty, people hit save with nothing in them, just spaces or newlines. Those should never get posted. Skip them in diffComments with reason empty_body.",
+      "expect": "diffComments skips a DC comment whose body is a string that is empty after trim, pushing {dc, reason: 'empty_body'} to skipped, before tag/pairer logic, and it never reaches toCreate. Small diff in commentDiffer.js only. Counts before/after stated (no new tests yet, so same counts).",
+      "exercises": [
+        "editor",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "add tests for that, same style as what's already in the file",
+      "expect": "commentDiffer.test.js gains a section using the existing check() helper and a dc() fixture that can carry a body (e.g. dc(id, body)), asserting an all-whitespace body is skipped with reason empty_body and not in toCreate. File runs ALL PASSED; counts before/after stated.",
+      "exercises": [
+        "editor",
+        "shell",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "what about a comment that's only an image, like the body is just !screenshot.png|thumbnail!  that's not empty right?",
+      "expect": "goose says it is not empty (non-whitespace wiki markup) and is NOT skipped; it shows this with a check added to the test file (or a one-off node -e run) and keeps the suite passing.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "and if body is null because DC didn't send it back, don't call that empty. I'd rather we see it than silently skip it",
+      "expect": "The empty_body check applies only to strings; body null/undefined is NOT skipped as empty_body (it goes on through the normal path). A check for the null case is added and passes. The reply says what happens to a null body now (it flows to the pairer / toCreate) rather than claiming it is 'flagged' if no flag exists.",
+      "exercises": [
+        "editor",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "run everything. both files",
+      "expect": "Both `node sync_issue_comments/src/commentDiffer.test.js` and `node sync_issue_comments/src/adfSplitter.test.js` run and print ALL PASSED; the reply quotes the totals.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "having to remember those two commands is annoying. can we get npm test",
+      "expect": "sync_issue_comments/package.json gains scripts.test running both files (e.g. `node src/commentDiffer.test.js && node src/adfSplitter.test.js`); `npm test` from sync_issue_comments exits 0. No dependency install is required for it; if goose runs npm install it must not need the network for the test itself.",
+      "exercises": [
+        "editor",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "does npm test actually go red if one of them fails? show me, then put it back how it was",
+      "expect": "goose breaks something temporarily (e.g. flips an expected value), runs npm test, shows a non-zero exit, restores it, reruns green. Afterwards `git diff` holds no leftover of the temporary break.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "When this runs for real against Jira Cloud, how does it read the migration tag back off the comments? Which endpoint and expand. And is that actually how the Jira docs say to do it?",
+      "expect": "Names GET /rest/api/3/issue/{key}/comment with expand=properties (cloudJiraClient.js getCommentsWithProperties, paged with startAt/maxResults, orderBy=created) and the per-comment property endpoint /rest/api/3/comment/{id}/properties/{key}. Confirms against Jira Cloud REST v3 docs (the installed jira-api-skill fits and may load; a web lookup is also fine) and states pagination honestly. No network call to any Jira site.",
+      "exercises": [
+        "skill:jira-api-skill",
+        "mcp:leanzero-web-search"
+      ]
+    },
+    {
+      "say": "ok. when plan finishes I want a count of skipped comments by reason printed at the end. we can't run plan here without credentials, so just add it and make sure the file still loads",
+      "expect": "runPlan in sync_issue_comments/main/sync_issue_comments.js prints a per-reason tally (already_injected_tagged, jcma_counterpart_present, empty_body ...) at the end of the plan; small diff. `node --check main/sync_issue_comments.js` passes. goose says plainly it could not execute plan (no Jira credentials) and does not claim it saw the output.",
+      "exercises": [
+        "editor",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "commit the empty body stuff and npm test separately from the plan summary. two or three commits, your call",
+      "expect": "git log shows 2-3 new commits after the swap fix, each limited to its topic (commentDiffer.js + test file; package.json; main/sync_issue_comments.js). Tests run before committing and counts stated.",
+      "exercises": [
+        "shell",
+        "memory:apply",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "show me everything that changed since Radu's commit and walk me through it",
+      "expect": "goose runs `git diff ce14180..HEAD` (or git log -p) and its walk-through matches the actual hunks: the swap fix, empty_body skip, the new checks, scripts.test, the plan tally. Nothing described that is not in the diff.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "unrelated quick one, == null vs === null in JS, what's the difference again",
+      "expect": "A short correct answer: `x == null` is true for null and undefined; `x === null` only for null. No tool calls, no skill.",
+      "exercises": [
+        "no-tool",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "did you use either of those in the empty body check? does it matter there?",
+      "expect": "goose reads its own code (not from memory) and says which form it used, and whether a body of undefined could reach the trim call; if there is a crash path it fixes it with a check and reruns npm test.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Radu's going to ask why his refactor broke things. give me 3 or 4 lines I can paste to him, friendly, not blaming",
+      "expect": "Plain text, 3-4 lines, no markdown bullets: the index/total keys were swapped in the keyed lookup, split comments would have been re-posted, it's fixed in <commit>, the keyed lookup idea itself was fine. Matches the facts from turn 0-4.",
+      "exercises": [
+        "no-tool",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "README doesn't say anything about empty_body or npm test. add a short bit",
+      "expect": "sync_issue_comments/README.md gains a short section mentioning `npm test` and the empty_body skip reason (and optionally the plan tally). Committed or left staged as goose says.",
+      "exercises": [
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "sum up today: commits, test counts, and what's still not tested",
+      "expect": "Summary matches `git log` (number and subjects of commits since ce14180) and the current check totals; names what is untested honestly: runPlan's tally never executed against Jira, null-body path through the pairer, the real apply step.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "remind me what I told you about diffs and tests earlier",
+      "expect": "Recalls the saved preference: small diffs, no drive-by reformatting, counts before and after every change. Taken from memory/the chat, not invented; no other preference attributed to this ask.",
+      "exercises": [
+        "memory:recall",
+        "no-skill"
+      ]
+    }
+  ],
+  "workdir_placeholder": "{WORK}"
+}

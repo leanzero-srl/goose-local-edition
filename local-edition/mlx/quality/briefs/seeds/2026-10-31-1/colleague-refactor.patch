@@ -1,0 +1,25 @@
+diff --git a/sync_issue_comments/src/commentDiffer.js b/sync_issue_comments/src/commentDiffer.js
+index 7c8c904..323d4fc 100644
+--- a/sync_issue_comments/src/commentDiffer.js
++++ b/sync_issue_comments/src/commentDiffer.js
+@@ -110,12 +110,14 @@ function collectMigrationTags(cloudComments) {
+     let dcId = null;
+     let partIndex = null;
+     let partTotal = null;
+-    for (const p of props) {
+-      if (!p || p.value == null) continue;
+-      if (p.key === MIGRATION_TAG_KEY) dcId = String(p.value);
+-      else if (p.key === PART_INDEX_PROP_KEY) partIndex = Number(p.value);
+-      else if (p.key === PART_TOTAL_PROP_KEY) partTotal = Number(p.value);
+-    }
++    // Read the three migration properties in one pass (keyed lookup instead of
++    // the if/else chain, so new part props only need one line each).
++    const byKey = Object.fromEntries(
++      props.filter((p) => p && p.value != null).map((p) => [p.key, p.value])
++    );
++    if (byKey[MIGRATION_TAG_KEY] != null) dcId = String(byKey[MIGRATION_TAG_KEY]);
++    if (byKey[PART_INDEX_PROP_KEY] != null) partTotal = Number(byKey[PART_INDEX_PROP_KEY]);
++    if (byKey[PART_TOTAL_PROP_KEY] != null) partIndex = Number(byKey[PART_TOTAL_PROP_KEY]);
+     if (!dcId) continue;
+     if (!out.has(dcId)) out.set(dcId, { parts: new Set(), total: null });
+     const e = out.get(dcId);
