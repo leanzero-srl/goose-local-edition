@@ -1723,6 +1723,11 @@ mod tests {
             ("prefer tabs over spaces", "prefer tabs over spaces", "Never prefer tabs over spaces"),
             ("prefer tabs over spaces", "prefer tabs over spaces", "Stop: prefer tabs over spaces"),
             // Something said after the quote.
+            (
+                "the build logs go in /var/tmp",
+                "the build logs go in /var/tmp",
+                "The build logs go in /var/tmp, not.",
+            ),
             ("keep the build logs in /var/tmp", "keep the build logs in /var/tmp", "Keep the build logs in /var/tmp; the user approved the report."),
             // "no" running straight on is the rule's negation, not an answer.
             ("no tabs in yaml files ever", "tabs in yaml files ever", "Tabs in yaml files ever."),
