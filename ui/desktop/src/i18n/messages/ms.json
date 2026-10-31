@@ -4974,7 +4974,7 @@
     "defaultMessage": "Kekalkan selepas mula semula"
   },
   "mlxDistWired.keeps": {
-    "defaultMessage": "macOS dan apl lain pada {mac} mengekalkan {keep} GiB"
+    "defaultMessage": "macOS dan apl lain pada {mac} mengekalkan {keep} GB"
   },
   "mlxDistWired.limitDefault": {
     "defaultMessage": "had wired 0 (lalai macOS) · siling GPU {ceiling} GB"
@@ -6180,10 +6180,10 @@
     "defaultMessage": "belum disimpan"
   },
   "mlxMemory.wiredBelowOthers": {
-    "defaultMessage": "Ini meninggalkan {keep} GiB, kurang daripada yang digunakan {mac} di luar GPU sekarang ({others} GiB) ditambah rizab {reserve} GiB: jangkakan tekanan memori dan swapping."
+    "defaultMessage": "Ini meninggalkan {keep} GB, kurang daripada yang digunakan {mac} di luar GPU sekarang ({others} GB) ditambah rizab {reserve} GB: jangkakan tekanan memori dan swapping."
   },
   "mlxMemory.wiredBelowReserve": {
-    "defaultMessage": "Ditolak: ini meninggalkan {keep} GiB, di bawah minimum {reserve} GiB. Enjin MLX juga memerlukan RAM di luar GPU (kira-kira 12 GB diukur semasa beban) dan kernel serta sistem kira-kira 10 GB lagi. Nilai tertinggi yang dibenarkan di sini ialah {max} MB."
+    "defaultMessage": "Ditolak: ini meninggalkan {keep} GB, di bawah minimum {reserve} GB. Enjin MLX juga memerlukan RAM di luar GPU (kira-kira 12 GB diukur semasa beban) dan kernel serta sistem kira-kira 10 GB lagi. Nilai tertinggi yang dibenarkan di sini ialah {max} MB."
   },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "Tetapan but (LaunchDaemon)"
@@ -6228,10 +6228,10 @@
     "defaultMessage": "Gunakan nombor bulat dari 8192 hingga {max} MB, atau Nyahdayakan untuk lalai macOS."
   },
   "mlxMemory.wiredKeep": {
-    "defaultMessage": "macOS dan apl lain mengekalkan {keep} GiB daripada {physical} GiB"
+    "defaultMessage": "macOS dan apl lain mengekalkan {keep} GB daripada {physical} GB"
   },
   "mlxMemory.wiredNoSuggestion": {
-    "defaultMessage": "Tiada kenaikan dicadangkan: penggunaan {mac} sekarang ditambah rizab {reserve} GiB meninggalkan terlalu sedikit untuk di-wire."
+    "defaultMessage": "Tiada kenaikan dicadangkan: penggunaan {mac} sekarang ditambah rizab {reserve} GB meninggalkan terlalu sedikit untuk di-wire."
   },
   "mlxMemory.wiredOthers": {
     "defaultMessage": "Digunakan di luar GPU sekarang"
@@ -6246,7 +6246,7 @@
     "defaultMessage": "Memasang LaunchDaemon yang menetapkan nilai pada setiap but; Nyahdayakan membuangnya."
   },
   "mlxMemory.wiredRangeReserve": {
-    "defaultMessage": "MB ({gib} GiB) · 8192 hingga {max}"
+    "defaultMessage": "MB ({gib} GB) · 8192 hingga {max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "Alih keluar tetapan but"
@@ -6258,7 +6258,7 @@
     "defaultMessage": "Rizab minimum untuk macOS"
   },
   "mlxMemory.wiredReserveValue": {
-    "defaultMessage": "{gib} GiB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
   },
   "mlxMemory.wiredStateDefault": {
     "defaultMessage": "Lalai macOS"
@@ -6270,7 +6270,7 @@
     "defaultMessage": "Dinaikkan kepada {mb} MB"
   },
   "mlxMemory.wiredSuggested": {
-    "defaultMessage": "Cadangan daripada pengukuran: {mb} MB (mengekalkan {others} GiB yang digunakan sekarang + rizab {reserve} GiB)"
+    "defaultMessage": "Cadangan daripada pengukuran: {mb} MB (mengekalkan {others} GB yang digunakan sekarang + rizab {reserve} GB)"
   },
   "mlxMemory.wiredSuggestedLow": {
     "defaultMessage": "Lalai macOS sudah memberi GPU {ws}: berdasarkan penggunaan {mac} sekarang, kenaikan melebihi {mb} MB akan memakan rizab."

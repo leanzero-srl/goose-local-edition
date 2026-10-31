@@ -4974,7 +4974,7 @@
     "defaultMessage": "Yeniden başlatmada koru"
   },
   "mlxDistWired.keeps": {
-    "defaultMessage": "{mac} üzerindeki macOS ve diğer uygulamalara {keep} GiB kalır"
+    "defaultMessage": "{mac} üzerindeki macOS ve diğer uygulamalara {keep} GB kalır"
   },
   "mlxDistWired.limitDefault": {
     "defaultMessage": "wired sınırı 0 (macOS varsayılanı) · GPU tavanı {ceiling} GB"
@@ -6180,10 +6180,10 @@
     "defaultMessage": "kaydedilmedi"
   },
   "mlxMemory.wiredBelowOthers": {
-    "defaultMessage": "Geriye {keep} GiB kalır; bu, {mac} cihazının şu anda GPU dışında kullandığı miktar ({others} GiB) artı {reserve} GiB rezervden az: bellek baskısı ve takas bekleyin."
+    "defaultMessage": "Geriye {keep} GB kalır; bu, {mac} cihazının şu anda GPU dışında kullandığı miktar ({others} GB) artı {reserve} GB rezervden az: bellek baskısı ve takas bekleyin."
   },
   "mlxMemory.wiredBelowReserve": {
-    "defaultMessage": "Reddedildi: geriye {keep} GiB kalır, bu da {reserve} GiB minimumun altında. MLX motoru GPU dışında da RAM’e ihtiyaç duyar (yük altında yaklaşık 12 GB ölçüldü), çekirdek ve sistem de yaklaşık 10 GB daha. Burada izin verilen en yüksek değer {max} MB."
+    "defaultMessage": "Reddedildi: geriye {keep} GB kalır, bu da {reserve} GB minimumun altında. MLX motoru GPU dışında da RAM’e ihtiyaç duyar (yük altında yaklaşık 12 GB ölçüldü), çekirdek ve sistem de yaklaşık 10 GB daha. Burada izin verilen en yüksek değer {max} MB."
   },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "Açılış ayarı (LaunchDaemon)"
@@ -6228,10 +6228,10 @@
     "defaultMessage": "8192 ile {max} MB arasında bir tam sayı girin veya macOS varsayılanı için Devre Dışı Bırak’ı kullanın."
   },
   "mlxMemory.wiredKeep": {
-    "defaultMessage": "macOS ve diğer uygulamalara {physical} GiB içinden {keep} GiB kalır"
+    "defaultMessage": "macOS ve diğer uygulamalara {physical} GB içinden {keep} GB kalır"
   },
   "mlxMemory.wiredNoSuggestion": {
-    "defaultMessage": "Artış önerilmiyor: {mac} cihazının şu anki kullanımı artı {reserve} GiB rezerv, wired için çok az yer bırakıyor."
+    "defaultMessage": "Artış önerilmiyor: {mac} cihazının şu anki kullanımı artı {reserve} GB rezerv, wired için çok az yer bırakıyor."
   },
   "mlxMemory.wiredOthers": {
     "defaultMessage": "Şu anda GPU dışında kullanılan"
@@ -6246,7 +6246,7 @@
     "defaultMessage": "Her açılışta değeri ayarlayan bir LaunchDaemon yükler; Devre Dışı Bırak onu kaldırır."
   },
   "mlxMemory.wiredRangeReserve": {
-    "defaultMessage": "MB ({gib} GiB) · 8192 ile {max} arası"
+    "defaultMessage": "MB ({gib} GB) · 8192 ile {max} arası"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "Açılış ayarını kaldır"
@@ -6258,7 +6258,7 @@
     "defaultMessage": "macOS için minimum rezerv"
   },
   "mlxMemory.wiredReserveValue": {
-    "defaultMessage": "{gib} GiB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
   },
   "mlxMemory.wiredStateDefault": {
     "defaultMessage": "macOS varsayılanı"
@@ -6270,7 +6270,7 @@
     "defaultMessage": "Yükseltildi: {mb} MB"
   },
   "mlxMemory.wiredSuggested": {
-    "defaultMessage": "Ölçüme göre öneri: {mb} MB (şu anda kullanılan {others} GiB + {reserve} GiB rezervi korur)"
+    "defaultMessage": "Ölçüme göre öneri: {mb} MB (şu anda kullanılan {others} GB + {reserve} GB rezervi korur)"
   },
   "mlxMemory.wiredSuggestedLow": {
     "defaultMessage": "macOS varsayılanı GPU’ya zaten {ws} veriyor: {mac} cihazının şu anki kullanımıyla {mb} MB üzerine çıkmak rezerve dokunur."

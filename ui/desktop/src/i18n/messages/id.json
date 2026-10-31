@@ -4974,7 +4974,7 @@
     "defaultMessage": "Pertahankan setelah restart"
   },
   "mlxDistWired.keeps": {
-    "defaultMessage": "macOS dan aplikasi lain di {mac} menyisakan {keep} GiB"
+    "defaultMessage": "macOS dan aplikasi lain di {mac} menyisakan {keep} GB"
   },
   "mlxDistWired.limitDefault": {
     "defaultMessage": "batas wired 0 (default macOS) · plafon GPU {ceiling} GB"
@@ -6180,10 +6180,10 @@
     "defaultMessage": "belum disimpan"
   },
   "mlxMemory.wiredBelowOthers": {
-    "defaultMessage": "Tersisa {keep} GiB, kurang dari yang dipakai {mac} di luar GPU saat ini ({others} GiB) ditambah cadangan {reserve} GiB: akan terjadi tekanan memori dan swapping."
+    "defaultMessage": "Tersisa {keep} GB, kurang dari yang dipakai {mac} di luar GPU saat ini ({others} GB) ditambah cadangan {reserve} GB: akan terjadi tekanan memori dan swapping."
   },
   "mlxMemory.wiredBelowReserve": {
-    "defaultMessage": "Ditolak: tersisa {keep} GiB, di bawah minimum {reserve} GiB. Engine MLX juga butuh RAM di luar GPU (sekitar 12 GB terukur saat beban) dan kernel serta sistem sekitar 10 GB lagi. Nilai tertinggi yang diizinkan di sini adalah {max} MB."
+    "defaultMessage": "Ditolak: tersisa {keep} GB, di bawah minimum {reserve} GB. Engine MLX juga butuh RAM di luar GPU (sekitar 12 GB terukur saat beban) dan kernel serta sistem sekitar 10 GB lagi. Nilai tertinggi yang diizinkan di sini adalah {max} MB."
   },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "Pengaturan saat boot (LaunchDaemon)"
@@ -6228,10 +6228,10 @@
     "defaultMessage": "Gunakan bilangan bulat dari 8192 hingga {max} MB, atau Nonaktifkan untuk default macOS."
   },
   "mlxMemory.wiredKeep": {
-    "defaultMessage": "macOS dan aplikasi lain menyisakan {keep} GiB dari {physical} GiB"
+    "defaultMessage": "macOS dan aplikasi lain menyisakan {keep} GB dari {physical} GB"
   },
   "mlxMemory.wiredNoSuggestion": {
-    "defaultMessage": "Tidak ada saran kenaikan: pemakaian {mac} saat ini ditambah cadangan {reserve} GiB menyisakan terlalu sedikit untuk di-wire."
+    "defaultMessage": "Tidak ada saran kenaikan: pemakaian {mac} saat ini ditambah cadangan {reserve} GB menyisakan terlalu sedikit untuk di-wire."
   },
   "mlxMemory.wiredOthers": {
     "defaultMessage": "Dipakai di luar GPU saat ini"
@@ -6246,7 +6246,7 @@
     "defaultMessage": "Memasang LaunchDaemon yang menetapkan nilai di setiap boot; Nonaktifkan menghapusnya."
   },
   "mlxMemory.wiredRangeReserve": {
-    "defaultMessage": "MB ({gib} GiB) · 8192 hingga {max}"
+    "defaultMessage": "MB ({gib} GB) · 8192 hingga {max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "Hapus pengaturan boot"
@@ -6258,7 +6258,7 @@
     "defaultMessage": "Cadangan minimum untuk macOS"
   },
   "mlxMemory.wiredReserveValue": {
-    "defaultMessage": "{gib} GiB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
   },
   "mlxMemory.wiredStateDefault": {
     "defaultMessage": "Default macOS"
@@ -6270,7 +6270,7 @@
     "defaultMessage": "Dinaikkan ke {mb} MB"
   },
   "mlxMemory.wiredSuggested": {
-    "defaultMessage": "Saran dari pengukuran: {mb} MB (menyisakan {others} GiB yang dipakai saat ini + cadangan {reserve} GiB)"
+    "defaultMessage": "Saran dari pengukuran: {mb} MB (menyisakan {others} GB yang dipakai saat ini + cadangan {reserve} GB)"
   },
   "mlxMemory.wiredSuggestedLow": {
     "defaultMessage": "Default macOS sudah memberi GPU {ws}: dengan pemakaian {mac} saat ini, menaikkan di atas {mb} MB akan memakan cadangan."

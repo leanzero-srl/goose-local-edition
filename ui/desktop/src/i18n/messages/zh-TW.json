@@ -4974,7 +4974,7 @@
     "defaultMessage": "重新開機後保留"
   },
   "mlxDistWired.keeps": {
-    "defaultMessage": "{mac} 上的 macOS 與其他 App 保留 {keep} GiB"
+    "defaultMessage": "{mac} 上的 macOS 與其他 App 保留 {keep} GB"
   },
   "mlxDistWired.limitDefault": {
     "defaultMessage": "固定上限 0（macOS 預設）· GPU 上限 {ceiling} GB"
@@ -6180,10 +6180,10 @@
     "defaultMessage": "未儲存"
   },
   "mlxMemory.wiredBelowOthers": {
-    "defaultMessage": "剩餘 {keep} GiB，少於 {mac} 目前在 GPU 以外的佔用（{others} GiB）加上 {reserve} GiB 保留量：預計會出現記憶體壓力與置換。"
+    "defaultMessage": "剩餘 {keep} GB，少於 {mac} 目前在 GPU 以外的佔用（{others} GB）加上 {reserve} GB 保留量：預計會出現記憶體壓力與置換。"
   },
   "mlxMemory.wiredBelowReserve": {
-    "defaultMessage": "已拒絕：剩餘 {keep} GiB，低於 {reserve} GiB 的最低值。MLX 引擎在 GPU 以外也需要記憶體（負載下實測約 12 GB），核心與系統還需約 10 GB。此處允許的最大值為 {max} MB。"
+    "defaultMessage": "已拒絕：剩餘 {keep} GB，低於 {reserve} GB 的最低值。MLX 引擎在 GPU 以外也需要記憶體（負載下實測約 12 GB），核心與系統還需約 10 GB。此處允許的最大值為 {max} MB。"
   },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "開機設定（LaunchDaemon）"
@@ -6228,10 +6228,10 @@
     "defaultMessage": "請使用 8192 至 {max} MB 之間的整數，或選擇停用以恢復 macOS 預設值。"
   },
   "mlxMemory.wiredKeep": {
-    "defaultMessage": "macOS 與其他 App 保留 {physical} GiB 中的 {keep} GiB"
+    "defaultMessage": "macOS 與其他 App 保留 {physical} GB 中的 {keep} GB"
   },
   "mlxMemory.wiredNoSuggestion": {
-    "defaultMessage": "不建議提高：{mac} 目前的佔用加上 {reserve} GiB 保留量後，可固定的記憶體太少。"
+    "defaultMessage": "不建議提高：{mac} 目前的佔用加上 {reserve} GB 保留量後，可固定的記憶體太少。"
   },
   "mlxMemory.wiredOthers": {
     "defaultMessage": "目前 GPU 以外的佔用"
@@ -6246,7 +6246,7 @@
     "defaultMessage": "安裝一個在每次開機時設定該值的 LaunchDaemon；停用會將其移除。"
   },
   "mlxMemory.wiredRangeReserve": {
-    "defaultMessage": "MB（{gib} GiB）· 8192 至 {max}"
+    "defaultMessage": "MB（{gib} GB）· 8192 至 {max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "移除開機設定"
@@ -6258,7 +6258,7 @@
     "defaultMessage": "macOS 最低保留量"
   },
   "mlxMemory.wiredReserveValue": {
-    "defaultMessage": "{gib} GiB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
   },
   "mlxMemory.wiredStateDefault": {
     "defaultMessage": "macOS 預設值"
@@ -6270,7 +6270,7 @@
     "defaultMessage": "已提高到 {mb} MB"
   },
   "mlxMemory.wiredSuggested": {
-    "defaultMessage": "依測量建議：{mb} MB（保留目前佔用的 {others} GiB + {reserve} GiB 保留量）"
+    "defaultMessage": "依測量建議：{mb} MB（保留目前佔用的 {others} GB + {reserve} GB 保留量）"
   },
   "mlxMemory.wiredSuggestedLow": {
     "defaultMessage": "macOS 預設值已為 GPU 提供 {ws}：依 {mac} 目前的佔用，提高到 {mb} MB 以上會擠占保留量。"

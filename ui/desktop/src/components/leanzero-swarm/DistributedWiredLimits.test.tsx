@@ -62,7 +62,7 @@ describe('DistributedWiredLimits', () => {
     expect(within(row).getByTestId('mlx-dist-wired-buys').textContent).toBe(
       'Raise to 114,688 MB on workmule: +1 layer moves to workmule → max context 262k → ~324k'
     );
-    expect(row.textContent).toContain('keep 16 GiB');
+    expect(row.textContent).toContain('keep 16 GB');
     expect(row.textContent).toContain('the most the reserve allows');
     await userEvent.click(within(row).getByRole('switch', { name: 'Keep after restart' }));
     await userEvent.click(within(row).getByTestId('mlx-dist-wired-raise'));

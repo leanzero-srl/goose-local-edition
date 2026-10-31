@@ -4974,7 +4974,7 @@
     "defaultMessage": "Conservar tras reiniciar"
   },
   "mlxDistWired.keeps": {
-    "defaultMessage": "macOS y otras apps en {mac} conservan {keep} GiB"
+    "defaultMessage": "macOS y otras apps en {mac} conservan {keep} GB"
   },
   "mlxDistWired.limitDefault": {
     "defaultMessage": "límite wired 0 (predeterminado de macOS) · techo de GPU {ceiling} GB"
@@ -6180,10 +6180,10 @@
     "defaultMessage": "sin guardar"
   },
   "mlxMemory.wiredBelowOthers": {
-    "defaultMessage": "Quedan {keep} GiB, menos de lo que {mac} usa ahora fuera de la GPU ({others} GiB) más la reserva de {reserve} GiB: habrá presión de memoria e intercambio."
+    "defaultMessage": "Quedan {keep} GB, menos de lo que {mac} usa ahora fuera de la GPU ({others} GB) más la reserva de {reserve} GB: habrá presión de memoria e intercambio."
   },
   "mlxMemory.wiredBelowReserve": {
-    "defaultMessage": "Rechazado: quedan {keep} GiB, por debajo del mínimo de {reserve} GiB. El motor MLX también necesita RAM fuera de la GPU (unos 12 GB medidos con carga) y el kernel y el sistema unos 10 GB más. El máximo permitido aquí es {max} MB."
+    "defaultMessage": "Rechazado: quedan {keep} GB, por debajo del mínimo de {reserve} GB. El motor MLX también necesita RAM fuera de la GPU (unos 12 GB medidos con carga) y el kernel y el sistema unos 10 GB más. El máximo permitido aquí es {max} MB."
   },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "Ajuste de arranque (LaunchDaemon)"
@@ -6228,10 +6228,10 @@
     "defaultMessage": "Usa un número entero de 8192 a {max} MB, o Desactivar para el valor predeterminado de macOS."
   },
   "mlxMemory.wiredKeep": {
-    "defaultMessage": "macOS y otras apps conservan {keep} GiB de {physical} GiB"
+    "defaultMessage": "macOS y otras apps conservan {keep} GB de {physical} GB"
   },
   "mlxMemory.wiredNoSuggestion": {
-    "defaultMessage": "No se sugiere subirlo: lo que usa {mac} ahora más la reserva de {reserve} GiB deja muy poco para fijar."
+    "defaultMessage": "No se sugiere subirlo: lo que usa {mac} ahora más la reserva de {reserve} GB deja muy poco para fijar."
   },
   "mlxMemory.wiredOthers": {
     "defaultMessage": "En uso fuera de la GPU ahora"
@@ -6246,7 +6246,7 @@
     "defaultMessage": "Instala un LaunchDaemon que aplica el valor en cada arranque; Desactivar lo elimina."
   },
   "mlxMemory.wiredRangeReserve": {
-    "defaultMessage": "MB ({gib} GiB) · de 8192 a {max}"
+    "defaultMessage": "MB ({gib} GB) · de 8192 a {max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "Quitar ajuste de arranque"
@@ -6258,7 +6258,7 @@
     "defaultMessage": "Reserva mínima para macOS"
   },
   "mlxMemory.wiredReserveValue": {
-    "defaultMessage": "{gib} GiB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
   },
   "mlxMemory.wiredStateDefault": {
     "defaultMessage": "Predeterminado de macOS"
@@ -6270,7 +6270,7 @@
     "defaultMessage": "Elevado a {mb} MB"
   },
   "mlxMemory.wiredSuggested": {
-    "defaultMessage": "Sugerido según medición: {mb} MB (deja {others} GiB en uso ahora + la reserva de {reserve} GiB)"
+    "defaultMessage": "Sugerido según medición: {mb} MB (deja {others} GB en uso ahora + la reserva de {reserve} GB)"
   },
   "mlxMemory.wiredSuggestedLow": {
     "defaultMessage": "El valor predeterminado de macOS ya da a la GPU {ws}: con lo que usa {mac} ahora, subir por encima de {mb} MB invadiría la reserva."

@@ -46,7 +46,7 @@ const i18n = defineMessages({
   },
   keeps: {
     id: 'mlxDistWired.keeps',
-    defaultMessage: 'macOS and other apps on {mac} keep {keep} GiB',
+    defaultMessage: 'macOS and other apps on {mac} keep {keep} GB',
   },
   beyond: {
     id: 'mlxDistWired.beyond',

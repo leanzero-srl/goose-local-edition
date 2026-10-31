@@ -71,7 +71,7 @@ pub fn validate_mb(v: u64, physical_bytes: u64, reserve_gib: u64) -> Result<u64>
     if let Some(keep) = keep_mb(v, physical_bytes) {
         ensure!(
             keep >= reserve_gib * 1024,
-            "wired limit {v} MB leaves macOS and other apps {:.1} GiB, under the {reserve_gib} GiB \
+            "wired limit {v} MB leaves macOS and other apps {:.1} GB, under the {reserve_gib} GB \
              minimum reserve (the engine also needs RAM outside the GPU); the highest allowed on \
              this Mac is {} MB",
             keep as f64 / 1024.0,
@@ -306,7 +306,7 @@ mod tests {
         }
         // The owner's first number: 122,000 MB leaves 8.9 GiB, under the 16 GiB reserve.
         let e = validate_mb(122_000, physical, R).unwrap_err().to_string();
-        assert!(e.contains("8.9 GiB"), "{e}");
+        assert!(e.contains("8.9 GB"), "{e}");
         assert!(e.contains("114688 MB"), "{e}");
         assert!(validate_mb(114_689, physical, R).is_err());
         assert_eq!(validate_mb(122_000, physical, 8).unwrap(), 122_000);

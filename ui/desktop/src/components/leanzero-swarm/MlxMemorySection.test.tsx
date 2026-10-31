@@ -199,7 +199,7 @@ describe('MlxMemorySection', () => {
       '/usr/sbin/sysctl iogpu.wired_limit_mb=105000'
     );
     const keep = within(panel).getByTestId('mlx-memory-wired-keep');
-    expect(keep.textContent).toBe('macOS and other apps keep 25.5 GiB of 128 GiB');
+    expect(keep.textContent).toBe('macOS and other apps keep 25.5 GB of 128 GB');
     expect(keep.getAttribute('data-kind')).toBe('ok');
     await userEvent.click(within(panel).getByTestId('mlx-memory-wired-enable'));
     expect(mockWiredApply).toHaveBeenCalledWith(105000, false, undefined);
@@ -216,13 +216,13 @@ describe('MlxMemorySection', () => {
     await userEvent.clear(input);
     await userEvent.type(input, '122000');
     const refused = within(panel).getByTestId('mlx-memory-wired-refused');
-    expect(refused.textContent).toContain('leaves 8.9 GiB, under the 16 GiB minimum');
+    expect(refused.textContent).toContain('leaves 8.9 GB, under the 16 GB minimum');
     expect(refused.textContent).toContain('114,688 MB');
     expect(enable().disabled).toBe(true);
     await userEvent.clear(input);
     await userEvent.type(input, '114000');
     expect(within(panel).getByTestId('mlx-memory-wired-warn').textContent).toContain(
-      'less than workhorse uses outside the GPU right now (9.3 GiB)'
+      'less than workhorse uses outside the GPU right now (9.3 GB)'
     );
     expect(enable().disabled).toBe(false);
     await userEvent.clear(input);

@@ -4974,7 +4974,7 @@
     "defaultMessage": "再起動後も保持"
   },
   "mlxDistWired.keeps": {
-    "defaultMessage": "{mac} の macOS と他のアプリに {keep} GiB が残ります"
+    "defaultMessage": "{mac} の macOS と他のアプリに {keep} GB が残ります"
   },
   "mlxDistWired.limitDefault": {
     "defaultMessage": "ワイヤード上限 0（macOS のデフォルト）· GPU 上限 {ceiling} GB"
@@ -6180,10 +6180,10 @@
     "defaultMessage": "未保存"
   },
   "mlxMemory.wiredBelowOthers": {
-    "defaultMessage": "残りは {keep} GiB で、{mac} が現在 GPU 以外で使用している量（{others} GiB）と {reserve} GiB の予約の合計を下回ります: メモリ圧迫とスワップが発生します。"
+    "defaultMessage": "残りは {keep} GB で、{mac} が現在 GPU 以外で使用している量（{others} GB）と {reserve} GB の予約の合計を下回ります: メモリ圧迫とスワップが発生します。"
   },
   "mlxMemory.wiredBelowReserve": {
-    "defaultMessage": "拒否されました: 残りが {keep} GiB となり、最小値 {reserve} GiB を下回ります。MLX エンジンは GPU 以外にも RAM を必要とし（負荷時の実測で約 12 GB）、カーネルとシステムにもさらに約 10 GB 必要です。ここで許可される最大値は {max} MB です。"
+    "defaultMessage": "拒否されました: 残りが {keep} GB となり、最小値 {reserve} GB を下回ります。MLX エンジンは GPU 以外にも RAM を必要とし（負荷時の実測で約 12 GB）、カーネルとシステムにもさらに約 10 GB 必要です。ここで許可される最大値は {max} MB です。"
   },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "起動時の設定 (LaunchDaemon)"
@@ -6228,10 +6228,10 @@
     "defaultMessage": "8192〜{max} MB の整数を入力するか、macOS のデフォルトに戻すには無効化を使用してください。"
   },
   "mlxMemory.wiredKeep": {
-    "defaultMessage": "macOS と他のアプリに {physical} GiB 中 {keep} GiB が残ります"
+    "defaultMessage": "macOS と他のアプリに {physical} GB 中 {keep} GB が残ります"
   },
   "mlxMemory.wiredNoSuggestion": {
-    "defaultMessage": "引き上げの推奨はありません: {mac} の現在の使用量と {reserve} GiB の予約を合わせると、ワイヤードに回せる量がほとんど残りません。"
+    "defaultMessage": "引き上げの推奨はありません: {mac} の現在の使用量と {reserve} GB の予約を合わせると、ワイヤードに回せる量がほとんど残りません。"
   },
   "mlxMemory.wiredOthers": {
     "defaultMessage": "現在 GPU 以外で使用中"
@@ -6246,7 +6246,7 @@
     "defaultMessage": "起動のたびに値を設定する LaunchDaemon をインストールします。無効化すると削除されます。"
   },
   "mlxMemory.wiredRangeReserve": {
-    "defaultMessage": "MB ({gib} GiB) · 8192〜{max}"
+    "defaultMessage": "MB ({gib} GB) · 8192〜{max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "起動時の設定を削除"
@@ -6258,7 +6258,7 @@
     "defaultMessage": "macOS 用の最小予約"
   },
   "mlxMemory.wiredReserveValue": {
-    "defaultMessage": "{gib} GiB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
   },
   "mlxMemory.wiredStateDefault": {
     "defaultMessage": "macOS のデフォルト"
@@ -6270,7 +6270,7 @@
     "defaultMessage": "{mb} MB に引き上げ済み"
   },
   "mlxMemory.wiredSuggested": {
-    "defaultMessage": "実測に基づく推奨: {mb} MB（現在使用中の {others} GiB + {reserve} GiB の予約を確保）"
+    "defaultMessage": "実測に基づく推奨: {mb} MB（現在使用中の {others} GB + {reserve} GB の予約を確保）"
   },
   "mlxMemory.wiredSuggestedLow": {
     "defaultMessage": "macOS のデフォルトですでに GPU に {ws} が割り当てられています: {mac} の現在の使用量では、{mb} MB を超えて引き上げると予約に食い込みます。"

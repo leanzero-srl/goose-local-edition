@@ -288,26 +288,26 @@ const i18n = defineMessages({
   wiredReserve: { id: 'mlxMemory.wiredReserve', defaultMessage: 'Minimum reserve for macOS' },
   wiredReserveValue: {
     id: 'mlxMemory.wiredReserveValue',
-    defaultMessage: '{gib} GiB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)',
+    defaultMessage: '{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)',
   },
   wiredValue: { id: 'mlxMemory.wiredValue', defaultMessage: 'New limit' },
   wiredRangeReserve: {
     id: 'mlxMemory.wiredRangeReserve',
-    defaultMessage: 'MB ({gib} GiB) · 8192 to {max}',
+    defaultMessage: 'MB ({gib} GB) · 8192 to {max}',
   },
   wiredKeep: {
     id: 'mlxMemory.wiredKeep',
-    defaultMessage: 'macOS and other apps keep {keep} GiB of {physical} GiB',
+    defaultMessage: 'macOS and other apps keep {keep} GB of {physical} GB',
   },
   wiredBelowReserve: {
     id: 'mlxMemory.wiredBelowReserve',
     defaultMessage:
-      'Refused: that leaves {keep} GiB, under the {reserve} GiB minimum. The MLX engine also needs RAM outside the GPU (about 12 GB measured under load) and the kernel and system about 10 GB more. The highest allowed here is {max} MB.',
+      'Refused: that leaves {keep} GB, under the {reserve} GB minimum. The MLX engine also needs RAM outside the GPU (about 12 GB measured under load) and the kernel and system about 10 GB more. The highest allowed here is {max} MB.',
   },
   wiredBelowOthers: {
     id: 'mlxMemory.wiredBelowOthers',
     defaultMessage:
-      'That leaves {keep} GiB, less than {mac} uses outside the GPU right now ({others} GiB) plus the {reserve} GiB reserve: expect memory pressure and swapping.',
+      'That leaves {keep} GB, less than {mac} uses outside the GPU right now ({others} GB) plus the {reserve} GB reserve: expect memory pressure and swapping.',
   },
   wiredInvalidValue: {
     id: 'mlxMemory.wiredInvalidValue',
@@ -316,7 +316,7 @@ const i18n = defineMessages({
   wiredSuggested: {
     id: 'mlxMemory.wiredSuggested',
     defaultMessage:
-      'Suggested from measurement: {mb} MB (keeps {others} GiB in use now + the {reserve} GiB reserve)',
+      'Suggested from measurement: {mb} MB (keeps {others} GB in use now + the {reserve} GB reserve)',
   },
   wiredSuggestedLow: {
     id: 'mlxMemory.wiredSuggestedLow',
@@ -326,7 +326,7 @@ const i18n = defineMessages({
   wiredNoSuggestion: {
     id: 'mlxMemory.wiredNoSuggestion',
     defaultMessage:
-      'No raise suggested: what {mac} uses now plus the {reserve} GiB reserve leaves too little to wire.',
+      'No raise suggested: what {mac} uses now plus the {reserve} GB reserve leaves too little to wire.',
   },
   wiredUseSuggestion: { id: 'mlxMemory.wiredUseSuggestion', defaultMessage: 'Use' },
   wiredPersistLabel: { id: 'mlxMemory.wiredPersistLabel', defaultMessage: 'Keep after restart' },
@@ -831,7 +831,7 @@ export function WiredLimitPanel({
             {
               key: 'others',
               label: intl.formatMessage(i18n.wiredOthers),
-              value: `${othersGib} GiB`,
+              value: `${othersGib} GB`,
             },
             {
               key: 'reserve',

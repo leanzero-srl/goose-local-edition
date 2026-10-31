@@ -6180,7 +6180,7 @@
     "defaultMessage": "저장 안 됨"
   },
   "mlxMemory.wiredBelowOthers": {
-    "defaultMessage": "{keep} GiB만 남아, {mac}이(가) 현재 GPU 외부에서 사용하는 양({others} GiB)과 {reserve} GiB 예약을 합한 것보다 적습니다: 메모리 압박과 스와핑이 예상됩니다."
+    "defaultMessage": "{keep} GiB만 남아, {mac}이(가) 현재 GPU 외부에서 사용하는 양({others} GB)과 {reserve} GB 예약을 합한 것보다 적습니다: 메모리 압박과 스와핑이 예상됩니다."
   },
   "mlxMemory.wiredBelowReserve": {
     "defaultMessage": "거부됨: {keep} GiB만 남아 최소값 {reserve} GiB보다 적습니다. MLX 엔진은 GPU 외부에도 RAM이 필요하며(부하 시 측정값 약 12 GB), 커널과 시스템에도 약 10 GB가 더 필요합니다. 여기서 허용되는 최댓값은 {max} MB입니다."
@@ -6228,10 +6228,10 @@
     "defaultMessage": "8192~{max} MB 사이의 정수를 사용하거나, macOS 기본값으로 되돌리려면 비활성화를 사용하세요."
   },
   "mlxMemory.wiredKeep": {
-    "defaultMessage": "macOS와 다른 앱에 {physical} GiB 중 {keep} GiB가 남습니다"
+    "defaultMessage": "macOS와 다른 앱에 {physical} GB 중 {keep} GiB가 남습니다"
   },
   "mlxMemory.wiredNoSuggestion": {
-    "defaultMessage": "상향 제안 없음: {mac}의 현재 사용량과 {reserve} GiB 예약을 합하면 와이어드로 고정할 여유가 너무 적습니다."
+    "defaultMessage": "상향 제안 없음: {mac}의 현재 사용량과 {reserve} GB 예약을 합하면 와이어드로 고정할 여유가 너무 적습니다."
   },
   "mlxMemory.wiredOthers": {
     "defaultMessage": "현재 GPU 외부에서 사용 중"
@@ -6246,7 +6246,7 @@
     "defaultMessage": "부팅할 때마다 값을 설정하는 LaunchDaemon을 설치합니다. 비활성화하면 제거됩니다."
   },
   "mlxMemory.wiredRangeReserve": {
-    "defaultMessage": "MB ({gib} GiB) · 8192~{max}"
+    "defaultMessage": "MB ({gib} GB) · 8192~{max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "부팅 설정 제거"
@@ -6258,7 +6258,7 @@
     "defaultMessage": "macOS 최소 예약"
   },
   "mlxMemory.wiredReserveValue": {
-    "defaultMessage": "{gib} GiB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
   },
   "mlxMemory.wiredStateDefault": {
     "defaultMessage": "macOS 기본값"
@@ -6270,7 +6270,7 @@
     "defaultMessage": "{mb} MB로 상향됨"
   },
   "mlxMemory.wiredSuggested": {
-    "defaultMessage": "측정 기반 제안: {mb} MB(현재 사용 중인 {others} GiB + {reserve} GiB 예약 확보)"
+    "defaultMessage": "측정 기반 제안: {mb} MB(현재 사용 중인 {others} GB + {reserve} GB 예약 확보)"
   },
   "mlxMemory.wiredSuggestedLow": {
     "defaultMessage": "macOS 기본값이 이미 GPU에 {ws}를 제공합니다: {mac}의 현재 사용량 기준으로 {mb} MB 이상 올리면 예약을 침범합니다."

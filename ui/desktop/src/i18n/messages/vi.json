@@ -4974,7 +4974,7 @@
     "defaultMessage": "Giữ sau khi khởi động lại"
   },
   "mlxDistWired.keeps": {
-    "defaultMessage": "macOS và các ứng dụng khác trên {mac} giữ {keep} GiB"
+    "defaultMessage": "macOS và các ứng dụng khác trên {mac} giữ {keep} GB"
   },
   "mlxDistWired.limitDefault": {
     "defaultMessage": "giới hạn wired 0 (mặc định macOS) · trần GPU {ceiling} GB"
@@ -6180,10 +6180,10 @@
     "defaultMessage": "chưa lưu"
   },
   "mlxMemory.wiredBelowOthers": {
-    "defaultMessage": "Chỉ còn {keep} GiB, ít hơn lượng {mac} đang dùng ngoài GPU ({others} GiB) cộng dự trữ {reserve} GiB: sẽ có áp lực bộ nhớ và swap."
+    "defaultMessage": "Chỉ còn {keep} GB, ít hơn lượng {mac} đang dùng ngoài GPU ({others} GB) cộng dự trữ {reserve} GB: sẽ có áp lực bộ nhớ và swap."
   },
   "mlxMemory.wiredBelowReserve": {
-    "defaultMessage": "Bị từ chối: chỉ còn {keep} GiB, dưới mức tối thiểu {reserve} GiB. Engine MLX cũng cần RAM ngoài GPU (khoảng 12 GB đo được khi tải) và kernel cùng hệ thống cần thêm khoảng 10 GB. Mức cao nhất cho phép ở đây là {max} MB."
+    "defaultMessage": "Bị từ chối: chỉ còn {keep} GB, dưới mức tối thiểu {reserve} GB. Engine MLX cũng cần RAM ngoài GPU (khoảng 12 GB đo được khi tải) và kernel cùng hệ thống cần thêm khoảng 10 GB. Mức cao nhất cho phép ở đây là {max} MB."
   },
   "mlxMemory.wiredBoot": {
     "defaultMessage": "Cài đặt khi khởi động máy (LaunchDaemon)"
@@ -6228,10 +6228,10 @@
     "defaultMessage": "Dùng số nguyên từ 8192 đến {max} MB, hoặc Tắt để về mặc định của macOS."
   },
   "mlxMemory.wiredKeep": {
-    "defaultMessage": "macOS và các ứng dụng khác giữ {keep} GiB trên {physical} GiB"
+    "defaultMessage": "macOS và các ứng dụng khác giữ {keep} GB trên {physical} GB"
   },
   "mlxMemory.wiredNoSuggestion": {
-    "defaultMessage": "Không đề xuất nâng: lượng {mac} đang dùng cộng dự trữ {reserve} GiB còn quá ít để cố định."
+    "defaultMessage": "Không đề xuất nâng: lượng {mac} đang dùng cộng dự trữ {reserve} GB còn quá ít để cố định."
   },
   "mlxMemory.wiredOthers": {
     "defaultMessage": "Đang dùng ngoài GPU hiện tại"
@@ -6246,7 +6246,7 @@
     "defaultMessage": "Cài một LaunchDaemon đặt giá trị mỗi lần khởi động; Tắt sẽ gỡ nó."
   },
   "mlxMemory.wiredRangeReserve": {
-    "defaultMessage": "MB ({gib} GiB) · từ 8192 đến {max}"
+    "defaultMessage": "MB ({gib} GB) · từ 8192 đến {max}"
   },
   "mlxMemory.wiredRemove": {
     "defaultMessage": "Xóa cài đặt khi khởi động"
@@ -6258,7 +6258,7 @@
     "defaultMessage": "Dự trữ tối thiểu cho macOS"
   },
   "mlxMemory.wiredReserveValue": {
-    "defaultMessage": "{gib} GiB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
+    "defaultMessage": "{gib} GB (GOOSE_WIRED_LIMIT_MIN_RESERVE_GIB)"
   },
   "mlxMemory.wiredStateDefault": {
     "defaultMessage": "Mặc định của macOS"
@@ -6270,7 +6270,7 @@
     "defaultMessage": "Đã nâng lên {mb} MB"
   },
   "mlxMemory.wiredSuggested": {
-    "defaultMessage": "Đề xuất theo đo đạc: {mb} MB (giữ {others} GiB đang dùng + dự trữ {reserve} GiB)"
+    "defaultMessage": "Đề xuất theo đo đạc: {mb} MB (giữ {others} GB đang dùng + dự trữ {reserve} GB)"
   },
   "mlxMemory.wiredSuggestedLow": {
     "defaultMessage": "Mặc định của macOS đã cho GPU {ws}: với mức {mac} đang dùng, nâng quá {mb} MB sẽ lấn vào dự trữ."
