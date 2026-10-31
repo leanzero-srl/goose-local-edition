@@ -214,6 +214,10 @@ const LABEL_WORDS: &[&str] = &[
     "convention",
     "conventions",
     "note",
+    "title",
+    "titles",
+    "naming",
+    "format",
     "notes",
     // Polish.
     "zasada",
@@ -344,10 +348,18 @@ const DROPPABLE_TAILS: &[&str] = &[
     "bitte",
     "danke",
     "ab jetzt",
+    "te rog",
+    "mulțumesc",
+    "multumesc",
+    "von jetzt an",
+    "thx",
+    "pls",
 ];
 
 /// Asides a memory may drop from the end of the user's sentence when a comma opens them
-/// ("…, e.g. YAML and TOML."), lower case, as typed.
+/// ("…, e.g. YAML and TOML."), lower case, as typed. Never "such as" (r7: "…, such as the
+/// Makefile which must keep tabs" is part of the rule), and never an aside holding a negator, a
+/// contrast or a modal ([`MODAL_WORDS`]).
 const DROPPABLE_ASIDES: &[&str] = &[
     "e.g.",
     "i.e.",
@@ -355,7 +367,6 @@ const DROPPABLE_ASIDES: &[&str] = &[
     "ie ",
     "for example",
     "for instance",
-    "such as",
     "np.",
     "na przykład",
     "tj.",
@@ -366,10 +377,88 @@ const DROPPABLE_ASIDES: &[&str] = &[
     "ex.",
 ];
 
-/// Abbreviations a full stop does not end a sentence after ("i.e. the v1 SDK").
+/// Words that make an aside part of the rule: what must, should or always happen.
+const MODAL_WORDS: &[&str] = &[
+    "must",
+    "should",
+    "shall",
+    "need",
+    "needs",
+    "have",
+    "has",
+    "always",
+    "required",
+    "mandatory",
+    "musi",
+    "muszą",
+    "należy",
+    "trzeba",
+    "powinien",
+    "powinno",
+    "powinny",
+    "zawsze",
+    "trebuie",
+    "mereu",
+    "întotdeauna",
+    "intotdeauna",
+    "muss",
+    "müssen",
+    "soll",
+    "sollte",
+    "sollen",
+    "immer",
+];
+
+/// Abbreviations that open an aside or precede a name: a full stop after them never ends the
+/// sentence, whatever the next word ("i.e. the v1 SDK", "np. SDK v1", "Dr. Smith").
 const ABBREVIATIONS: &[&str] = &[
-    "e.g", "i.e", "etc", "vs", "cf", "approx", "dr", "mr", "mrs", "ms", "prof", "st", "jr", "sr",
-    "nr", "np", "tj", "itd", "itp", "z.b", "d.h", "u.a", "bzw", "usw", "ca", "ex",
+    "e.g", "i.e", "vs", "cf", "approx", "dr", "mr", "mrs", "ms", "prof", "st", "jr", "sr", "nr",
+    "np", "tj", "z.b", "d.h", "ca", "ex",
+];
+
+/// Abbreviations that also close a sentence ("…, TOML, etc. Keep tabs in Makefiles."): like a
+/// version ("v2.1") or an initial ("plan B"), their full stop ends the sentence only when the next
+/// word starts upper case (r7).
+const CLOSING_ABBREVIATIONS: &[&str] = &["etc", "itd", "itp", "usw", "u.a", "bzw"];
+
+/// Lead-ins before a colon that only ask goose to remember what follows: the clause after the
+/// colon stands alone after one or more of these, or after a label ([`is_label`]), never after
+/// any other lead-in (r7: "Forbidden:", "Old rule we dropped:", "Mistakes I made last week:").
+const REMEMBER_LEADINS: &[&str] = &[
+    "remember",
+    "remember that",
+    "please remember",
+    "how i like things",
+    "how i like it",
+    "note",
+    "note that",
+    "please note",
+    "keep in mind",
+    "for everything we write",
+    "for everything we write for this client",
+    "for this client",
+    "from now on",
+    "going forward",
+    "please",
+    "zapamiętaj",
+    "zapamiętaj że",
+    "pamiętaj",
+    "pamiętaj że",
+    "od teraz",
+    "na przyszłość",
+    "ține minte",
+    "tine minte",
+    "reține",
+    "retine",
+    "de acum",
+    "de acum înainte",
+    "te rog",
+    "merk dir",
+    "merke dir",
+    "beachte",
+    "ab jetzt",
+    "von jetzt an",
+    "bitte",
 ];
 
 /// Openers that answer the assistant, not part of the rule: dropped from the front of a quote.
@@ -408,9 +497,11 @@ fn strip_discourse(quote: &str) -> &str {
     }
 }
 
-/// The token a full stop closes is an abbreviation ("e.g", "z.B", "etc"), an initial ("J") or a
-/// version ("v1", "v1.2"): that full stop does not end the sentence.
-fn abbreviation_before(before: &str) -> bool {
+/// Whether the full stop at the end of `before` ends the sentence, given what follows it: never
+/// after an [`ABBREVIATIONS`] entry; after a [`CLOSING_ABBREVIATIONS`] entry, a version ("v1",
+/// "v1.2") or an initial ("B") only when the next word starts upper case (r7: "Always pin the API
+/// client to v2.1. It breaks on v2.2." is two sentences, "v2.1 or later" is not).
+fn full_stop_ends(before: &str, after: &str) -> bool {
     let start = before
         .char_indices()
         .rev()
@@ -420,14 +511,23 @@ fn abbreviation_before(before: &str) -> bool {
     let version = token.strip_prefix('v').is_some_and(|rest| {
         !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit() || c == '.')
     });
-    ABBREVIATIONS.contains(&token.as_str())
+    if ABBREVIATIONS.contains(&token.as_str()) {
+        return false;
+    }
+    let closing = CLOSING_ABBREVIATIONS.contains(&token.as_str())
         || version
-        || (token.chars().count() == 1 && token.chars().all(char::is_alphabetic))
+        || (token.chars().count() == 1 && token.chars().all(char::is_alphabetic));
+    !closing
+        || after
+            .trim_start()
+            .chars()
+            .next()
+            .is_none_or(char::is_uppercase)
 }
 
 /// The user's text as sentences: split after `.` `!` `?` `;` that end a word (followed by a space
-/// or the end — "DD.MM.YYYY", "report.md" and "0.5" stay whole, and never after an abbreviation:
-/// [`abbreviation_before`]) and at line breaks; commas never split. Each with whether it asks
+/// or the end — "DD.MM.YYYY", "report.md" and "0.5" stay whole — and, after an abbreviation, a
+/// version or an initial, only as [`full_stop_ends`] says) and at line breaks; commas never split. Each with whether it asks
 /// (ends on `?`).
 fn sentences(text: &str) -> Vec<(&str, bool)> {
     let mut out = Vec::new();
@@ -438,7 +538,7 @@ fn sentences(text: &str) -> Vec<(&str, bool)> {
         let ends = c == '\n'
             || (matches!(c, '.' | '!' | '?' | ';')
                 && next_is_space
-                && !(c == '.' && abbreviation_before(&text[..at])));
+                && !(c == '.' && !full_stop_ends(&text[..at], &text[at + 1..])));
         if ends {
             let end = at + c.len_utf8();
             let sentence = &text[start..end];
@@ -452,6 +552,29 @@ fn sentences(text: &str) -> Vec<(&str, bool)> {
         out.push((&text[start..], false));
     }
     out
+}
+
+/// The lead-in before a colon is a label or one or more remember-style lead-ins, in any order
+/// ("Remember how I like things", "Please note that", "Zasada").
+fn only_asks_to_remember(lead: &str) -> bool {
+    if is_label(lead) {
+        return true;
+    }
+    let words = quote_words(lead);
+    let leadins: Vec<Vec<String>> = REMEMBER_LEADINS.iter().map(|l| quote_words(l)).collect();
+    // covered[i]: words[..i] is a run of lead-ins.
+    let mut covered = vec![false; words.len() + 1];
+    covered[0] = true;
+    for i in 0..words.len() {
+        if covered[i] {
+            for leadin in &leadins {
+                if words[i..].starts_with(leadin) {
+                    covered[i + leadin.len()] = true;
+                }
+            }
+        }
+    }
+    !words.is_empty() && covered[words.len()]
 }
 
 fn holds_a_turn(words: &[String]) -> bool {
@@ -485,7 +608,8 @@ fn droppable_tails(sentence: &str) -> Vec<usize> {
     });
     if let Some((at, _)) = aside {
         let tail = quote_words(&sentence[at..]);
-        if !tail.is_empty() && tail.len() < words.len() && !holds_a_turn(&tail) {
+        let modal = tail.iter().any(|w| MODAL_WORDS.contains(&w.as_str()));
+        if !tail.is_empty() && tail.len() < words.len() && !holds_a_turn(&tail) && !modal {
             out.push(tail.len());
         }
     }
@@ -494,14 +618,15 @@ fn droppable_tails(sentence: &str) -> Vec<usize> {
 
 /// Where a span may start in a sentence: its start (openers aside), or after its FIRST colon
 /// ("Remember how I like things: Jira titles as …") when a space follows the colon ("10:30" and
-/// "https://" are not one) and the lead-in holds no negator or contrast word.
+/// "https://" are not one) and the lead-in, openers aside, is a label ([`is_label`]) or one or
+/// more [`REMEMBER_LEADINS`]: never any other lead-in.
 fn span_starts(sentence: &str) -> Vec<Vec<String>> {
     let mut out = vec![quote_words(strip_discourse(sentence))];
     if let Some(at) = sentence.find(':') {
         let (lead, rest) = (&sentence[..at], &sentence[at + 1..]);
         let spaced = rest.chars().next().is_some_and(char::is_whitespace);
         let clause = quote_words(strip_discourse(rest));
-        if spaced && !clause.is_empty() && !holds_a_turn(&quote_words(lead)) {
+        if spaced && !clause.is_empty() && only_asks_to_remember(strip_discourse(lead)) {
             out.push(clause);
         }
     }
@@ -2199,6 +2324,178 @@ mod tests {
             );
         }
         assert!(judge_one(q, q, &format!("Client rule: {q}")).is_some());
+    }
+
+    /// WR-17 r7 D1: the clause after a colon stands alone only after a label or a remember-style
+    /// lead-in; an aside with a modal and a "such as" aside are part of the rule.
+    #[test]
+    fn a_clause_after_a_turning_lead_in_is_never_proposed() {
+        let tabs = "Old rule we dropped: never use tabs for indenting.";
+        let cases: &[(&str, &str, &str)] = &[
+            (
+                "Forbidden: push to main directly.",
+                "Forbidden: push to main directly.",
+                "Push to main directly.",
+            ),
+            (
+                "Forbidden: push to main directly.",
+                "Forbidden: push to main directly.",
+                "Rule: push to main directly.",
+            ),
+            (
+                "Forbidden: push to main directly.",
+                "push to main directly",
+                "Push to main directly.",
+            ),
+            (
+                "Verboten: direkt auf main pushen.",
+                "Verboten: direkt auf main pushen.",
+                "Regel: direkt auf main pushen.",
+            ),
+            (
+                "Zakazane: wysyłanie raportu bez recenzji.",
+                "Zakazane: wysyłanie raportu bez recenzji.",
+                "Zasada: wysyłanie raportu bez recenzji.",
+            ),
+            (tabs, tabs, "Never use tabs for indenting."),
+            (
+                tabs,
+                "never use tabs for indenting",
+                "Never use tabs for indenting.",
+            ),
+            (
+                "Mistakes I made last week: committing secrets to the repo.",
+                "Mistakes I made last week: committing secrets to the repo.",
+                "Project rule: committing secrets to the repo.",
+            ),
+            (
+                "Use spaces in all config files, such as the Makefile which must keep tabs.",
+                "Use spaces in all config files, such as the Makefile which must keep tabs.",
+                "Use spaces in all config files.",
+            ),
+            (
+                "Use spaces in all config files, such as the Makefile which keeps tabs.",
+                "Use spaces in all config files, such as the Makefile which keeps tabs.",
+                "Use spaces in all config files.",
+            ),
+            (
+                "Use spaces in all config files, e.g. the Makefile must keep tabs.",
+                "Use spaces in all config files, e.g. the Makefile must keep tabs.",
+                "Use spaces in all config files.",
+            ),
+            (
+                "Use spaces in all config files, i.e. YAML should always win.",
+                "Use spaces in all config files, i.e. YAML should always win.",
+                "Use spaces in all config files.",
+            ),
+            // r7 D2: a lower-case word after "etc." or a version continues the sentence.
+            (
+                "Avoid the old tools etc. use the v1 SDK in production code.",
+                "use the v1 SDK in production code.",
+                "Use the v1 SDK in production code.",
+            ),
+            (
+                "Stay on v2. upgrading breaks the release pipeline.",
+                "upgrading breaks the release pipeline.",
+                "Upgrading breaks the release pipeline.",
+            ),
+        ];
+        for (said, quote, memory) in cases {
+            assert_eq!(
+                judge_one(said, quote, memory),
+                None,
+                "{memory:?} under {quote:?}"
+            );
+        }
+    }
+
+    /// WR-17 r7: remember-style lead-ins in every language, sentence ends after "etc." and a
+    /// version, the new tails and label words.
+    #[test]
+    fn r7_true_memories_are_proposed() {
+        let cases: &[(&str, &str, &str)] = &[
+            (
+                "Always pin the API client to v2.1. It breaks on v2.2.",
+                "Always pin the API client to v2.1.",
+                "Always pin the API client to v2.1",
+            ),
+            (
+                "Always pin the API client to v2.1. It breaks on v2.2.",
+                "Always pin the API client to v2.1",
+                "Always pin the API client to v2.1.",
+            ),
+            (
+                "Use spaces in YAML, TOML, etc. Keep tabs in Makefiles.",
+                "Keep tabs in Makefiles.",
+                "Keep tabs in Makefiles.",
+            ),
+            (
+                "Use spaces in YAML, TOML, etc. Keep tabs in Makefiles.",
+                "Use spaces in YAML, TOML, etc.",
+                "Use spaces in YAML, TOML, etc.",
+            ),
+            (
+                "Zapamiętaj: logi budowania trzymaj w /var/tmp.",
+                "Zapamiętaj: logi budowania trzymaj w /var/tmp.",
+                "Logi budowania trzymaj w /var/tmp.",
+            ),
+            (
+                "Ține minte: logurile de build stau în /var/tmp.",
+                "Ține minte: logurile de build stau în /var/tmp.",
+                "Logurile de build stau în /var/tmp.",
+            ),
+            (
+                "Merk dir: Build-Logs gehören nach /var/tmp.",
+                "Build-Logs gehören nach /var/tmp.",
+                "Build-Logs gehören nach /var/tmp.",
+            ),
+            (
+                "Also please note that: build logs live in /var/tmp.",
+                "build logs live in /var/tmp",
+                "Build logs live in /var/tmp.",
+            ),
+            (
+                "Rule: build logs live in /var/tmp.",
+                "Rule: build logs live in /var/tmp.",
+                "Build logs live in /var/tmp.",
+            ),
+            (
+                "Keep the build logs in /var/tmp, pls.",
+                "Keep the build logs in /var/tmp, pls.",
+                "Keep the build logs in /var/tmp.",
+            ),
+            (
+                "Keep the build logs in /var/tmp thx",
+                "Keep the build logs in /var/tmp thx",
+                "Keep the build logs in /var/tmp",
+            ),
+            (
+                "Păstrează logurile în /var/tmp, te rog, mulțumesc.",
+                "Păstrează logurile în /var/tmp, te rog, mulțumesc.",
+                "Păstrează logurile în /var/tmp.",
+            ),
+            (
+                "Build-Logs in /var/tmp ablegen, von jetzt an.",
+                "Build-Logs in /var/tmp ablegen, von jetzt an.",
+                "Build-Logs in /var/tmp ablegen.",
+            ),
+            (
+                "Keep Jira titles under 70 characters.",
+                "Keep Jira titles under 70 characters.",
+                "Titles: keep Jira titles under 70 characters.",
+            ),
+            (
+                "Keep Jira titles under 70 characters.",
+                "Keep Jira titles under 70 characters.",
+                "Naming format: keep Jira titles under 70 characters.",
+            ),
+        ];
+        for (said, quote, memory) in cases {
+            assert!(
+                judge_one(said, quote, memory).is_some(),
+                "{memory:?} under {quote:?}"
+            );
+        }
     }
 
     /// WR-17 r6 D2: true memories the r5 rule dropped — a politeness or time tail, a comma aside,
