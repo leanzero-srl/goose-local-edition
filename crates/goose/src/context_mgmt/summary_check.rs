@@ -420,7 +420,11 @@ pub fn mark_missing_paths(model_text: &str, chat_folder: Option<&std::path::Path
     while i < chars.len() {
         let (at, c) = chars[i];
         // A fenced block is a command or code as written: never marked inside.
-        if (i == 0 || chars[i - 1].1 == '\n') && model_text[at..].starts_with("```") {
+        if (i == 0 || chars[i - 1].1 == '\n')
+            && model_text
+                .get(at..)
+                .is_some_and(|rest| rest.starts_with("```"))
+        {
             in_fence = !in_fence;
         }
         if in_fence {
@@ -428,7 +432,10 @@ pub fn mark_missing_paths(model_text: &str, chat_folder: Option<&std::path::Path
             continue;
         }
         let starts_word = i == 0
-            || matches!(chars[i - 1].1, ' ' | '\t' | '\n' | '`' | '(' | '"' | '\'' | '[' | '*');
+            || matches!(
+                chars[i - 1].1,
+                ' ' | '\t' | '\n' | '`' | '(' | '"' | '\'' | '[' | '*'
+            );
         if c != '/' || !starts_word {
             i += 1;
             continue;
@@ -438,10 +445,17 @@ pub fn mark_missing_paths(model_text: &str, chat_folder: Option<&std::path::Path
             j += 1;
         }
         let end = chars.get(j).map_or(model_text.len(), |(n, _)| *n);
-        let token = model_text[at..end].trim_end_matches(['.', ',', ':', ';']);
+        let token = model_text
+            .get(at..end)
+            .unwrap_or("")
+            .trim_end_matches(['.', ',', ':', ';']);
         let token_end = at + token.len();
         i = j.max(i + 1);
-        let first = token.trim_start_matches('/').split('/').next().unwrap_or("");
+        let first = token
+            .trim_start_matches('/')
+            .split('/')
+            .next()
+            .unwrap_or("");
         if first.is_empty() || token.contains("//") || !first.chars().any(char::is_alphabetic) {
             continue;
         }
@@ -460,19 +474,25 @@ pub fn mark_missing_paths(model_text: &str, chat_folder: Option<&std::path::Path
             _ => continue,
         };
         // After a closing backquote, not inside it.
-        let place = if model_text[token_end..].starts_with('`') {
+        let place = if model_text
+            .get(token_end..)
+            .is_some_and(|rest| rest.starts_with('`'))
+        {
             token_end + 1
         } else {
             token_end
         };
-        if model_text[place..].starts_with(NOT_ON_DISK_LEAD) {
+        if model_text
+            .get(place..)
+            .is_some_and(|rest| rest.starts_with(NOT_ON_DISK_LEAD))
+        {
             continue;
         }
-        out.push_str(&model_text[copied..place]);
+        out.push_str(model_text.get(copied..place).unwrap_or(""));
         out.push_str(&mark);
         copied = place;
     }
-    out.push_str(&model_text[copied..]);
+    out.push_str(model_text.get(copied..).unwrap_or(""));
     out
 }
 
@@ -676,11 +696,17 @@ mod tests {
         assert!(!marked.contains("gone.txt (not"), "{marked}");
         let fenced = "```\ngrep ERROR /export/dock.log\n```\nthen /export/";
         let fenced_marked = super::mark_missing_paths(fenced, Some(dir.path()));
-        assert!(fenced_marked.starts_with("```\ngrep ERROR /export/dock.log\n```"), "{fenced_marked}");
+        assert!(
+            fenced_marked.starts_with("```\ngrep ERROR /export/dock.log\n```"),
+            "{fenced_marked}"
+        );
         assert!(fenced_marked.ends_with("is)"), "{fenced_marked}");
         assert!(!marked.contains("dock.log` (not"), "{marked}");
         assert!(!marked.contains("summary` (not"), "{marked}");
-        assert!(!marked.contains("docs (not") && !marked.contains("docs. (not"), "{marked}");
+        assert!(
+            !marked.contains("docs (not") && !marked.contains("docs. (not"),
+            "{marked}"
+        );
         assert_eq!(super::mark_missing_paths(&marked, Some(dir.path())), marked);
     }
 }

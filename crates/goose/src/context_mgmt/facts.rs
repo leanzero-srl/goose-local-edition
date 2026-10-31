@@ -517,7 +517,9 @@ fn without_stream_redirects(command: &str) -> String {
     while i < chars.len() {
         if chars[i] == '>'
             && chars.get(i + 1) == Some(&'&')
-            && !chars.get(i + 2).is_some_and(|c| c.is_ascii_digit() || *c == '-')
+            && !chars
+                .get(i + 2)
+                .is_some_and(|c| c.is_ascii_digit() || *c == '-')
         {
             // `>& file` sends both streams to a file: a write, kept as `>`.
             out.push('>');
@@ -530,7 +532,10 @@ fn without_stream_redirects(command: &str) -> String {
                 out.pop();
             }
             i += 2;
-            while chars.get(i).is_some_and(|c| c.is_ascii_digit() || *c == '-') {
+            while chars
+                .get(i)
+                .is_some_and(|c| c.is_ascii_digit() || *c == '-')
+            {
                 i += 1;
             }
             continue;

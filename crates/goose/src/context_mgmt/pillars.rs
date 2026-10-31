@@ -1342,7 +1342,8 @@ fn person_text(message: &Message) -> Option<String> {
         .collect();
     let text = text.join("\n");
     let text = text.trim();
-    if text.is_empty() || parse_slash_command(text).is_some_and(|parsed| parsed.command == "compact")
+    if text.is_empty()
+        || parse_slash_command(text).is_some_and(|parsed| parsed.command == "compact")
     {
         return None;
     }
@@ -1361,8 +1362,7 @@ fn is_goose_notice(message: &Message) -> bool {
     }
     let text = message.as_concat_text();
     let text = text.trim();
-    text == crate::agents::EMPTY_TURN_MESSAGE
-        || text == crate::agents::GOOSE_STOPPED_AS_LOOP.trim()
+    text == crate::agents::EMPTY_TURN_MESSAGE || text == crate::agents::GOOSE_STOPPED_AS_LOOP.trim()
 }
 
 fn newest_message_unanswered(messages: &[Message]) -> bool {
@@ -1384,9 +1384,10 @@ fn newest_message_unanswered(messages: &[Message]) -> bool {
             answered = false;
         } else if message.role == Role::Assistant
             && !is_goose_notice(message)
-            && message.content.iter().any(
-                |c| matches!(c, MessageContent::Text(t) if !t.text.trim().is_empty()),
-            )
+            && message
+                .content
+                .iter()
+                .any(|c| matches!(c, MessageContent::Text(t) if !t.text.trim().is_empty()))
         {
             answered = true;
         }
@@ -1550,13 +1551,21 @@ fn without_analysis(text: &str) -> (String, bool) {
     let mut text = text.to_string();
     let mut from = 0;
     while let Some(start) = analysis_tag(&text, from, "<analysis") {
-        let Some(open_end) = text[start..].find('>').map(|n| start + n + 1) else {
+        let Some(open_end) = text
+            .get(start..)
+            .and_then(|rest| rest.find('>'))
+            .map(|n| start + n + 1)
+        else {
             return (text, true);
         };
         let Some(close) = analysis_tag(&text, open_end, "</analysis") else {
             return (text, true);
         };
-        let Some(close_end) = text[close..].find('>').map(|n| close + n + 1) else {
+        let Some(close_end) = text
+            .get(close..)
+            .and_then(|rest| rest.find('>'))
+            .map(|n| close + n + 1)
+        else {
             return (text, true);
         };
         text.replace_range(start..close_end, "");
@@ -1572,8 +1581,11 @@ fn analysis_tag(text: &str, from: usize, lead: &str) -> Option<usize> {
     let mut at = from;
     while let Some(n) = text.get(at..)?.find(lead) {
         let start = at + n;
-        let next = text[start + lead.len()..].chars().next();
-        if next.is_some_and(|c| c == '>' || c == '_' || c == '-' || c == ' ' || c.is_alphanumeric()) {
+        let next = text
+            .get(start + lead.len()..)
+            .and_then(|rest| rest.chars().next());
+        if next.is_some_and(|c| c == '>' || c == '_' || c == '-' || c == ' ' || c.is_alphanumeric())
+        {
             return Some(start);
         }
         at = start + lead.len();
@@ -1775,7 +1787,12 @@ mod tests {
     }
 
     fn kept_of(messages: &[Message]) -> String {
-        Pillars::build(messages, &KeptSources::default(), LedgerRead::Entries(Vec::new())).render()
+        Pillars::build(
+            messages,
+            &KeptSources::default(),
+            LedgerRead::Entries(Vec::new()),
+        )
+        .render()
     }
 
     /// WR-18 (Gabee round 4, 2026-10-31): the summary said "Pending Tasks: None" while the
@@ -1787,13 +1804,21 @@ mod tests {
     fn the_newest_message_without_a_reply_is_open_work() {
         let reply = || Message::assistant().with_text("The report is in export/ROWEREK.md.");
         let ask = |text: &str| Message::user().with_text(text);
-        let before_turn = vec![ask("make the report"), reply(), ask("Remember: dates as DD.MM.YYYY")];
+        let before_turn = vec![
+            ask("make the report"),
+            reply(),
+            ask("Remember: dates as DD.MM.YYYY"),
+        ];
         let kept = kept_of(&before_turn);
         assert!(kept.contains("## Not answered yet"), "{kept}");
         assert!(kept.contains("message ([2] above)"), "{kept}");
 
         let mut mid_turn = before_turn.clone();
-        mid_turn.push(call("t1", "shell", serde_json::json!({"command": "ls export"})));
+        mid_turn.push(call(
+            "t1",
+            "shell",
+            serde_json::json!({"command": "ls export"}),
+        ));
         mid_turn.push(Message::user().with_tool_response("t1", Ok(text_result("ROWEREK.md"))));
         assert!(kept_of(&mid_turn).contains("## Not answered yet"));
 
@@ -1814,11 +1839,15 @@ mod tests {
     /// `</analysis>`; the whole block was stored as the summary, every section twice.
     #[test]
     fn an_analysis_block_under_any_analysis_tag_is_scratch() {
-        let answer = "<analysis_to_write>\n## Where we are\ndraft\n</analysis>\n\n## Where we are\nfinal";
+        let answer =
+            "<analysis_to_write>\n## Where we are\ndraft\n</analysis>\n\n## Where we are\nfinal";
         assert_eq!(strip_scratch(answer), "## Where we are\nfinal");
         assert_eq!(strip_scratch("<analysis>x</analysis>\nkept"), "kept");
         // A word that only starts like the tag is text.
-        assert_eq!(strip_scratch("see <analysis.md> and </analysis notes>"), "see <analysis.md> and </analysis notes>".to_string());
+        assert_eq!(
+            strip_scratch("see <analysis.md> and </analysis notes>"),
+            "see <analysis.md> and </analysis notes>".to_string()
+        );
     }
 
     fn chat() -> Vec<Message> {
