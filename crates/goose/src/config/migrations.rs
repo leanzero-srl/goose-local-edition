@@ -16,10 +16,19 @@ const CHATRECALL_DEFAULT_ON: &str = "chatrecall_default_on";
 const CHATRECALL_OLD_DESCRIPTION: &str =
     "Search past conversations and load session summaries for contextual memory";
 const CHATRECALL_OLD_DISPLAY_NAME: &str = "Chat Recall";
+const MEMORY_DEFAULT_ON: &str = "memory_default_on";
+const MEMORY_EXTENSION_NAME: &str = "memory";
+/// The descriptions goose itself wrote for the `memory` builtin: the desktop's bundled entry and
+/// the CLI's / older bundle's server description.
+const MEMORY_GOOSE_DESCRIPTIONS: [&str; 2] = [
+    "Teach goose your preferences as you go.",
+    "Stores and retrieves categorized memories",
+];
 
 pub fn run_migrations(config: &mut Mapping) -> bool {
     let mut changed = false;
     changed |= migrate_chatrecall_default_on(config);
+    changed |= migrate_memory_default_on(config);
     changed |= migrate_platform_extensions(config);
     changed |= migrate_provider_config(config);
     changed
@@ -31,6 +40,7 @@ pub fn run_migrations(config: &mut Mapping) -> bool {
 /// config nobody has written to since the upgrade reads the same as it will once written.
 pub fn run_read_migrations(config: &mut Mapping) {
     migrate_chatrecall_default_on(config);
+    migrate_memory_default_on(config);
     migrate_platform_extensions(config);
 }
 
@@ -116,6 +126,79 @@ fn migrate_chatrecall_default_on(config: &mut Mapping) -> bool {
     }
 
     applied.push(yaml_key(CHATRECALL_DEFAULT_ON));
+    config.insert(
+        yaml_key(APPLIED_MIGRATIONS_KEY),
+        serde_yaml::Value::Sequence(applied),
+    );
+    true
+}
+
+/// The stored `memory` entry is exactly what goose wrote while memory was off by default, so its
+/// `enabled: false` was goose's default and never the person's choice. `display_name`, `timeout`,
+/// `bundled` and `available_tools` may be absent or carry goose's own values; any other key or
+/// value means the person (or another tool) edited the entry, and it is left alone.
+fn is_old_default_off_memory(entry: &Mapping) -> bool {
+    let known_keys = [
+        "enabled",
+        "type",
+        "name",
+        "description",
+        "display_name",
+        "timeout",
+        "bundled",
+        "available_tools",
+    ];
+    let field = |key: &str| entry.get(yaml_key(key));
+    let absent = |key: &str| matches!(field(key), None | Some(serde_yaml::Value::Null));
+    let text = |key: &str| field(key).and_then(|value| value.as_str());
+
+    entry
+        .keys()
+        .all(|key| key.as_str().is_some_and(|key| known_keys.contains(&key)))
+        && field("enabled") == Some(&serde_yaml::Value::Bool(false))
+        && text("type") == Some("builtin")
+        && text("name") == Some(MEMORY_EXTENSION_NAME)
+        && text("description").is_some_and(|d| MEMORY_GOOSE_DESCRIPTIONS.contains(&d))
+        && (absent("display_name") || text("display_name") == Some("Memory"))
+        && (absent("timeout") || field("timeout").and_then(|t| t.as_u64()) == Some(300))
+        && (absent("bundled") || field("bundled") == Some(&serde_yaml::Value::Bool(true)))
+        && (absent("available_tools")
+            || field("available_tools")
+                .and_then(|value| value.as_sequence())
+                .is_some_and(|tools| tools.is_empty()))
+}
+
+/// WR-17: memory is on by default (bundled-extensions.json), but every install so far stored the
+/// old default `enabled: false`, and the desktop's bundled sync keeps a stored `enabled`. So a
+/// person who said "remember how I like things" had no memory tool, and nothing was saved
+/// (Gabee, 2026-10-31). Once per config the untouched old default is flipped on — the same rule as
+/// Q-364's chatrecall flip. The marker is recorded whatever was found (no entry, an edited entry,
+/// an enabled one), so the person turning memory off afterwards stays off. What the app cannot
+/// tell: an untouched-looking `enabled: false` the person set by toggling it off before this
+/// release stores no trace of that choice, and is read as goose's default.
+fn migrate_memory_default_on(config: &mut Mapping) -> bool {
+    let Some(mut applied) = applied_migrations(config) else {
+        return false;
+    };
+    if applied
+        .iter()
+        .any(|id| id.as_str() == Some(MEMORY_DEFAULT_ON))
+    {
+        return false;
+    }
+
+    if let Some(entry) = config
+        .get_mut(yaml_key(EXTENSIONS_CONFIG_KEY))
+        .and_then(|extensions| extensions.as_mapping_mut())
+        .and_then(|extensions| extensions.get_mut(yaml_key(MEMORY_EXTENSION_NAME)))
+        .and_then(|entry| entry.as_mapping_mut())
+    {
+        if is_old_default_off_memory(entry) {
+            entry.insert(yaml_key("enabled"), serde_yaml::Value::Bool(true));
+        }
+    }
+
+    applied.push(yaml_key(MEMORY_DEFAULT_ON));
     config.insert(
         yaml_key(APPLIED_MIGRATIONS_KEY),
         serde_yaml::Value::Sequence(applied),
@@ -782,5 +865,102 @@ extensions:
                 .and_then(|v| v.as_str()),
             Some("lmstudio")
         );
+    }
+
+    const OLD_DEFAULT_OFF_MEMORY: &str = "extensions:\n  memory:\n    enabled: false\n    type: builtin\n    name: memory\n    description: Teach goose your preferences as you go.\n    display_name: Memory\n    timeout: 300\n    bundled: true\n";
+
+    fn memory_enabled(config: &Mapping) -> Option<bool> {
+        config
+            .get(yaml_key(EXTENSIONS_CONFIG_KEY))?
+            .get(yaml_key(MEMORY_EXTENSION_NAME))?
+            .get(yaml_key("enabled"))?
+            .as_bool()
+    }
+
+    fn set_memory_enabled(config: &mut Mapping, enabled: bool) {
+        config
+            .get_mut(yaml_key(EXTENSIONS_CONFIG_KEY))
+            .and_then(|e| e.as_mapping_mut())
+            .and_then(|e| e.get_mut(yaml_key(MEMORY_EXTENSION_NAME)))
+            .and_then(|e| e.as_mapping_mut())
+            .unwrap()
+            .insert(yaml_key("enabled"), serde_yaml::Value::Bool(enabled));
+    }
+
+    fn memory_marker_recorded(config: &Mapping) -> bool {
+        applied_migrations(config)
+            .unwrap()
+            .iter()
+            .any(|id| id.as_str() == Some(MEMORY_DEFAULT_ON))
+    }
+
+    /// WR-17: the config Gabee's install had — memory stored off by goose's old default.
+    #[test]
+    fn the_old_default_off_memory_is_turned_on_once() {
+        for old in [
+            OLD_DEFAULT_OFF_MEMORY.to_string(),
+            OLD_DEFAULT_OFF_MEMORY.replace(
+                "Teach goose your preferences as you go.",
+                "Stores and retrieves categorized memories",
+            ),
+            OLD_DEFAULT_OFF_MEMORY
+                .replace("    display_name: Memory\n", "")
+                .replace("    timeout: 300\n", ""),
+        ] {
+            let mut config: Mapping = serde_yaml::from_str(&old).unwrap();
+            assert!(run_migrations(&mut config));
+            assert_eq!(memory_enabled(&config), Some(true), "{old}");
+            assert!(memory_marker_recorded(&config));
+        }
+        // A config only ever READ since the upgrade reads the same.
+        let mut config: Mapping = serde_yaml::from_str(OLD_DEFAULT_OFF_MEMORY).unwrap();
+        run_read_migrations(&mut config);
+        assert_eq!(memory_enabled(&config), Some(true));
+    }
+
+    #[test]
+    fn memory_turned_off_after_the_migration_stays_off() {
+        let mut config: Mapping = serde_yaml::from_str(OLD_DEFAULT_OFF_MEMORY).unwrap();
+        run_migrations(&mut config);
+        set_memory_enabled(&mut config, false);
+        run_migrations(&mut config);
+        run_read_migrations(&mut config);
+        assert_eq!(
+            memory_enabled(&config),
+            Some(false),
+            "the person's own off must survive every later load"
+        );
+    }
+
+    #[test]
+    fn an_edited_memory_entry_is_never_flipped() {
+        for edited in [
+            OLD_DEFAULT_OFF_MEMORY.replace("timeout: 300", "timeout: 30"),
+            OLD_DEFAULT_OFF_MEMORY.replace("display_name: Memory", "display_name: Mine"),
+            OLD_DEFAULT_OFF_MEMORY.replace("bundled: true", "bundled: false"),
+            OLD_DEFAULT_OFF_MEMORY.replace("type: builtin", "type: stdio"),
+            OLD_DEFAULT_OFF_MEMORY.replace("as you go.", "as you go!"),
+            format!("{OLD_DEFAULT_OFF_MEMORY}    available_tools: [remember_memory]\n"),
+            format!("{OLD_DEFAULT_OFF_MEMORY}    envs: {{A: b}}\n"),
+        ] {
+            let mut config: Mapping = serde_yaml::from_str(&edited).unwrap();
+            run_migrations(&mut config);
+            assert_eq!(memory_enabled(&config), Some(false), "{edited}");
+            assert!(memory_marker_recorded(&config));
+        }
+    }
+
+    #[test]
+    fn a_config_without_memory_gets_only_the_marker_and_is_idempotent() {
+        let mut config = Mapping::new();
+        run_migrations(&mut config);
+        assert_eq!(memory_enabled(&config), None);
+        assert!(memory_marker_recorded(&config));
+
+        let mut config: Mapping = serde_yaml::from_str(OLD_DEFAULT_OFF_MEMORY).unwrap();
+        run_migrations(&mut config);
+        let once = config.clone();
+        assert!(!migrate_memory_default_on(&mut config));
+        assert_eq!(config, once);
     }
 }

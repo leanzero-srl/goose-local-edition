@@ -37,7 +37,7 @@
     "name": "memory",
     "display_name": "Memory",
     "description": "Teach goose your preferences as you go.",
-    "enabled": false,
+    "enabled": true,
     "type": "builtin",
     "env_keys": [],
     "timeout": 300,
