@@ -16,13 +16,23 @@ of the benchmarks ... for now engine fixes". Director: campaign director agent (
   eca39ae893 has run the 5 h MiMo split Gauntlet 8985a86d (compaction graded B+, vision in use). Decision: merge
   into main IF the merge gate (cargo tests of touched crates + desktop typecheck/tests + unsigned package + launch)
   is green; otherwise ship 3.0.137 without it and record why.
+- 11:20 MERGED: gate run2 green on the laptop (fmt, clippy 6 crates, sidecar/providers/goose developer/swarm gates, typecheck, vitest 568, unsigned package); main = 053c715e25 incl. 3.0.137 bump + notes. Notarized build waits for MiMo scoring.
 
 ## Problems (one line each: id · found · evidence · fixed sha · re-test)
 | id | rank | problem | found (round, evidence) | fixed sha | re-test |
 |----|------|---------|-------------------------|-----------|---------|
+| Q-522 | 1 BLOCKER | after Run it + Save as node, every chat errors "swarm chat: no `swarm` block in config.yaml"; New chats start on stays Any node (Auto) with an empty pool | Gabee smoke RU-2026-10-31-0, 20261031_1 t0-t2 (WEEKEND-GABEE-FINDINGS F1) | | |
+| Q-523 | 2 MAJOR | Run it never persists mlx_engine.model_id: false "Restart required" right after first mount, and its Remount would load a different 31 GB model | Gabee setup 10:52-10:54 (F2) | | |
+| Q-524 | 3 MAJOR | fresh chat prefills goose's ~22k-token system prompt + tools cold: 35-40 s before the first word on a 9B | Gabee 0 t0 calls.tsv input 22157 cache_read 0 (F7) | | |
+| Q-525 | 4 MAJOR | "goose check" flags a TRUE claim ("All **19 tests passed**" vs tool "19 passed") | 20261031_2 t2 (F8) turn_assessment.rs:948 | | |
+| Q-526 | 5 MINOR | 5.6 GB load took ~110 s (~50 MB/s) on Gabee: check whether models are links to the SSD over Tailscale | F3 | | |
+| Q-527 | 6 MINOR | harness r1 grades error-notice turns `done` (false green) | RU-2026-10-31-0 (F6) | | |
+| Q-528 | 7 MINOR | Mesh card shows raw 409 JSON {"error":"update_required"}; Nodes card "Measuring your Macs" 18+ min idle; Mellum row has no fit badge | F4, F5 | | |
+| Q-529 | harness | r1 cannot attach files (types text only, r1.mjs:455); playwright import hard-codes /Users/mihaiperdum | briefs agent 17f6fd984e | | |
 
 ## Rounds
 | round | host · config · model · build | brief | result |
 |-------|-------------------------------|-------|--------|
+| RU-2026-10-31-0/0b | gabee · single · Qwen3.5-9B-MLX-4bit · 3.0.136 | smoke 3 turns | after Q-522 workaround: right tools, recovered from PEP 668, 19 tests pass; 57/57/107 s per turn |
 
 ## Handoff (written at ~300k context)
