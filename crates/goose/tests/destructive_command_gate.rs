@@ -131,8 +131,10 @@ fn project() -> Result<TempDir> {
     let dir = TempDir::new()?;
     let root = dir.path();
     git(root, &["init", "-q"])?;
-    std::fs::write(root.join(".gitignore"), "node_modules/\n")?;
+    std::fs::write(root.join(".gitignore"), "node_modules/\ndata/\n")?;
     std::fs::create_dir_all(root.join("node_modules/pkg"))?;
+    std::fs::create_dir_all(root.join("data"))?;
+    std::fs::write(root.join("data/customers.csv"), "only copy")?;
     std::fs::create_dir_all(root.join("src"))?;
     std::fs::write(root.join("src/a.js"), "a")?;
     git(root, &["add", "."])?;
@@ -300,5 +302,19 @@ async fn rm_of_tracked_source_in_the_project_is_asked() -> Result<()> {
         project.path().join("src/a.js").exists(),
         "declined rm must not run"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn rm_of_an_ignored_data_dir_is_asked() -> Result<()> {
+    let project = project()?;
+    let outcome = run_turn_in(
+        project.path().to_path_buf(),
+        "rm -rf data",
+        Permission::DenyOnce,
+    )
+    .await?;
+    assert_eq!(outcome.prompts.len(), 1, "ignored is not disposable");
+    assert!(project.path().join("data/customers.csv").exists());
     Ok(())
 }

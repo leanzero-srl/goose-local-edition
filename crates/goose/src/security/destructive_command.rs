@@ -11,9 +11,10 @@
 //! it off is the explicit config key [`DESTRUCTIVE_CONFIRM_KEY`] set to `false`.
 //!
 //! Disposable trees, which `rm -r` may delete without asking: a path inside the system temp dir,
-//! and a DIRECTORY inside the session's working dir that the repository itself declares ignored
-//! (`git check-ignore`), e.g. `node_modules`, `target`, `dist` in a project that ignores them.
-//! The repository's own ignore rules decide, not a list of names.
+//! and a DIRECTORY inside the session's working dir that BOTH the repository declares ignored
+//! (`git check-ignore`) AND sits in a known regenerable build/cache output
+//! ([`REGENERABLE_OUTPUT_DIRS`]). Ignored alone is not disposable: an ignored `data/` or local DB
+//! is exactly what git cannot give back.
 //!
 //! What the parser sees: the command line as the shell would split it, quotes and escapes
 //! honoured, chains (`&&`, `||`, `;`, `|`, `&`, newlines, subshells), `$( )` and backtick
@@ -801,8 +802,36 @@ fn is_temp_path(path: &str) -> bool {
         .any(|root| path.len() > root.len() && path.starts_with(root.as_str()))
 }
 
-/// A directory strictly inside `root` that the repository at `root` ignores. Asks git, so the
-/// project's own ignore rules decide; any failure to ask counts as NOT disposable.
+/// Named policy (GATE 10 policy constant, receipt: F17 real-use incident 2026-10-31 and the
+/// independent review of 281e3abe92, which showed a git-ignored `data/` deleted with no card):
+/// the build and cache outputs that tools regenerate from tracked sources. A directory is
+/// disposable only when it is git-ignored AND one of its path components (relative to the
+/// working dir) is one of these; every other ignored directory still asks.
+pub const REGENERABLE_OUTPUT_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".turbo",
+    ".gradle",
+    "coverage",
+];
+
+fn is_regenerable_output(relative: &Path) -> bool {
+    relative.components().any(|c| {
+        matches!(c, Component::Normal(name)
+            if REGENERABLE_OUTPUT_DIRS.iter().any(|d| name == std::ffi::OsStr::new(d)))
+    })
+}
+
+/// A directory strictly inside `root` that is a regenerable output AND that the repository at
+/// `root` ignores. Asks git for the second half; any failure to ask counts as NOT disposable.
 async fn is_ignored_dir_in(root: &Path, path: &Path) -> bool {
     if path == root || !path.starts_with(root) || !path.is_dir() {
         return false;
@@ -810,6 +839,9 @@ async fn is_ignored_dir_in(root: &Path, path: &Path) -> bool {
     let Ok(relative) = path.strip_prefix(root) else {
         return false;
     };
+    if !is_regenerable_output(relative) {
+        return false;
+    }
     match tokio::process::Command::new("git")
         .arg("-C")
         .arg(root)
@@ -1186,10 +1218,18 @@ mod tests {
         git(root, &["init", "-q"]);
         std::fs::write(
             root.join(".gitignore"),
-            "node_modules/\ntarget/\ndist\n.env\n",
+            "node_modules/\ntarget/\ndist\n.env\ndata/\nlocal.db/\n",
         )
         .unwrap();
-        for d in ["node_modules/x", "target/debug", "dist", "src", "notes"] {
+        for d in [
+            "node_modules/x",
+            "target/debug",
+            "dist",
+            "src",
+            "notes",
+            "data/raw",
+            "local.db",
+        ] {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
         std::fs::write(root.join("src/a.js"), "a").unwrap();
@@ -1226,6 +1266,7 @@ mod tests {
             "rm -rf ./target",
             "rm -rf dist target/debug",
             "rm -rf node_modules/",
+            "rm -rf node_modules/x",
         ] {
             assert!(!asks_in(root, line).await, "should pass: {line}");
         }
@@ -1240,6 +1281,10 @@ mod tests {
         for line in [
             "rm -rf src",
             "rm -rf notes",
+            "rm -rf data",
+            "rm -rf data/raw",
+            "rm -rf local.db",
+            "rm -rf node_modules data",
             "rm -rf node_modules notes",
             "rm -rf node_modules ../elsewhere",
             "rm -rf .",
