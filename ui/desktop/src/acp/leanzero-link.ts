@@ -594,8 +594,28 @@ export function isLinkServiceUnreachable(text: string): boolean {
 export const LINK_SERVICE_UNREACHABLE_MESSAGE =
   "Couldn't reach the LeanZero Link service — the auth worker may not be deployed yet.";
 
-/** Map a thrown Link error to the exact banner text: honest line for transport, else verbatim. */
+/**
+ * True when the worker refused this Mac's mesh join with `409 {"error":"update_required"}`
+ * (WorkerError::Unexpected for join-key). The worker does that while an iPhone or iPad paired
+ * for remote control is on the mesh (or mid-pairing): this release joins with the account-wide
+ * key, and the two are never on the mesh together (worker legacy-mesh.ts, WR-7).
+ */
+export function isMeshUpdateRequired(text: string): boolean {
+  return /\b409\b/.test(text) && /join-key/.test(text) && /update_required/.test(text);
+}
+
+/** The update_required refusal as a plain line that says what to do (never the raw JSON). */
+export const MESH_UPDATE_REQUIRED_MESSAGE =
+  "This Mac can't join the mesh while an iPhone or iPad paired for remote control is on it. Sign out of Goose Remote on that device (or leave it closed for about 30 minutes so it drops off the mesh), then click Retry connect.";
+
+/** Any Link error text the UI shows (banner, lastError, reconnect reason) as a plain line. */
+export function linkPlainText(text: string): string {
+  if (isLinkServiceUnreachable(text)) return LINK_SERVICE_UNREACHABLE_MESSAGE;
+  if (isMeshUpdateRequired(text)) return MESH_UPDATE_REQUIRED_MESSAGE;
+  return text;
+}
+
+/** Map a thrown Link error to the exact banner text: plain lines for known faults, else verbatim. */
 export function linkBannerText(error: unknown): string {
-  const text = linkErrorText(error);
-  return isLinkServiceUnreachable(text) ? LINK_SERVICE_UNREACHABLE_MESSAGE : text;
+  return linkPlainText(linkErrorText(error));
 }

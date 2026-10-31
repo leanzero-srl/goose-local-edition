@@ -641,6 +641,39 @@ describe('LeanZeroLinkSection — the persisted intent and the launch reconnect'
     expect(mockConnect).toHaveBeenCalledTimes(1);
   });
 
+  // WR-7: the worker's 409 update_required used to show as raw JSON on the Mesh card.
+  const RAW_409 =
+    'mesh join failed: worker returned 409 for join-key at https://link.leanzero.net/v1/mesh/join-key: {"error":"update_required"}';
+  const expectPlain409 = (el: HTMLElement) => {
+    expect(el).toHaveTextContent(/iPhone or iPad paired for remote control/);
+    expect(el).toHaveTextContent(/Sign out of Goose Remote on that device/);
+    expect(el).toHaveTextContent(/Retry connect/);
+    expect(el).not.toHaveTextContent(/update_required|\{"error"|409/);
+  };
+
+  it('a 409 update_required reconnect failure reads as a plain instruction, not raw JSON', async () => {
+    currentState = {
+      ...LOGGED_IN,
+      intent: CONNECTED_INTENT,
+      lastError: RAW_409,
+      reconnect: { state: 'failed', reason: RAW_409, at: '2026-10-31T19:00:00Z' },
+    };
+    render();
+    expectPlain409(await screen.findByTestId('link-reconnect-failed'));
+    expect(screen.queryByText(/update_required/)).not.toBeInTheDocument();
+  });
+
+  it('a 409 update_required lastError and a 409 Connect click both read as the plain instruction', async () => {
+    currentState = { ...LOGGED_IN, lastError: RAW_409 };
+    render();
+    expectPlain409(await screen.findByTestId('link-connect-card'));
+    mockConnect.mockRejectedValue(rpcError(RAW_409));
+    await userEvent.click(screen.getByTestId('link-connect'));
+    await waitFor(() => expect(mockConnect).toHaveBeenCalledTimes(1));
+    expectPlain409(screen.getByTestId('link-connect-card'));
+    expect(screen.queryByText(/update_required/)).not.toBeInTheDocument();
+  });
+
   it('a reconnect that found no credential says so above the sign-in card', async () => {
     currentState = {
       ...LOGGED_OUT,

@@ -30,6 +30,7 @@ import {
   leanzeroLinkStatus,
   leanzeroLinkVerify,
   linkBannerText,
+  linkPlainText,
   linkErrorText,
   type AuthState,
   type LinkHealth,
@@ -68,8 +69,9 @@ const SUPERVISOR_REASON_HEAD = "LeanZero Link's mesh daemon";
  * the context; the supervisor's reason already says what happened to the daemon, and the launch
  * context ("was on when this app last ran") would be false for it.
  */
-function reconnectFailedCopy(reason: string): { label: string; text: string } {
-  return reason.startsWith(SUPERVISOR_REASON_HEAD)
+function reconnectFailedCopy(raw: string): { label: string; text: string } {
+  const reason = linkPlainText(raw);
+  return raw.startsWith(SUPERVISOR_REASON_HEAD)
     ? { label: 'Restart failed', text: reason }
     : {
         label: 'Reconnect failed',
@@ -782,7 +784,10 @@ const LeanZeroLinkSectionBody: React.FC = () => {
           connecting={connecting}
           // A failed launch reconnect is shown as itself; its text also sits in lastError.
           error={
-            connectError ?? (reconnect?.state === 'failed' ? null : linkState?.lastError) ?? null
+            connectError ??
+            (reconnect?.state === 'failed' || !linkState?.lastError
+              ? null
+              : linkPlainText(linkState.lastError))
           }
           reconnect={reconnect}
           stayingOff={linkState?.intent?.cause === 'userDisconnect'}
@@ -798,7 +803,7 @@ const LeanZeroLinkSectionBody: React.FC = () => {
           reconnecting={reconnect?.state === 'reconnecting'}
           // The launch reconnect clears lastError before it connects; a supervisor restart sets it
           // to the fault it is recovering from (manager.rs FaultResponse::Restart).
-          cause={linkState?.lastError ?? null}
+          cause={linkState?.lastError ? linkPlainText(linkState.lastError) : null}
         />
       )}
 

@@ -1,8 +1,9 @@
 import type { Deps } from "../lib/deps";
 import { digest } from "./crypto";
+import { MeshProvider } from "./mesh-provider";
 import { ControllerError, Registry, assertAccountActive } from "./registry";
 import { newAccount } from "./service";
-import type { AccountState } from "./types";
+import type { AccountState, MeshEnrollment } from "./types";
 
 const LEGACY_RESERVATION_MS = 60_000;
 export type LegacyMintReservation = (() => Promise<void>) & { beginExternal: () => Promise<void>; deps: Deps };
@@ -20,14 +21,54 @@ export function reapUnstartedLegacyMints(state: AccountState, now: number): void
   }
 }
 
+/** WR-7. Legacy (account-JWT) mesh keys and controller enrollments are mutually
+ * exclusive: a phone is never on the mesh beside an untracked legacy node, and
+ * legacy credentials are never outstanding while a controller can join. The old
+ * gate enforced that by refusing legacy mints whenever ANY controller enrollment
+ * was confirmed, even after its phone node had left the provider. That locked
+ * current desktop hosts out of the mesh for good once a phone was ever paired.
+ *
+ * A confirmed controller is DORMANT when the provider proves it has no foothold:
+ * no node (online, offline or expired) carries its binding or key, and its key
+ * can no longer admit a node. A dormant phone can only come back through
+ * MeshService.join with a fresh enrollment, and that path's compatible() check
+ * refuses while legacy nodes or legacy key lifetimes exist (same registry CAS),
+ * so the exclusion still holds. Pending/issued controller enrollments with live
+ * keys still block. Any provider doubt (unreadable, other provider) keeps the
+ * strict rule. Returns "enrollment_id:key_id" tokens. */
+async function dormantControllers(deps: Deps, state: AccountState | null): Promise<Set<string>> {
+  const dormant = new Set<string>();
+  const confirmed = Object.values(state?.mesh_enrollments ?? {}).filter(e => e.role === "controller" && e.status === "confirmed");
+  if (!state || confirmed.length === 0 || deps.config.meshProvider !== "headscale") return dormant;
+  try {
+    const provider = new MeshProvider(deps);
+    const { user, nodes } = await provider.nodes(state.email);
+    const admitting = await provider.admittingKeys(user.id);
+    for (const e of confirmed) {
+      const b = e.binding;
+      if (!b || e.key_id === null || b.key_id !== e.key_id || e.user_id !== user.id || admitting.has(e.key_id)) continue;
+      if (nodes.some(n => n.id === b.node_id || n.node_key === b.node_key || n.key_id === e.key_id)) continue;
+      dormant.add(e.enrollment_id + ":" + e.key_id);
+    }
+  } catch { return new Set(); }
+  return dormant;
+}
+
+function blocksLegacyMint(e: MeshEnrollment, now: number, dormant: Set<string>): boolean {
+  if (e.role !== "controller" || e.status === "revoked") return false;
+  if (e.status === "confirmed") return !dormant.has(e.enrollment_id + ":" + e.key_id);
+  return e.expires_at > now;
+}
+
 export async function reserveLegacyMint(deps: Deps, email: string, issuedAt?: number): Promise<LegacyMintReservation | null> {
   if (!deps.deviceRegistry) return null;
   const registry = new Registry(deps.deviceRegistry); const key = await digest(email); const id = crypto.randomUUID();
+  const dormant = await dormantControllers(deps, await registry.read(key));
   const accountId = await registry.update(key, old => {
     const state = old ?? newAccount(email);
     if (state.legacy_revoked_before !== undefined && (issuedAt === undefined || issuedAt <= state.legacy_revoked_before)) throw new ControllerError(401, "account_credential_revoked", "Account credential was revoked by deletion");
     reapUnstartedLegacyMints(state, deps.now());
-    if (Object.values(state.mesh_enrollments ?? {}).some(e => e.role === "controller" && e.status !== "revoked" && (e.status === "confirmed" || e.expires_at > deps.now()))) throw new ControllerError(409, "update_required", "Controller-enabled accounts require scoped host enrollment");
+    if (Object.values(state.mesh_enrollments ?? {}).some(e => blocksLegacyMint(e, deps.now(), dormant))) throw new ControllerError(409, "update_required", "Controller-enabled accounts require scoped host enrollment");
     const mints = state.legacy_mesh_mints ??= { in_flight: 0, expires_at: 0 };
     (mints.reservations ??= {})[id] = { expires_at: deps.now() + LEGACY_RESERVATION_MS, external_started: false };
     mints.in_flight += 1;

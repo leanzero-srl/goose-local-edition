@@ -322,6 +322,45 @@ for (const backend of ["sqlite", "durable"] as const) {
       expect(legacyJoin.status).toBe(409);
       expect((await handleRequest(postJson("/v1/mesh/join-key", {}, { Authorization: "Bearer " + phone.access_token }), f.h.deps)).status).toBe(401);
     });
+    it("WR-7: lets a legacy host rejoin once every confirmed phone has left the provider, and keeps phones out while it is on", async () => {
+      const f = await setup(store()); await f.bindHost(); const phone = await f.device();
+      const enrollment_id = crypto.randomUUID();
+      const issued = await f.post("/mesh/join-key", { enrollment_id }, phone.access_token); expect(issued.status).toBe(200);
+      const phoneNode = provider.join((await issued.json() as MeshJoinCredential).auth_key, "b");
+      expect((await f.post("/mesh/confirm", { enrollment_id, mesh_node_key: phoneNode.nodeKey }, phone.access_token)).status).toBe(200);
+      const legacyJoin = () => handleRequest(postJson("/v1/mesh/join-key", {}, { Authorization: "Bearer " + f.accountToken }), f.h.deps);
+      // Phone node present (online, then offline, then expired-but-listed): strict refusal.
+      const first = await legacyJoin(); expect(first.status).toBe(409); expect(await first.json()).toEqual({ error: "update_required" });
+      phoneNode.online = false; expect((await legacyJoin()).status).toBe(409);
+      phoneNode.expiry = new Date(f.h.clock.now() - 1000).toISOString(); expect((await legacyJoin()).status).toBe(409);
+      // Node gone but its key could still admit a node: refusal.
+      provider.nodes = provider.nodes.filter(n => n !== phoneNode);
+      const phoneKey = provider.keys.find(k => k.id === phoneNode.preAuthKey!.id)!;
+      phoneKey.used = false; expect((await legacyJoin()).status).toBe(409);
+      phoneKey.reusable = true; phoneKey.used = true; expect((await legacyJoin()).status).toBe(409);
+      phoneKey.reusable = false;
+      // Provider doubt keeps the strict rule.
+      provider.unavailable = true; expect((await legacyJoin()).status).toBe(409); provider.unavailable = false;
+      // Dormant phone: the current desktop host may rejoin.
+      const minted = await legacyJoin(); expect(minted.status).toBe(200);
+      const legacyKey = (await minted.json() as { authKey: string; loginServer: string }).authKey;
+      expect(provider.keys.filter(k => k.key === legacyKey)).toHaveLength(1);
+      // Exclusion still holds: the phone cannot come back while the legacy key lifetime or node exists.
+      const back = await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token);
+      expect(back.status).toBe(409); expect(await back.json()).toMatchObject({ error: { code: "update_required" } });
+      // The joined legacy node alone also keeps the phone out, after its key window is over.
+      const desktop = provider.legacy(f.user, "d");
+      for (const k of provider.keys.filter(k => k.key === legacyKey)) { k.used = true; k.reusable = false; }
+      await f.service.registry.update(await digest(f.email), st => { st!.legacy_mesh_mints!.expires_at = 0; return { state: st!, result: undefined }; });
+      expect((await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token)).status).toBe(409);
+      provider.nodes = provider.nodes.filter(n => n !== desktop);
+      expect((await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token)).status).toBe(200);
+    });
+    it("WR-7: a pending phone enrollment with a live key still blocks legacy mints", async () => {
+      const f = await setup(store()); await f.bindHost(); const phone = await f.device();
+      expect((await f.post("/mesh/join-key", { enrollment_id: crypto.randomUUID() }, phone.access_token)).status).toBe(200);
+      expect((await handleRequest(postJson("/v1/mesh/join-key", {}, { Authorization: "Bearer " + f.accountToken }), f.h.deps)).status).toBe(409);
+    });
     it("serializes duplicate enrollment and fences in-flight legacy joins", async () => {
       const f = await setup(store()); await f.bindHost(); const phone = await f.device();
       const release = await reserveLegacyMint(f.h.deps, f.email); expect(release).not.toBeNull();

@@ -110,6 +110,20 @@ export class MeshProvider {
     if (new Set(nodes.map(n => n.id)).size !== nodes.length || new Set(nodes.map(n => n.node_key)).size !== nodes.length) fail(502, "provider_ambiguous", "Provider node identities are ambiguous");
     return { user, nodes };
   }
+  /** IDs of this user's keys that can still admit a node: unexpired and reusable or unused. */
+  async admittingKeys(userId: string): Promise<Set<string>> {
+    const body = await this.request("/api/v1/preauthkey");
+    if (!Array.isArray(body.preAuthKeys)) fail(502, "provider_invalid", "Provider key list is missing");
+    const out = new Set<string>();
+    for (const raw of body.preAuthKeys) {
+      const k = record(raw); const u = record(k.user);
+      if (u.id !== userId) continue;
+      const id = numericId(k.id); const expires = expiration(k.expiration);
+      if (typeof k.used !== "boolean" || typeof k.reusable !== "boolean") fail(502, "provider_invalid", "Provider key usage is missing");
+      if ((expires === null || expires > this.deps.now()) && (k.reusable || !k.used)) out.add(id);
+    }
+    return out;
+  }
   async assertNoUntrackedKeys(userId: string, known: Set<string>): Promise<void> {
     const body = await this.request("/api/v1/preauthkey");
     if (!Array.isArray(body.preAuthKeys)) fail(502, "provider_invalid", "Provider key list is missing");
