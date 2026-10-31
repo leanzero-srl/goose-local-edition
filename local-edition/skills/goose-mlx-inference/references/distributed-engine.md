@@ -29,8 +29,17 @@ Moved verbatim from SKILL.md on 2026-10-30 (skills audit). Read by section; the 
   watchdog on real ballast pressure (WARN/CRITICAL reserves raised via `watchdog_warn_ratio`/`watchdog_critical_ratio`).
   Never gate on `kern.memorystatus_level` — it did not move with 18 GiB of ballast.
 - Liveness = rank-0 step counter OR every rank's CPU time advancing; hang = silent > 10 × running median (≥3 samples);
-  ps stat `T` = frozen at once. Watchdog per poll: kernel pressure WARN or available < 5% RAM → admission 503; CRITICAL →
-  verified stop, never restarted. Restart breaker = the single Sidecar's (3 per 600 s, backoff 1 s → 30 s).
+  ps stat `T` = frozen at once. Watchdog per poll (2 s): kernel pressure WARN or HOLD-available < 5% RAM for 3 polls in a
+  row → admission held (503 + memory_hold, waited out); reopens only after 2 polls kernel NORMAL and ≥ 1.25 × the WARN
+  reserve (6.0 GiB on 96 GiB). Stop (never restarted): kernel CRITICAL at once, or < 2% RAM on 2 polls in a row.
+  HOLD-available = free + speculative + INACTIVE + purgeable (`probe::vm_hold_available_bytes`, max'd with the mount
+  figure in `parse_sample`); the mount/plan keep free + file cache + purgeable. WHY (2026-10-31, branch
+  dist-admission-hold): on the live MiMo split the workhorse (rank 0 Metal ≈80 GB wired) read 3.2–4.8 GiB on the mount
+  figure with ≈9 GB inactive and the kernel NORMAL, so the hold flapped 56 times in a night (14 requests 503'd and
+  waited 1.3–30 s each, 121 s total) and the CRITICAL stop sat only ~1.3 GiB below. Card: "Held · <node> X GB
+  available (needs Y)" from `status.hold`. Evidence: cli log `kind` admissionClosed/watchdogWarn rows, rank0 log
+  `POST /v1/chat/completions ... 503` followed by `GET /goose/admission`.
+  Restart breaker = the single Sidecar's (3 per 600 s, backoff 1 s → 30 s).
 - THE MEMORY HOLD IS WAITED OUT, NOT RETRIED (Q-397, 1d97681d2): the watchdog's close sends `code: "memory_hold"`
   (`distributed::MEMORY_HOLD_CODE`); rank 0's 503 carries `error.code`/`reason`/`admission: "/goose/admission"`, and
   `GET /goose/admission` parks until the reopen (rank_admission.py). goose keys on the CODE (never the prose) →
@@ -314,6 +323,7 @@ Moved verbatim from SKILL.md on 2026-10-30 (skills audit). Read by section; the 
   row + an 84-token side call) evicted #3x's 200k prefix, and each switch cost an 18-min cold re-read (E2E #3x, 15:10).
   Keeping both under the old rule needs 29.07 GB; the MacBook lacks it.
 - Q-498: the engine SAYS it. `/v1/status requests[].evicted_prefix` and the rank-log line `GOOSE_RANK_PREFIX_LOST`
+- Q-522 (2026-10-31, mimo-distributed 69ee5cf67e + main e8b721c1ab): `while_keeping: null` on a PREFIX_LOST = NO conversation was kept. Cause: goose's chat names no `rapid_mlx_transient_tail` since a79067e2f0 (kept blocks), and `_tokenize` only cut/kept tail-bearing requests, so every chat ran on mlx_lm's type-count eviction; the per-decode-step yield (TrackedBatchGenerator.next) took the chat's own prompt[:-1] beside a stale "user" entry (run 8985a86d: summary read 35,503 of 212,772, 30 min). Fix: spec `keep_tailless_conversations` (tag mlxLmServerTaillessPipelineSplit) keeps a tool-bearing tailless chat (`Conversations.tailless_turn`; a same-session side call with another head is not the chat). A run built before these commits still has the defect.
   drive the glance/tray: "another chat pushed N of this conversation out of the engine's memory".
 - Q-502: every conversation's kept prefix + head are protected, and a request whose padding would evict another
   chat's kept entries is HELD until rows finish (no timer). The spec tag `mlxLmServerEveryConversation` goes to every

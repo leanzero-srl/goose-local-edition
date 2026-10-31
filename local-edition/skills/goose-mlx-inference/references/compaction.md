@@ -217,3 +217,20 @@ llm_request.9.jsonl = the first request after its compaction, summary text insid
   conversation's kept prefix (assistant 2 seqs 6.33 GB -> 1 seq 3.34 GB) was dropped while req-121 generated 9,221
   tokens, with no other chat on the engine. The first compaction of the same run read 209,398 of 215,948 (7 min).
   Log: /private/tmp/gmimo/root/state/logs/distributed/rank0-work-s-mac-studio-1793416063838.log, 07:44:15Z.
+- STEWARD 2026-10-31 e (WR-18, wk/wr18-compaction ca21baf6a3, merge a4f6d05ff5; Gabee RU-2026-10-31-4, Qwen3.5-9B,
+  3.0.137, 3 compactions, the summaries came from the TRANSCRIPT fallback: 9 legacy sections + `<analysis>`).
+  FIXED: (1) "## Not answered yet" (`pillars::newest_message_unanswered`): the summary said "Pending Tasks: None"
+  while the person's newest message, sent just before a pre-turn compaction, had no reply; answered = the newest
+  user-visible activity after it is an assistant text with no tool call, not goose's own end-of-turn notice
+  (provider_error metadata, EMPTY_TURN_MESSAGE, the loop stamp). (2) `without_analysis` strips any tag NAMED
+  analysis… (`<analysis_to_write>`…`</analysis>` was stored as the summary, every section twice). (3)
+  `summary_check::mark_missing_paths`: a path whose first folder is not at the root but is in the chat's folder gets
+  "(not on disk; <full path> is)" ("/export/" broke the next grep); real-root paths, routes and fenced blocks are
+  left alone (independent check: case-folding disk matches /users/..., other Macs' paths, planned files). (4)
+  `facts::exit_step` returns None when the last step reads a here-document (my round-d bug: every `python3 << 'EOF'`
+  would settle every other); `without_stream_redirects`: `ls X 2>&1` is a look-up, `>& file` a write. PROOF:
+  M12-M21 10/10 killed (~/scratch/compsteward/mutate-wr18.sh on the workhorse). Gate: clippy -D warnings clean
+  (TRAP: clippy::string_slice is denied: use str::get); lib 2444 pass + key_connection loopback (known env).
+  NOT FIXED: the transcript prompt still asks 9 sections + `<analysis>` (a test pins it as the swarm workers'
+  golden prompt; the "line 39 vs 51 contradiction" is two branches); F41 invented provenance (model); failed
+  scripts a different later script superseded stay listed (no fuzzy matching).

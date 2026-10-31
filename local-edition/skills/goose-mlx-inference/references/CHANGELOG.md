@@ -553,3 +553,10 @@ boundaries were the main loss -> cut now picks the quietest 100 ms (6a611e3bb4).
 servable (empty/garbled audio, vision broken). Updater: works on quit and via install-now; startup-only check
 fixed (4 h re-check). Details: omni-media.md "Clip-set proof".
 - 2026-10-31 blubber audit: LONG RUNS cut to one compact block; references/long-runs.md is now the detail home (was a verbatim copy).
+
+## DISTRIBUTED MEMORY HOLD: INACTIVE PAGES COUNT, HYSTERESIS, SUSTAINED CRITICAL (2026-10-31)
+- Card showed "Held · memory low" through the live MiMo Gauntlet with the kernel NORMAL: the supervisor's hold read the
+  mount figure (free + file cache + purgeable), 3.2–4.8 GiB under its 4.8 GiB WARN with ≈9 GB inactive. 56 closes,
+  14 refused requests (all waited out by goose's memory_hold client, none ended the run). Fix on dist-admission-hold
+  (merged to mimo-distributed and main): hold figure adds inactive + speculative, close after 3 polls, reopen above
+  1.25 × WARN after 2, bytes-CRITICAL needs 2 polls, `status.hold` names node + numbers. Details: distributed-engine.md.
