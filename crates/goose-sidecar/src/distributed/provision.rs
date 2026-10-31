@@ -148,8 +148,9 @@ pub const PIPELINE_FORK_COMMIT: &str = "1e5d581d1256389ef1bdc8b041adbc3d11a969f2
 /// v0.14.3-lz.17 (= ple.6 plus a perf doc; no code change) and v0.14.3-lz.18 (single-engine qwen4_exp prompt
 /// lookup under sampling; the split runs its own pinned fork commit). So is v0.14.3-lz.19 (single-engine audio and
 /// video media parts in the chat route and the MLLM scheduler; the split's media path is its own and carries no audio).
-/// So is v0.14.3-lz.20 (single-engine memory tunables in the scheduler and memory budget).
-pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.20";
+/// So is v0.14.3-lz.20 (single-engine memory tunables in the scheduler and memory budget), and so is
+/// v0.14.3-lz.21 (the single engine's free-memory floor reference: scheduler + memory budget only).
+pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.21";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
     "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@1e5d581d1256389ef1bdc8b041adbc3d11a969f2";
