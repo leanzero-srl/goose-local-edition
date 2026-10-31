@@ -526,3 +526,17 @@ default OFF, read per request — flips without a reconnect). The ssh path is un
   batches at 18/30. Gauntlet not run. Details + candidate fix: HANDOFF.md "Session 13".
 - TRAPS: the dev app has two CDP page targets (main + #/engine-glance), pick by URL; ~/goose-builds tools hardcode
   9897 and need mainpage.mjs beside them; pgrep|xargs kill in go.sh replaced by a per-pid loop.
+
+## 2026-10-31 — Q-529 / WR-28 split prompt cache: quiet limit (goose wk/wr28-cache 6c090616ed)
+- CAUSE: the MiMo 18/30 plan at 262,144 flips between cached=1 (mule ~120 GB available: limit 8.08 GB, run a005ed73)
+  and cached=0 (~119 GB: 3.0.138). cached=0 charges the row's copy as state - workspace; rank 0's workspace (2.16 GB)
+  covers its whole copy (2.02) -> pc 0 -> weighted limit 4,046,192,640 B = ONE live row. The kept prompt[:-1] cut beside
+  its row fits only to 126,592 tokens (RANK_INSERT_BUDGET inserted=false from req-37 127,711; req-53 cold).
+- FIX: RankPlan::prompt_cache_quiet_limit_bytes (state + max(pc, min(state, pc + ws - ws/16))), weighted like the
+  limit (7,949,778,944 B -> cut kept to 253,661); used only while no row has >1 prompt token left (cut, decode, idle);
+  fetch/admission stay strict (the cut is MOVED into the next row). Tag mlxLmServerQuietCopy.
+- MEASURED (rank1 ...1793469182827.log): the rank-1 peak 111.50 is the END-OF-REQUEST moment (live + compacted end
+  copy + head = weights 103.83 + 6.84 + ~0.8), not the prefill (108.7 at 217k = weights + KV + ws, ~0 slop). Model:
+  peak = weights + KV in existence + ~0.8 GB at a copy. Quiet-phase prediction at 262k: 103.83 + 7.95 + 0.8 = 112.6 GB.
+- Levers checked offline: split 19/29 / 20/28 lift the strict ceiling only to ~205-209k (and the planner refuses them on
+  rank 0's budget); quantized KV not in mlx_lm's batch path. iogpu.wired_limit_mb: not needed.
