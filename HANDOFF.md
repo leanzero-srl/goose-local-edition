@@ -738,3 +738,24 @@ reasoning_controls ["enable_thinking"], provider sends no graded effort there; t
 that 400). Planner refuses >= 266,240 today (workhorse available 74.6 GB). A reload under other sessions' voice-qa
 load re-planned 17/31 (rank 1 113.3 planned vs 115.45 ceiling): never run that; stop, free the workhorse, re-plan.
 Vigil: run-causes/20261031-002917-mimo-split-sb72-s15/VIGIL.md; ranks stop at scoring via s15/watch.sh.
+RUN 51bfaccd DIED 04:18 (10-31) at 97/150 calls, UNSCORED (incomplete-agent.json). Not the split: the newsroom launchd
+PREPARE tick (claude -p /leanzero-newsroom pid 20476) started `mflux-generate-ernie-image-turbo` (pid 93635) on the
+workhorse at 04:17:58, outside node-run; kernel pressure critical -> goose's distributed supervisor stopped the split
+("the engine stops before the kernel kills it, and is not restarted"). Until then: 1 compaction at 211,784 -> 18,229,
+summary graded A- by the vigil, vision used 3x and described truthfully, 0 rank faults, nudge not reached (fires 120).
+Coordinator asked (04:20) to pause the newsroom image job / tick on the workhorse for ~5 h.
+STATE AT HANDOFF (subagent stopped at the 350k ctx limit): dev app pid 70520 on CDP 9461 (installed app QUIT on the
+workhorse; restore with app.sh down at the end), split STOPPED, holds ALIVE: workhorse perl pid 81165 (+ marker
+~/.leanzero/benchmarks/81165.json), workmule perl pid 80887 (+ marker). watch.sh exited (RANK_FATAL). Vigil agent
+for 51bfaccd will report the end and stop by itself. /tmp/gmimo config: context 262144, GOOSE_CONTEXT_LIMIT 262144.
+RELAUNCH (all scripts in <scratchpad>): 1 confirm the newsroom tick/mflux is paused and no voice-qa/mflux/python GPU job
+on the workhorse (ps); 2 `zsh mimo10/go.sh` -> must print split [18, 30] (if 17/31: stop.sh, free memory, retry;
+never run 17/31); 3 `curl -s 127.0.0.1:8191/v1/models` (reasoning_controls ["enable_thinking"]), s13/ask.py
+s13/table.png (8,416 / Charlie); 4 `c nav '#/benchmark'`, click "Single model", "Refresh providers", `cd s13/tools &&
+node pickprov.mjs OpenAI`, `PYTHONPATH=~/goose-builds/loop-state python3 s13/launch2.py`; 5 verify run_build --sb72 +
+vendor 200 on 8850; `nohup zsh s15/watch.sh <R> <L0> <L1> &` (L0 L1 from mimo10/logs.cur AFTER go.sh); 6 fresh vigil
+agent with s15/VIGIL-BRIEF.md (new RUNID, new run-causes dir via long_run_gate.py check, same why/cheaper text).
+END: publish from the app (sb72_chain.publish_label pattern: run row -> title input placeholder "e.g. My M4" ->
+"MiMo-V2.6-Flash MOPD 4-bit · 2-Mac split · vision, 262k, nudge" -> Publish); verify the live run page signed out;
+only then hide brun-79c4f078 (Sanity invalidated + invalidationReason, scratchpad hide-run.cjs / supersede.cjs);
+release holds (kill 81165; ssh workmule kill 80887; rm both markers), app.sh down, goose-single-guard --check.
