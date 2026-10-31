@@ -77,6 +77,8 @@ struct TurnContextInputs {
     context_limit: Option<usize>,
     compaction_threshold: f64,
     extension_parts: Vec<String>,
+    /// The memory builtin is loaded: the block's head carries the memory cue.
+    memory_loaded: bool,
 }
 
 /// `None` where no block is sent: a window under [`MIN_CONTEXT_FOR_MOIM`].
@@ -131,12 +133,14 @@ async fn turn_context_inputs(
     // Read only by the swarm workers' countdown, which keeps the ratio their guard uses.
     let compaction_threshold = crate::context_mgmt::configured_or_default_threshold();
     let extension_parts = extension_manager.collect_moim_parts(session_id).await;
+    let memory_loaded = extension_manager.memory_loaded().await;
     Some(TurnContextInputs {
         working_dir,
         total_tokens,
         context_limit,
         compaction_threshold,
         extension_parts,
+        memory_loaded,
     })
 }
 
@@ -182,6 +186,7 @@ pub async fn inject_moim(
         Some(line) => wrap_up::with_line(&moim, &line),
         None => moim,
     };
+    let moim = with_memory_cue(moim, inputs.memory_loaded);
 
     let mut messages = conversation.messages().clone();
     let Some(idx) = messages
@@ -222,6 +227,17 @@ pub fn fixed_for_request(conversation: Conversation) -> Option<Conversation> {
     }
 
     Some(fixed)
+}
+
+/// WR-17 r3: the memory cue rides in the block's HEAD, so a block whose extension context is
+/// [`EXTENSION_CONTEXT_UNCHANGED`] still carries it — the RU-2 rule came deep in a session, when
+/// every extension part had long been deduped. Constant, so it never makes a block "new" by itself.
+fn with_memory_cue(block: String, memory_loaded: bool) -> String {
+    if memory_loaded {
+        wrap_up::with_line(&block, crate::agents::extension_manager::MEMORY_TURN_CUE)
+    } else {
+        block
+    }
 }
 
 /// What a block that repeats no extension context carries in its place.
@@ -290,6 +306,7 @@ fn next_chat_block(
     report: ContextReport,
     wrap_up_line: Option<String>,
 ) -> Option<String> {
+    let memory_loaded = inputs.memory_loaded;
     let listed = extension_section(&inputs.extension_parts);
     let last_listed = last_listed_extension_section(messages);
     let extension_changed = last_listed.as_deref() != Some(listed.as_str());
@@ -313,6 +330,7 @@ fn next_chat_block(
         Some(line) => wrap_up::with_line(&block, &line),
         None => block,
     };
+    let block = with_memory_cue(block, memory_loaded);
     let newest = messages.iter().enumerate().rev().find_map(|(at, m)| {
         m.is_agent_visible()
             .then(|| {
@@ -937,6 +955,7 @@ mod tests {
             context_limit: Some(32_768),
             compaction_threshold: 0.8,
             extension_parts: parts.iter().map(|p| p.to_string()).collect(),
+            memory_loaded: false,
         }
     }
 
@@ -950,6 +969,63 @@ mod tests {
                 ])),
             ),
         ]
+    }
+
+    /// WR-17 r3: with memory loaded, a later user turn whose extension context is unchanged still
+    /// gets the memory cue — in the head, beside `<extension-context>unchanged…`.
+    #[test]
+    fn the_memory_cue_rides_a_block_whose_extension_context_is_unchanged() {
+        use crate::agents::extension_manager::MEMORY_TURN_CUE;
+        let scratch = "<scratchpad>\nGoal: x\n</scratchpad>\n";
+        let with_memory = |used: i32| TurnContextInputs {
+            memory_loaded: true,
+            ..inputs("/w", used, &[scratch])
+        };
+        let first = next_chat_block(
+            &[Message::user().with_text("go")],
+            "2026-10-31 10:00:00",
+            with_memory(20_000),
+            0,
+            0,
+            REPORTED,
+            None,
+        )
+        .expect("the first request carries a block");
+        assert!(first.contains(MEMORY_TURN_CUE), "{first}");
+        let mut history = vec![
+            Message::user().with_text("go"),
+            Message::user().with_text(&first).agent_only(),
+        ];
+        history.extend(tool_step("c1"));
+        history.push(Message::assistant().with_text("Done."));
+        history.push(Message::user().with_text(
+            "For everything we write for this client: English, sources right after each claim.",
+        ));
+        let second = next_chat_block(
+            &history,
+            "2026-10-31 10:05:00",
+            with_memory(20_000),
+            0,
+            0,
+            REPORTED,
+            None,
+        )
+        .expect("the person's new words get a block");
+        assert!(second.contains(EXTENSION_CONTEXT_UNCHANGED), "{second}");
+        assert!(second.contains(MEMORY_TURN_CUE), "{second}");
+        assert_eq!(second.matches(MEMORY_TURN_CUE).count(), 1);
+        // Without memory, no cue.
+        let plain = next_chat_block(
+            &history,
+            "2026-10-31 10:05:00",
+            inputs("/w", 20_000, &[scratch]),
+            0,
+            0,
+            REPORTED,
+            None,
+        )
+        .unwrap();
+        assert!(!plain.contains("<memory>"), "{plain}");
     }
 
     /// A new block only when it says something the newest kept one does not. The minute alone, or

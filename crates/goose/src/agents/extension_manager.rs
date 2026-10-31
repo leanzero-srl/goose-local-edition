@@ -123,7 +123,7 @@ const MEMORY_BUILTIN_NAME: &str = "memory";
 /// never saved the rule. Those instructions sit in the system prompt, ~60k tokens back; the
 /// turn-context block rides next to the newest message, where a 9B model heeds goose's lines (the
 /// wrap-up probe of 2026-10-30 measured the same distance effect). So while memory is loaded, every
-/// turn carries this one line.
+/// turn-context block carries this one line in its head — never deduped as "unchanged" (WR-17 r3).
 pub const MEMORY_TURN_CUE: &str = "<memory>If the user's newest message says how they want things \
 done from now on (a preference, a standing rule, a correction, \"remember ...\"), call \
 memory__remember_memory with their own words first, then continue the task.</memory>";
@@ -2177,14 +2177,6 @@ impl ExtensionManager {
                 .collect()
         };
 
-        let memory_loaded = {
-            let extensions = self.extensions.lock().await;
-            extensions.values().any(|extension| {
-                matches!(&extension.config, ExtensionConfig::Builtin { name, .. }
-                    if name_to_key(name) == MEMORY_BUILTIN_NAME)
-            })
-        };
-
         let mut parts = Vec::new();
         for (name, client) in platform_clients {
             if let Some(moim_content) = client.get_moim(session_id).await {
@@ -2192,10 +2184,18 @@ impl ExtensionManager {
                 parts.push(moim_content);
             }
         }
-        if memory_loaded {
-            parts.push(MEMORY_TURN_CUE.to_string());
-        }
         parts
+    }
+
+    /// Whether the `memory` builtin is loaded in this agent: the turn context then carries
+    /// [`MEMORY_TURN_CUE`] in its head, on every block (moim.rs), outside the extension-context
+    /// dedupe that repeats nothing unchanged.
+    pub async fn memory_loaded(&self) -> bool {
+        let extensions = self.extensions.lock().await;
+        extensions.values().any(|extension| {
+            matches!(&extension.config, ExtensionConfig::Builtin { name, .. }
+                if name_to_key(name) == MEMORY_BUILTIN_NAME)
+        })
     }
 }
 
@@ -2780,25 +2780,25 @@ mod tests {
         assert!(tool_names.iter().any(|n| n.starts_with("ext_b__")));
     }
 
-    /// WR-17: the memory cue rides in every turn's context while — and only while — memory is
-    /// loaded.
+    /// WR-17: memory counts as loaded while — and only while — the memory builtin is in.
     #[tokio::test]
-    async fn the_memory_cue_rides_in_the_turn_context_only_while_memory_is_loaded() {
+    async fn memory_is_loaded_only_while_the_memory_builtin_is_in() {
         let temp_dir = tempfile::tempdir().unwrap();
         let extension_manager =
             ExtensionManager::new_without_provider(temp_dir.path().to_path_buf());
         extension_manager
             .add_mock_extension("developer".to_string(), Arc::new(MockClient {}))
             .await;
-        let parts = extension_manager.collect_moim_parts("s").await;
-        assert!(!parts.iter().any(|p| p == MEMORY_TURN_CUE), "{parts:?}");
-
+        assert!(!extension_manager.memory_loaded().await);
         extension_manager
             .add_mock_extension("memory".to_string(), Arc::new(MockClient {}))
             .await;
-        let parts = extension_manager.collect_moim_parts("s").await;
-        assert_eq!(parts.iter().filter(|p| *p == MEMORY_TURN_CUE).count(), 1);
-        assert!(MEMORY_TURN_CUE.contains("memory__remember_memory"));
+        assert!(extension_manager.memory_loaded().await);
+        assert!(!extension_manager
+            .collect_moim_parts("s")
+            .await
+            .iter()
+            .any(|p| p == MEMORY_TURN_CUE));
     }
 
     #[tokio::test]

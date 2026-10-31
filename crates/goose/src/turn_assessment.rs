@@ -133,6 +133,11 @@ fn quote_words(text: &str) -> Vec<String> {
     use unicode_normalization::UnicodeNormalization;
     text.nfc()
         .flat_map(char::to_lowercase)
+        .collect::<String>()
+        // "don't" / "don’t" read as "do not": the negation is a word of its own, never a lost "t".
+        .replace("n't", " not")
+        .replace("n\u{2019}t", " not")
+        .chars()
         .map(|c| if c.is_alphanumeric() { c } else { ' ' })
         .collect::<String>()
         .split_whitespace()
@@ -150,11 +155,15 @@ fn is_content_word(word: &str) -> bool {
 /// The same word, or one is the other plus an ending ("prefer"/"prefers", "title"/"titles").
 fn same_word(a: &str, b: &str) -> bool {
     let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
-    short == long || (short.chars().count() >= ASSESSMENT_CONTENT_WORD_MIN_CHARS && long.starts_with(short))
+    short == long
+        || (short.chars().count() >= ASSESSMENT_CONTENT_WORD_MIN_CHARS && long.starts_with(short))
 }
 
 fn contains_run(haystack: &[String], needle: &[String]) -> bool {
-    !needle.is_empty() && haystack.windows(needle.len()).any(|window| window == needle)
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
 }
 
 /// WR-17: the memory rests on the user's own words, checked in code three ways.
@@ -193,7 +202,79 @@ fn memory_rests_on_users_words(quote: &str, memory: &str, user_texts: &[String])
         .iter()
         .filter(|m| users.iter().flatten().any(|u| same_word(m, u)))
         .count();
-    said * 2 >= memory_content.len()
+    said * 2 >= memory_content.len() && polarity_kept(&quote, &memory)
+}
+
+/// Words that turn the next word around, in the languages goose's users write. A grammar fact, not
+/// a judgement of the user's tone: the check only asks whether the memory negates what the quote
+/// negates.
+const NEGATORS: &[&str] = &[
+    "not",
+    "no",
+    "never",
+    "without",
+    "avoid",
+    "nor",
+    "neither",
+    "none",
+    "nothing",
+    "stop",
+    "nie",
+    "nigdy",
+    "bez",
+    "nu",
+    "niciodată",
+    "niciodata",
+    "fără",
+    "fara",
+    "nicht",
+    "kein",
+    "keine",
+    "ohne",
+    "não",
+    "nao",
+    "nunca",
+    "sem",
+    "ne",
+    "pas",
+    "jamais",
+    "sans",
+    "sin",
+    "non",
+];
+/// How far after a negator its word may sit: "never push", "not the tabs", "without a review".
+const NEGATION_REACH: usize = 3;
+
+/// The content words a negator turns around: for each negator, the first content word after it,
+/// within [`NEGATION_REACH`].
+fn negated_words(words: &[String]) -> Vec<&String> {
+    let is_negator = |w: &str| NEGATORS.contains(&w);
+    words
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| is_negator(w))
+        .filter_map(|(at, _)| {
+            words[at + 1..]
+                .iter()
+                .take(NEGATION_REACH)
+                .find(|w| !is_negator(w) && is_content_word(w))
+        })
+        .collect()
+}
+
+/// WR-17 r3: word overlap is blind to negation — "Always push to main without a review" shares
+/// every content word but one with "never push to main without a review", "Push straight to main"
+/// all of them with "don't push straight to main", "Use spaces, not tabs" all of them with "use
+/// tabs, not spaces". So what the quote negates, the memory negates too, and a word the memory
+/// negates that the quote has is one the quote negates.
+fn polarity_kept(quote: &[String], memory: &[String]) -> bool {
+    let (in_quote, in_memory) = (negated_words(quote), negated_words(memory));
+    in_quote
+        .iter()
+        .all(|q| in_memory.iter().any(|m| same_word(q, m)))
+        && in_memory.iter().all(|m| {
+            !quote.iter().any(|q| same_word(q, m)) || in_quote.iter().any(|q| same_word(q, m))
+        })
 }
 
 /// The facts of one turn, as the prompt sees them: the user's messages of THIS turn and the
@@ -1422,16 +1503,23 @@ mod tests {
         let parse = |raw: &str| parse_assessment(raw, &said);
         let q = r#""quote": "run the integration tests""#;
         let m = r#""memory": "run the integration tests first""#;
-        assert!(parse(&format!(r#"{{"worth": true, "polarity": "mixed", {m}, {q}}}"#)).is_none());
-        assert!(
-            parse(&format!(r#"{{"worth": false, "polarity": "positive", {m}, {q}}}"#)).is_none()
-        );
+        assert!(parse(&format!(
+            r#"{{"worth": true, "polarity": "mixed", {m}, {q}}}"#
+        ))
+        .is_none());
+        assert!(parse(&format!(
+            r#"{{"worth": false, "polarity": "positive", {m}, {q}}}"#
+        ))
+        .is_none());
         assert!(parse(&format!(
             r#"{{"worth": true, "polarity": "positive", "memory": "  ", {q}}}"#
         ))
         .is_none());
         assert!(parse("I think it went well.").is_none());
-        assert!(parse(&format!(r#"{{"worth": "true", "polarity": "positive", {m}, {q}}}"#)).is_some());
+        assert!(parse(&format!(
+            r#"{{"worth": "true", "polarity": "positive", {m}, {q}}}"#
+        ))
+        .is_some());
     }
 
     /// WR-17 (Gabee 2026-10-31): the measured turn. The user asked for the report to be saved;
@@ -1448,7 +1536,8 @@ mod tests {
             ),
         ];
         let facts = turn_facts(&messages);
-        let false_memory = "User approved the generated report and asked for further additions or corrections.";
+        let false_memory =
+            "User approved the generated report and asked for further additions or corrections.";
         for quote in [
             // The assistant's words.
             "Let me know if you'd like any further additions or corrections.",
@@ -1465,7 +1554,11 @@ mod tests {
                 "why": "User explicitly confirmed the report was ready",
             })
             .to_string();
-            assert_eq!(parse_assessment(&raw, &facts.user_texts), None, "quote {quote:?}");
+            assert_eq!(
+                parse_assessment(&raw, &facts.user_texts),
+                None,
+                "quote {quote:?}"
+            );
         }
         assert!(assessment_system_prompt().contains("ONLY from the USER's own words"));
     }
@@ -1502,7 +1595,10 @@ mod tests {
             Message::user().with_text("thanks, looks good"),
             Message::assistant().with_text(said),
         ];
-        assert_eq!(parse_assessment(&raw, &turn_facts(&echoed).user_texts), None);
+        assert_eq!(
+            parse_assessment(&raw, &turn_facts(&echoed).user_texts),
+            None
+        );
     }
 
     /// WR-17 (RU-2026-10-31-2): goose's turn-context blocks are not the user's words — neither a
@@ -1513,10 +1609,8 @@ mod tests {
         let rule = "For everything we write for this client: English, but keep Portuguese law names in Portuguese.";
         let messages = vec![
             Message::user().with_text(rule).with_text(block),
-            Message::assistant().with_tool_request(
-                "c1",
-                Ok(rmcp::model::CallToolRequestParams::new("edit")),
-            ),
+            Message::assistant()
+                .with_tool_request("c1", Ok(rmcp::model::CallToolRequestParams::new("edit"))),
             Message::user().with_text(block),
             Message::assistant().with_text("Done."),
         ];
@@ -1538,8 +1632,18 @@ mod tests {
             .to_string();
             parse_assessment(&raw, &said)
         };
-        assert!(judge("Never push to main without a review.", "never push to main without a review").is_some());
-        assert_eq!(judge("Never push to main without a review.", "keep the build logs in /var/tmp"), None);
+        assert!(judge(
+            "Never push to main without a review.",
+            "never push to main without a review"
+        )
+        .is_some());
+        assert_eq!(
+            judge(
+                "Never push to main without a review.",
+                "keep the build logs in /var/tmp"
+            ),
+            None
+        );
         assert_eq!(
             judge(
                 "Keep the build logs in /var/tmp; the user approved the generated report and asked for further additions.",
@@ -1547,6 +1651,69 @@ mod tests {
             ),
             None
         );
+    }
+
+    /// WR-17 r3: a memory that turns the user's negation around is never proposed; the same
+    /// memories with the user's polarity are.
+    #[test]
+    fn a_memory_that_flips_the_users_negation_is_never_proposed() {
+        let judge = |said: &str, quote: &str, memory: &str| {
+            let raw = serde_json::json!({
+                "worth": true, "polarity": "negative", "memory": memory, "quote": quote,
+            })
+            .to_string();
+            parse_assessment(&raw, &[said.to_string()])
+        };
+        let review = "please never push to main without a review";
+        let straight = "and don't push straight to main, ever";
+        let tabs = "in this repo use tabs, not spaces";
+        for (said, quote, flipped) in [
+            (
+                review,
+                "never push to main without a review",
+                "Always push to main without a review.",
+            ),
+            (
+                straight,
+                "don't push straight to main",
+                "Push straight to main.",
+            ),
+            (
+                straight,
+                "don’t push straight to main",
+                "Push straight to main.",
+            ),
+            (tabs, "use tabs, not spaces", "Use spaces, not tabs."),
+        ] {
+            assert_eq!(
+                judge(said, quote, flipped),
+                None,
+                "{flipped:?} under {quote:?}"
+            );
+        }
+        for (said, quote, kept) in [
+            (
+                review,
+                "never push to main without a review",
+                "Never push to main without a review.",
+            ),
+            (
+                straight,
+                "don't push straight to main",
+                "Do not push straight to main.",
+            ),
+            (tabs, "use tabs, not spaces", "Use tabs, not spaces."),
+            (
+                tabs,
+                "use tabs, not spaces",
+                "Indent with tabs, never spaces, in this repo.",
+            ),
+        ] {
+            assert!(
+                judge(said, quote, kept).is_some(),
+                "{kept:?} under {quote:?}"
+            );
+        }
     }
 
     /// WR-17 round 2: a true quote survives the punctuation a model changes when it copies —
@@ -1594,7 +1761,9 @@ mod tests {
             )
             .with_text(json);
         assert_eq!(
-            parse_assessment(&reply_text(&text_wins), &said).unwrap().polarity,
+            parse_assessment(&reply_text(&text_wins), &said)
+                .unwrap()
+                .polarity,
             Polarity::Positive
         );
     }
