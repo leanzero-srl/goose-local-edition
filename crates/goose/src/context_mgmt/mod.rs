@@ -6218,6 +6218,62 @@ mod tests {
         assert!(open.contains("4 failed look-ups"), "{open}");
     }
 
+    /// Steward 2026-10-31 (the live MiMo run 8985a86d, second compaction at call ~121): a call
+    /// that wrote a probe and ran it failed in its run; the next plain run of the probe worked,
+    /// yet the kept block listed the first as an open error and a to-do. A probe line ending on
+    /// `grep … /proc/cpuinfo` (no /proc on macOS) exited 2 from that look-up alone, listed too.
+    /// The exit code is the LAST top-level step's: that step is what a later success settles and
+    /// what decides a look-up. A write to a file is never a look-up; a real failure stays open.
+    #[test]
+    fn a_failed_call_is_judged_by_the_step_its_exit_code_came_from() {
+        let mut messages = vec![Message::user().with_text("build the console")];
+        for (id, command, out, code) in [
+            (
+                "w1",
+                "cd /w && cat > test/perf2.mjs <<'EOF'\nconst r = 1; console.log(r);\nEOF\nnode test/perf2.mjs",
+                "TimeoutError",
+                1,
+            ),
+            ("w2", "cd /w && node test/perf2.mjs", "{\"setCam\":[1694]}", 0),
+            (
+                "g1",
+                "cd /w && cat > test/fill.mjs <<'EOF'\nlet x;\nEOF\nnode test/fill.mjs; nproc; grep -m1 \"model name\" /proc/cpuinfo",
+                "{\"full\":[1714]}\n14\ngrep: /proc/cpuinfo: No such file or directory",
+                2,
+            ),
+            (
+                "r1",
+                "cd /w && cat > test/dump.py <<'EOF'\nprint(1)\nEOF\npython3 test/dump.py",
+                "Traceback (most recent call last):",
+                1,
+            ),
+            ("r2", "cd /w && python3 - <<'EOF'\nprint(2)\nEOF\nls -la test/", "2", 0),
+            ("x1", "echo done > /ro/state.txt", "Permission denied", 1),
+        ] {
+            messages.extend(shelled(id, command, out, code));
+        }
+        let kept = Pillars::build(
+            &messages,
+            &KeptSources::default(),
+            LedgerRead::Entries(Vec::new()),
+        );
+        let rendered = kept.render();
+        let open = rendered
+            .split_once("## Errors still open (2)")
+            .unwrap_or_else(|| panic!("{rendered}"))
+            .1;
+        let open = open.split_once("\n## ").map_or(open, |(open, _)| open);
+        // A different program that later worked does not settle the dump; a failed write is real.
+        for real in ["test/dump.py", "/ro/state.txt"] {
+            assert!(open.contains(real), "{real}: {open}");
+        }
+        for noise in ["perf2.mjs", "fill.mjs"] {
+            assert!(!open.contains(noise), "{noise}: {open}");
+        }
+        assert!(open.contains("1 earlier failed calls were settled"), "{open}");
+        assert!(open.contains("1 failed look-ups"), "{open}");
+    }
+
     const SYNC_PY: &str =
         "import json\n\nclass Store:\n    def get(self, key):\n        return key\n\n\
         def sync_all(store):\n    return []\n\nROUTES = {\"GET\": \"/api/payments\"}\n\
