@@ -899,10 +899,12 @@ fn replay() {
 // Every probe below is the reviewer's text as it ran against 1319752f4b, unchanged. Only `probe`
 // differs: it records a miss instead of printing. SHOULD per the review: R1/R2 FIRE (the real F35
 // split), every other probe SILENT (a correct answer). R3 is SILENT: 64 - 40 = 24 is right.
+// `#[rustfmt::skip]` keeps them as the review wrote them.
 
 thread_local! {
     static PROBE_MISSES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
+#[rustfmt::skip]
 fn probe(name: &str, m: &[Message]) {
     let f = findings(m);
     println!("PROBE {name} => {} {:?}", f.len(), f.iter().map(|s| s.chars().take(160).collect::<String>()).collect::<Vec<_>>());
@@ -911,10 +913,12 @@ fn probe(name: &str, m: &[Message]) {
         PROBE_MISSES.with(|m| m.borrow_mut().push(format!("{name}: should {} => {f:?}", if should_fire { "FIRE" } else { "SILENT" })));
     }
 }
+#[rustfmt::skip]
 fn res_embedded(id: &str, text: &str) -> Message {
     Message::user().with_tool_response(id, Ok(CallToolResult::success(vec![Content::embedded_text("file:///doc.md", text)])))
 }
 
+#[rustfmt::skip]
 #[test]
 fn zz_probes() {
     probe("P1_sum_total", &turn("how many FW_CHECK errors over both days?",
@@ -1023,6 +1027,7 @@ fn zz_probes() {
 
 /// The review's worst case (12,004 messages, 5 MB, 30 bound names). `cargo test --release -p goose
 /// grounding_check::tests::zz_cost -- --ignored --nocapture`.
+#[rustfmt::skip]
 #[test]
 #[ignore]
 fn zz_cost() {

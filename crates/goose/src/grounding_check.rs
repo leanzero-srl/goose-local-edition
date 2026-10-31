@@ -93,7 +93,9 @@ fn content_text(c: &rmcp::model::Content) -> Option<&str> {
         return Some(t.text.as_str());
     }
     match c.as_resource().map(|r| &r.resource) {
-        Some(rmcp::model::ResourceContents::TextResourceContents { text, .. }) => Some(text.as_str()),
+        Some(rmcp::model::ResourceContents::TextResourceContents { text, .. }) => {
+            Some(text.as_str())
+        }
         _ => None,
     }
 }
@@ -263,8 +265,10 @@ static NUMBER_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
 /// "GSM_DROP (29)", "KRK-008 (65, 19%)": the parenthesis holds the number alone. "`to_minor` (12
 /// tests)" counts something else, and "(409 → the existing id)" is a status, not a count.
 static PAREN_NUMBER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!(r"^(?:\*\*|__|`)?\s*\(\s*(?:\*\*)?{COUNT}(?:\*\*)?\s*[),;]"))
-        .expect("static regex")
+    Regex::new(&format!(
+        r"^(?:\*\*|__|`)?\s*\(\s*(?:\*\*)?{COUNT}(?:\*\*)?\s*[),;]"
+    ))
+    .expect("static regex")
 });
 
 /// "3 of 5", "3 out of 5": a share, held against the two numbers it names.
@@ -368,7 +372,11 @@ fn words_before(head: &str) -> String {
         .chain(head.match_indices(". ").map(|(k, _)| k).last())
         .max()
         .map_or(0, |k| k + 1);
-    let words: Vec<&str> = head.get(cut..).unwrap_or_default().split_whitespace().collect();
+    let words: Vec<&str> = head
+        .get(cut..)
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect();
     let keep = &words[words.len().saturating_sub(6)..];
     let lead = if keep.len() < words.len() { "… " } else { "" };
     format!("{lead}{}", keep.join(" "))
@@ -539,9 +547,7 @@ pub(crate) fn bindings(reply: &str) -> Vec<Binding> {
                     Some(c) => {
                         let n = c.get(1).expect("group 1");
                         after = rest.get(n.end()..).unwrap_or_default();
-                        let of = OF_TOTAL
-                            .captures(after)
-                            .and_then(|o| whole(&o[1]));
+                        let of = OF_TOTAL.captures(after).and_then(|o| whole(&o[1]));
                         (whole(n.as_str()), of)
                     }
                     // "3 of 5 KRK-008 docks": the number before the name is the total.
@@ -574,9 +580,7 @@ pub(crate) fn bindings(reply: &str) -> Vec<Binding> {
                 w[w.len().saturating_sub(3)..].join(" ")
             };
             let approx = HEDGE.is_match(&near_after) || HEDGE.is_match(&near_before);
-            let unit = UNIT_AFTER
-                .captures(after)
-                .and_then(|c| unit_scale(&c[1]));
+            let unit = UNIT_AFTER.captures(after).and_then(|c| unit_scale(&c[1]));
             out.push(Binding {
                 approx,
                 unit,
@@ -672,7 +676,11 @@ fn supported(
         // "2 min" over "build_time: 120 s": the output's measurements of the name, converted.
         let value = binding.number as f64 * scale;
         let mut measured = false;
-        for line in raw.iter().flat_map(|t| t.lines()).filter(|l| holds_name(l, &binding.name)) {
+        for line in raw
+            .iter()
+            .flat_map(|t| t.lines())
+            .filter(|l| holds_name(l, &binding.name))
+        {
             for c in MEASURE.captures_iter(line) {
                 let Some((d, f)) = unit_scale(&c[2]) else {
                     continue;
